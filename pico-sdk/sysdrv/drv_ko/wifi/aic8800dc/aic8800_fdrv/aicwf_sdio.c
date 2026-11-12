@@ -12,7 +12,6 @@
 #include <linux/mmc/sdio_func.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
-#include <linux/property.h>
 #include <linux/semaphore.h>
 #include <linux/debugfs.h>
 #include <linux/kthread.h>
@@ -876,14 +875,7 @@ static int aicwf_sdio_probe(struct sdio_func *func,
 	}
 
 	host->caps |= MMC_CAP_NONREMOVABLE;
-	err = aicwf_rwnx_sdio_platform_init(sdiodev);
-	if (err) {
-		sdio_err("platform init failed: %d\n", err);
-		/* cfg80211 errors quiesce the bus before freeing rwnx_hw. */
-		if (bus_if->state != BUS_DOWN_ST)
-			aicwf_sdio_abort_init(sdiodev);
-		goto fail;
-	}
+	aicwf_rwnx_sdio_platform_init(sdiodev);
 	aicwf_hostif_ready();
 	err = rwnx_register_hostwake_irq(sdiodev->dev);
 	if (err != 0)
@@ -942,10 +934,7 @@ static void aicwf_sdio_remove(struct sdio_func *func)
 
 	AICWFDBG(LOGINFO, "%s Enter\n", __func__);
 	host = func->card->host;
-	/* The retained board owns this capability across driver reloads. */
-	if (!device_property_read_bool(host->parent,
-				       "aico,aic8800d80-retained-sdio"))
-		host->caps &= ~MMC_CAP_NONREMOVABLE;
+	host->caps &= ~MMC_CAP_NONREMOVABLE;
 	bus_if = dev_get_drvdata(&func->dev);
 	if (!bus_if) {
 		return;
@@ -3143,23 +3132,6 @@ static struct aicwf_bus_ops aicwf_sdio_bus_ops = {
 	.txmsg = aicwf_sdio_bus_txmsg,
 };
 
-/* Failed probe only: stop producers before release frees bus resources. */
-void aicwf_sdio_abort_init(struct aic_sdio_dev *sdiodev)
-{
-	sdiodev->bus_if->state = BUS_DOWN_ST;
-#if defined(CONFIG_SDIO_PWRCTRL)
-	aicwf_sdio_pwrctl_timer(sdiodev, 0);
-	if (sdiodev->pwrctl_tsk) {
-		complete_all(&sdiodev->pwrctrl_trgg);
-		kthread_stop(sdiodev->pwrctl_tsk);
-		sdiodev->pwrctl_tsk = NULL;
-	}
-#endif
-	if (sdiodev->cmd_mgr.cmd_wq)
-		cancel_work_sync(&sdiodev->cmd_mgr.cmdWork);
-	aicwf_sdio_release(sdiodev);
-}
-
 void aicwf_sdio_release(struct aic_sdio_dev *sdiodev)
 {
 	struct aicwf_bus *bus_if;
@@ -3212,8 +3184,7 @@ void aicwf_sdio_release(struct aic_sdio_dev *sdiodev)
 	AICWFDBG(LOGINFO, "%s:pwrctl stopped\n", __func__);
 #endif
 
-	if (sdiodev->cmd_mgr.state == RWNX_CMD_MGR_STATE_INITED ||
-	    sdiodev->cmd_mgr.state == RWNX_CMD_MGR_STATE_CRASHED)
+	if (sdiodev->cmd_mgr.state == RWNX_CMD_MGR_STATE_INITED)
 		rwnx_cmd_mgr_deinit(&sdiodev->cmd_mgr);
 	AICWFDBG(LOGINFO, "%s Exit\n", __func__);
 }

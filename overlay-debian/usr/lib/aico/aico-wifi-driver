@@ -5,9 +5,6 @@ ko_dir=/usr/lib/aico/platform/modules
 he_on=${AICO_WIFI_HE:-1}
 lp_on=${AICO_WIFI_LOW_POWER:-0}
 stage=init
-host_power=/sys/bus/platform/devices/ff9a0000.mmc/power/control
-host_power_previous=
-model=$(tr -d '\000' < /proc/device-tree/model 2>/dev/null || true)
 log() {
     printf 'aico-wifi-driver: %s\n' "$*" >&2
     logger -t aico-wifi-driver "$*" 2>/dev/null || true
@@ -31,25 +28,7 @@ case "${lp_on}" in
         exit 1
         ;;
 esac
-restore_host_power() {
-    [ -n "$host_power_previous" ] || return 0
-    if ! printf '%s\n' "$host_power_previous" > "$host_power"; then
-        log "stage=${stage} result=failed reason=host-power-restore"
-        return 1
-    fi
-    host_power_previous=
-}
-cleanup() {
-    status=$?
-    trap - EXIT
-    if ! restore_host_power; then
-        status=1
-    fi
-    [ "$status" -eq 0 ] || mark "failed stage=${stage} status=${status}"
-    exit "$status"
-}
-trap cleanup EXIT
-trap 'exit 1' HUP INT TERM
+trap 'status=$?; [ "$status" -eq 0 ] || mark "failed stage=${stage} status=${status}"; exit "$status"' EXIT
 insert_if_present() {
     module=$1
     shift
@@ -89,36 +68,14 @@ insert_if_present aes_generic.ko
 stage=cfg80211
 insert_if_present cfg80211.ko
 stage=bsp
-if [ "$model" = "Aico Link SCH v1" ]; then
-    host_power_previous=$(cat "$host_power")
-    case "$host_power_previous" in
-        auto|on) ;;
-        *)
-            host_power_previous=
-            log "stage=${stage} result=failed reason=invalid-host-power-control"
-            exit 1
-            ;;
-    esac
-    # Keep the ROM/retained transport active through both synchronous probes.
-    printf 'on\n' > "$host_power"
-fi
 insert_if_present aic8800_bsp.ko aic_fw_path=/usr/lib/aico/platform/modules/aic8800dc_fw
-if [ "$model" = "Aico Link SCH v1" ]; then
-    fw_state=$(cat /sys/devices/platform/aic-bsp/aicbsp_info/fw_state 2>/dev/null || true)
-    case "$fw_state" in
-        provisioned|reused) log "stage=${stage} result=ready fw_state=$fw_state" ;;
-        *)
-            log "stage=${stage} result=failed reason=firmware-not-ready fw_state=${fw_state:-missing}"
-            exit 1
-            ;;
-    esac
-fi
+sleep 1
 # The AIC8800D80 supports Wi-Fi 6 HE on both bands. AICO_WIFI_HE=0 restores
 # the HT/VHT-only workaround from 2b08d9a9 (#177), which targeted the previous
 # hardware design. This parameter takes effect at module load.
 stage=firmware
 insert_if_present aic8800_fdrv.ko he_on="${he_on}" custregd=1 lp_on="${lp_on}"
-restore_host_power
+sleep 2
 stage=bluetooth
 insert_if_present aic8800_btlpm.ko
 

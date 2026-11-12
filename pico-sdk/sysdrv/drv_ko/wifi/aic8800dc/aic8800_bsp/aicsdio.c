@@ -12,7 +12,6 @@
 #include <linux/mmc/sdio_func.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
-#include <linux/property.h>
 #include <linux/semaphore.h>
 #include <linux/debugfs.h>
 #include <linux/kthread.h>
@@ -158,7 +157,6 @@ int aicbsp_set_subsys(int subsys, int state)
 	int cur_power_map;
 	int pre_power_state;
 	int cur_power_state;
-	int ret;
 
 	mutex_lock(&aicbsp_power_lock);
 	aicbsp_load_fw_in_fdrv = false;
@@ -178,14 +176,11 @@ int aicbsp_set_subsys(int subsys, int state)
 		sdio_dbg("%s, power state change to %d dure to %s\n", __func__,
 			 cur_power_state, aicbsp_subsys_name(subsys));
 		if (cur_power_state) {
-			ret = aicbsp_platform_power_on();
-			if (ret < 0)
+			if (aicbsp_platform_power_on() < 0)
 				goto err0;
-			ret = aicbsp_sdio_init();
-			if (ret)
+			if (aicbsp_sdio_init())
 				goto err1;
-			ret = aicbsp_driver_fw_init(aicbsp_sdiodev);
-			if (ret)
+			if (aicbsp_driver_fw_init(aicbsp_sdiodev))
 				goto err2;
 #ifndef CONFIG_FDRV_NO_REG_SDIO
 			aicbsp_sdio_release(aicbsp_sdiodev);
@@ -228,7 +223,7 @@ err0:
 	sdio_dbg("%s, fail to set %s power state to %d\n", __func__,
 		 aicbsp_subsys_name(subsys), state);
 	mutex_unlock(&aicbsp_power_lock);
-	return ret;
+	return -1;
 }
 EXPORT_SYMBOL_GPL(aicbsp_set_subsys);
 
@@ -325,10 +320,9 @@ static int aicbsp_sdio_probe(struct sdio_func *func,
 		kfree(bus_if);
 		return -ENOMEM;
 	}
-	err = aicwf_sdio_chipmatch(sdiodev, func->vendor, func->device);
-	if (err)
-		goto free_dev;
 	aicbsp_sdiodev = sdiodev;
+
+	err = aicwf_sdio_chipmatch(sdiodev, func->vendor, func->device);
 
 	sdiodev->func = func;
 	if (sdiodev->chipid == PRODUCT_ID_AIC8800DC ||
@@ -344,8 +338,6 @@ static int aicbsp_sdio_probe(struct sdio_func *func,
 	}
 	dev_set_drvdata(&func->dev, bus_if);
 	sdiodev->dev = &func->dev;
-	/* Retained firmware may deliver RX as soon as IRQs are enabled. */
-	aicbsp_platform_init(sdiodev);
 
 	if (sdiodev->chipid != PRODUCT_ID_AIC8800D80 &&
 	    sdiodev->chipid != PRODUCT_ID_AIC8800D80X2) {
@@ -360,21 +352,17 @@ static int aicbsp_sdio_probe(struct sdio_func *func,
 
 	if (aicwf_sdio_bus_init(sdiodev) == NULL) {
 		sdio_err("sdio bus init err\r\n");
-		err = -EIO;
 		goto fail;
 	}
+
+	aicbsp_platform_init(sdiodev);
 
 	up(&aicbsp_probe_semaphore);
 
 	return 0;
 fail:
-	rwnx_cmd_mgr_deinit(&sdiodev->cmd_mgr);
 	aicwf_sdio_func_deinit(sdiodev);
-	if (sdiodev->func_msg)
-		dev_set_drvdata(&sdiodev->func_msg->dev, NULL);
 	dev_set_drvdata(&func->dev, NULL);
-	aicbsp_sdiodev = NULL;
-free_dev:
 	kfree(sdiodev);
 	kfree(bus_if);
 	return err;
@@ -397,10 +385,7 @@ static void aicbsp_sdio_remove(struct sdio_func *func)
 	}
 
 	host = func->card->host;
-	/* The retained board owns this capability across driver reloads. */
-	if (!device_property_read_bool(host->parent,
-				       "aico,aic8800d80-retained-sdio"))
-		host->caps &= ~MMC_CAP_NONREMOVABLE;
+	host->caps &= ~MMC_CAP_NONREMOVABLE;
 
 	bus_if = aicbsp_get_drvdata(&func->dev);
 
@@ -419,8 +404,6 @@ static void aicbsp_sdio_remove(struct sdio_func *func)
 	aicwf_sdio_func_deinit(sdiodev);
 
 	dev_set_drvdata(&sdiodev->func->dev, NULL);
-	if (sdiodev->func_msg)
-		dev_set_drvdata(&sdiodev->func_msg->dev, NULL);
 	kfree(sdiodev);
 
 done:
@@ -606,16 +589,17 @@ static void aicbsp_platform_power_off(void)
 
 int aicbsp_sdio_init(void)
 {
-	int ret;
-
-	ret = sdio_register_driver(&aicbsp_sdio_driver);
-	if (ret)
-		return ret;
-	if (down_timeout(&aicbsp_probe_semaphore, msecs_to_jiffies(2000))) {
-		printk("%s aicbsp_sdio_probe fail\r\n", __func__);
-		sdio_unregister_driver(&aicbsp_sdio_driver);
-		return -ETIMEDOUT;
+	if (sdio_register_driver(&aicbsp_sdio_driver)) {
+		return -1;
+	} else {
+		//may add mmc_rescan here
 	}
+	if (down_timeout(&aicbsp_probe_semaphore, msecs_to_jiffies(2000)) !=
+	    0) {
+		printk("%s aicbsp_sdio_probe fail\r\n", __func__);
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -933,6 +917,7 @@ static void aicwf_sdio_bus_stop(struct device *dev)
 {
 	struct aicwf_bus *bus_if = aicbsp_get_drvdata(dev);
 	struct aic_sdio_dev *sdiodev = bus_if->bus_priv.sdio;
+	int ret;
 
 #if defined(CONFIG_SDIO_PWRCTRL)
 	aicwf_sdio_pwrctl_timer(sdiodev, 0);
@@ -944,12 +929,15 @@ static void aicwf_sdio_bus_stop(struct device *dev)
 	}
 #endif
 	bus_if->state = BUS_DOWN_ST;
-	down(&sdiodev->tx_priv->txctl_sema);
+	ret = down_interruptible(&sdiodev->tx_priv->txctl_sema);
+	if (ret)
+		sdio_err("down txctl_sema fail\n");
 
 #if defined(CONFIG_SDIO_PWRCTRL)
 	aicwf_sdio_pwr_stctl(sdiodev, SDIO_SLEEP_ST);
 #endif
-	up(&sdiodev->tx_priv->txctl_sema);
+	if (!ret)
+		up(&sdiodev->tx_priv->txctl_sema);
 	aicwf_frame_queue_flush(&sdiodev->tx_priv->txq);
 }
 
@@ -1735,9 +1723,6 @@ void aicwf_sdio_release(struct aic_sdio_dev *sdiodev)
 	if (bus_if)
 		bus_if->state = BUS_DOWN_ST;
 
-	/* Retire synchronous requests before freeing TX or RX storage. */
-	rwnx_cmd_mgr_deinit(&sdiodev->cmd_mgr);
-
 	bus_if_t = dev_get_drvdata(sdiodev->dev);
 
 	if ((bus_if_t != NULL) && (sdiodev->bus_if == bus_if_t)) {
@@ -1762,15 +1747,13 @@ void aicwf_sdio_release(struct aic_sdio_dev *sdiodev)
 	if (sdiodev->dev)
 		aicwf_bus_deinit(sdiodev->dev);
 
-	if (sdiodev->tx_priv) {
+	if (sdiodev->tx_priv)
 		aicwf_tx_deinit(sdiodev->tx_priv);
-		sdiodev->tx_priv = NULL;
-	}
 
-	if (sdiodev->rx_priv) {
+	if (sdiodev->rx_priv)
 		aicwf_rx_deinit(sdiodev->rx_priv);
-		sdiodev->rx_priv = NULL;
-	}
+
+	rwnx_cmd_mgr_deinit(&sdiodev->cmd_mgr);
 }
 
 void aicwf_sdio_reg_init(struct aic_sdio_dev *sdiodev)
@@ -2054,16 +2037,14 @@ void *aicwf_sdio_bus_init(struct aic_sdio_dev *sdiodev)
 	rx_priv = aicwf_rx_init(sdiodev);
 	if (!rx_priv) {
 		sdio_err("rx init fail\n");
-		return NULL;
+		goto fail;
 	}
 	sdiodev->rx_priv = rx_priv;
 
 	tx_priv = aicwf_tx_init(sdiodev);
 	if (!tx_priv) {
 		sdio_err("tx init fail\n");
-		aicwf_rx_deinit(rx_priv);
-		sdiodev->rx_priv = NULL;
-		return NULL;
+		goto fail;
 	}
 	sdiodev->tx_priv = tx_priv;
 	aicwf_frame_queue_init(&tx_priv->txq, 8, TXQLEN);

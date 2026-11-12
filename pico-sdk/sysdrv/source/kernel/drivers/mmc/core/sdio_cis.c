@@ -240,36 +240,11 @@ static const struct cis_tpl cis_tpl_list[] = {
 	{	0x91,	2,	/* cistpl_sdio_std */	},
 };
 
-struct sdio_cis_reader {
-	bool bounded;
-	unsigned int bytes;
-	unsigned long deadline;
-};
-
-static int sdio_cis_read_byte(struct mmc_card *card,
-			      struct sdio_cis_reader *reader,
-			      unsigned int address, u8 *value)
-{
-	if (reader->bounded) {
-		if (address > 0x1ffff)
-			return -ERANGE;
-		if (reader->bytes++ >= 512)
-			return -E2BIG;
-		if (time_after_eq(jiffies, reader->deadline))
-			return -ETIMEDOUT;
-	}
-	return mmc_io_rw_direct(card, 0, 0, address, 0, value);
-}
-
 static int sdio_read_cis(struct mmc_card *card, struct sdio_func *func)
 {
 	int ret;
 	struct sdio_func_tuple *this, **prev;
 	unsigned i, ptr = 0;
-	struct sdio_cis_reader reader = {
-		.bounded = mmc_sdio_aic_retained_host(card->host),
-		.deadline = jiffies + msecs_to_jiffies(5000),
-	};
 
 	/*
 	 * Note that this works for the common CIS (function number 0) as
@@ -284,8 +259,8 @@ static int sdio_read_cis(struct mmc_card *card, struct sdio_func *func)
 		else
 			fn = 0;
 
-		ret = sdio_cis_read_byte(card, &reader,
-			SDIO_FBR_BASE(fn) + SDIO_FBR_CIS + i, &x);
+		ret = mmc_io_rw_direct(card, 0, 0,
+			SDIO_FBR_BASE(fn) + SDIO_FBR_CIS + i, 0, &x);
 		if (ret)
 			return ret;
 		ptr |= x << (i * 8);
@@ -304,7 +279,7 @@ static int sdio_read_cis(struct mmc_card *card, struct sdio_func *func)
 		unsigned long timeout = jiffies +
 			msecs_to_jiffies(SDIO_READ_CIS_TIMEOUT_MS);
 
-		ret = sdio_cis_read_byte(card, &reader, ptr++, &tpl_code);
+		ret = mmc_io_rw_direct(card, 0, 0, ptr++, 0, &tpl_code);
 		if (ret)
 			break;
 
@@ -316,7 +291,7 @@ static int sdio_read_cis(struct mmc_card *card, struct sdio_func *func)
 		if (tpl_code == 0x00)
 			continue;
 
-		ret = sdio_cis_read_byte(card, &reader, ptr++, &tpl_link);
+		ret = mmc_io_rw_direct(card, 0, 0, ptr++, 0, &tpl_link);
 		if (ret)
 			break;
 
@@ -329,20 +304,13 @@ static int sdio_read_cis(struct mmc_card *card, struct sdio_func *func)
 			return -ENOMEM;
 
 		for (i = 0; i < tpl_link; i++) {
-			ret = sdio_cis_read_byte(card, &reader,
-					       ptr + i, &this->data[i]);
+			ret = mmc_io_rw_direct(card, 0, 0,
+					       ptr + i, 0, &this->data[i]);
 			if (ret)
 				break;
 		}
 		if (ret) {
 			kfree(this);
-			break;
-		}
-		/* Do not overwrite a previous version allocation on this fixed card. */
-		if (reader.bounded && tpl_code == 0x15 &&
-		    (func ? func->info != NULL : card->info != NULL)) {
-			kfree(this);
-			ret = -EINVAL;
 			break;
 		}
 

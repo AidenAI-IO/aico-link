@@ -148,9 +148,9 @@ static int cmd_mgr_queue(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 #endif
 	if (cmd->e2a_msg != NULL) {
 		do {
-			spin_lock_bh(&cmd_mgr->lock);
 			if (cmd_mgr->state == RWNX_CMD_MGR_STATE_CRASHED)
 				break;
+			spin_lock_bh(&cmd_mgr->lock);
 			empty = list_empty(&cmd_mgr->cmds);
 			if (!empty) {
 				spin_unlock_bh(&cmd_mgr->lock);
@@ -243,7 +243,6 @@ static int cmd_mgr_queue(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 		//rwnx_ipc_msg_push(rwnx_hw, cmd, RWNX_CMD_A2EMSG_LEN(cmd->a2e_msg));
 
 		kfree(cmd->a2e_msg);
-		cmd->a2e_msg = NULL;
 	} else {
 		if (cmd_mgr->queue_sz <= 1) {
 			WAKE_CMD_WORK(cmd_mgr);
@@ -279,15 +278,11 @@ static int cmd_mgr_queue(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 			cmd_dump(cmd);
 			spin_lock_bh(&cmd_mgr->lock);
 			cmd_mgr->state = RWNX_CMD_MGR_STATE_CRASHED;
-			/* No late confirmation may write into the caller's stack. */
-			list_del_init(&cmd->list);
-			cmd_mgr->queue_sz--;
-			cmd->e2a_msg = NULL;
-			cmd->result = -ETIMEDOUT;
-			cmd->flags |= RWNX_CMD_FLAG_DONE;
+			if (!(cmd->flags & RWNX_CMD_FLAG_DONE)) {
+				cmd->result = -ETIMEDOUT;
+				cmd_complete(cmd_mgr, cmd);
+			}
 			spin_unlock_bh(&cmd_mgr->lock);
-			/* The caller releases the command slot on error. */
-			return -ETIMEDOUT;
 		} else {
 			spin_lock_bh(&cmd_mgr->lock);
 			list_del(&cmd->list);
@@ -577,10 +572,8 @@ void rwnx_cmd_mgr_deinit(struct rwnx_cmd_mgr *cmd_mgr)
 	cmd_mgr->print(cmd_mgr);
 	cmd_mgr->drain(cmd_mgr);
 	cmd_mgr->print(cmd_mgr);
-	if (cmd_mgr->cmd_wq) {
-		flush_workqueue(cmd_mgr->cmd_wq);
-		destroy_workqueue(cmd_mgr->cmd_wq);
-	}
+	flush_workqueue(cmd_mgr->cmd_wq);
+	destroy_workqueue(cmd_mgr->cmd_wq);
 	memset(cmd_mgr, 0, sizeof(*cmd_mgr));
 }
 

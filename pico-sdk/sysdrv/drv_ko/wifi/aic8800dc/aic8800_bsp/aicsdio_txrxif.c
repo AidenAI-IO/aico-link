@@ -63,13 +63,15 @@ int aicwf_bus_init(uint bus_hdrlen, struct device *dev)
 #endif
 	return ret;
 fail:
-	/* The caller unwinds initialized transport resources once. */
+	aicwf_bus_deinit(dev);
+
 	return ret;
 }
 
 void aicwf_bus_deinit(struct device *dev)
 {
 	struct aicwf_bus *bus_if;
+	struct aic_sdio_dev *sdiodev;
 
 	if (!dev) {
 		txrx_err("device not found\n");
@@ -79,15 +81,17 @@ void aicwf_bus_deinit(struct device *dev)
 	bus_if = aicbsp_get_drvdata(dev);
 	aicwf_bus_stop(bus_if);
 
-	if (bus_if->bustx_thread) {
-		complete_all(&bus_if->bustx_trgg);
-		kthread_stop(bus_if->bustx_thread);
-		bus_if->bustx_thread = NULL;
-	}
+	sdiodev = bus_if->bus_priv.sdio;
 
 	if (bus_if->cmd_buf) {
 		kfree(bus_if->cmd_buf);
 		bus_if->cmd_buf = NULL;
+	}
+
+	if (bus_if->bustx_thread) {
+		complete_all(&bus_if->bustx_trgg);
+		kthread_stop(bus_if->bustx_thread);
+		bus_if->bustx_thread = NULL;
 	}
 }
 
@@ -134,7 +138,7 @@ static bool aicwf_another_ptk(struct sk_buff *skb)
 	u8 *data;
 	u16 aggr_len = 0;
 
-	if (skb->data == NULL || skb->len < 4) {
+	if (skb->data == NULL || skb->len == 0) {
 		return false;
 	}
 	data = skb->data;
@@ -151,9 +155,9 @@ int aicwf_process_rxframes(struct aicwf_rx_priv *rx_priv)
 	int ret = 0;
 	unsigned long flags = 0;
 	struct sk_buff *skb = NULL;
-	unsigned int pkt_len = 0;
+	u16 pkt_len = 0;
 	struct sk_buff *skb_inblock = NULL;
-	unsigned int aggr_len = 0, adjust_len = 0;
+	u16 aggr_len = 0, adjust_len = 0;
 	u8 *data = NULL;
 
 	while (1) {
@@ -169,16 +173,11 @@ int aicwf_process_rxframes(struct aicwf_rx_priv *rx_priv)
 			break;
 		}
 		while (aicwf_another_ptk(skb)) {
-			if (skb->len < 4)
-				break;
 			data = skb->data;
 			pkt_len = (*skb->data | (*(skb->data + 1) << 8));
 
 			if ((skb->data[2] & SDIO_TYPE_CFG) !=
 			    SDIO_TYPE_CFG) { // type : data
-				if (skb->len < RX_HWHRD_LEN ||
-				    pkt_len > skb->len - RX_HWHRD_LEN)
-					break;
 				aggr_len = pkt_len + RX_HWHRD_LEN;
 
 				if (aggr_len & (RX_ALIGNMENT - 1))
@@ -186,8 +185,6 @@ int aicwf_process_rxframes(struct aicwf_rx_priv *rx_priv)
 						roundup(aggr_len, RX_ALIGNMENT);
 				else
 					adjust_len = aggr_len;
-				if (adjust_len > skb->len)
-					break;
 
 				skb_inblock = __dev_alloc_skb(
 					aggr_len + CCMP_OR_WEP_INFO,
@@ -195,7 +192,6 @@ int aicwf_process_rxframes(struct aicwf_rx_priv *rx_priv)
 				if (skb_inblock == NULL) {
 					txrx_err("no more space!\n");
 					aicwf_dev_skb_free(skb);
-					atomic_dec(&rx_priv->rx_cnt);
 					return -EBADE;
 				}
 
@@ -206,8 +202,6 @@ int aicwf_process_rxframes(struct aicwf_rx_priv *rx_priv)
 #endif
 				skb_pull(skb, adjust_len);
 			} else { //  type : config
-				if (pkt_len > skb->len - 4)
-					break;
 				aggr_len = pkt_len;
 
 				if (aggr_len & (RX_ALIGNMENT - 1))
@@ -215,39 +209,34 @@ int aicwf_process_rxframes(struct aicwf_rx_priv *rx_priv)
 						roundup(aggr_len, RX_ALIGNMENT);
 				else
 					adjust_len = aggr_len;
-				if (adjust_len + 4 > skb->len)
-					break;
 
 				skb_inblock = __dev_alloc_skb(aggr_len + 4,
 							      GFP_KERNEL);
 				if (skb_inblock == NULL) {
 					txrx_err("no more space!\n");
 					aicwf_dev_skb_free(skb);
-					atomic_dec(&rx_priv->rx_cnt);
 					return -EBADE;
 				}
 
 				skb_put(skb_inblock, aggr_len + 4);
 				memcpy(skb_inblock->data, data, aggr_len + 4);
 				if ((*(skb_inblock->data + 2) & 0x7f) ==
-				    SDIO_TYPE_CFG_CMD_RSP &&
-				    pkt_len >= offsetof(struct ipc_e2a_msg, param)) {
-					struct ipc_e2a_msg *msg =
-						(void *)(skb_inblock->data + 4);
-					if (msg->param_len <=
-					    pkt_len - offsetof(struct ipc_e2a_msg, param))
-						rwnx_rx_handle_msg(rx_priv->sdiodev, msg);
-				}
+				    SDIO_TYPE_CFG_CMD_RSP)
+					rwnx_rx_handle_msg(
+						rx_priv->sdiodev,
+						(struct ipc_e2a_msg
+							 *)(skb_inblock->data +
+							    4));
 #if 0
 				if ((*(skb_inblock->data + 2) & 0x7f) == SDIO_TYPE_CFG_DATA_CFM)
 					aicwf_sdio_host_tx_cfm_handler(&(rx_priv->sdiodev->rwnx_hw->sdio_env), (u32 *)(skb_inblock->data + 4));
 #endif
 				skb_pull(skb, adjust_len + 4);
 			}
-			dev_kfree_skb(skb_inblock);
-			skb_inblock = NULL;
 		}
 
+		/* skb_inblock no used currently, just free it! */
+		dev_kfree_skb(skb_inblock);
 		dev_kfree_skb(skb);
 		atomic_dec(&rx_priv->rx_cnt);
 	}
