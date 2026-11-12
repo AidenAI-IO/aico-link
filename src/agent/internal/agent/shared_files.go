@@ -347,6 +347,11 @@ var sharedRemoveHook func()
 func removeSharedEntry(root *os.Root, rel string) error {
 	parts := strings.Split(rel, "/")
 	dir := root
+	defer func() {
+		if dir != root {
+			dir.Close()
+		}
+	}()
 	for _, name := range parts[:len(parts)-1] {
 		info, err := dir.Lstat(name)
 		if err != nil {
@@ -365,16 +370,11 @@ func removeSharedEntry(root *os.Root, rel string) error {
 		dir = next
 		opened, err := dir.Stat(".")
 		if err != nil {
-			dir.Close()
 			return err
 		}
 		if !os.SameFile(info, opened) {
-			dir.Close()
 			return os.ErrNotExist
 		}
-	}
-	if dir != root {
-		defer dir.Close()
 	}
 	name := parts[len(parts)-1]
 	info, err := dir.Lstat(name)

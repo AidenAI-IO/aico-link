@@ -515,6 +515,9 @@ func TestSharedFilesDeleteStaysInValidatedFolder(t *testing.T) {
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("DELETE = %d, want %d", response.Code, http.StatusNoContent)
 	}
+	if info, err := os.Lstat(filepath.Join(dir, "outputs")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("folder swap did not run: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(dir, "archive", "report.pdf")); err != nil {
 		t.Fatalf("file in the swapped-in folder was removed: %v", err)
 	}
