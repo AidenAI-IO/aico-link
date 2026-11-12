@@ -40,6 +40,9 @@ const (
 	DecisionOpAppOpen            = "app_open_confirmation"
 	DecisionOpAndroidSearchEntry = "android_search_entry"
 	DecisionOpPasteMenu          = "paste_menu"
+	// DecisionOpStepGate checks a batch step's expected screen state; see
+	// decisionAdvisor.gate. It has no main-model counterpart.
+	DecisionOpStepGate = "step_gate"
 )
 
 // DecisionModelConfig configures the optional decision model (TypeSafe Jev or

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"strings"
 	"time"
 
@@ -165,7 +166,15 @@ func tapSequenceInput(input string) (points []normalizedPoint, ok bool) {
 // taps again: the pointer and press highlight stay well below the threshold.
 // A whole-screen comparison backs this up for layouts whose remaining targets
 // all happen to sit outside the changed area.
-func newTapSequenceGuard(capture frameCapturer, screenState *screen.ScreenState, baseline lumaFrame, points []normalizedPoint) mnk.TapSequenceGuard {
+//
+// A changed target is not always a changed layout: a suggestion row can dim
+// the keypad past the threshold. When confirm is set, it gets the final say on
+// a target change (never on a whole-screen change). It compares the baseline
+// with the frame that showed the change, so it can tell whether the same
+// controls are still there. A pass is rechecked against a fresh frame, since
+// the screen can move while the decision model answers; only when that frame
+// still matches the judged one does it become the new baseline.
+func newTapSequenceGuard(capture frameCapturer, screenState *screen.ScreenState, baseline lumaFrame, points []normalizedPoint, confirm tapSequenceConfirmer) mnk.TapSequenceGuard {
 	return func(ctx context.Context, executed int) (bool, string, error) {
 		started := time.Now()
 		current, err := capture(ctx)
@@ -180,10 +189,82 @@ func newTapSequenceGuard(capture frameCapturer, screenState *screen.ScreenState,
 		case !comparable || ratio > tapSequenceLayoutChangeRatio:
 			return true, fmt.Sprintf("screen layout changed after tap %d (%.0f%% of the screen changed); remaining taps were not sent", executed, ratio*100), nil
 		case target >= 0:
+			if confirm != nil && confirm(ctx, baseline, current, region, points[executed:]).Pass {
+				fresh, err := capture(ctx)
+				if err != nil {
+					return false, "", err
+				}
+				if moved, _ := tapSequenceChangedTarget(current, fresh, region, points, executed); moved < 0 {
+					if ratio, ok := tapSequenceFrameChange(current, fresh, region); ok && ratio <= tapSequenceLayoutChangeRatio {
+						baseline = fresh
+						return false, "", nil
+					}
+				}
+				return true, fmt.Sprintf("screen changed again after tap %d while the change was being checked; remaining taps were not sent", executed), nil
+			}
 			return true, fmt.Sprintf("target %d changed after tap %d, so the planned layout no longer matches; remaining taps were not sent", target+1, executed), nil
 		}
 		return false, "", nil
 	}
+}
+
+// tapSequenceConfirmer asks whether the remaining targets are still the same
+// controls, in place, after the pixel check saw one of them change. before is
+// the frame the taps were planned on and after the frame that showed the
+// change; both are cropped to region.
+type tapSequenceConfirmer func(ctx context.Context, before, after lumaFrame, region image.Rectangle, remaining []normalizedPoint) stepGateResult
+
+// newTapSequenceConfirmer returns a confirmer backed by the decision model, or
+// nil when there is no decision model to ask. The decision model's setting is
+// read on each check, so a disabled decision model leaves the pixel check's
+// stop in place.
+func newTapSequenceConfirmer(decider *decisionAdvisor) tapSequenceConfirmer {
+	if decider == nil {
+		return nil
+	}
+	return func(ctx context.Context, before, after lumaFrame, region image.Rectangle, remaining []normalizedPoint) stepGateResult {
+		if _, _, ok := decider.settings(); !ok {
+			return stepGateResult{}
+		}
+		beforeJPEG, err := lumaFrameJPEG(before, region)
+		if err != nil {
+			return stepGateResult{}
+		}
+		afterJPEG, err := lumaFrameJPEG(after, region)
+		if err != nil {
+			return stepGateResult{}
+		}
+		return decider.compareGate(ctx, beforeJPEG, afterJPEG, tapSequenceExpectation(remaining))
+	}
+}
+
+// lumaFrameJPEG encodes the region of a luminance frame as a grayscale JPEG.
+// The decision model only needs to recognise controls, and the frames the
+// guard already holds avoid another screenshot round trip.
+func lumaFrameJPEG(frame lumaFrame, region image.Rectangle) ([]byte, error) {
+	region = region.Intersect(image.Rect(0, 0, frame.width, frame.height))
+	if !frame.valid() || region.Empty() {
+		return nil, fmt.Errorf("frame has no comparable region")
+	}
+	img := image.NewGray(image.Rect(0, 0, region.Dx(), region.Dy()))
+	for row := 0; row < region.Dy(); row++ {
+		start := (region.Min.Y+row)*frame.stride + region.Min.X
+		copy(img.Pix[row*img.Stride:row*img.Stride+region.Dx()], frame.y[start:start+region.Dx()])
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// tapSequenceExpectation describes the controls a tap_sequence still relies on.
+func tapSequenceExpectation(remaining []normalizedPoint) string {
+	at := make([]string, len(remaining))
+	for i, point := range remaining {
+		at[i] = fmt.Sprintf("(%.0f, %.0f)", point.X, point.Y)
+	}
+	return "The tappable controls at " + strings.Join(at, ", ") + " on a 0-1000 grid of the screen."
 }
 
 // tapSequenceChangedTarget returns the index of the first remaining target
