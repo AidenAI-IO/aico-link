@@ -327,12 +327,22 @@ function handleVoiceControlMessage(local, text) {
 
 // Capture only counts as started once the audio context runs; a suspended
 // context sends and plays nothing while the page would claim to listen.
+// How long to wait for a suspended audio context to start. A browser that
+// does not allow audio leaves resume() pending rather than rejecting it.
+const voiceResumeTimeoutMs = 2000;
+
 async function beginVoiceCapture(local) {
     if (local.context.state === 'suspended') {
+        let timer = null;
         try {
-            await local.context.resume();
+            await Promise.race([
+                local.context.resume(),
+                new Promise(resolve => { timer = setTimeout(resolve, voiceResumeTimeoutMs); })
+            ]);
         } catch (err) {
             // Checked below.
+        } finally {
+            clearTimeout(timer);
         }
     }
     if (local.ended) return;
