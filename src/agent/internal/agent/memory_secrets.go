@@ -99,32 +99,6 @@ func userRequestQuoted(quote string, userTexts ...string) bool {
 	return false
 }
 
-// minSecretValueLength is the shortest run of letters and digits treated as a
-// possible secret value; it covers a four-digit PIN.
-const minSecretValueLength = 4
-
-// userRequestRepeatsSecret reports whether quote contains a value from content
-// that looks like a secret: a run of ASCII characters with at least one digit,
-// such as a password, PIN, or card number group. A request to keep a secret
-// asks for it to be remembered; a quote that carries the value itself is
-// usually the sentence that stated the secret, which the model may cite even
-// though the user never asked. Ordinary words in content do not count, so
-// quoting "remember my PIN" still passes.
-func userRequestRepeatsSecret(quote, content string) bool {
-	normalizedQuote := normalizeQuotedText(quote)
-	for _, value := range strings.FieldsFunc(content, func(r rune) bool {
-		return r > unicode.MaxASCII || unicode.IsSpace(r)
-	}) {
-		normalizedValue := normalizeQuotedText(value)
-		if len(normalizedValue) >= minSecretValueLength &&
-			strings.IndexFunc(normalizedValue, unicode.IsDigit) >= 0 &&
-			strings.Contains(normalizedQuote, normalizedValue) {
-			return true
-		}
-	}
-	return false
-}
-
 func normalizeQuotedText(text string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsLetter(r) || unicode.IsNumber(r) {

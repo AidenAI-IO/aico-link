@@ -66,10 +66,9 @@ func TestSaveMemoryToolRefusesSensitiveWithoutQuotedRequest(t *testing.T) {
 	tool := NewSaveMemoryTool(NewLongTermMemoryStore(root))
 	ctx := userRunContext("我的银行卡密码是 520731，下次付款要用")
 	for name, input := range map[string]string{
-		"no request":           `{"type":"fact","content":"用户的银行卡密码是 520731","sensitive":"credential"}`,
-		"invented request":     `{"type":"fact","content":"用户的银行卡密码是 520731","sensitive":"credential","user_request":"帮我记住密码"}`,
-		"value as request":     `{"type":"fact","content":"用户的银行卡密码是 520731","sensitive":"credential","user_request":"520731"}`,
-		"statement as request": `{"type":"fact","content":"用户的银行卡密码是 520731","sensitive":"credential","user_request":"我的银行卡密码是 520731"}`,
+		"no request":       `{"type":"fact","content":"用户的银行卡密码是 520731","sensitive":"credential"}`,
+		"invented request": `{"type":"fact","content":"用户的银行卡密码是 520731","sensitive":"credential","user_request":"帮我记住密码"}`,
+		"value as request": `{"type":"fact","content":"用户的银行卡密码是 520731","sensitive":"credential","user_request":"520731"}`,
 	} {
 		if result := saveMemoryForTest(t, ctx, tool, input); result["status"] != "refused" {
 			t.Errorf("%s: result = %v, want refused", name, result)

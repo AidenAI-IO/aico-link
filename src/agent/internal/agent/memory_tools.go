@@ -279,19 +279,11 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 		return "", fmt.Errorf("content is required")
 	}
 	sensitive := parseMemorySensitiveKind(req.Sensitive)
-	if sensitive != memorySensitiveNone {
-		if !userRequestQuoted(req.UserRequest, EpisodeRecorderFromContext(ctx).UserTexts()...) {
-			return encodeToolJSON(map[string]string{
-				"status": "refused",
-				"reason": "sensitive " + string(sensitive) + " without a user_request quoting the user's own words asking to remember it; secrets are not saved by default. Tell the user it was not remembered.",
-			})
-		}
-		if userRequestRepeatsSecret(req.UserRequest, req.Content) {
-			return encodeToolJSON(map[string]string{
-				"status": "refused",
-				"reason": "user_request repeats the secret instead of quoting only the user's words asking to keep it; a statement of a secret is not a request to remember it. If the user never asked, do not retry; tell the user it was not remembered.",
-			})
-		}
+	if sensitive != memorySensitiveNone && !userRequestQuoted(req.UserRequest, EpisodeRecorderFromContext(ctx).UserTexts()...) {
+		return encodeToolJSON(map[string]string{
+			"status": "refused",
+			"reason": "sensitive " + string(sensitive) + " without a user_request quoting the user's own words asking to remember it; secrets are not saved by default. Tell the user it was not remembered.",
+		})
 	}
 	if len(req.Evidence) == 0 {
 		req.Evidence = []string{req.Content}
