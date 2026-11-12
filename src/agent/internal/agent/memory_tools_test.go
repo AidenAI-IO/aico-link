@@ -670,8 +670,10 @@ func TestSaveMemoryReplacementRespectsAdmissionAndOrigin(t *testing.T) {
 		oldSensitive  bool
 		declareSecret bool
 		authorized    bool
+		oneOff        bool
 	}{
 		{name: "refuse unrequested secret", declareSecret: true},
+		{name: "refuse one-off replacement", oneOff: true},
 		{name: "save requested secret", declareSecret: true, authorized: true},
 		{name: "preserve existing sensitivity", oldSensitive: true},
 		{name: "user corrects notification"},
@@ -697,16 +699,19 @@ func TestSaveMemoryReplacementRespectsAdmissionAndOrigin(t *testing.T) {
 			if tc.authorized {
 				input["user_request"] = "Please remember my updated safe code."
 			}
+			if tc.oneOff {
+				input["durable"] = false
+			}
 			encoded, err := json.Marshal(input)
 			if err != nil {
 				t.Fatal(err)
 			}
-			result := saveMemoryForTest(t, ctx, NewSaveMemoryTool(store), string(encoded))
+			result := saveMemoryForTest(t, ctx, newRequestedSaveMemoryTool(store), string(encoded))
 			old, err := readMemoryMarkdown(store.memoryPath(oldID))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.declareSecret && !tc.authorized {
+			if (tc.declareSecret && !tc.authorized) || tc.oneOff {
 				if result["status"] != "refused" || old.Item.Status != "active" || old.Item.Content != "Old saved value." || effectiveMemoryRevision(old.Item) != 1 {
 					t.Fatalf("refused correction changed memory: result=%v old=%+v", result, old.Item)
 				}
