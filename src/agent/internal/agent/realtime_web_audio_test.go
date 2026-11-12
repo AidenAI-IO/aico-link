@@ -322,4 +322,18 @@ func TestWebRealtimePlaybackDrainWaitsForUnsentSpeech(t *testing.T) {
 	if err := waiter.WaitForPlaybackDrain(context.Background()); err == nil {
 		t.Fatal("a drain after the endpoint closed reported discarded speech as played")
 	}
+
+	// Speech submitted only after the endpoint closed is dropped, and a drain
+	// must not report it as played either.
+	late := newWebRealtimeAudio(nil)
+	late.Close("")
+	latePlayback := late.Playback()
+	if err := latePlayback.WritePlayChunk(1, make([]byte, 480), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := latePlayback.(interface {
+		WaitForPlaybackDrain(context.Context) error
+	}).WaitForPlaybackDrain(context.Background()); err == nil {
+		t.Fatal("a drain reported speech submitted after the endpoint closed as played")
+	}
 }

@@ -73,7 +73,7 @@ type webRealtimeAudio struct {
 	recordingStop chan struct{}
 	playbackID    uint64
 	// unsent counts speech frames not yet written to the browser: queued,
-	// being written, or discarded when the endpoint closed. playEnd is when
+	// being written, or dropped because the endpoint closed. playEnd is when
 	// the browser finishes playing the speech written so far.
 	unsent  int
 	playEnd time.Time
@@ -149,9 +149,14 @@ func (w *webRealtimeAudio) send(message any) {
 
 // enqueue queues a frame for the browser. Output for a browser that is gone
 // is dropped: the session then ends through the end of its microphone stream
-// instead of a playback error.
+// instead of a playback error. Dropped speech stays counted as unsent, so a
+// drain does not report it as heard.
 func (w *webRealtimeAudio) enqueue(frame webRealtimeFrame) {
+	speech := frame.kind == websocket.MessageBinary
 	w.mu.Lock()
+	if speech {
+		w.unsent++
+	}
 	if w.closing || w.closed() {
 		w.mu.Unlock()
 		return
@@ -163,9 +168,6 @@ func (w *webRealtimeAudio) enqueue(frame webRealtimeFrame) {
 		return
 	}
 	w.out = append(w.out, frame)
-	if frame.kind == websocket.MessageBinary {
-		w.unsent++
-	}
 	w.mu.Unlock()
 	w.signal()
 }
@@ -380,10 +382,10 @@ func (p webRealtimePlayback) StartPlayback(format tts.AudioFormat) (uint64, erro
 // WritePlayChunk forwards speech to the browser. Empty writes are the
 // session's keep-alive and finalize markers, which the browser does not need.
 func (p webRealtimePlayback) WritePlayChunk(_ uint64, data []byte, _ bool) error {
-	w := p.w
-	if len(data) == 0 || w.closed() {
+	if len(data) == 0 {
 		return nil
 	}
+	w := p.w
 	w.mu.Lock()
 	var speech time.Duration
 	if w.bytesPerS > 0 {
