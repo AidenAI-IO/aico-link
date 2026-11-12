@@ -63,10 +63,10 @@ jobs:
       - name: Install benchmark dependencies
         working-directory: benchmark
         run: uv sync --frozen --python 3.12
-      - name: Recover owned emulators from interrupted runs
+      - name: Remove work files left by earlier runs
         working-directory: benchmark
         run: |
-          uv run python -c 'import os; from pathlib import Path; from ci.auto_improve.emulator import cleanup_orphans, cleanup_stale_work; root=Path(os.environ["AUTO_IMPROVE_WORK_ROOT"]); cleanup_orphans(root); print("removed:", cleanup_stale_work(root, "auto-improve-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"]))'
+          uv run python -c 'import os; from pathlib import Path; from ci.auto_improve.execution import cleanup_stale_work; print("removed:", cleanup_stale_work(Path(os.environ["AUTO_IMPROVE_WORK_ROOT"]), "auto-improve-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"]))'
       - id: mode
         working-directory: benchmark
         env:
@@ -104,17 +104,6 @@ jobs:
           prefix="$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/cli"
           npm install --global --prefix "$prefix" --no-fund --no-audit '@anthropic-ai/claude-code@2.1.308'
           echo "AUTO_IMPROVE_CLAUDE=$prefix/bin/claude" >> "$GITHUB_ENV"
-      - name: Locate the Android SDK for isolated ADB runs
-        if: steps.discover.outputs.found == 'true'
-        env:
-          SDK_DIR: ${{ vars.BENCHMARK_ANDROID_SDK_DIR || '~/android-sdk' }}
-        run: |
-          sdk_dir="${SDK_DIR/#\~/$HOME}"
-          if [[ -d "$sdk_dir" ]]; then
-            echo "ANDROID_SDK_ROOT=$sdk_dir" >> "$GITHUB_ENV"
-            echo "$sdk_dir/platform-tools" >> "$GITHUB_PATH"
-            echo "$sdk_dir/emulator" >> "$GITHUB_PATH"
-          fi
       - name: Diagnose, reproduce and audit findings
         id: driver
         if: steps.discover.outputs.found == 'true'
@@ -128,8 +117,6 @@ jobs:
           AUTO_IMPROVE_MAX_ISSUES: ${{ vars.AUTO_IMPROVE_MAX_ISSUES || '3' }}
           AUTO_IMPROVE_ISSUE_AUTHOR: ${{ vars.AUTO_IMPROVE_ISSUE_AUTHOR }}
           AUTO_IMPROVE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          AUTO_IMPROVE_AVD_TEMPLATE: ${{ vars.AUTO_IMPROVE_AVD_TEMPLATE }}
-          AUTO_IMPROVE_AVD_SHA256: ${{ vars.AUTO_IMPROVE_AVD_SHA256 }}
           BENCHMARK_AGENT_PROVIDER: ${{ vars.BENCHMARK_AGENT_PROVIDER }}
           BENCHMARK_AGENT_MODEL: ${{ vars.BENCHMARK_AGENT_MODEL }}
           BENCHMARK_AGENT_BASE_URL: ${{ vars.BENCHMARK_AGENT_BASE_URL }}
@@ -175,7 +162,7 @@ jobs:
           # it neither marks sources processed nor enables publication.
           name: ${{ steps.artifact.outputs.name || format('auto-improve-unnamed-{0}-{1}', github.run_id, github.run_attempt) }}
           retention-days: 14
-          # Do not upload clones, daemon configurations, CLI sessions, or emulator disks.
+          # Do not upload daemon configurations or CLI sessions.
           path: |
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/manifest.json
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/source-window.json
@@ -193,13 +180,11 @@ jobs:
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/daily-observations.json
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/reproduction-runs/*/*/runner.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/reproduction-runs/*/*/rejudge-error.log
-            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/reproduction-runs/*/*/emulator/emulator.log
           if-no-files-found: warn
       - name: Remove uploaded work files
         if: always() && steps.evidence.outcome == 'success'
         working-directory: benchmark
-        run: |
-          uv run python -c 'import os; from pathlib import Path; from ci.auto_improve.emulator import cleanup_orphans, cleanup_completed_work; root=Path(os.environ["AUTO_IMPROVE_WORK_ROOT"]); cleanup_orphans(root); cleanup_completed_work(root, "auto-improve-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"])'
+        run: rm -rf "$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
   publish:
     needs: analyze

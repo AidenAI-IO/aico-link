@@ -339,9 +339,9 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
         if not failures:
             state["status"] = "no_failures" if not warnings else "insufficient_evidence"
             return state
+        # ADB and device environments need hardware or a provisioned emulator; their findings
+        # rest on repeated daily failures instead of a fresh attempt.
         executable = {"isolated", "mobilegym"}
-        if os.environ.get("AUTO_IMPROVE_AVD_TEMPLATE") and os.environ.get("AUTO_IMPROVE_AVD_SHA256"):
-            executable.add("adb")
         diagnosis = ask(out, "diagnosis", repo, {"failures": failures, "history": history,
                         "existing_issues": compact_issues(feedback, trusted), "configuration": state["configuration"]},
                         DIAGNOSIS_PROMPT, review.DIAGNOSIS, deadline, image_root=source_dir / "benchmark/runs")

@@ -22,7 +22,7 @@ def timestamp(value: str) -> datetime:
 
 def choose_window(runs: list[dict], processed: set[str], *, branch: str, now: datetime,
                   delay_hours: float = 3, requested: tuple[str, ...] = (),
-                  limit: int = 13) -> tuple[list[dict], list[dict]]:
+                  limit: int = 13) -> list[dict]:
     """Select the complete pending window, oldest first; never silently drop a run."""
     require_main_branch(branch)
     if not 1 <= limit <= 13:
@@ -41,12 +41,12 @@ def choose_window(runs: list[dict], processed: set[str], *, branch: str, now: da
     eligible.sort(key=lambda r: r["created_at"])
     if requested:
         if {str(r["id"]) for r in eligible} != set(requested):
-            return [], []
-        return eligible, []
+            return []
+        return eligible
     eligible = [r for r in eligible if run_identity(r) not in processed]
     if len(eligible) > limit:
         raise ValueError("Pending window exceeds run budget; explicitly select sources to investigate")
-    return eligible, []
+    return eligible
 
 
 def run_identity(run: dict) -> str:
@@ -156,7 +156,7 @@ class GitHub:
         processed = {identity for a in artifacts
                      if not a.get("expired") and a["name"].startswith("auto-improve-source-")
                      for identity in a["name"].removeprefix("auto-improve-source-").split("__")}
-        window, skipped = choose_window(runs, processed, branch=branch, now=datetime.now(timezone.utc),
+        window = choose_window(runs, processed, branch=branch, now=datetime.now(timezone.utc),
                                         requested=requested, delay_hours=delay_hours, limit=limit)
         if requested and not window:
             raise ValueError("Requested sources are not completed eligible daily runs")
@@ -176,4 +176,4 @@ class GitHub:
         # Encode every included identity, not a time watermark: late-finishing or missing
         # artifacts must remain selectable even after a newer run has been processed.
         return {"identity": "__".join(s["identity"] for s in sources), "sources": sources,
-                "skipped": [run_identity(r) for r in skipped], "missing_artifacts": missing}
+                "missing_artifacts": missing}

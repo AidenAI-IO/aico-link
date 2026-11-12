@@ -13,7 +13,7 @@ import zipfile
 
 import pytest
 
-from ci.auto_improve import control, driver, emulator, evidence, execution, github, issues, policy, review
+from ci.auto_improve import control, driver, evidence, execution, github, issues, policy, review
 
 
 AUDIT_OUTPUT = {"verdict": "confirmed", "targets": ["a:one"], "reason": "Fresh trace shows the same failure",
@@ -61,13 +61,12 @@ def test_source_selection_delays_and_deduplicates():
                 "conclusion": "success", "created_at": (now - timedelta(hours=hours + 1)).isoformat(),
                 "updated_at": (now - timedelta(hours=hours)).isoformat(), **extra}
     runs = [run(1, 4), run(2, 2), run(3, 6, event="pull_request"), run(4, 6, head_branch="fork"), run(5, 24 * 15), run(6, 5)]
-    selected, skipped = github.choose_window(runs, set(), branch="main", now=now)
-    assert [r["id"] for r in selected] == [6, 1] and not skipped
-    assert github.choose_window(runs, {"1-1", "6-1"}, branch="main", now=now) == ([], [])
-    assert github.choose_window(runs, set(), branch="main", now=now, requested=("4",)) == ([], [])
-    assert github.choose_window(runs, {"1-1"}, branch="main", now=now, requested=("1",))[0][0]["id"] == 1
+    assert [r["id"] for r in github.choose_window(runs, set(), branch="main", now=now)] == [6, 1]
+    assert github.choose_window(runs, {"1-1", "6-1"}, branch="main", now=now) == []
+    assert github.choose_window(runs, set(), branch="main", now=now, requested=("4",)) == []
+    assert github.choose_window(runs, {"1-1"}, branch="main", now=now, requested=("1",))[0]["id"] == 1
     # Older late-finishing runs must not be lost behind a newer processed run.
-    assert github.choose_window(runs, {"1-1"}, branch="main", now=now)[0][0]["id"] == 6
+    assert github.choose_window(runs, {"1-1"}, branch="main", now=now)[0]["id"] == 6
     with pytest.raises(ValueError, match="budget"):
         github.choose_window(runs, set(), branch="main", now=now, limit=1)
 
@@ -159,52 +158,6 @@ def test_artifact_extraction_rejects_unsafe_entries(tmp_path, name, mode):
     assert not (tmp_path / "escape").exists()
 
 
-def test_avd_clone_rewrites_writable_disks_and_leaves_template_unchanged(tmp_path):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "userdata-qemu.img").write_bytes(b"clean disk")
-    (template / "config.ini").write_text(f"AvdId=original\ndisk.dataPartition.path={template}/userdata-qemu.img\n")
-    before = emulator.template_digest(template)
-    for name in ("baseline", "candidate"):
-        clone = tmp_path / name
-        emulator.clone_template(template, clone, name)
-        assert f"disk.dataPartition.path={clone}/userdata-qemu.img" in (clone / "config.ini").read_text()
-    (tmp_path / "baseline/userdata-qemu.img").write_bytes(b"mutated")
-    assert (tmp_path / "candidate/userdata-qemu.img").read_bytes() == b"clean disk"
-    assert emulator.template_digest(template) == before
-    (template / "hardware-qemu.ini.lock").touch()
-    with pytest.raises(ValueError, match="stopped"):
-        emulator.template_digest(template)
-
-
-def test_emulator_failure_terminates_only_owned_process(tmp_path, monkeypatch):
-    template = tmp_path / "template"
-    template.mkdir()
-    (template / "config.ini").write_text("AvdId=fixture\n")
-    (template / "userdata-qemu.img").write_bytes(b"clean")
-    class Process:
-        pid = 123
-        def poll(self):
-            return 1
-    proc = Process()
-    terminated = []
-    commands = []
-    monkeypatch.setattr(emulator.shutil, "which", lambda value: value)
-    monkeypatch.setattr(emulator, "free_port", lambda: 5580)
-    monkeypatch.setattr(emulator, "process_start", lambda _: "test-start")
-    monkeypatch.setattr(emulator.subprocess, "check_output", lambda *a, **kw: "List of devices attached\nemulator-5554\tdevice\n")
-    monkeypatch.setattr(emulator.subprocess, "Popen", lambda cmd, **kw: commands.append(cmd) or proc)
-    monkeypatch.setattr(emulator, "terminate_process_tree", lambda p: terminated.append(p))
-    with pytest.raises(RuntimeError, match="exited"):
-        with emulator.isolated_emulator(tmp_path / "owned", template=template,
-                                       expected_sha256=emulator.template_digest(template)):
-            pytest.fail("Exited emulator must not run tasks")
-    assert terminated == [proc]
-    assert commands[0][commands[0].index("-port") + 1] == "5580"
-    assert not (tmp_path / "owned/avds").exists()
-    assert template.is_dir()
-
-
 def test_review_has_no_mutating_tools_or_publication_credentials(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTO_IMPROVE_REVIEW_MODEL", "review-model")
     monkeypatch.setenv("AUTO_IMPROVE_REVIEW_API_KEY", "review-key")
@@ -262,7 +215,7 @@ def test_failure_evidence_uses_source_rubric_and_keeps_unknown_tasks(tmp_path):
     (run / "manifest.json").write_text(json.dumps({"metrics_k": 1, "agent_model": "old-model"}))
     (run / "suite.json").write_text(json.dumps({"tasks": [{"id": "tap", "rubric": ["original rule"]}]}))
     (run / "results.jsonl").write_text(json.dumps({"task_id": "tap", "attempt": 1, "status": "failed"}) + "\n")
-    failures, warnings = evidence.source_failures(tmp_path, "42", "1", {})
+    failures, warnings = evidence.source_failures_window(tmp_path, [("42", "1")], {})
     assert not warnings
     assert failures[0]["observations"][0]["task"]["rubric"] == ["original rule"]
     assert failures[0]["observations"][0]["current_task"] is None
@@ -320,24 +273,9 @@ def test_raw_artifact_paths_cannot_escape_run(tmp_path):
     run.mkdir(parents=True)
     (run / "manifest.json").write_text('{}')
     (run / "results.jsonl").write_text(json.dumps({"task_id": "../../other", "status": "failed", "attempt": 1}))
-    failures, warnings = evidence.source_failures(tmp_path, "42", "1", {})
+    failures, warnings = evidence.source_failures_window(tmp_path, [("42", "1")], {})
     assert not failures
     assert warnings
-
-
-def test_orphan_cleanup_refuses_reused_pid(tmp_path, monkeypatch):
-    owned = tmp_path / "job/result/finding-1/reproduction-runs/task/1/emulator"
-    owned.mkdir(parents=True)
-    owner = owned / "owner.json"
-    owner.write_text(json.dumps({"pid": 123, "name": "auto-improve-test", "started": "old",
-                                "avd": str(owned / "avds/auto-improve-test.avd")}))
-    monkeypatch.setattr(emulator, "process_start", lambda _: "new")
-    killed = []
-    monkeypatch.setattr(emulator.os, "kill", lambda *args: killed.append(args))
-    with pytest.raises(RuntimeError, match="reused"):
-        emulator.cleanup_orphans(tmp_path)
-    assert not killed
-    assert owner.exists()
 
 
 def test_judge_errors_are_rejudged_without_rerunning_the_agent(tmp_path, monkeypatch):
@@ -485,9 +423,9 @@ def test_discovery_normalizes_artifact_root(tmp_path, monkeypatch, nested):
 
 
 def cluster(**overrides):
-    base = {"title": "Saves one-off plans", "category": "memory", "cause": "Admission accepts dated plans",
+    base = {"title": "Saves one-off plans", "cause": "Admission accepts dated plans",
             "judge_review": "supported", "fix_target": "go_code", "symptom": {"kind": "none", "pattern": ""},
-            "targets": ["a:one"], "neighbors": [], "source_paths": ["src/agent/memory.go"], "evidence": ["trace step 2"]}
+            "targets": ["a:one"], "source_paths": ["src/agent/memory.go"], "evidence": ["trace step 2"]}
     return {**base, **overrides}
 
 
@@ -819,11 +757,8 @@ def test_cancellation_survives_unreadable_evidence(tmp_path, monkeypatch):
     assert "JSONDecodeError" in (out / "evidence-error.log").read_text()
 
 
-def test_stale_work_directories_are_swept_but_live_emulators_are_kept(tmp_path):
-    for name in ("auto-improve-1-1", "auto-improve-2-1", "auto-improve-3-1", "other"):
+def test_stale_work_directories_are_swept_without_touching_the_current_run(tmp_path):
+    for name in ("auto-improve-1-1", "auto-improve-2-1", "auto-improve-3-1", "auto-improve-x", "other"):
         (tmp_path / name / "source").mkdir(parents=True)
-    owner = tmp_path / "auto-improve-2-1/result/finding-1/reproduction-runs/t/1/emulator/owner.json"
-    owner.parent.mkdir(parents=True)
-    owner.write_text("{}")
-    assert emulator.cleanup_stale_work(tmp_path, "auto-improve-3-1") == ["auto-improve-1-1"]
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["auto-improve-2-1", "auto-improve-3-1", "other"]
+    assert execution.cleanup_stale_work(tmp_path, "auto-improve-3-1") == ["auto-improve-1-1", "auto-improve-2-1"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["auto-improve-3-1", "auto-improve-x", "other"]

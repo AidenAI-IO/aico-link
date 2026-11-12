@@ -1,17 +1,16 @@
 """Run one task per fresh daemon/environment, retaining only reviewable evidence."""
 from __future__ import annotations
 
-from contextlib import nullcontext
 import dataclasses
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import time
 
-from ci.auto_improve.emulator import isolated_emulator, prepare_companion
 from ci.auto_improve.evidence import sanitize
 from ci.auto_improve.policy import digest
 from ci.plan import load_catalog
@@ -122,6 +121,22 @@ def rejudge_transient_errors(run: Path, *, deadline: float, delays: tuple[float,
         (run / "results.rejudged.jsonl").replace(results)
 
 
+def cleanup_stale_work(root: Path, current: str) -> list[str]:
+    """Remove other runs' work directories under the persistent runner work root.
+
+    Workflow concurrency allows one run at a time, so every directory but the current
+    one is inactive; a run that failed before upload would otherwise leave its downloads.
+    """
+    removed = []
+    for work in sorted(root.glob("auto-improve-*")):
+        if (work.name == current or not re.fullmatch(r"auto-improve-[0-9]+-[0-9]+", work.name)
+                or work.is_symlink() or not work.is_dir()):
+            continue
+        shutil.rmtree(work, ignore_errors=True)
+        removed.append(work.name)
+    return removed
+
+
 def judge_error_only(run: Path) -> bool:
     """A one-task run that exited 1 and passes run_case's completeness checks except its judge call.
 
@@ -145,36 +160,24 @@ def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadli
     out.mkdir(parents=True, exist_ok=True)
     case_file = out / "case.json"
     case_file.write_text(json.dumps(case.matrix_entry()))
-    emulator = nullcontext({})
-    if case.environment == "adb":
-        template = os.environ.get("AUTO_IMPROVE_AVD_TEMPLATE", "")
-        checksum = os.environ.get("AUTO_IMPROVE_AVD_SHA256", "")
-        if not template or not checksum:
-            raise ValueError("ADB validation requires AUTO_IMPROVE_AVD_TEMPLATE/SHA256")
-        emulator = isolated_emulator(out / "emulator", template=Path(template), expected_sha256=checksum,
-                                     timeout=min(240, remaining))
     try:
-        with emulator as device_env:
-            env.update(device_env)
-            if case.android_phone_bridge:
-                prepare_companion(device_env["ANDROID_SERIAL"])
-            # Run trusted CI code in the selected checkout so config/skills and images
-            # both come from that revision. Each invocation starts a fresh daemon.
-            code = ("import dataclasses,json,os,signal; from ci.plan import SuiteCase; "
-                    "from ci.run_case import run_case; import sys; "
-                    "signal.signal(signal.SIGTERM,lambda *_: sys.exit(143)); "
-                    "case=SuiteCase(**json.load(open(sys.argv[1]))); "
-                    "raise SystemExit(run_case(case,run_id=sys.argv[2],environment=os.environ,"
-                    "timeout_seconds=float(sys.argv[3])))")
-            try:
-                command([sys.executable, "-c", code, str(case_file), run_id,
-                         str(max(1, deadline - time.monotonic() - 30))], cwd=root / "benchmark",
-                        log=out / "runner.log", timeout=max(1, deadline - time.monotonic()), env=env)
-            except CommandFailed as exc:
-                # run_case exits 1 for a judge error; a complete judge-error result is data.
-                # Any other exit, such as 143 on cancellation, or an incomplete run still fails.
-                if exc.returncode != 1 or not judge_error_only(root / "benchmark/runs" / run_id):
-                    raise
+        # Run trusted CI code in the selected checkout so config/skills and images
+        # both come from that revision. Each invocation starts a fresh daemon.
+        code = ("import dataclasses,json,os,signal; from ci.plan import SuiteCase; "
+                "from ci.run_case import run_case; import sys; "
+                "signal.signal(signal.SIGTERM,lambda *_: sys.exit(143)); "
+                "case=SuiteCase(**json.load(open(sys.argv[1]))); "
+                "raise SystemExit(run_case(case,run_id=sys.argv[2],environment=os.environ,"
+                "timeout_seconds=float(sys.argv[3])))")
+        try:
+            command([sys.executable, "-c", code, str(case_file), run_id,
+                     str(max(1, deadline - time.monotonic() - 30))], cwd=root / "benchmark",
+                    log=out / "runner.log", timeout=max(1, deadline - time.monotonic()), env=env)
+        except CommandFailed as exc:
+            # run_case exits 1 for a judge error; a complete judge-error result is data.
+            # Any other exit, such as 143 on cancellation, or an incomplete run still fails.
+            if exc.returncode != 1 or not judge_error_only(root / "benchmark/runs" / run_id):
+                raise
     finally:
         # Keep evidence even on timeout; no generated agent configuration is copied.
         run = root / "benchmark/runs" / run_id

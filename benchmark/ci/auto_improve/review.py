@@ -18,7 +18,7 @@ def object_schema(properties: dict) -> dict:
     return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
 
 
-CLUSTER = object_schema({"title": STRING, "category": STRING, "cause": STRING,
+CLUSTER = object_schema({"title": STRING, "cause": STRING,
     "judge_review": {"type": "string", "enum": ["supported", "disputed", "insufficient_evidence"]},
     # skill/prompt/tool_description/go_code are agent defects; benchmark_code/task_definition are
     # evaluation defects; external_code is hardware/service code the runner cannot execute.
@@ -29,7 +29,7 @@ CLUSTER = object_schema({"title": STRING, "category": STRING, "cause": STRING,
                                                                  "environment_failure", "tool_error",
                                                                  "hard_assertion", "error_text"]},
                               "pattern": STRING}),
-    "targets": STRINGS, "neighbors": STRINGS, "source_paths": STRINGS, "evidence": STRINGS})
+    "targets": STRINGS, "source_paths": STRINGS, "evidence": STRINGS})
 DIAGNOSIS = object_schema({"summary": STRING, "clusters": {"type": "array", "items": CLUSTER},
     # Failures attributed to grading or setup; they are never agent findings.
     "evaluation_issues": {"type": "array", "items": object_schema({

@@ -52,10 +52,6 @@ def catalog_tasks(root: Path) -> dict[str, dict]:
     return tasks
 
 
-def source_failures(artifact: Path, source_id: str, attempt: str, tasks: dict[str, dict]) -> tuple[list[dict], list[str]]:
-    return source_failures_window(artifact, [(source_id, attempt)], tasks)
-
-
 def source_failures_window(artifact: Path, sources: list[tuple[str, str]],
                            tasks: dict[str, dict], *, empty: frozenset[str] = frozenset()) -> tuple[list[dict], list[str]]:
     """Aggregate each task's observations across every daily run in the selected window."""

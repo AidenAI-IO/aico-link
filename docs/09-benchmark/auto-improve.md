@@ -59,9 +59,8 @@ flowchart TD
    has no evidence. Agent findings must target agent-eligible failures that the
    diagnosis did not itself attribute to the evaluator or environment. Benchmark
    findings need a valid symptom.
-4. **Reproduction.** Findings whose tasks this runner can execute (`isolated`,
-   `mobilegym`, and `adb` when an emulator fixture is configured) run each target
-   task once on current `main`, in a fresh daemon. An agent finding reproduces
+4. **Reproduction.** Findings whose tasks this runner can execute (`isolated` and
+   `mobilegym`) run each target task once on current `main`, in a fresh daemon. An agent finding reproduces
    when the attempt fails and is evaluable; a judge error or environment failure
    does not count. A benchmark finding reproduces when its symptom recurs; those
    attempts are not rejudged, so a judge failure stays visible. At least one
@@ -171,9 +170,6 @@ so the next run analyzes the same window again.
 | `AUTO_IMPROVE_ISSUE_TOKEN` | Optional secret | Bot token for publication when organization policy requires it; otherwise the job's `GITHUB_TOKEN` is used |
 | `AUTO_IMPROVE_ISSUE_AUTHOR` | Variable | Login of that bot token, so its issues are trusted for deduplication |
 | `AUTO_IMPROVE_DELAY_HOURS` | Variable | Minimum age after a daily run completes; default 3 |
-| `AUTO_IMPROVE_AVD_TEMPLATE` | Variable, ADB only | Runner path to the offline Android emulator fixture used for ADB reproduction |
-| `AUTO_IMPROVE_AVD_SHA256` | Variable, ADB only | Fingerprint of that fixture |
-| `BENCHMARK_ANDROID_SDK_DIR` | Variable | Android SDK location; default `~/android-sdk` |
 
 Reproduction reuses the existing `BENCHMARK_AGENT_*` and `BENCHMARK_JUDGE_*`
 variables and secrets. The review base URL is passed as `ANTHROPIC_BASE_URL` with
@@ -186,47 +182,12 @@ Bounds: 48 turns and 15 minutes per review session, a two-hour driver budget and
 a 150-minute job. There is no model-cost cap; each session's estimated cost is
 recorded in the manifest and job summary.
 
-## Android emulator fixture for ADB tasks
-
-ADB tasks are reproduced only when a fixture is configured. Every attempt starts
-from a private copy of an **offline, stopped** Android SDK AVD export, so it never
-inherits app data or touches the nightly emulator. The fixture contains
-`config.ini` and `userdata-qemu.img`, the required apps, permissions, locale and
-task data, and no locks, symlinks, personal accounts or backing disks outside the
-export. qcow2 overlays need `qemu-img`; the launcher validates their backing chain
-and flattens copies. The system image named by `image.sysdir.1` must be installed
-on the runner. Companion-app tasks need a rootable image with the pinned
-AidenBridge APK preinstalled.
-
-From `benchmark/`, fingerprint the export and set `AUTO_IMPROVE_AVD_SHA256`:
-
-```bash
-uv run python -m ci.auto_improve.emulator fingerprint \
-  --template /path/to/offline-fixture.avd
-```
-
-Then run the no-model smoke check, which starts two disposable instances in
-turn, verifies the second does not see a marker written in the first, and checks
-that pre-existing devices remain:
-
-```bash
-uv run python -m ci.auto_improve.emulator smoke \
-  --template /path/to/offline-fixture.avd \
-  --sha256 "$AUTO_IMPROVE_AVD_SHA256" \
-  --out runs/auto-improve-avd-smoke --companion
-```
-
-Only processes and files the run created are stopped or removed. Orphan recovery
-checks a leftover emulator's PID start time and AVD identity before terminating
-it, and keeps the ownership record when unsure. Work files live under the runner
-tool cache so a live orphan's record survives GitHub's temporary-directory cleanup.
-
 ## Boundaries
 
 - The pipeline reports defects; it does not fix them, open pull requests, or merge.
 - One attempt on `main` confirms that a failure still happens, not that it is
   deterministic; the audit and the daily window history provide the rest.
-- Physical phones and external devices are not executed; their findings rely on
-  repeated daily failures and audit.
+- ADB emulator, physical phone and external-device tasks are not executed; their
+  findings rely on repeated daily failures and audit.
 - Findings outside the agent, the benchmark, and external device or service code
   are not filed.
