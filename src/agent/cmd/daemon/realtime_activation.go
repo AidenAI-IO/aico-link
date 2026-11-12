@@ -1,6 +1,10 @@
 package main
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+
+	"aico-agent/internal/logging"
+)
 
 // realtimeActivations tracks why the realtime wakeup loop was woken.
 //
@@ -11,6 +15,10 @@ import "sync/atomic"
 type realtimeActivations struct {
 	events chan struct{}
 	device atomic.Bool
+	// running is set while a session runs. A wake word or button press then
+	// belongs to the conversation already in progress and must not queue a
+	// device session to start when it ends.
+	running atomic.Bool
 	// stage, when set by tests, runs at each step of settle so a test can
 	// interleave an activation at a precise point.
 	stage func(string)
@@ -24,6 +32,22 @@ func newRealtimeActivations() *realtimeActivations {
 func (a *realtimeActivations) Device() {
 	a.device.Store(true)
 	signalWakeupEvent(a.events)
+}
+
+// Wakeup handles a wake word or MCU button press. It is ignored while a
+// session runs: the user is already talking, and queueing it would switch a
+// browser conversation to the board as soon as that conversation ended.
+func (a *realtimeActivations) Wakeup() {
+	if a.running.Load() {
+		logging.Infof("agent", "wakeup", "Wakeup ignored: a realtime session is already running")
+		return
+	}
+	a.Device()
+}
+
+// SetRunning marks whether a session is running.
+func (a *realtimeActivations) SetRunning(running bool) {
+	a.running.Store(running)
 }
 
 // DeferDevice records a device activation without waking the loop, for a

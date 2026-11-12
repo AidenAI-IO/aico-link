@@ -93,3 +93,25 @@ func TestOpenedSessionConsumesTaskWatermark(t *testing.T) {
 		t.Fatal("an update the session consumed would activate the loop again")
 	}
 }
+
+// A board wakeup while a session runs is ignored; in standby it opens the
+// device.
+func TestRealtimeActivationsIgnoreWakeupWhileRunning(t *testing.T) {
+	a := newRealtimeActivations()
+	a.SetRunning(true)
+	a.Wakeup()
+	select {
+	case <-a.events:
+		t.Fatal("a wakeup during a session woke the loop")
+	default:
+	}
+	if a.TakeDevice() {
+		t.Fatal("a wakeup during a session claimed the device")
+	}
+	a.SetRunning(false)
+	a.Wakeup()
+	<-a.events
+	if !a.TakeDevice() {
+		t.Fatal("a wakeup in standby did not claim the device")
+	}
+}

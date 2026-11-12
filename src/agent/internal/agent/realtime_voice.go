@@ -282,6 +282,30 @@ func (s *Server) EndRealtimeVoiceSession(session *RealtimeVoiceSession, rotated 
 	return true
 }
 
+// ContinueRealtimeVoiceRotation decides, under the controller lock, whether
+// a rotated session continues into a successor. It reports false, and
+// withdraws the session, when the user stopped it during the handoff. A
+// session that continues stays published until the next claim replaces it,
+// so a stop that arrives after this call still reaches it there.
+func (s *Server) ContinueRealtimeVoiceRotation(session *RealtimeVoiceSession) bool {
+	if session == nil {
+		return false
+	}
+	if s == nil {
+		return !session.Stopped()
+	}
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !session.Stopped() {
+		return true
+	}
+	if c.active == session {
+		c.active = nil
+	}
+	return false
+}
+
 // RealtimeVoiceStatus reports the current realtime voice state.
 func (s *Server) RealtimeVoiceStatus() RealtimeVoiceStatus {
 	c := &s.realtimeVoice

@@ -615,7 +615,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 	var watchers []wakeupWatcher
 	var err error
 	if !cfg.Benchmark.RealtimeText {
-		watchers, err = startWakeupWatchers(newWatcher, activations.Device)
+		watchers, err = startWakeupWatchers(newWatcher, activations.Wakeup)
 	}
 	if err != nil {
 		logging.Warnf("agent", "realtime", "MCU wakeup unavailable: %v; /api/chat activation remains enabled", err)
@@ -706,6 +706,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			if server != nil {
 				claimer = server
 			}
+			realtimeBeforeClaim()
 			media, opened := claimRealtimeSessionMedia(claimer, cfg, activations, &taskWake, agentTaskTerminalSequence(tasks), chatBridgeHasPending(bridge) || rotatedDevice)
 			rotatedDevice = false
 			if !opened {
@@ -716,8 +717,11 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 				logging.Infof("agent", "realtime", "Voice start withdrawn or stopped before it began; staying in standby")
 				continue
 			}
-			sessionErr := runRealtimeSessionWithMedia(cfg, sigChan, runtime, tasks, semanticSink, media, bridge)
+			activations.SetRunning(true)
+			sessionErr := realtimeSessionRunner(cfg, sigChan, runtime, tasks, semanticSink, media, bridge)
+			activations.SetRunning(false)
 			finishRealtimeSessionMedia(server, media, sessionErr)
+			realtimeAfterSessionTeardown()
 			if errors.Is(sessionErr, errRealtimeShutdown) {
 				return
 			} else if errors.Is(sessionErr, realtimevoice.ErrSessionRotated) {
@@ -743,7 +747,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			// arrives meanwhile, and re-wakes the loop for the reasons below.
 			// A provider rotation continues the same conversation on the same
 			// route, unless the user asked to stop it.
-			if rotated && media.voice.Stopped() {
+			if rotated && server != nil && media.voice != nil && !server.ContinueRealtimeVoiceRotation(media.voice) {
 				rotated = false
 			}
 			rotatedDevice = rotated && media.route() == agent.RealtimeAudioRouteDevice
@@ -1444,6 +1448,19 @@ func runRealtimeSessionWithRegistry(cfg agent.Config, sigChan chan os.Signal, ru
 func runRealtimeSessionWithSink(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, sink streamcontract.EventSink, chatBridges ...*realtimeChatBridge) error {
 	return runRealtimeSessionWithMedia(cfg, sigChan, runtime, tasks, sink, realtimeSessionMedia{}, chatBridges...)
 }
+
+// realtimeBeforeClaim runs as the loop starts handling an activation, before
+// it claims a session. Tests use it to land a task update in that gap.
+var realtimeBeforeClaim = func() {}
+
+// realtimeAfterSessionTeardown runs between a session's teardown and the
+// loop deciding whether a provider rotation continues. Tests use it to land
+// a stop request in exactly that gap.
+var realtimeAfterSessionTeardown = func() {}
+
+// realtimeSessionRunner runs one realtime session for the wakeup loop. Tests
+// replace it to drive the loop without a provider or audio devices.
+var realtimeSessionRunner = runRealtimeSessionWithMedia
 
 func runRealtimeSessionWithMedia(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, sink streamcontract.EventSink, media realtimeSessionMedia, chatBridges ...*realtimeChatBridge) error {
 	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, realtimevoice.DefaultProviderRegistry(), sink, realtimeResponseIdleTimeout, media, chatBridges...)
