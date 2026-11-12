@@ -23,6 +23,11 @@ export function shortVersion(version) {
   return match ? match[1] : String(version || '');
 }
 
+/** Convert Debian's `0.0.78-1` package version to its displayed release. */
+export function businessReleaseVersion(version) {
+  return String(version || '').trim().replace(/^\d+:/, '').replace(/-\d+$/, '');
+}
+
 /** Stages in the order the updater runs them. */
 export const STAGES = ['check', 'download', 'install', 'reboot'];
 
