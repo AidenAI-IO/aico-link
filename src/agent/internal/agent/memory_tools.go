@@ -3,9 +3,15 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
+
+	"aico-agent/internal/logging"
+
+	"github.com/tmc/langchaingo/llms"
 )
 
 type RecallMemoryTool struct {
@@ -15,6 +21,9 @@ type RecallMemoryTool struct {
 
 type SaveMemoryTool struct {
 	store *LongTermMemoryStore
+	// requestJudge decides whether the user asked to keep a secret; without
+	// one, no secret is saved.
+	requestJudge memoryRequestJudge
 }
 
 type ForgetMemoryTool struct {
@@ -236,14 +245,63 @@ func NewSaveMemoryTool(store *LongTermMemoryStore) *SaveMemoryTool {
 	return &SaveMemoryTool{store: store}
 }
 
+// SetRequestModel sets the model that decides whether the user asked to keep a
+// secret.
+func (t *SaveMemoryTool) SetRequestModel(model llms.Model) {
+	if model == nil {
+		t.requestJudge = nil
+		return
+	}
+	t.requestJudge = newModelMemoryRequestJudge(model)
+}
+
+// judgeRequest asks the judge about one candidate. Without a judge it fails,
+// so callers treat it like an unavailable model.
+func (t *SaveMemoryTool) judgeRequest(ctx context.Context, candidate memoryRequestCandidate) (memoryRequestVerdict, error) {
+	if t.requestJudge == nil {
+		return memoryRequestVerdict{}, fmt.Errorf("no memory request judge configured")
+	}
+	started := time.Now()
+	verdict, err := t.requestJudge(ctx, candidate)
+	// The candidate is often a secret and a provider error can echo the
+	// request, so only the error's category is logged.
+	logging.Infof("agent", "memory", "save_memory request judgment secret=%t asked=%t error=%s elapsed_ms=%d", verdict.Secret, verdict.Asked, memoryRequestJudgmentErrorKind(err), time.Since(started).Milliseconds())
+	return verdict, err
+}
+
+func memoryRequestJudgmentErrorKind(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, errMemoryRequestJudgmentParse):
+		return "parse"
+	default:
+		return "call"
+	}
+}
+
+func unrequestedSecretRefusal(sensitive memorySensitiveKind) map[string]string {
+	return map[string]string{
+		"status": "refused",
+		"reason": "the user did not ask to remember this " + string(sensitive) + "; a secret that is only mentioned is not saved. Do not retry; tell the user it was not remembered.",
+	}
+}
+
 func (t *SaveMemoryTool) Name() string { return "save_memory" }
 
 func (t *SaveMemoryTool) Description() string {
 	return strings.Join([]string{
-		"Save long-term memory for future recall. Mandatory when the user asks to remember/save; also use for observed stable preferences, rules, or procedures.",
+		"Save long-term memory for future recall.",
+		"Do NOT call it for one-off or time-bound plans, appointments, reminders, passing states, chat, or a secret (password, PIN, card number) the user merely mentions; just reply, without claiming you remembered anything. Example: \"I have a dentist visit tomorrow\" is not saved.",
+		"Call it when the user asks to remember/save, and for observed stable preferences, rules, or procedures.",
 		"Do not tell the user something was remembered or saved until this tool returns status=saved or status=ignored as a duplicate.",
 		"Use profile for durable user facts (name, nickname, location, timezone, home city, role, background); preference/rule for future defaults and must/must-not behavior such as a default city; fact for stable info that should be recalled but not surfaced in the synthesized user profile.",
-		"Skip one-off plans and chat. A secret is kept only if the user asked: set sensitive and quote their request in user_request, else it is refused and you must say so.",
+		"A secret is kept only if the user explicitly asked to keep it: set sensitive and put in user_request only their words asking to remember it, never the sentence stating the secret; otherwise it is refused and you must say it was not remembered.",
+		"Set durable=false, or better do not call at all, for a one-off plan, appointment, reminder, or passing state; such a call is refused. durable=true is for a lasting preference, rule, procedure, or personal fact, including a preference the user limits to a period (\"keep replies short for the next three weeks\").",
 		"Returns status=saved with id, ignored for a duplicate, or refused.",
 		"To correct a previously saved memory, first recall it, then pass its id as replaces_id and its revision as expected_revision. Do not guess the target; a stale revision is rejected.",
 	}, " ")
@@ -262,7 +320,8 @@ func (t *SaveMemoryTool) ArgsSchema() map[string]any {
 		"expected_revision": minIntegerArgSchema("Revision returned by recall_memory for replaces_id.", 1),
 		"sensitive":         stringEnumArgSchema("Secret kind, if any.", "none", "credential", "payment_card"),
 		"user_request":      stringArgSchema("For a secret: the user's verbatim words asking to remember it."),
-	}, "type", "content")
+		"durable":           boolArgSchema("false for a one-off plan, appointment, reminder, or passing state; true for a lasting preference, rule, procedure, or personal fact."),
+	}, "type", "content", "durable")
 }
 
 func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error) {
@@ -276,12 +335,50 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 	if strings.TrimSpace(req.Content) == "" {
 		return "", fmt.Errorf("content is required")
 	}
-	sensitive := parseMemorySensitiveKind(req.Sensitive)
-	if sensitive != memorySensitiveNone && !userRequestQuoted(req.UserRequest, EpisodeRecorderFromContext(ctx).UserTexts()...) {
+	// durable is the calling model's own classification, a self-check before
+	// it saves rather than an independent admission check: a model that
+	// misreads a plan can also report durable=true. A correction is held to
+	// the same rule, so a one-off plan cannot replace a long-term memory. An
+	// omitted durable is accepted, so a model that ignores the schema keeps
+	// saving as before.
+	if req.Durable != nil && !*req.Durable {
 		return encodeToolJSON(map[string]string{
 			"status": "refused",
-			"reason": "sensitive " + string(sensitive) + " without a user_request quoting the user's own words asking to remember it; secrets are not saved by default. Tell the user it was not remembered.",
+			"reason": "durable=false: one-off or time-bound information is not kept in long-term memory. Do not retry. Reply without saying or implying it was noted, saved, or remembered (no \"noted\", \"记下了\", \"I'll remember\"); you may offer to set a reminder instead.",
 		})
+	}
+	sensitive := parseMemorySensitiveKind(req.Sensitive)
+	if sensitive != memorySensitiveNone {
+		userTexts := EpisodeRecorderFromContext(ctx).UserTexts()
+		if !userRequestQuoted(req.UserRequest, userTexts...) {
+			return encodeToolJSON(map[string]string{
+				"status": "refused",
+				"reason": "sensitive " + string(sensitive) + " without a user_request quoting the user's own words asking to remember it; secrets are not saved by default. Tell the user it was not remembered.",
+			})
+		}
+		// A declared secret is saved only on a confirmed request: the user
+		// can ask again, but a secret written by mistake persists.
+		verdict, err := t.judgeRequest(ctx, memoryRequestCandidate{UserTexts: userTexts, Content: req.Content, UserRequest: req.UserRequest})
+		if err != nil {
+			return encodeToolJSON(map[string]string{
+				"status": "refused",
+				"reason": "could not confirm the user's request to keep this " + string(sensitive) + ", so it was not saved. Tell the user it was not remembered and that they can ask again.",
+			})
+		}
+		if !verdict.Asked {
+			return encodeToolJSON(unrequestedSecretRefusal(sensitive))
+		}
+	} else if mayHoldSecret(req.Content) {
+		// The model may leave sensitive unset on a secret. When the content
+		// could hold one, the judge decides; if it cannot, the save goes
+		// ahead as it would without the judge.
+		verdict, err := t.judgeRequest(ctx, memoryRequestCandidate{UserTexts: EpisodeRecorderFromContext(ctx).UserTexts(), Content: req.Content, UserRequest: req.UserRequest})
+		if err == nil && verdict.Secret {
+			if !verdict.Asked {
+				return encodeToolJSON(unrequestedSecretRefusal(memorySensitiveCredential))
+			}
+			sensitive = memorySensitiveCredential
+		}
 	}
 	if len(req.Evidence) == 0 {
 		req.Evidence = []string{req.Content}

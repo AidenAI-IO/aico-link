@@ -35,14 +35,14 @@ When flashing the full firmware, you typically use `update.img`.
 This project's firmware is built on `pico-sdk` and includes the following customizations:
 
 - The AIC8800D80 Wi-Fi driver is enabled by default (`ENABLE_WIFIDRV=1`). The
-  GD32 MCU controls `WIFI_VCC_PWREN`. SCH v1 startup preserves module power and
-  retained SDIO state across RV1106 restarts, without pulsing WL_EN or rebinding
-  the host. The BSP identifies the supported ROM state before provisioning, or
-  validates and reuses running firmware. Partial or unknown firmware states
-  fail startup instead of triggering another download. The loader requires
-  `fw_state` to report `provisioned` or `reused` and holds the SDIO host active
-  through BSP and Wi-Fi driver initialization before restoring its power policy.
-  Bluetooth preparation checks the same shared firmware state. Bluetooth HCI
+  GD32 MCU controls `WIFI_VCC_PWREN` and keeps the module powered across RV1106
+  restarts, so the module can still be running the previous boot's firmware.
+  SCH v1 startup therefore resets it on every boot: `aico-wifi-prepare`
+  detaches the Wi-Fi SDIO host, pulses WL_EN low then high, rebinds the host and
+  waits for both SDIO functions before any AIC module loads. The BSP then
+  downloads the shared Wi-Fi/Bluetooth firmware into the module from ROM;
+  firmware left running by an earlier boot is never reused. Bluetooth
+  preparation requires the loaded Wi-Fi firmware driver. Bluetooth HCI
   and the BLE service are enabled by default (`ENABLE_BLUETOOTH_HCI=1`,
   `ENABLE_BLE_SERVICE=1`) and attach the controller on `/dev/ttyS0`;
 - Kernel builds the Rockchip RK628 HDMI-to-CSI V4L2 driver and disables the
@@ -200,12 +200,12 @@ Wi-Fi recovery are exercised together. Arm the MCU timer before invoking it;
 the timer includes filesystem sync and suspend preparation, so the measured
 frozen interval will be shorter than the timer's requested delay.
 
-Keep cold-module startup and retained-module reboot results separate from
-suspend acceptance. On SCH v1, the maintained OFF switch leaves Wi-Fi and ASR
+Keep cold-module startup and warm-reboot results separate from suspend
+acceptance. On SCH v1, the maintained OFF switch leaves Wi-Fi and ASR
 powered; toggling it does not establish a cold Wi-Fi baseline. Record the
-kernel version, firmware state, boot ID and suspend counters when comparing
-these paths. A reachable serial shell or a successful SDIO enumeration alone
-does not establish that the Wi-Fi firmware can answer commands.
+kernel version, boot ID and suspend counters when comparing these paths. A
+reachable serial shell or a successful SDIO enumeration alone does not
+establish that the Wi-Fi firmware can answer commands.
 
 ## Flashing the Firmware
 

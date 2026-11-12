@@ -696,6 +696,11 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 			tools.RegisterMemoryTools(cfg.ConfigDir, memoryDir, longTermStore)
 		}
 	}
+	if tool, ok := tools.Get("save_memory"); ok && models != nil {
+		if saveTool, ok := tool.(*SaveMemoryTool); ok {
+			saveTool.SetRequestModel(models)
+		}
+	}
 
 	rt := &Runtime{
 		config:        cfg,

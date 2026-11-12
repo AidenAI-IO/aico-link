@@ -24,7 +24,6 @@
 #include "aicsdio_txrxif.h"
 #include "aicsdio.h"
 #include "aic_bsp_driver.h"
-#include "aico_fw_state.h"
 #include "md5.h"
 #include "aic8800dc_compat.h"
 #include "aic8800d80_compat.h"
@@ -348,16 +347,6 @@ static int rwnx_send_msg(struct aic_sdio_dev *sdiodev, const void *msg_params,
 free_msg:
 	kfree(msg);
 	return ret;
-}
-
-int rwnx_send_mm_version_req(struct aic_sdio_dev *sdiodev,
-			     struct aico_fw_version_cfm *cfm)
-{
-	void *req = rwnx_msg_zalloc(4, TASK_MM, DRV_TASK_ID, 0);
-
-	if (!req)
-		return -ENOMEM;
-	return rwnx_send_msg(sdiodev, req, 1, 5, cfm, sizeof(*cfm));
 }
 
 int rwnx_send_dbg_mem_block_write_req(struct aic_sdio_dev *sdiodev,
@@ -2213,12 +2202,6 @@ int aicbsp_driver_fw_init(struct aic_sdio_dev *sdiodev)
 	int ret = 0;
 
 	mem_addr = 0x40500000;
-	if (aico_fw_state_enabled(sdiodev) &&
-	    (sdiodev->chipid != PRODUCT_ID_AIC8800D80 ||
-	     aicbsp_info.cpmode != AICBSP_CPMODE_WORK || adap_test)) {
-		aico_fw_state_failed();
-		return -EOPNOTSUPP;
-	}
 
 	testmode = aicbsp_info.cpmode;
 
@@ -2300,17 +2283,8 @@ int aicbsp_driver_fw_init(struct aic_sdio_dev *sdiodev)
 			    aicbsp_info.chip_rev == CHIP_REV_U03)
 				aicbsp_firmware_list = fw_8800d80_u02;
 		}
-		if (aico_fw_state_enabled(sdiodev)) {
-			ret = aico_fw_prepare(sdiodev);
-			if (ret < 0)
-				return ret;
-			if (ret == 1)
-				return 0;
-		}
-		if (aicbsp_system_config_8800d80(sdiodev)) {
-			aico_fw_state_failed();
+		if (aicbsp_system_config_8800d80(sdiodev))
 			return -EIO;
-		}
 	} else if (sdiodev->chipid == PRODUCT_ID_AIC8800D80X2) {
 		btenable = 1;
 		if (rwnx_send_dbg_mem_read_req(sdiodev, mem_addr,
@@ -2334,21 +2308,15 @@ int aicbsp_driver_fw_init(struct aic_sdio_dev *sdiodev)
 #ifndef CONFIG_MCU_MESSAGE
 	if (testmode != 4) {
 		if (btenable == 1) {
-			if (aicbt_init(sdiodev)) {
-				aico_fw_state_failed();
+			if (aicbt_init(sdiodev))
 				return -EIO;
-			}
 		}
 	}
 #endif
 
 	ret = aicwifi_init(sdiodev);
-	if (ret) {
-		aico_fw_state_failed();
+	if (ret)
 		return ret;
-	}
-	if (aico_fw_state_enabled(sdiodev))
-		return aico_fw_finish(sdiodev);
 
 	return 0;
 }

@@ -954,7 +954,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewSaveMemoryTool(nil),
-			"Save a long-term memory for future recall. Mandatory when the user asks you to remember or save something; also use for stable preferences, rules, or procedures you observe. Do not tell the user you remembered it until this tool returns status=saved or status=ignored for a duplicate. Use profile for durable user facts such as name, location, or timezone; preference or rule for future defaults and must/must-not behavior; procedure for how-to steps; fact for stable info worth recalling later.",
+			"Save a long-term memory for future recall. Do NOT call it for one-off or time-bound plans, appointments, reminders, passing states, chat, or a secret (password, PIN, card number) the user merely mentions; just reply, without claiming you remembered anything. Call it when the user asks you to remember or save something, and for stable preferences, rules, or procedures you observe. A secret is kept only if the user explicitly asked to keep it. Do not tell the user you remembered it until this tool returns status=saved or status=ignored for a duplicate. Use profile for durable user facts such as name, location, or timezone; preference or rule for future defaults and must/must-not behavior; procedure for how-to steps; fact for stable info worth recalling later.",
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewForgetMemoryTool(nil),

@@ -6,14 +6,10 @@
  */
 
 #include <linux/err.h>
-#include <linux/of.h>
 #include <linux/pm_runtime.h>
-#include <linux/property.h>
-#include <linux/regulator/consumer.h>
 
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
-#include <linux/mmc/sd.h>
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/sdio.h>
 #include <linux/mmc/sdio_func.h>
@@ -103,14 +99,12 @@ out:
 	return ret;
 }
 
-static int sdio_init_func(struct mmc_card *card, unsigned int fn, bool retained)
+static int sdio_init_func(struct mmc_card *card, unsigned int fn)
 {
 	int ret;
 	struct sdio_func *func;
 
 	if (WARN_ON(fn > SDIO_MAX_FUNCS))
-		return -EINVAL;
-	if (retained && (card->quirks & MMC_QUIRK_NONSTD_SDIO))
 		return -EINVAL;
 
 	func = sdio_alloc_func(card);
@@ -118,9 +112,6 @@ static int sdio_init_func(struct mmc_card *card, unsigned int fn, bool retained)
 		return PTR_ERR(func);
 
 	func->num = fn;
-	/* The function destructor drops a card CIS reference even on failure. */
-	if (retained)
-		get_device(&card->dev);
 
 	if (!(card->quirks & MMC_QUIRK_NONSTD_SDIO)) {
 		ret = sdio_read_fbr(func);
@@ -137,8 +128,6 @@ static int sdio_init_func(struct mmc_card *card, unsigned int fn, bool retained)
 	}
 
 	card->sdio_func[fn - 1] = func;
-	if (retained)
-		put_device(&card->dev); /* sdio_read_func_cis() acquired its own. */
 
 	return 0;
 
@@ -147,10 +136,7 @@ fail:
 	 * It is okay to remove the function here even though we hold
 	 * the host lock as we haven't registered the device yet.
 	 */
-	if (retained)
-		put_device(&func->dev);
-	else
-		sdio_remove_func(func);
+	sdio_remove_func(func);
 	return ret;
 }
 
@@ -648,362 +634,6 @@ static int mmc_sdio_pre_init(struct mmc_host *host, u32 ocr,
 	return mmc_send_io_op_cond(host, 0, NULL);
 }
 
-bool mmc_sdio_aic_retained_host(struct mmc_host *host)
-{
-	return device_property_read_bool(host->parent,
-					 "aico,aic8800d80-retained-sdio");
-}
-
-static bool mmc_sdio_aic_fixed_supply(struct mmc_host *host,
-				    const char *name, u32 microvolt)
-{
-	struct device_node *np = of_parse_phandle(host->parent->of_node, name, 0);
-	u32 min_uv, max_uv;
-	bool valid;
-
-	if (!np)
-		return false;
-	valid = of_device_is_compatible(np, "regulator-fixed") &&
-		of_property_read_bool(np, "regulator-always-on") &&
-		!of_find_property(np, "gpio", NULL) &&
-		!of_find_property(np, "gpios", NULL) &&
-		!of_find_property(np, "enable-gpios", NULL) &&
-		!of_property_read_u32(np, "regulator-min-microvolt", &min_uv) &&
-		!of_property_read_u32(np, "regulator-max-microvolt", &max_uv) &&
-		min_uv == microvolt && max_uv == microvolt;
-	of_node_put(np);
-	return valid;
-}
-
-bool mmc_sdio_aic_retained_configured(struct mmc_host *host)
-{
-	u32 required = MMC_CAP_NONREMOVABLE | MMC_CAP_4_BIT_DATA |
-		       MMC_CAP_SD_HIGHSPEED | MMC_CAP_SDIO_IRQ;
-
-	if (!mmc_sdio_aic_retained_host(host))
-		return false;
-
-	/* This board retains a two-function AIC8800D80 on fixed rails. */
-	if (!of_device_is_compatible(host->parent->of_node,
-				     "rockchip,rv1106-dw-mshc") ||
-	    (host->caps & required) != required ||
-	    (host->caps2 & (MMC_CAP2_NO_SD | MMC_CAP2_NO_MMC)) !=
-			  (MMC_CAP2_NO_SD | MMC_CAP2_NO_MMC) ||
-	    (host->caps2 & (MMC_CAP2_NO_SDIO | MMC_CAP2_FULL_PWR_CYCLE |
-			   MMC_CAP2_FULL_PWR_CYCLE_IN_SUSPEND)) ||
-	    mmc_host_is_spi(host) || mmc_host_uhs(host) || host->pwrseq ||
-	    (host->caps & MMC_CAP_POWER_OFF_CARD) ||
-	    !(host->pm_caps & MMC_PM_KEEP_POWER) ||
-	    (host->ocr_avail & 0x00300000) != 0x00300000 ||
-	    host->f_max != 50000000 ||
-	    IS_ERR_OR_NULL(host->supply.vmmc) ||
-	    IS_ERR_OR_NULL(host->supply.vqmmc) ||
-	    !mmc_sdio_aic_fixed_supply(host, "vmmc-supply", 3300000) ||
-	    !mmc_sdio_aic_fixed_supply(host, "vqmmc-supply", 1800000))
-		return false;
-
-	return regulator_get_voltage(host->supply.vmmc) == 3300000 &&
-	       regulator_get_voltage(host->supply.vqmmc) == 1800000;
-}
-
-bool mmc_sdio_aic_retained_allowed(struct mmc_host *host)
-{
-	return mmc_sdio_aic_retained_configured(host) &&
-	       host->ios.signal_voltage == MMC_SIGNAL_VOLTAGE_180 &&
-	       host->ios.power_mode == MMC_POWER_ON && host->ios.vdd == 21;
-}
-
-static int mmc_sdio_aic_retained_rca(struct mmc_host *host, unsigned int *rca)
-{
-	struct mmc_command deselect = {
-		.opcode = MMC_SELECT_CARD,
-		.flags = MMC_RSP_NONE | MMC_CMD_AC,
-	};
-	struct mmc_command cmd = {
-		.opcode = SD_SEND_RELATIVE_ADDR,
-		.flags = MMC_RSP_R6 | MMC_CMD_BCR,
-	};
-	int err;
-
-	/* Deselect, then obtain a newly assigned RCA from the live card. */
-	err = mmc_wait_for_cmd(host, &deselect, 0);
-	if (err)
-		return err;
-	err = mmc_wait_for_cmd(host, &cmd, 0);
-	if (err)
-		return err;
-	if (cmd.resp[0] & (BIT(15) | BIT(14) | BIT(13)))
-		return -EIO;
-	*rca = cmd.resp[0] >> 16;
-	if (!*rca)
-		return -EINVAL;
-
-	pr_info("%s: AIC retained SDIO assigned RCA %04x\n",
-		mmc_hostname(host), *rca);
-	return 0;
-}
-
-static int mmc_sdio_aic_retained_select(struct mmc_host *host, unsigned int rca)
-{
-	struct mmc_command cmd;
-	int err, i, attempt;
-
-	for (attempt = 0; attempt < 2; attempt++) {
-		memset(&cmd, 0, sizeof(cmd));
-		cmd.opcode = MMC_SELECT_CARD;
-		cmd.arg = rca << 16;
-		cmd.flags = MMC_RSP_R1 | MMC_CMD_AC;
-		err = mmc_wait_for_cmd(host, &cmd, 0);
-		pr_info("%s: retained select CMD7 attempt=%d arg=%08x error=%d response=%08x clock=%u\n",
-			mmc_hostname(host), attempt, cmd.arg, err, cmd.resp[0],
-			host->ios.clock);
-		if (err)
-			return err;
-		if (!R1_STATUS(cmd.resp[0]))
-			break;
-		if (attempt || R1_STATUS(cmd.resp[0]) != (u32)R1_OUT_OF_RANGE)
-			return -EIO;
-		/*
-		 * OUT_OF_RANGE is clear-by-read in R1. Do not assume that
-		 * explains this card's response: require a clean second CMD7
-		 * at the same RCA/clock, then full live CIS validation.
-		 */
-		pr_warn("%s: retained CMD7 reported only OUT_OF_RANGE; retrying same RCA once\n",
-			mmc_hostname(host));
-	}
-	if (attempt)
-		pr_info("%s: retained CMD7 retry returned clean status\n",
-			mmc_hostname(host));
-
-	/* R5 illegal/CRC flags can describe the preceding command. */
-	for (i = 0; i < 2; i++) {
-		memset(&cmd, 0, sizeof(cmd));
-		cmd.opcode = SD_IO_RW_DIRECT;
-		cmd.flags = MMC_RSP_R5 | MMC_CMD_AC;
-		err = mmc_wait_for_cmd(host, &cmd, 0);
-		pr_info("%s: retained initial CMD52 attempt=%d error=%d response=%08x\n",
-			mmc_hostname(host), i, err, cmd.resp[0]);
-		if (err)
-			return err;
-		if (cmd.resp[0] & (R5_ERROR | R5_FUNCTION_NUMBER | R5_OUT_OF_RANGE))
-			return -EIO;
-		if (!i && (cmd.resp[0] & (R5_COM_CRC_ERROR | R5_ILLEGAL_COMMAND)))
-			pr_info("%s: retained initial CCCR clears prior R5 flags %08x\n",
-				mmc_hostname(host), cmd.resp[0]);
-	}
-	if (cmd.resp[0] & (R5_COM_CRC_ERROR | R5_ILLEGAL_COMMAND |
-			 R5_ERROR | R5_FUNCTION_NUMBER | R5_OUT_OF_RANGE))
-		return -EIO;
-
-	return 0;
-}
-
-/* Validate actual common/F1/F2 CIS before accepting board-specific metadata. */
-static int mmc_sdio_aic_cis_byte(struct mmc_host *host, unsigned int address,
-			       unsigned int *bytes, unsigned long deadline,
-			       u8 *value)
-{
-	struct mmc_command cmd = {
-		.opcode = SD_IO_RW_DIRECT,
-		.arg = address << 9,
-		.flags = MMC_RSP_R5 | MMC_CMD_AC,
-	};
-	int err;
-
-	if (address > 0x1ffff)
-		return -ERANGE;
-	if (*bytes >= 512)
-		return -E2BIG;
-	if (time_after_eq(jiffies, deadline))
-		return -ETIMEDOUT;
-	(*bytes)++;
-	err = mmc_wait_for_cmd(host, &cmd, 0);
-	if (err)
-		return err;
-	if (cmd.resp[0] & (R5_COM_CRC_ERROR | R5_ILLEGAL_COMMAND |
-			 R5_ERROR | R5_FUNCTION_NUMBER | R5_OUT_OF_RANGE))
-		return -EIO;
-	*value = cmd.resp[0];
-	return 0;
-}
-
-static int mmc_sdio_aic_cis_chain(struct mmc_host *host, unsigned int fn,
-				unsigned int pointer)
-{
-	unsigned int address = pointer, bytes = 0, tuples = 0, i;
-	unsigned long deadline = jiffies + msecs_to_jiffies(5000);
-	unsigned int expected = fn == 2 ? 0x0182 : 0x0082;
-	u8 code, link, data[254];
-	bool manfid = false, funce = false, version = false;
-	int err;
-
-	while (tuples < 64) {
-		err = mmc_sdio_aic_cis_byte(host, address++, &bytes, deadline, &code);
-		if (err)
-			return err;
-		if (code == 0xff) {
-			/* Function 1 legitimately inherits the common MANFID. */
-			if (!funce || (fn != 1 && !manfid))
-				return -ENODEV;
-			pr_info("%s: retained live CIS fn=%u pointer=%05x bytes=%u MANFID=%s FUNCE=valid END\n",
-				mmc_hostname(host), fn, pointer, bytes,
-				manfid ? "matched" : "inherits-validated-common");
-			return 0;
-		}
-		if (code == 0x00)
-			continue;
-		err = mmc_sdio_aic_cis_byte(host, address++, &bytes, deadline, &link);
-		if (err)
-			return err;
-		if (link == 0xff || link > 512 - bytes || address > 0x20000 - link)
-			return -EOVERFLOW;
-		for (i = 0; i < link; i++) {
-			err = mmc_sdio_aic_cis_byte(host, address++, &bytes,
-						  deadline, &data[i]);
-			if (err)
-				return err;
-		}
-		tuples++;
-		if (code == 0x15) {
-			if (version)
-				return -EINVAL;
-			version = true;
-		} else if (code == 0x20) {
-			if (link < 4 || manfid ||
-			    (data[0] | (data[1] << 8)) != 0xc8a1 ||
-			    (data[2] | (data[3] << 8)) != expected)
-				return -ENODEV;
-			manfid = true;
-		} else if (code == 0x22) {
-			if (funce || (!fn && (link < 4 || data[0] != 0 ||
-			    (data[1] | (data[2] << 8)) != 1 || data[3] != 0x5a)) ||
-			    (fn && (link < 42 || data[0] != 1 ||
-			    (data[12] | (data[13] << 8)) != 2048)))
-				return -ENODEV;
-			funce = true;
-		}
-	}
-	return -EOVERFLOW;
-}
-
-static int mmc_sdio_aic_live_cis(struct mmc_host *host)
-{
-	unsigned int pointers[3], fn, i, bytes = 0;
-	unsigned long deadline = jiffies + msecs_to_jiffies(5000);
-	u8 value;
-	int err;
-
-	for (fn = 0; fn < ARRAY_SIZE(pointers); fn++) {
-		pointers[fn] = 0;
-		if (fn) {
-			err = mmc_sdio_aic_cis_byte(host, SDIO_FBR_BASE(fn),
-						  &bytes, deadline, &value);
-			if (err || (value & 0x0f) != 7)
-				return err ? err : -ENODEV;
-		}
-		for (i = 0; i < 3; i++) {
-			err = mmc_sdio_aic_cis_byte(host,
-				SDIO_FBR_BASE(fn) + SDIO_CCCR_CIS + i,
-				&bytes, deadline, &value);
-			if (err)
-				return err;
-			pointers[fn] |= value << (i * 8);
-		}
-		if (pointers[fn] < 0x300 || pointers[fn] > 0x1ffff)
-			return -ERANGE;
-		for (i = 0; i < fn; i++)
-			if (pointers[i] == pointers[fn])
-				return -ENODEV;
-	}
-	for (fn = 0; fn < ARRAY_SIZE(pointers); fn++) {
-		err = mmc_sdio_aic_cis_chain(host, fn, pointers[fn]);
-		if (err) {
-			pr_err("%s: retained live CIS validation failed fn=%u error=%d\n",
-				mmc_hostname(host), fn, err);
-			return err;
-		}
-	}
-	return 0;
-}
-
-static int mmc_sdio_aic_retained_probe(struct mmc_host *host, unsigned int *rca)
-{
-	int err;
-
-	/* No existing drivers or card objects may be rebound through this path. */
-	if (host->card || host->sdio_irqs || !host->claimed ||
-	    !mmc_sdio_aic_retained_allowed(host))
-		return -EINVAL;
-	err = mmc_sdio_aic_retained_rca(host, rca);
-	if (err)
-		return err;
-	err = mmc_sdio_aic_retained_select(host, *rca);
-	if (err)
-		return err;
-	return mmc_sdio_aic_live_cis(host);
-}
-
-static int mmc_sdio_aic_write_ien(struct mmc_card *card, u8 value)
-{
-	u8 readback;
-	int err;
-
-	err = mmc_io_rw_direct(card, 1, 0, SDIO_CCCR_IENx, value, NULL);
-	if (err)
-		return err;
-	err = mmc_io_rw_direct(card, 0, 0, SDIO_CCCR_IENx, 0, &readback);
-	if (err)
-		return err;
-	return readback == value ? 0 : -EIO;
-}
-
-static int mmc_sdio_aic_rearm_irq(struct mmc_card *card)
-{
-	struct mmc_host *host = card->host;
-	u8 original;
-	int err, restore_err, i;
-
-	if (!host->claimed || host->sdio_irqs ||
-	    atomic_read(&card->sdio_funcs_probed) || card->sdio_funcs != 2 ||
-	    card->cis.vendor != 0xc8a1 || card->cis.device != 0x0082 ||
-	    !mmc_sdio_aic_retained_allowed(host))
-		return -EINVAL;
-	for (i = 0; i < card->sdio_funcs; i++) {
-		struct sdio_func *func = card->sdio_func[i];
-
-		if (!func || func->num != i + 1 || sdio_func_present(func) ||
-		    func->dev.driver || func->irq_handler || func->class != 7 ||
-		    func->vendor != 0xc8a1 ||
-		    func->device != (i ? 0x0182 : 0x0082))
-			return -ENODEV;
-	}
-	err = mmc_io_rw_direct(card, 0, 0, SDIO_CCCR_IENx, 0, &original);
-	if (err)
-		return err;
-	if (original & ~0x07)
-		return -EINVAL;
-	/* With master already clear, the driver's normal claim supplies the edge. */
-	if (!(original & BIT(0)))
-		return 0;
-
-	/* CMD7 re-selection can leave this card's IRQ output gated off. */
-	err = mmc_sdio_aic_write_ien(card, original & ~BIT(0));
-	/* A timed-out write may have reached the card: always restore the byte. */
-	restore_err = mmc_sdio_aic_write_ien(card, original);
-	if (!err)
-		err = restore_err;
-	if (err) {
-		restore_err = mmc_sdio_aic_write_ien(card, original);
-		pr_err("%s: retained IRQ rearm failed %d; IENx restore %02x result %d\n",
-			mmc_hostname(host), err, original, restore_err);
-		return err;
-	}
-	pr_info("%s: retained SDIO IRQ master rearmed %02x->%02x->%02x\n",
-		mmc_hostname(host), original,
-		(unsigned int)(original & ~BIT(0)), original);
-	return 0;
-}
-
 /*
  * Handle the detection and initialisation of a card.
  *
@@ -1011,19 +641,15 @@ static int mmc_sdio_aic_rearm_irq(struct mmc_card *card)
  * we're trying to reinitialise.
  */
 static int mmc_sdio_init_card(struct mmc_host *host, u32 ocr,
-			      struct mmc_card *oldcard, unsigned int retained_rca)
+			      struct mmc_card *oldcard)
 {
 	struct mmc_card *card;
 	int err;
 	int retries = 10;
 	u32 rocr = 0;
 	u32 ocr_card = ocr;
-	bool retained = retained_rca != 0;
 
 	WARN_ON(!host->claimed);
-	/* Retained recovery is only for an unpublished, newly allocated card. */
-	if (retained && oldcard)
-		return -EINVAL;
 
 	/* to query card if 1.8V signalling is supported */
 	if (mmc_host_uhs(host))
@@ -1038,11 +664,9 @@ try_again:
 	/*
 	 * Inform the card of the voltage
 	 */
-	if (!retained) {
-		err = mmc_send_io_op_cond(host, ocr, &rocr);
-		if (err)
-			return err;
-	}
+	err = mmc_send_io_op_cond(host, ocr, &rocr);
+	if (err)
+		return err;
 
 	/*
 	 * For SPI, enable CRC as appropriate.
@@ -1083,10 +707,6 @@ try_again:
 	 */
 	if (host->ops->init_card)
 		host->ops->init_card(host, card);
-	if (retained && (card->quirks & MMC_QUIRK_NONSTD_SDIO)) {
-		err = -EINVAL;
-		goto remove;
-	}
 
 	card->ocr = ocr_card;
 
@@ -1116,12 +736,7 @@ try_again:
 	 * For native busses:  set card RCA and quit open drain mode.
 	 */
 	if (!mmc_host_is_spi(host)) {
-		if (retained) {
-			card->rca = retained_rca;
-			err = 0;
-		} else {
-			err = mmc_send_relative_addr(host, &card->rca);
-		}
+		err = mmc_send_relative_addr(host, &card->rca);
 		if (err)
 			goto remove;
 
@@ -1148,7 +763,7 @@ try_again:
 	/*
 	 * Select card, as all following commands rely on that.
 	 */
-	if (!retained && !mmc_host_is_spi(host)) {
+	if (!mmc_host_is_spi(host)) {
 		err = mmc_select_card(card);
 		if (err)
 			goto remove;
@@ -1181,8 +796,6 @@ try_again:
 	 */
 	err = sdio_read_cccr(card, ocr);
 	if (err) {
-		if (mmc_sdio_aic_retained_host(host))
-			goto remove;
 		mmc_sdio_pre_init(host, ocr_card, card);
 		if (ocr & R4_18V_PRESENT) {
 			/* Retry init sequence, but without R4_18V_PRESENT. */
@@ -1198,13 +811,6 @@ try_again:
 	err = sdio_read_common_cis(card);
 	if (err)
 		goto remove;
-	if (retained && (card->cis.vendor != 0xc8a1 ||
-			 card->cis.device != 0x0082)) {
-		pr_err("%s: refusing retained SDIO common CIS %04x:%04x\n",
-			mmc_hostname(host), card->cis.vendor, card->cis.device);
-		err = -ENODEV;
-		goto remove;
-	}
 
 	if (oldcard) {
 		if (card->cis.vendor == oldcard->cis.vendor &&
@@ -1291,15 +897,11 @@ static int mmc_sdio_reinit_card(struct mmc_host *host)
 {
 	int ret;
 
-	/* Bound drivers need their own resume protocol, never fresh-host recovery. */
-	if (mmc_sdio_aic_retained_host(host))
-		return -EOPNOTSUPP;
-
 	ret = mmc_sdio_pre_init(host, host->card->ocr, NULL);
 	if (ret)
 		return ret;
 
-	return mmc_sdio_init_card(host, host->card->ocr, host->card, 0);
+	return mmc_sdio_init_card(host, host->card->ocr, host->card);
 }
 
 /*
@@ -1423,10 +1025,6 @@ remove:
  */
 static int mmc_sdio_suspend(struct mmc_host *host)
 {
-	/* This board's external module supply cannot follow card power cycling. */
-	if (mmc_sdio_aic_retained_host(host) && !mmc_card_keep_power(host))
-		return -EOPNOTSUPP;
-
 	WARN_ON(host->sdio_irqs && !mmc_card_keep_power(host));
 
 	/* Prevent processing of SDIO IRQs in suspended state. */
@@ -1453,9 +1051,6 @@ static int mmc_sdio_suspend(struct mmc_host *host)
 static int mmc_sdio_resume(struct mmc_host *host)
 {
 	int err = 0;
-
-	if (mmc_sdio_aic_retained_host(host) && !mmc_card_keep_power(host))
-		return -EOPNOTSUPP;
 
 	/* Basic card reinitialization. */
 	mmc_claim_host(host);
@@ -1506,10 +1101,6 @@ out:
 
 static int mmc_sdio_runtime_suspend(struct mmc_host *host)
 {
-	/* Retained hosts reject MMC_CAP_POWER_OFF_CARD at initial attachment. */
-	if (mmc_sdio_aic_retained_host(host))
-		return -EOPNOTSUPP;
-
 	/* No references to the card, cut the power to it. */
 	mmc_claim_host(host);
 	mmc_power_off(host);
@@ -1521,9 +1112,6 @@ static int mmc_sdio_runtime_suspend(struct mmc_host *host)
 static int mmc_sdio_runtime_resume(struct mmc_host *host)
 {
 	int ret;
-
-	if (mmc_sdio_aic_retained_host(host))
-		return -EOPNOTSUPP;
 
 	/* Restore power and re-initialize. */
 	mmc_claim_host(host);
@@ -1543,9 +1131,6 @@ static int mmc_sdio_runtime_resume(struct mmc_host *host)
 static int mmc_sdio_hw_reset(struct mmc_host *host)
 {
 	struct mmc_card *card = host->card;
-
-	if (mmc_sdio_aic_retained_host(host))
-		return -EOPNOTSUPP;
 
 	/*
 	 * In case the card is shared among multiple func drivers, reset the
@@ -1571,9 +1156,6 @@ static int mmc_sdio_hw_reset(struct mmc_host *host)
 
 static int mmc_sdio_sw_reset(struct mmc_host *host)
 {
-	if (mmc_sdio_aic_retained_host(host))
-		return -EOPNOTSUPP;
-
 	mmc_set_clock(host, host->f_init);
 	sdio_reset(host);
 	mmc_go_idle(host);
@@ -1606,27 +1188,12 @@ int mmc_attach_sdio(struct mmc_host *host)
 	int err, i, funcs;
 	u32 ocr, rocr;
 	struct mmc_card *card;
-	bool retained = false;
-	unsigned int retained_rca = 0;
 
 	WARN_ON(!host->claimed);
 
 	err = mmc_send_io_op_cond(host, 0, &ocr);
-	if (err) {
-		if (err != -ETIMEDOUT || !mmc_sdio_aic_retained_allowed(host))
-			return err;
-		err = mmc_sdio_aic_retained_probe(host, &retained_rca);
-		if (err) {
-			pr_err("%s: retained SDIO identity probe failed: %d\n",
-				mmc_hostname(host), err);
-			return err;
-		}
-		retained = true;
-		/* Board metadata, accepted only after live common/F1/F2 validation. */
-		ocr = 0x00300000;
-		pr_info("%s: CMD5 timed out; verified AIC8800D80 uses fixed board OCR=00300000 and two functions, not a received R4\n",
-			mmc_hostname(host));
-	}
+	if (err)
+		return err;
 
 	mmc_attach_bus(host, &mmc_sdio_ops);
 	if (host->ocr_avail_sdio)
@@ -1646,7 +1213,7 @@ int mmc_attach_sdio(struct mmc_host *host)
 	/*
 	 * Detect and init the card.
 	 */
-	err = mmc_sdio_init_card(host, rocr, NULL, retained_rca);
+	err = mmc_sdio_init_card(host, rocr, NULL);
 	if (err)
 		goto err;
 
@@ -1676,18 +1243,17 @@ int mmc_attach_sdio(struct mmc_host *host)
 	}
 
 	/*
-	 * Normal cards report their function count in R4. The opted-in
-	 * fixed AIC8800D80 has two functions, validated below before add.
+	 * The number of functions on the card is encoded inside
+	 * the ocr.
 	 */
-	funcs = retained ? 2 : (ocr & 0x70000000) >> 28;
+	funcs = (ocr & 0x70000000) >> 28;
 	card->sdio_funcs = 0;
 
 	/*
 	 * Initialize (but don't add) all present functions.
 	 */
 	for (i = 0; i < funcs; i++, card->sdio_funcs++) {
-		err = sdio_init_func(host->card, i + 1,
-				     mmc_sdio_aic_retained_host(host));
+		err = sdio_init_func(host->card, i + 1);
 		if (err)
 			goto remove;
 
@@ -1696,26 +1262,6 @@ int mmc_attach_sdio(struct mmc_host *host)
 		 */
 		if (host->caps & MMC_CAP_POWER_OFF_CARD)
 			pm_runtime_enable(&card->sdio_func[i]->dev);
-	}
-
-	if (retained) {
-		for (i = 0; i < funcs; i++) {
-			struct sdio_func *func = card->sdio_func[i];
-			unsigned int expected_device = i ? 0x0182 : 0x0082;
-
-			if (func->vendor != 0xc8a1 || func->device != expected_device) {
-				pr_err("%s: refusing retained SDIO function %u CIS %04x:%04x\n",
-					mmc_hostname(host), func->num,
-					func->vendor, func->device);
-				err = -ENODEV;
-				goto remove;
-			}
-		}
-		pr_info("%s: validated AIC retained SDIO common and two function CIS identities\n",
-			mmc_hostname(host));
-		err = mmc_sdio_aic_rearm_irq(card);
-		if (err)
-			goto remove;
 	}
 
 	/*
@@ -1745,22 +1291,6 @@ int mmc_attach_sdio(struct mmc_host *host)
 remove:
 	mmc_release_host(host);
 remove_added:
-	/* Also cover a failed card add or a partially completed function add. */
-	if (mmc_sdio_aic_retained_host(host)) {
-		for (i = 0; i < host->card->sdio_funcs; i++) {
-			struct sdio_func *func = host->card->sdio_func[i];
-
-			if (func && !sdio_func_present(func)) {
-				host->card->sdio_func[i] = NULL;
-				of_node_put(func->dev.of_node);
-				put_device(&func->dev);
-			}
-		}
-		if (!mmc_card_present(host->card)) {
-			of_node_put(host->card->dev.of_node);
-			host->card->dev.of_node = NULL;
-		}
-	}
 	/*
 	 * The devices are being deleted so it is not necessary to disable
 	 * runtime PM. Similarly we also don't pm_runtime_put() the SDIO card
