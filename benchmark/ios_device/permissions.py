@@ -37,7 +37,7 @@ def deduplicate_alert_buttons(text, buttons, source):
 def alert_snapshot(text, buttons):
     if not isinstance(text, str) or not isinstance(buttons, list) or not buttons or not all(isinstance(x, str) and x for x in buttons):
         raise ValueError("WDA returned an invalid alert")
-    fingerprint = hashlib.sha256(json.dumps([text, buttons], ensure_ascii=False).encode()).hexdigest()
+    fingerprint = hashlib.sha256(json.dumps([text, sorted(buttons)], ensure_ascii=False).encode()).hexdigest()
     return {"present": True, "alert_id": fingerprint, "text": text, "buttons": buttons}
 
 

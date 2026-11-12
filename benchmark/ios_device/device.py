@@ -6,8 +6,8 @@ import threading
 import time
 from urllib.parse import quote
 
-from mnk_provider import validate_insert_text
 from .permissions import PermissionPolicy, alert_snapshot, deduplicate_alert_buttons
+from .text import TYPING_FREQUENCY, validate_ios_text
 from .transport import IOSDeviceError
 from .touch import validate_touch_actions, wda_actions
 
@@ -160,7 +160,7 @@ class IOSDevice:
         self.insert_text(text)
 
     def insert_text(self, text, replace=False):
-        validate_insert_text(text)
+        validate_ios_text(text)
         if not isinstance(replace, bool):
             raise ValueError("replace must be a boolean")
         with self.lock:
@@ -171,7 +171,7 @@ class IOSDevice:
                 if not identifier:
                     raise IOSDeviceError("field_unavailable", "No focused field could be identified before replacement.")
                 self._call("POST", f"/element/{quote(identifier, safe='')}/clear", {})
-            self._call("POST", "/wda/keys", {"value": [text]})
+            self._call("POST", "/wda/keys", {"value": [text], "frequency": TYPING_FREQUENCY})
 
     def press(self, keys):
         values = {"enter": "\n", "return": "\n", "tab": "\t", "backspace": "\b", "delete": "\b"}

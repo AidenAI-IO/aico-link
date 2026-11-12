@@ -3,7 +3,8 @@ from __future__ import annotations
 from desktop.bridge.server import DesktopBridgeServer, _handler_for
 from desktop.bridge.state import NoBridgeEnvAvailableError, benchmark_task_id_from_headers
 from desktop.bridge.tools_api import DesktopToolsAPIHandler
-from mnk_provider import execute_mnk_request, validate_insert_text
+from mnk_provider import execute_mnk_request
+from .text import validate_ios_text
 from .transport import IOSDeviceError
 from .touch import validate_touch_actions
 
@@ -58,7 +59,7 @@ def execute_ios_mnk(payload, invoke):
         else:
             if not isinstance(params, dict):
                 raise ValueError("insert_text params required")
-            validate_insert_text(params.get("text"))
+            validate_ios_text(params.get("text"))
             if not isinstance(params.get("replace", False), bool):
                 raise ValueError("replace must be a boolean")
     except ValueError as exc:

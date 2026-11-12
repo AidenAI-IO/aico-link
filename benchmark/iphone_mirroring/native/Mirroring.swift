@@ -257,48 +257,53 @@ func insertText(_ text: String, replace: Bool, window: MirrorWindow) throws {
     if changed && TISSelectInputSource(ascii) != noErr {
         throw BridgeError("Cannot select the macOS text input source; no text was sent")
     }
-    var restored = !changed
-    defer {
-        if !restored { TISSelectInputSource(original) }
-    }
-    if changed { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1)) }
-    guard inputSourceID(TISCopyCurrentKeyboardInputSource().takeRetainedValue()) == inputSourceID(ascii) else {
-        throw BridgeError("macOS input source did not change; no text was sent")
-    }
-    if replace {
-        guard hasInputFocus(window) else {
-            throw BridgeError("Input permission or mirror focus was lost; no replacement was sent")
+    let insertion = Result<Void, Error> {
+        if changed { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1)) }
+        guard inputSourceID(TISCopyCurrentKeyboardInputSource().takeRetainedValue()) == inputSourceID(ascii) else {
+            throw BridgeError("macOS input source did not change; no text was sent")
         }
-        try press(["meta", "a"])
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
-    }
-    for character in text {
-        guard hasInputFocus(window) else {
-            throw BridgeError("Input permission or mirror focus was lost; text may be partially inserted. Inspect the field before retrying")
-        }
-        let units = Array(String(character).utf16)
-        for down in [true, false] {
-            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) else {
-                throw BridgeError("Cannot create text event; inspect the field before retrying")
+        if replace {
+            guard hasInputFocus(window) else {
+                throw BridgeError("Input permission or mirror focus was lost; no replacement was sent")
             }
-            event.flags = []
-            event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
-            event.post(tap: .cghidEventTap)
+            try press(["meta", "a"])
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
         }
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.003))
+        for character in text {
+            guard hasInputFocus(window) else {
+                throw BridgeError("Input permission or mirror focus was lost; text may be partially inserted. Inspect the field before retrying")
+            }
+            let units = Array(String(character).utf16)
+            for down in [true, false] {
+                guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) else {
+                    throw BridgeError("Cannot create text event; inspect the field before retrying")
+                }
+                event.flags = []
+                event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+                event.post(tap: .cghidEventTap)
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.003))
+        }
+        // Let the application consume the last events before restoring IME.
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
     }
-    // Let the focused application consume the last events before restoring IME.
-    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+    // Restore on both success and failure. Preserve the insertion error if
+    // restoration also fails, so focus loss cannot hide an input-source change.
     if changed {
+        let outcome: String
+        switch insertion {
+        case .success: outcome = "Text was sent"
+        case .failure(let error): outcome = String(describing: error)
+        }
         guard TISSelectInputSource(original) == noErr else {
-            throw BridgeError("Text was sent but the original macOS input source could not be restored; inspect the field before retrying")
+            throw BridgeError("\(outcome); the original macOS input source could not be restored. Inspect the field before retrying")
         }
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
-        restored = inputSourceID(TISCopyCurrentKeyboardInputSource().takeRetainedValue()) == inputSourceID(original)
-        if !restored {
-            throw BridgeError("Text was sent but the macOS input source did not restore; inspect the field before retrying")
+        guard inputSourceID(TISCopyCurrentKeyboardInputSource().takeRetainedValue()) == inputSourceID(original) else {
+            throw BridgeError("\(outcome); the macOS input source did not restore. Inspect the field before retrying")
         }
     }
+    try insertion.get()
 }
 
 @available(macOS 14.0, *)

@@ -3,6 +3,44 @@ import UserNotifications
 import CoreLocation
 import AVFoundation
 
+private extension UNAuthorizationStatus {
+    var displayName: String {
+        switch self {
+        case .notDetermined: return "Not determined"
+        case .denied: return "Denied"
+        case .authorized: return "Authorized"
+        case .provisional: return "Provisional"
+        case .ephemeral: return "Ephemeral"
+        @unknown default: return "Unknown (\(rawValue))"
+        }
+    }
+}
+
+private extension CLAuthorizationStatus {
+    var displayName: String {
+        switch self {
+        case .notDetermined: return "Not determined"
+        case .restricted: return "Restricted"
+        case .denied: return "Denied"
+        case .authorizedAlways: return "Authorized (always)"
+        case .authorizedWhenInUse: return "Authorized (when in use)"
+        @unknown default: return "Unknown (\(rawValue))"
+        }
+    }
+}
+
+private extension AVAuthorizationStatus {
+    var displayName: String {
+        switch self {
+        case .notDetermined: return "Not determined"
+        case .restricted: return "Restricted"
+        case .denied: return "Denied"
+        case .authorized: return "Authorized"
+        @unknown default: return "Unknown (\(rawValue))"
+        }
+    }
+}
+
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, configurationForConnecting session: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
@@ -114,7 +152,7 @@ final class ProbeController: UIViewController, CLLocationManagerDelegate, UIText
     @objc private func refreshStatus() {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
-                self.status.text = "Notifications: \(settings.authorizationStatus.rawValue)\nLocation: \(self.location.authorizationStatus.rawValue)\nCamera: \(AVCaptureDevice.authorizationStatus(for: .video).rawValue)"
+                self.status.text = "Notifications: \(settings.authorizationStatus.displayName)\nLocation: \(self.location.authorizationStatus.displayName)\nCamera: \(AVCaptureDevice.authorizationStatus(for: .video).displayName)"
             }
         }
     }

@@ -177,6 +177,11 @@ applications' permissions.
   accessible field before typing. `keyboard_text` retains the bridge's ASCII
   contract. Enter, Tab, and Backspace/Delete are supported; desktop modifier
   chords and arbitrary physical keys are not.
+  Direct iOS text input accepts at most 512 UTF-16 units per request (256
+  supplementary-plane emoji or 512 BMP characters). Oversized input is rejected
+  before clearing or typing. WDA types at an explicit 60 keys/s, leaving time
+  for keyboard synchronization within the 25s WDA and 30s Agent deadlines.
+  Mirroring and other backends retain their existing text limits.
 - This target's Home binding uses WDA's native `/wda/pressButton` command
   with `name: home`, which also dismisses Spotlight;
   Spotlight first uses the same command, then swipes down on Home. App Switcher

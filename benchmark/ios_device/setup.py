@@ -56,6 +56,12 @@ def main(argv=None):
     output = args.output.resolve()
     if output.exists():
         parser.error("output must be a new dedicated directory")
+    if not args.probe_app:
+        if not args.wda_source or not (args.wda_source / "WebDriverAgent.xcodeproj").is_dir():
+            parser.error("WDA build requires --wda-source pointing at a WebDriverAgent checkout")
+        args.wda_source = args.wda_source.resolve()
+        if output.is_relative_to(args.wda_source):
+            parser.error("output must be outside the WDA source directory")
     output.mkdir(parents=True)
     if args.probe_app:
         project = probe_project(output, args.team_id, args.bundle_id or "io.aiden.aico.PermissionProbe")
@@ -63,8 +69,6 @@ def main(argv=None):
         action = "build"
         app_name = "PermissionProbe.app"
     else:
-        if not args.wda_source or not (args.wda_source / "WebDriverAgent.xcodeproj").is_dir():
-            parser.error("WDA build requires --wda-source pointing at a WebDriverAgent checkout")
         source = output / "WebDriverAgent"
         shutil.copytree(args.wda_source, source, ignore=shutil.ignore_patterns(".git", "build", "DerivedData"))
         project = source / "WebDriverAgent.xcodeproj"

@@ -7,6 +7,7 @@ import json
 import urllib.error
 import urllib.request
 from contextlib import AsyncExitStack
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -14,6 +15,7 @@ from PIL import Image
 from ios_device.device import IOSDevice
 from ios_device.permissions import PermissionPolicy, deduplicate_alert_buttons
 from ios_device.server import IOSServer, execute_ios_mnk
+from ios_device.setup import main as setup_main
 from ios_device.transport import IOSDeviceError, USBTransport
 
 
@@ -23,6 +25,7 @@ class FakeWDA:
         self.alert = None
         self.locked = False
         self.fail_selection = False
+        self.reorder_selection = False
         self.fail_text = False
         self.fail_home = False
 
@@ -45,11 +48,14 @@ class FakeWDA:
         if path.endswith("/alert/text") or path.endswith("/wda/alert/buttons"):
             if self.alert is None:
                 raise IOSDeviceError("no_alert", "No alert is open")
-            return {"value": self.alert["text"] if path.endswith("/alert/text") else self.alert["buttons"]}
+            return {"value": self.alert["text"] if path.endswith("/alert/text") else list(self.alert["buttons"])}
         if path.endswith("/alert/accept"):
             if self.fail_selection:
                 raise IOSDeviceError("device_timeout", "delivery is ambiguous")
-            self.alert = None
+            if self.reorder_selection:
+                self.alert["buttons"].reverse()
+            else:
+                self.alert = None
         if path.endswith("/screenshot"):
             output = io.BytesIO()
             Image.new("RGB", (117, 253)).save(output, format="PNG")
@@ -75,7 +81,7 @@ def test_native_coordinates_text_and_partial_delivery(device):
     assert device.transport.calls[-1] == ("POST", "/session/test-session/wda/tap", {"x": 97.5, "y": 422.0})
     device.insert_text("中文🔋", replace=True)
     assert [path.rsplit("/", 1)[-1] for _, path, _ in device.transport.calls[-2:]] == ["clear", "keys"]
-    assert device.transport.calls[-1][2] == {"value": ["中文🔋"]}
+    assert device.transport.calls[-1][2] == {"value": ["中文🔋"], "frequency": 60}
     device.transport.fail_text = True
     before = len(device.transport.calls)
     with pytest.raises(IOSDeviceError, match="ambiguous"):
@@ -87,10 +93,22 @@ def test_native_coordinates_text_and_partial_delivery(device):
     assert device.check_device()["input_available"] is False
 
 
+@pytest.mark.parametrize("text", ["a" * 512, "🔋" * 256])
+def test_native_text_limit_rejects_before_clearing_or_typing(device, text):
+    device.insert_text(text, replace=True)
+    assert device.transport.calls[-1][2]["value"] == [text]
+    before = list(device.transport.calls)
+    with pytest.raises(ValueError, match="at most 512 UTF-16 units"):
+        device.insert_text(text + "a", replace=True)
+    assert device.transport.calls == before
+
+
 @pytest.mark.parametrize("payload", [
     {"operation": "insert_text", "insert_text": {"text": "\u0000"}},
     {"operation": "insert_text", "insert_text": {"text": "\ud800"}},
     {"operation": "insert_text", "insert_text": {"text": "🔋" * 2049}},
+    {"operation": "insert_text", "insert_text": {"text": "a" * 513, "replace": True}},
+    {"operation": "insert_text", "insert_text": {"text": "🔋" * 257}},
     {"operation": "insert_text", "insert_text": {"text": "hello", "replace": "true"}},
     {"operation": "system_action"},
     {"operation": "system_action", "system_action": {"action": "power"}},
@@ -214,6 +232,57 @@ def test_auto_policy_verifies_selection_and_does_not_replay_a_timeout(device):
     result = device.apply_permission_policy()
     assert result["dismissed"] and result["selected"] == "Allow"
     assert device.read_alert() == {"present": False}
+
+
+def test_reordered_buttons_do_not_verify_dismissal_or_replay_selection(device, monkeypatch):
+    device.policy = PermissionPolicy([signature()])
+    device.transport.alert = {"text": '"Permission Probe" Would Like to Send Notifications', "buttons": ["Don't Allow", "Allow"]}
+    before = device.read_alert()
+    device.transport.reorder_selection = True
+    # Expire verification after one read; avoid sleeping on an unchanged alert.
+    times = iter([0, 4])
+    monkeypatch.setattr("ios_device.device.time", SimpleNamespace(monotonic=lambda: next(times)))
+    with pytest.raises(IOSDeviceError) as error:
+        device.apply_permission_policy()
+    assert error.value.code == "selection_unverified"
+    after = device.read_alert()
+    assert after["buttons"] == list(reversed(before["buttons"]))
+    assert after["alert_id"] == before["alert_id"]
+    assert device.apply_permission_policy() is None
+    assert sum(path.endswith("/alert/accept") for _, path, _ in device.transport.calls) == 1
+    # Multiplicity still distinguishes a changed prompt.
+    device.transport.alert["buttons"].append("Don't Allow")
+    assert device.read_alert()["alert_id"] != before["alert_id"]
+
+
+@pytest.mark.parametrize("via_symlink", [False, True])
+def test_wda_setup_rejects_recursive_output_before_creating_it(tmp_path, via_symlink):
+    source = tmp_path / "wda"
+    (source / "WebDriverAgent.xcodeproj").mkdir(parents=True)
+    selected_source = source
+    if via_symlink:
+        selected_source = tmp_path / "wda-link"
+        selected_source.symlink_to(source, target_is_directory=True)
+    output = selected_source / "build-output"
+    with pytest.raises(SystemExit) as error:
+        setup_main(["--team-id", "TEST", "--udid", "test-device", "--wda-source", str(source), "--output", str(output)])
+    assert error.value.code == 2
+    assert not output.exists()
+
+
+def test_wda_setup_copies_to_an_external_output_without_changing_source(tmp_path, monkeypatch):
+    source = tmp_path / "wda"
+    project = source / "WebDriverAgent.xcodeproj"
+    project.mkdir(parents=True)
+    original = "PRODUCT_BUNDLE_IDENTIFIER = com.facebook.WebDriverAgentRunner;"
+    (project / "project.pbxproj").write_text(original)
+    commands = []
+    monkeypatch.setattr("ios_device.setup.subprocess.run", lambda command, **kwargs: commands.append(command))
+    output = tmp_path / "external-build"
+    assert setup_main(["--team-id", "TEST", "--udid", "test-device", "--wda-source", str(source), "--output", str(output)]) == 0
+    assert (project / "project.pbxproj").read_text() == original
+    assert "io.aiden.aico.WebDriverAgentRunner" in (output / "WebDriverAgent/WebDriverAgent.xcodeproj/project.pbxproj").read_text()
+    assert commands[0][:2] == ["xcrun", "xcodebuild"]
 
 
 def test_http_alert_selection_obeys_task_lease_and_rejects_stale_prompts(device):
