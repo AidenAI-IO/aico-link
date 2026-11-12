@@ -240,10 +240,12 @@ func (t *SaveMemoryTool) Name() string { return "save_memory" }
 
 func (t *SaveMemoryTool) Description() string {
 	return strings.Join([]string{
-		"Save long-term memory for future recall. Mandatory when the user asks to remember/save; also use for observed stable preferences, rules, or procedures.",
+		"Save long-term memory for future recall.",
+		"Do NOT call it for one-off or time-bound plans, appointments, reminders, passing states, chat, or a secret (password, PIN, card number) the user merely mentions; just reply, without claiming you remembered anything. Example: \"I have a dentist visit tomorrow\" is not saved.",
+		"Call it when the user asks to remember/save, and for observed stable preferences, rules, or procedures.",
 		"Do not tell the user something was remembered or saved until this tool returns status=saved or status=ignored as a duplicate.",
 		"Use profile for durable user facts (name, nickname, location, timezone, home city, role, background); preference/rule for future defaults and must/must-not behavior such as a default city; fact for stable info that should be recalled but not surfaced in the synthesized user profile.",
-		"Skip one-off plans and chat. A secret is kept only if the user asked: set sensitive and quote their request in user_request, else it is refused and you must say so.",
+		"A secret is kept only if the user explicitly asked to keep it: set sensitive and put in user_request only their words asking to remember it, never the sentence stating the secret; otherwise it is refused and you must say it was not remembered.",
 		"Returns status=saved with id, ignored for a duplicate, or refused.",
 		"To correct a previously saved memory, first recall it, then pass its id as replaces_id and its revision as expected_revision. Do not guess the target; a stale revision is rejected.",
 	}, " ")
@@ -261,7 +263,7 @@ func (t *SaveMemoryTool) ArgsSchema() map[string]any {
 		"replaces_id":       stringArgSchema("ID returned by recall_memory when correcting an existing memory; requires expected_revision."),
 		"expected_revision": minIntegerArgSchema("Revision returned by recall_memory for replaces_id.", 1),
 		"sensitive":         stringEnumArgSchema("Secret kind, if any.", "none", "credential", "payment_card"),
-		"user_request":      stringArgSchema("For a secret: the user's verbatim words asking to remember it."),
+		"user_request":      stringArgSchema("For a secret: only the user's verbatim words asking to remember it, without the secret itself."),
 	}, "type", "content")
 }
 
@@ -277,11 +279,19 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 		return "", fmt.Errorf("content is required")
 	}
 	sensitive := parseMemorySensitiveKind(req.Sensitive)
-	if sensitive != memorySensitiveNone && !userRequestQuoted(req.UserRequest, EpisodeRecorderFromContext(ctx).UserTexts()...) {
-		return encodeToolJSON(map[string]string{
-			"status": "refused",
-			"reason": "sensitive " + string(sensitive) + " without a user_request quoting the user's own words asking to remember it; secrets are not saved by default. Tell the user it was not remembered.",
-		})
+	if sensitive != memorySensitiveNone {
+		if !userRequestQuoted(req.UserRequest, EpisodeRecorderFromContext(ctx).UserTexts()...) {
+			return encodeToolJSON(map[string]string{
+				"status": "refused",
+				"reason": "sensitive " + string(sensitive) + " without a user_request quoting the user's own words asking to remember it; secrets are not saved by default. Tell the user it was not remembered.",
+			})
+		}
+		if userRequestRepeatsSecret(req.UserRequest, req.Content) {
+			return encodeToolJSON(map[string]string{
+				"status": "refused",
+				"reason": "user_request repeats the secret instead of quoting only the user's words asking to keep it; a statement of a secret is not a request to remember it. If the user never asked, do not retry; tell the user it was not remembered.",
+			})
+		}
 	}
 	if len(req.Evidence) == 0 {
 		req.Evidence = []string{req.Content}
