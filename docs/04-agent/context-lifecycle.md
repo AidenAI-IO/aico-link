@@ -258,10 +258,44 @@ index past the end, or an `after` refresh more than `limit` messages behind),
 the response is the newest page with `reset: true`, and the client replaces
 what it holds.
 
+Message `type` is one of `user`, `assistant`, `tool_call`, `tool_result`,
+`notice`, `state`, or `proactive`. A `proactive` message is an assistant
+message the Agent started on its own, outside any user turn; see
+[Proactive Messages](#proactive-messages).
+
 Chat responses (`/api/chat` `done` and `error` events, and
 `/api/chat/result`) carry only the latest turn in `history`: the messages from
 the last user message on, at most 200. Clients read older messages through
 `/api/history`.
+
+## Proactive Messages
+
+The Agent can speak first. `POST /api/proactive` with `{"content": "..."}`
+adds the text to the backend conversation as an assistant message marked
+`proactive` and then decides how to tell the user:
+
+| Companion App state | `delivery` | What the user sees |
+|---|---|---|
+| Connected and `active` | `chat` | The message in the chat page |
+| Not in the foreground, notification route available | `notification` | A local notification with the message; the chat page shows it when opened |
+| No notification route | `deferred` | The message in the chat page the next time it is opened |
+
+The history is the single record: every outcome shows the same message in the
+chat page, so nothing is queued separately. The notification route is the one
+`notification_send` already uses (foreground WebSocket, PiP or Android
+foreground-service queue, or BLE wake on iOS). It never restores the App
+through its return entry, because a notification must not pull the user into
+the App. If the send fails, `delivery` is `deferred` and `error` says why.
+
+The append waits for a running task to finish, so a proactive message never
+lands between a tool call and its result. The model sees an ordinary assistant
+message, so a reply from the user continues from it. After the append, the
+legacy event stream carries the message and the semantic stream emits
+`message.appended`, which tells open chat views to reload history.
+
+Proactive messages are not supported while `input_mode = "realtime"`, because
+the live voice session owns the displayed user context; the endpoint returns
+`409 Conflict` there.
 
 ## Storage Map
 

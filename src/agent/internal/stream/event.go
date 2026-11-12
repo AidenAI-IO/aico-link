@@ -55,6 +55,9 @@ const (
 	EventRunTerminal         EventKind = "run.terminal"
 	EventReasoningDelta      EventKind = "reasoning.delta"
 	EventReasoningReset      EventKind = "reasoning.reset"
+	// EventMessageAppended reports a message added to the displayed history
+	// outside a run, such as a proactive message. Clients reload history.
+	EventMessageAppended EventKind = "message.appended"
 )
 
 // EventSink accepts validated semantic events. Implementations may apply

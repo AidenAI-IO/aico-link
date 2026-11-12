@@ -347,6 +347,7 @@ function semanticEventNeedsHistoryRefresh(kind) {
         kind === 'tool.failed' ||
         kind === 'task.updated' ||
         kind === 'stream.error' ||
+        kind === 'message.appended' ||
         kind === 'session.closed';
 }
 

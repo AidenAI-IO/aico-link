@@ -92,6 +92,10 @@ type Message struct {
 	// compaction summary. It is written by the model, not the user, so code
 	// that needs the user's own words skips it.
 	CompactionSummary bool `json:"compaction_summary,omitempty"`
+	// Proactive marks an assistant message the Agent started on its own,
+	// outside any user turn. Providers see an ordinary assistant message;
+	// clients render it as a proactive message.
+	Proactive bool `json:"proactive,omitempty"`
 }
 
 // Usage is the provider-neutral token usage recorded for an LLM response.
