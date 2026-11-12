@@ -135,12 +135,22 @@ type memoryRequestVerdict struct {
 // says nothing about this secret. Telling these apart in any language needs a
 // model, and the model that wanted to save is the one that misread them, so a
 // separate call answers for this candidate alone.
-type memoryRequestJudge func(ctx context.Context, userTexts []string, content string) (memoryRequestVerdict, error)
+type memoryRequestJudge func(ctx context.Context, candidate memoryRequestCandidate) (memoryRequestVerdict, error)
+
+// memoryRequestCandidate is what the judge reads for one save.
+type memoryRequestCandidate struct {
+	// UserTexts are the user's recent messages, oldest first.
+	UserTexts []string
+	// Content is the memory the Agent wants to save.
+	Content string
+	// UserRequest is the request the Agent quoted, if any.
+	UserRequest string
+}
 
 func newModelMemoryRequestJudge(model llms.Model) memoryRequestJudge {
-	return func(ctx context.Context, userTexts []string, content string) (memoryRequestVerdict, error) {
+	return func(ctx context.Context, candidate memoryRequestCandidate) (memoryRequestVerdict, error) {
 		var quoted strings.Builder
-		for _, text := range userTexts {
+		for _, text := range candidate.UserTexts {
 			if text = strings.TrimSpace(text); text != "" {
 				quoted.WriteString("- ")
 				quoted.WriteString(strconv.Quote(text))
@@ -153,7 +163,8 @@ asked: in the user's messages below, did the user explicitly ask the assistant t
 Only a request about this information counts. Merely stating or sharing it, even a password, is not a request; neither is a request to remember something else. If a later message withdraws the request, answer false.
 Answer with JSON only: {"secret": true or false, "asked": true or false}.
 
-Candidate memory: ` + strconv.Quote(content) + `
+Candidate memory: ` + strconv.Quote(candidate.Content) + `
+Request the assistant cited (it may be wrong, so check it against the messages): ` + strconv.Quote(candidate.UserRequest) + `
 
 User messages, oldest first:
 ` + quoted.String()

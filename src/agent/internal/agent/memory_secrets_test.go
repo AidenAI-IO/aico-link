@@ -50,7 +50,7 @@ func TestUserRequestQuoted(t *testing.T) {
 // that the user asked to keep the secret.
 func newRequestedSaveMemoryTool(store *LongTermMemoryStore) *SaveMemoryTool {
 	tool := NewSaveMemoryTool(store)
-	tool.requestJudge = func(context.Context, []string, string) (memoryRequestVerdict, error) {
+	tool.requestJudge = func(context.Context, memoryRequestCandidate) (memoryRequestVerdict, error) {
 		return memoryRequestVerdict{Secret: true, Asked: true}, nil
 	}
 	return tool
@@ -105,10 +105,10 @@ func TestSaveMemoryToolRefusesSecretTheJudgeFindsUnrequested(t *testing.T) {
 	input := `{"type":"fact","content":"家里 Wi-Fi 密码是 qwer8826","sensitive":"credential","user_request":"我家 Wi-Fi 密码是 qwer8826"}`
 	for name, judge := range map[string]memoryRequestJudge{
 		"no judge": nil,
-		"not asked": func(context.Context, []string, string) (memoryRequestVerdict, error) {
+		"not asked": func(context.Context, memoryRequestCandidate) (memoryRequestVerdict, error) {
 			return memoryRequestVerdict{Secret: true}, nil
 		},
-		"judge error": func(context.Context, []string, string) (memoryRequestVerdict, error) {
+		"judge error": func(context.Context, memoryRequestCandidate) (memoryRequestVerdict, error) {
 			return memoryRequestVerdict{Secret: true, Asked: true}, context.DeadlineExceeded
 		},
 	} {
@@ -159,8 +159,8 @@ func TestSaveMemoryToolJudgesTheCandidateNotAnyEarlierRequest(t *testing.T) {
 	if result["status"] != "refused" {
 		t.Fatalf("result = %v, want refused", result)
 	}
-	if len(model.prompts) != 1 || !strings.Contains(model.prompts[0], "qwer8826") {
-		t.Fatalf("judge prompts = %q, want one naming the candidate", model.prompts)
+	if len(model.prompts) != 1 || !strings.Contains(model.prompts[0], "qwer8826") || !strings.Contains(model.prompts[0], `"帮我记住"`) {
+		t.Fatalf("judge prompts = %q, want one naming the candidate and the cited request", model.prompts)
 	}
 }
 
@@ -188,7 +188,7 @@ func TestSaveMemoryToolJudgesUndeclaredSecret(t *testing.T) {
 			store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
 			tool := NewSaveMemoryTool(store)
 			judged := false
-			tool.requestJudge = func(context.Context, []string, string) (memoryRequestVerdict, error) {
+			tool.requestJudge = func(context.Context, memoryRequestCandidate) (memoryRequestVerdict, error) {
 				judged = true
 				return tc.verdict, tc.judgeErr
 			}

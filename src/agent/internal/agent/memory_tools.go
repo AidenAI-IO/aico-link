@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"aico-agent/internal/logging"
 
@@ -255,14 +256,13 @@ func (t *SaveMemoryTool) SetRequestModel(model llms.Model) {
 
 // judgeRequest asks the judge about one candidate. Without a judge it fails,
 // so callers treat it like an unavailable model.
-func (t *SaveMemoryTool) judgeRequest(ctx context.Context, userTexts []string, content string) (memoryRequestVerdict, error) {
+func (t *SaveMemoryTool) judgeRequest(ctx context.Context, candidate memoryRequestCandidate) (memoryRequestVerdict, error) {
 	if t.requestJudge == nil {
 		return memoryRequestVerdict{}, fmt.Errorf("no memory request judge configured")
 	}
-	verdict, err := t.requestJudge(ctx, userTexts, content)
-	if err != nil {
-		logging.Warnf("agent", "memory", "save_memory request judgment failed: %v", err)
-	}
+	started := time.Now()
+	verdict, err := t.requestJudge(ctx, candidate)
+	logging.Infof("agent", "memory", "save_memory request judgment secret=%t asked=%t err=%v elapsed_ms=%d", verdict.Secret, verdict.Asked, err, time.Since(started).Milliseconds())
 	return verdict, err
 }
 
@@ -283,7 +283,7 @@ func (t *SaveMemoryTool) Description() string {
 		"Do not tell the user something was remembered or saved until this tool returns status=saved or status=ignored as a duplicate.",
 		"Use profile for durable user facts (name, nickname, location, timezone, home city, role, background); preference/rule for future defaults and must/must-not behavior such as a default city; fact for stable info that should be recalled but not surfaced in the synthesized user profile.",
 		"A secret is kept only if the user explicitly asked to keep it: set sensitive and put in user_request only their words asking to remember it, never the sentence stating the secret; otherwise it is refused and you must say it was not remembered.",
-		"Set durable=false, or do not call at all, when the information will not still be true and useful a month from now; such a call is refused.",
+		"Set durable=false, or better do not call at all, for a one-off plan, appointment, reminder, or passing state; such a call is refused. durable=true is for a lasting preference, rule, procedure, or personal fact, including a preference the user limits to a period (\"keep replies short for the next three weeks\").",
 		"Returns status=saved with id, ignored for a duplicate, or refused.",
 		"To correct a previously saved memory, first recall it, then pass its id as replaces_id and its revision as expected_revision. Do not guess the target; a stale revision is rejected.",
 	}, " ")
@@ -302,7 +302,7 @@ func (t *SaveMemoryTool) ArgsSchema() map[string]any {
 		"expected_revision": minIntegerArgSchema("Revision returned by recall_memory for replaces_id.", 1),
 		"sensitive":         stringEnumArgSchema("Secret kind, if any.", "none", "credential", "payment_card"),
 		"user_request":      stringArgSchema("For a secret: the user's verbatim words asking to remember it."),
-		"durable":           boolArgSchema("Whether this will still be true and useful a month from now. false for one-off plans, appointments, reminders, and passing states."),
+		"durable":           boolArgSchema("false for a one-off plan, appointment, reminder, or passing state; true for a lasting preference, rule, procedure, or personal fact."),
 	}, "type", "content", "durable")
 }
 
@@ -317,9 +317,12 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 	if strings.TrimSpace(req.Content) == "" {
 		return "", fmt.Errorf("content is required")
 	}
-	// A correction is held to the same rule: a one-off plan must not replace
-	// a long-term memory either. An omitted durable is accepted, so a model
-	// that ignores the schema keeps saving as before.
+	// durable is the calling model's own classification, a self-check before
+	// it saves rather than an independent admission check: a model that
+	// misreads a plan can also report durable=true. A correction is held to
+	// the same rule, so a one-off plan cannot replace a long-term memory. An
+	// omitted durable is accepted, so a model that ignores the schema keeps
+	// saving as before.
 	if req.Durable != nil && !*req.Durable {
 		return encodeToolJSON(map[string]string{
 			"status": "refused",
@@ -337,7 +340,7 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 		}
 		// A declared secret is saved only on a confirmed request: the user
 		// can ask again, but a secret written by mistake persists.
-		verdict, err := t.judgeRequest(ctx, userTexts, req.Content)
+		verdict, err := t.judgeRequest(ctx, memoryRequestCandidate{UserTexts: userTexts, Content: req.Content, UserRequest: req.UserRequest})
 		if err != nil {
 			return encodeToolJSON(map[string]string{
 				"status": "refused",
@@ -351,7 +354,7 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 		// The model may leave sensitive unset on a secret. When the content
 		// could hold one, the judge decides; if it cannot, the save goes
 		// ahead as it would without the judge.
-		verdict, err := t.judgeRequest(ctx, EpisodeRecorderFromContext(ctx).UserTexts(), req.Content)
+		verdict, err := t.judgeRequest(ctx, memoryRequestCandidate{UserTexts: EpisodeRecorderFromContext(ctx).UserTexts(), Content: req.Content, UserRequest: req.UserRequest})
 		if err == nil && verdict.Secret {
 			if !verdict.Asked {
 				return encodeToolJSON(unrequestedSecretRefusal(memorySensitiveCredential))
