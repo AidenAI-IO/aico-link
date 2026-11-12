@@ -96,8 +96,11 @@ At runtime, the Agent is intentionally decoupled from C++ service internals: Fra
 ## Quick Start
 
 To run the Agent directly on your computer with a real Android phone or an
-iPhone through macOS iPhone Mirroring, start with
+iPhone through USB/WDA or macOS iPhone Mirroring, start with
 [Local Agent with a Real Phone](docs/01-getting-started/local-agent-real-phone.md).
+From the repository root, use `python3 scripts/local_agent.py android`,
+`python3 scripts/local_agent.py iphone-mirroring`, or
+`python3 scripts/local_agent.py ios` to start the selected native workflow.
 It covers native startup, Config Web, phone connection, verification, and switching targets.
 
 For the fastest hardware-free experience, start Config Web and Agent Web with

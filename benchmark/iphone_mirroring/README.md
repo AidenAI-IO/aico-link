@@ -4,6 +4,9 @@ For the complete native Agent and Config Web startup sequence, start with
 [Local Agent with a Real Phone](../../docs/01-getting-started/local-agent-real-phone.md).
 This README provides the iPhone-specific reference and diagnostics.
 
+For normal use, run `python3 scripts/local_agent.py iphone-mirroring` from the
+repository root. It starts Config Web, this bridge, and the native Agent together.
+
 Run the Agent on a Mac and operate a real iPhone through Apple's iPhone
 Mirroring app. This experimental backend implements the existing screenshot
 and MNK provider APIs. It does not require an RV1106 board, ADB, PyAutoGUI,

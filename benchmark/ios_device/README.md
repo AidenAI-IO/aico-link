@@ -52,6 +52,12 @@ account credentials belong in this repository.
 
 ## Start the Bridge and Agent
 
+After installing the signed runner, start the complete local workflow from
+the repository root with `python3 scripts/local_agent.py ios`. It builds the
+Agent, prepares dependencies, opens Config Web, and starts this bridge with
+the correct quick actions and task route. The manual commands below are for
+debugging the bridge separately.
+
 Keep the phone unlocked. Run only one XCTest/WDA controller for the device:
 
 ```bash
