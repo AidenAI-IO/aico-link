@@ -749,10 +749,11 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 					startFailureAnnouncement(sessionErr)
 				}
 			}
-			drainRealtimeWakeups(events, failureAnnouncementDone != nil)
-			// A device activation during the session was served by it; one
-			// that arrives after this point is new and sets the flag again.
+			// A device activation during the session was served by it. Clear
+			// the flag before draining: one that arrives during the drain sets
+			// it again, and is re-signalled below instead of being lost.
 			deviceActivation.Store(false)
+			drainRealtimeWakeups(events, failureAnnouncementDone != nil)
 			// A provider rotation continues the same conversation on the same
 			// route, unless the user asked to stop it.
 			if rotated && media.voice.Stopped() {
@@ -763,7 +764,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			// down. Preserve that activation after clearing stale wake events.
 			// A browser voice start queued during teardown would otherwise
 			// lose its wakeup to the drain above and stay connecting.
-			if rotated || chatBridgeHasPending(bridge) || (server != nil && server.RealtimeVoicePending()) {
+			if rotated || deviceActivation.Load() || chatBridgeHasPending(bridge) || (server != nil && server.RealtimeVoicePending()) {
 				signalWakeupEvent(events)
 			}
 			if !rotated {
@@ -1806,6 +1807,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	activeNotificationToken := ""
 	activeNotificationResponseID := ""
 	activeNotificationAudioWritten := false
+	activeNotificationSilenced := false
 	responseSuppressed := false
 	suppressedNotificationResponsePending := false
 	suppressedNotificationResponseIDs := make(map[string]struct{})
@@ -1936,6 +1938,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		if !currentAdmission().canInjectVoiceNotification() {
 			return nil
 		}
+		if media.voice.SpeakerMuted() {
+			// A notification is spoken only to be heard. Keep it pending
+			// until the speaker is unmuted or the next standby period.
+			return nil
+		}
 		prepared := runtime.PrepareVoiceNotification(ctx)
 		if prepared.DeliveryToken == "" || strings.TrimSpace(prepared.Text) == "" {
 			return nil
@@ -1951,6 +1958,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		activeNotificationToken = prepared.DeliveryToken
 		activeNotificationResponseID = ""
 		activeNotificationAudioWritten = false
+		activeNotificationSilenced = false
 		requestResponse()
 		return nil
 	}
@@ -2079,6 +2087,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			activeNotificationToken = ""
 			activeNotificationResponseID = ""
 			activeNotificationAudioWritten = false
+			activeNotificationSilenced = false
 			if err := tryInjectVoiceNotification(); err != nil {
 				return err
 			}
@@ -2309,6 +2318,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					activeNotificationToken = ""
 					activeNotificationResponseID = ""
 					activeNotificationAudioWritten = false
+					activeNotificationSilenced = false
 				}
 				logging.Infof("agent", "realtime", "Input speech started: provider=%s session_id=%s item_id=%s audio_start_ms=%d; interrupting local playback", providerName, info.ID, event.ItemID, event.AudioStartMS)
 				if canInterrupt {
@@ -2554,17 +2564,23 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if len(pcm) > 0 {
 					watchdog.progress()
 				}
+				audible := len(pcm) > 0
 				if media.voice.SpeakerMuted() {
 					// Keep the playback position moving so barge-in still
 					// truncates the provider's reply at the right point, but
 					// play silence instead of speech.
 					pcm = make([]byte, len(pcm))
+					audible = false
 				}
 				if err := playback.appendItem(playbackAudio, outputFormat, event.ItemID, pcm); err != nil {
 					return err
 				}
 				if activeNotificationToken != "" {
-					activeNotificationAudioWritten = activeNotificationAudioWritten || len(pcm) > 0
+					// Only speech the user heard in full counts as delivered; a
+					// notification muted at any point stays pending and is
+					// retried.
+					activeNotificationAudioWritten = activeNotificationAudioWritten || audible
+					activeNotificationSilenced = activeNotificationSilenced || (len(pcm) > 0 && !audible)
 				}
 			case realtimevoice.EventToolCall:
 				if !turnState.acceptsResponseEvent(event.ResponseID) {
@@ -2737,6 +2753,8 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						deliveryErr = fmt.Errorf("realtime notification response ended with status %q", event.Status)
 					} else if !activeNotificationAudioWritten {
 						deliveryErr = errors.New("realtime notification response produced no audio")
+					} else if activeNotificationSilenced {
+						deliveryErr = errors.New("realtime notification was muted before it finished")
 					}
 					if deliveryErr == nil {
 						if err := playback.finishResponse(playbackAudio, true); err != nil {
@@ -2751,6 +2769,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						activeNotificationToken = ""
 						activeNotificationResponseID = ""
 						activeNotificationAudioWritten = false
+						activeNotificationSilenced = false
 					} else {
 						drainCtx, cancel := context.WithTimeout(ctx, realtimeNotificationDrain)
 						notificationDrainCancel = cancel
