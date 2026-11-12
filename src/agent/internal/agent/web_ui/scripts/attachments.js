@@ -76,15 +76,17 @@ function imageMIMETypeFromDataURL(dataUrl) {
     return mimeType.indexOf('image/') === 0 ? mimeType : 'image/png';
 }
 
-function setComposerHint(text, isError) {
+// setComposerHint shows a short notice under the input. It clears itself
+// after a moment unless sticky is set.
+function setComposerHint(text, isError, sticky) {
     if (!composerHintEl) return;
     if (composerHintTimer) {
         clearTimeout(composerHintTimer);
         composerHintTimer = null;
     }
-    composerHintEl.textContent = text || defaultComposerHint;
+    composerHintEl.textContent = text || '';
     composerHintEl.classList.toggle('error', !!isError);
-    if (text) {
+    if (text && !sticky) {
         composerHintTimer = setTimeout(resetComposerHint, 2800);
     }
 }
@@ -95,7 +97,7 @@ function resetComposerHint() {
         clearTimeout(composerHintTimer);
         composerHintTimer = null;
     }
-    composerHintEl.textContent = defaultComposerHint;
+    composerHintEl.textContent = '';
     composerHintEl.classList.remove('error');
 }
 
@@ -397,11 +399,7 @@ async function addAttachmentFiles(files, source) {
 }
 
 function showSharedFileLoginHint() {
-    setComposerHint('Sign in to upload files, then select the file again. ', true);
-    if (composerHintTimer) {
-        clearTimeout(composerHintTimer);
-        composerHintTimer = null;
-    }
+    setComposerHint('Sign in to upload files, then select the file again. ', true, true);
     if (!composerHintEl) return;
     const link = document.createElement('a');
     // Keep this page and its draft intact while the shared host cookie is set.

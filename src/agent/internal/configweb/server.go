@@ -20,6 +20,7 @@ import (
 	"aico-agent/internal/agent"
 	"aico-agent/internal/backup"
 	"aico-agent/internal/lanaccess"
+	"aico-agent/internal/localtls"
 	"aico-agent/internal/logging"
 	"aico-agent/internal/usbuplink"
 	"aico-agent/internal/wifiproxy"
@@ -35,6 +36,9 @@ type Server struct {
 	options                  Options
 	http                     *http.Server
 	usbHTTP                  *http.Server
+	https                    *http.Server
+	usbHTTPS                 *http.Server
+	authority                *localtls.Authority
 	usbRetryStop             chan struct{}
 	usbRetryOnce             sync.Once
 	storage                  storageController
@@ -136,11 +140,27 @@ func NewServer(options Options) (*Server, error) {
 	if options.LANGuard {
 		handler = lanaccess.Guard(s.lanAccess, s)
 	}
+	if options.HTTPSPort > 0 {
+		authority, err := localtls.Load(options.TLSDir)
+		if err != nil {
+			// HTTPS adds browser features; the portal keeps serving HTTP.
+			logging.Warnf("config_web", "config_web", "HTTPS disabled: %v", err)
+		} else {
+			s.authority = authority
+		}
+	}
 	usbOnly := options.BindAddress == options.USBAddress
 	s.http = configHTTPServer(options.Addr(), handler, usbOnly)
 	if options.BindAddress == "0.0.0.0" {
 		s.usbHTTP = configHTTPServer(net.JoinHostPort(options.USBAddress, strconv.Itoa(options.Port)), handler, true)
 		s.usbRetryStop = make(chan struct{})
+	}
+	if s.authority != nil {
+		httpsAddr := net.JoinHostPort(options.BindAddress, strconv.Itoa(options.HTTPSPort))
+		s.https = configHTTPSServer(httpsAddr, handler, usbOnly, s.authority)
+		if options.BindAddress == "0.0.0.0" {
+			s.usbHTTPS = configHTTPSServer(net.JoinHostPort(options.USBAddress, strconv.Itoa(options.HTTPSPort)), handler, true, s.authority)
+		}
 	}
 	if s.usbTerminal != nil && s.usbRetryStop == nil {
 		s.usbRetryStop = make(chan struct{})
@@ -173,7 +193,10 @@ func (s *Server) ListenAndServe() error {
 		// The USB gadget can come up after Config Web (a Wants= dependency);
 		// keep retrying the interface-bound socket in the background so USB
 		// maintenance becomes available without a service restart.
-		go s.serveUSBListener(errorsCh)
+		go s.serveUSBListener(s.usbHTTP, false, errorsCh)
+	}
+	if s.usbHTTPS != nil {
+		go s.serveUSBListener(s.usbHTTPS, true, errorsCh)
 	}
 	device := ""
 	if s.options.BindAddress == s.options.USBAddress {
@@ -184,6 +207,21 @@ func (s *Server) ListenAndServe() error {
 		return err
 	}
 	defer listener.Close()
+	if s.https != nil {
+		httpsListener, err := lanaccess.ListenOnDevice("tcp4", s.https.Addr, device)
+		if err != nil {
+			logging.Warnf("config_web", "config_web", "HTTPS listener unavailable on %s: %v", s.https.Addr, err)
+		} else {
+			defer httpsListener.Close()
+			logging.Infof("config_web", "config_web", "HTTPS listening on %s", s.https.Addr)
+			go func() {
+				err := s.https.ServeTLS(httpsListener, "", "")
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					logging.Warnf("config_web", "config_web", "HTTPS listener stopped; HTTP keeps serving: %v", err)
+				}
+			}()
+		}
+	}
 	go func() { errorsCh <- s.http.Serve(listener) }()
 	err = <-errorsCh
 	if errors.Is(err, http.ErrServerClosed) {
@@ -195,9 +233,11 @@ func (s *Server) ListenAndServe() error {
 // serveUSBListener binds the SO_BINDTODEVICE maintenance socket, retrying
 // with backoff until it succeeds or the server shuts down.  Failures are
 // fail-closed: no USB listener means no maintenance authorization.
-func (s *Server) serveUSBListener(errorsCh chan<- error) {
+// useTLS is explicit because net/http fills in TLSConfig on a plain server
+// when it starts serving, so the field cannot tell the two apart.
+func (s *Server) serveUSBListener(server *http.Server, useTLS bool, errorsCh chan<- error) {
 	listener, err := lanaccess.RetryListen(func() (net.Listener, error) {
-		return lanaccess.ListenOnDevice("tcp4", s.usbHTTP.Addr, s.options.USBInterface)
+		return lanaccess.ListenOnDevice("tcp4", server.Addr, s.options.USBInterface)
 	}, s.usbRetryStop, func(attempt int, err error) {
 		if attempt == 1 {
 			logging.Warnf("config_web", "config_web", "USB maintenance listener unavailable (fail closed), retrying: %v", err)
@@ -206,7 +246,7 @@ func (s *Server) serveUSBListener(errorsCh chan<- error) {
 	if err != nil {
 		return
 	}
-	logging.Infof("config_web", "config_web", "USB maintenance listener ready on %s (%s)", s.usbHTTP.Addr, s.options.USBInterface)
+	logging.Infof("config_web", "config_web", "USB maintenance listener ready on %s (%s)", server.Addr, s.options.USBInterface)
 	select {
 	case <-s.usbRetryStop:
 		// Shutdown raced the successful bind; Serve would return immediately.
@@ -214,7 +254,15 @@ func (s *Server) serveUSBListener(errorsCh chan<- error) {
 		return
 	default:
 	}
-	errorsCh <- s.usbHTTP.Serve(listener)
+	if useTLS {
+		// HTTPS adds browser features; its failure must not end the portal,
+		// so it reports to the log rather than errorsCh.
+		if err := server.ServeTLS(listener, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logging.Warnf("config_web", "config_web", "USB HTTPS listener stopped; HTTP keeps serving: %v", err)
+		}
+		return
+	}
+	errorsCh <- server.Serve(listener)
 }
 
 func (s *Server) stopUSBRetry() {
@@ -233,16 +281,18 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.restoreJobs != nil {
 		s.restoreJobs.cancelAll()
 	}
-	shutdownErrors := make(chan error, 3)
+	shutdownErrors := make(chan error, 5)
 	go func() { shutdownErrors <- s.http.Shutdown(ctx) }()
 	count := 1
 	if s.usbTerminal != nil {
 		count++
 		go func() { shutdownErrors <- s.usbTerminal.Shutdown(ctx) }()
 	}
-	if s.usbHTTP != nil {
-		count++
-		go func() { shutdownErrors <- s.usbHTTP.Shutdown(ctx) }()
+	for _, server := range []*http.Server{s.usbHTTP, s.https, s.usbHTTPS} {
+		if server != nil {
+			count++
+			go func() { shutdownErrors <- server.Shutdown(ctx) }()
+		}
 	}
 	var err error
 	for index := 0; index < count; index++ {
@@ -257,6 +307,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.authority != nil && r.URL.Path == localtls.AuthorityPath {
+		s.authority.ServeAuthority(w, r)
+		return
+	}
 	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 		s.APIHandler().ServeHTTP(w, r)
 		return
