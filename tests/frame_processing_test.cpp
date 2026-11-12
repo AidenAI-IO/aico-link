@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "frame_processing.h"
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -304,6 +305,123 @@ TEST_CASE("known screen ratio derives portrait orientation from current frame") 
     CHECK(cropped_metadata.height == 8);
     CHECK(cropped_metadata.crop_x == 4);
     CHECK(cropped_metadata.crop_y == 0);
+}
+
+// A dark screen in a frame the size the board captures. Each whole frame
+// line averages out as black, so the sampled border score ties between the
+// two orientations; only the phone's own region tells them apart.
+static std::vector<uint8_t> dark_frame_nv12(uint32_t width, uint32_t height) {
+    std::vector<uint8_t> nv12(static_cast<size_t>(width) * height * 3U / 2U, 128);
+    std::fill(nv12.begin(), nv12.begin() + static_cast<size_t>(width) * height, 16);
+    return nv12;
+}
+
+static FrameMetadata nv12_meta(uint32_t width, uint32_t height) {
+    FrameMetadata metadata;
+    metadata.width = width;
+    metadata.height = height;
+    metadata.pixel_format = "nv12";
+    metadata.stride = width;
+    metadata.bytes = static_cast<uint32_t>(static_cast<size_t>(width) * height * 3U / 2U);
+    return metadata;
+}
+
+TEST_CASE("dark portrait screen keeps portrait when the sampled border score ties") {
+    // A portrait 440x956 phone mirrored into 1920x1080 occupies the centered
+    // columns 712..1207 on a dark UI. Its only bright content in the rows a
+    // landscape crop removes (0..97) is status bar text on rows 28..55, which
+    // the five sampled border rows (0, 24, 48, 72, 97) step over, the same
+    // as a real dark sheet captured on the board.
+    const uint32_t width = 1920;
+    const uint32_t height = 1080;
+    FrameMetadata metadata = nv12_meta(width, height);
+    std::vector<uint8_t> frame = dark_frame_nv12(width, height);
+    for (uint32_t y = 28; y < 56; ++y) {
+        if (y == 48) {
+            continue;
+        }
+        for (uint32_t x = 740; x < 1180; x += 3) {
+            frame[static_cast<size_t>(y) * width + x] = 235;
+        }
+    }
+    // Some dark UI content in the phone's middle rows.
+    for (uint32_t y = 300; y < 340; ++y) {
+        for (uint32_t x = 760; x < 1160; x += 4) {
+            frame[static_cast<size_t>(y) * width + x] = 200;
+        }
+    }
+    FrameMetadata resolved;
+
+    REQUIRE(resolve_frame_center_aspect_auto_crop(metadata, frame, 440, 956, &resolved));
+    CHECK(resolved.crop_y == 0);
+    CHECK(resolved.crop_height == height);
+    CHECK(resolved.crop_width < 520);
+}
+
+TEST_CASE("dark landscape screen keeps landscape when the sampled border score ties") {
+    // The mirror case: a landscape phone spans the frame width between black
+    // bars above and below, with bright text only near its left edge, which a
+    // portrait crop would cut.
+    const uint32_t width = 1920;
+    const uint32_t height = 1080;
+    FrameMetadata metadata = nv12_meta(width, height);
+    std::vector<uint8_t> frame = dark_frame_nv12(width, height);
+    // Landscape content sits in rows 98..981; its bright text lies in columns
+    // that a portrait crop removes, between the five sampled border columns
+    // (0, 177, 355, 533, 711), and in rows sparse enough to keep each whole
+    // frame column black on average.
+    for (uint32_t y = 150; y < 930; y += 6) {
+        for (uint32_t x = 30; x < 170; ++x) {
+            frame[static_cast<size_t>(y) * width + x] = 235;
+        }
+    }
+    FrameMetadata resolved;
+
+    REQUIRE(resolve_frame_center_aspect_auto_crop(metadata, frame, 440, 956, &resolved));
+    CHECK(resolved.crop_x == 0);
+    CHECK(resolved.crop_width == width);
+    CHECK(resolved.crop_height < height);
+}
+
+TEST_CASE("dark portrait screen keeps short content when both crops cut something") {
+    // A seven-row status bar inside the portrait columns, plus a small
+    // bright patch outside them: both crops would remove some content, and
+    // portrait removes far less.
+    const uint32_t width = 1920;
+    const uint32_t height = 1080;
+    FrameMetadata metadata = nv12_meta(width, height);
+    std::vector<uint8_t> frame = dark_frame_nv12(width, height);
+    for (uint32_t y = 30; y < 37; ++y) {
+        for (uint32_t x = 740; x < 1180; x += 3) {
+            frame[static_cast<size_t>(y) * width + x] = 235;
+        }
+    }
+    for (uint32_t y = 500; y < 520; ++y) {
+        for (uint32_t x = 300; x < 308; ++x) {
+            frame[static_cast<size_t>(y) * width + x] = 235;
+        }
+    }
+    FrameMetadata resolved;
+
+    REQUIRE(resolve_frame_center_aspect_auto_crop(metadata, frame, 440, 956, &resolved));
+    CHECK(resolved.crop_y == 0);
+    CHECK(resolved.crop_height == height);
+    CHECK(resolved.crop_width < 520);
+}
+
+TEST_CASE("a stray bright pixel does not pick the orientation of a dark frame") {
+    // One bright pixel in a row a landscape crop removes is noise, not a
+    // portrait status bar: the orientation stays with the geometry fallback.
+    const uint32_t width = 1920;
+    const uint32_t height = 1080;
+    FrameMetadata metadata = nv12_meta(width, height);
+    std::vector<uint8_t> frame = dark_frame_nv12(width, height);
+    frame[static_cast<size_t>(40) * width + 1000] = 235;
+    FrameMetadata resolved;
+
+    REQUIRE(resolve_frame_center_aspect_auto_crop(metadata, frame, 440, 956, &resolved));
+    CHECK(resolved.crop_x == 0);
+    CHECK(resolved.crop_width == width);
 }
 
 TEST_CASE("known screen ratio retains one column to make portrait crop even") {

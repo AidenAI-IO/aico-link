@@ -90,6 +90,8 @@ type Options struct {
 	OTAUpdateLogPath       string
 	OTAHealthLogPath       string
 	DmesgBinary            string
+
+	BusinessPackageQueryBinary string
 }
 
 func DefaultOptions() Options {
@@ -155,6 +157,8 @@ func DefaultOptions() Options {
 		OTAUpdateLogPath:       envOrDefault("AICO_CONFIG_WEB_OTA_UPDATE_LOG", "/userdata/ota/config_web_ota_update.log"),
 		OTAHealthLogPath:       envOrDefault("AICO_CONFIG_WEB_OTA_HEALTH_LOG", "/var/log/ota/ota.log"),
 		DmesgBinary:            envOrDefault("AICO_CONFIG_WEB_DMESG_BIN", "dmesg"),
+
+		BusinessPackageQueryBinary: envOrDefault("AICO_DPKG_QUERY_BIN", "dpkg-query"),
 	}
 }
 

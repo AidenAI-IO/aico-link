@@ -1,11 +1,19 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/messages"
+
+	"github.com/tmc/langchaingo/llms"
 )
 
 // priorUserTurnsForMemoryRequests is how many earlier user messages count as
@@ -106,4 +114,96 @@ func normalizeQuotedText(text string) string {
 		}
 		return -1
 	}, text)
+}
+
+// memoryRequestJudgeTimeout bounds the judgment so that a slow model cannot
+// hold up the reply.
+const memoryRequestJudgeTimeout = 20 * time.Second
+
+// errMemoryRequestJudgmentParse reports a judge response that is not the
+// expected JSON.
+var errMemoryRequestJudgmentParse = errors.New("parse memory request judgment")
+
+// memoryRequestVerdict is the judge's reading of one candidate memory.
+type memoryRequestVerdict struct {
+	// Secret is true when the content holds a password, PIN, card number, or
+	// similar secret.
+	Secret bool `json:"secret"`
+	// Asked is true when the user asked to remember this content itself.
+	Asked bool `json:"asked"`
+}
+
+// memoryRequestJudge reads the user's recent messages and one candidate
+// memory. userRequestQuoted only proves that a quote is the user's own words;
+// a statement such as "my Wi-Fi password is …" passes it although nothing was
+// requested, and a request to remember something else earlier in the window
+// says nothing about this secret. Telling these apart in any language needs a
+// model, and the model that wanted to save is the one that misread them, so a
+// separate call answers for this candidate alone.
+type memoryRequestJudge func(ctx context.Context, candidate memoryRequestCandidate) (memoryRequestVerdict, error)
+
+// memoryRequestCandidate is what the judge reads for one save.
+type memoryRequestCandidate struct {
+	// UserTexts are the user's recent messages, oldest first.
+	UserTexts []string
+	// Content is the memory the Agent wants to save.
+	Content string
+	// UserRequest is the request the Agent quoted, if any.
+	UserRequest string
+}
+
+func newModelMemoryRequestJudge(model llms.Model) memoryRequestJudge {
+	return func(ctx context.Context, candidate memoryRequestCandidate) (memoryRequestVerdict, error) {
+		var quoted strings.Builder
+		for _, text := range candidate.UserTexts {
+			if text = strings.TrimSpace(text); text != "" {
+				quoted.WriteString("- ")
+				quoted.WriteString(strconv.Quote(text))
+				quoted.WriteString("\n")
+			}
+		}
+		prompt := `An assistant wants to save the candidate memory below to long-term memory. Answer two questions about it.
+secret: does the candidate contain a password, PIN, passcode, card number, or similar secret?
+asked: in the user's messages below, did the user explicitly ask the assistant to remember, save, or note down this candidate's information?
+Only a request about this information counts. Merely stating or sharing it, even a password, is not a request; neither is a request to remember something else. If a later message withdraws the request, answer false.
+Answer with JSON only: {"secret": true or false, "asked": true or false}.
+
+Candidate memory: ` + strconv.Quote(candidate.Content) + `
+Request the assistant cited (it may be wrong, so check it against the messages): ` + strconv.Quote(candidate.UserRequest) + `
+
+User messages, oldest first:
+` + quoted.String()
+		callCtx, cancel := context.WithTimeout(ctx, memoryRequestJudgeTimeout)
+		defer cancel()
+		raw, err := llms.GenerateFromSinglePrompt(callCtx, model, prompt, llms.WithJSONMode(), llms.WithMaxTokens(64))
+		if err != nil {
+			return memoryRequestVerdict{}, err
+		}
+		var verdict memoryRequestVerdict
+		if err := json.Unmarshal([]byte(stripJSONFences(raw)), &verdict); err != nil {
+			// The response may repeat the secret, so it stays out of the error.
+			return memoryRequestVerdict{}, fmt.Errorf("%w: %v", errMemoryRequestJudgmentParse, err)
+		}
+		return verdict, nil
+	}
+}
+
+// minSecretLikeLength is the shortest run that mayHoldSecret considers; it
+// covers a four-digit PIN.
+const minSecretLikeLength = 4
+
+// mayHoldSecret reports whether content contains a run of ASCII letters and
+// digits with at least one digit, the shape of most passwords, PINs, and card
+// numbers. It only decides whether a save the model did not mark sensitive is
+// worth asking the judge about; it never refuses or marks a memory itself, so
+// a false match costs one judge call and a secret without digits is missed.
+func mayHoldSecret(content string) bool {
+	for _, run := range strings.FieldsFunc(content, func(r rune) bool {
+		return r > unicode.MaxASCII || !(unicode.IsLetter(r) || unicode.IsDigit(r))
+	}) {
+		if len(run) >= minSecretLikeLength && strings.IndexFunc(run, unicode.IsDigit) >= 0 {
+			return true
+		}
+	}
+	return false
 }

@@ -12,7 +12,6 @@
 #include <linux/mmc/sdio_func.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
-#include <linux/property.h>
 #include <linux/semaphore.h>
 #include <linux/debugfs.h>
 #include <linux/kthread.h>
@@ -344,7 +343,7 @@ static int aicbsp_sdio_probe(struct sdio_func *func,
 	}
 	dev_set_drvdata(&func->dev, bus_if);
 	sdiodev->dev = &func->dev;
-	/* Retained firmware may deliver RX as soon as IRQs are enabled. */
+	/* RX can arrive as soon as IRQs are enabled; set up the command manager first. */
 	aicbsp_platform_init(sdiodev);
 
 	if (sdiodev->chipid != PRODUCT_ID_AIC8800D80 &&
@@ -397,10 +396,7 @@ static void aicbsp_sdio_remove(struct sdio_func *func)
 	}
 
 	host = func->card->host;
-	/* The retained board owns this capability across driver reloads. */
-	if (!device_property_read_bool(host->parent,
-				       "aico,aic8800d80-retained-sdio"))
-		host->caps &= ~MMC_CAP_NONREMOVABLE;
+	host->caps &= ~MMC_CAP_NONREMOVABLE;
 
 	bus_if = aicbsp_get_drvdata(&func->dev);
 
@@ -608,6 +604,8 @@ int aicbsp_sdio_init(void)
 {
 	int ret;
 
+	/* Drop a signal left by a probe that raced an earlier timeout. */
+	sema_init(&aicbsp_probe_semaphore, 0);
 	ret = sdio_register_driver(&aicbsp_sdio_driver);
 	if (ret)
 		return ret;

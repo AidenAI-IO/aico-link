@@ -92,6 +92,10 @@ type Message struct {
 	// compaction summary. It is written by the model, not the user, so code
 	// that needs the user's own words skips it.
 	CompactionSummary bool `json:"compaction_summary,omitempty"`
+	// Proactive marks an assistant message the Agent started on its own,
+	// outside any user turn. Providers see an ordinary assistant message;
+	// clients render it as a proactive message.
+	Proactive bool `json:"proactive,omitempty"`
 }
 
 // Usage is the provider-neutral token usage recorded for an LLM response.
@@ -204,6 +208,9 @@ type ToolResultMeta struct {
 	ObservationComplete bool   `json:"observation_complete,omitempty"`
 	ProcessingErrorCode string `json:"processing_error_code,omitempty"`
 	ArtifactStoreError  string `json:"artifact_store_error,omitempty"`
+	// IsError records that the tool execution failed, so history keeps the
+	// failure the live stream reported. It is not sent to the model.
+	IsError bool `json:"is_error,omitempty"`
 	// RequiresComplete marks a complete result from a tool whose output is
 	// only useful in full. Current-turn pruning must not replace it with a
 	// placeholder; conversation compaction may still summarize it.

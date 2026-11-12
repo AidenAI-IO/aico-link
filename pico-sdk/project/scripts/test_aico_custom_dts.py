@@ -197,7 +197,7 @@ class AicoCustomBoardTest(unittest.TestCase):
             "supports-sdio;", "non-removable;", "cap-sdio-irq;",
             "keep-power-in-suspend;", "rockchip,default-sample-phase = <90>;",
             "vmmc-supply = <&v_wifi_vcc>;", "vqmmc-supply = <&vcc_1v8>;",
-            "pinctrl-0 = <&sdmmc1m0_cmd &sdmmc1m0_clk &sdmmc1m0_bus4>;",
+            "pinctrl-0 = <&sdmmc1m0_cmd &sdmmc1m0_clk &sdmmc1m0_bus4 &wifi_enable>;",
         ):
             with self.subTest(setting=setting):
                 self.assertIn(setting, sdio)

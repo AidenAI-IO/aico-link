@@ -50,9 +50,10 @@ This preserves the iPhone bond across reboot and firmware rootfs replacement.
 
 Before `ble_service` starts, `aico-bluetooth-clear-adv` waits up to 10 seconds
 for `hci0` to come up, then disables and clears every extended advertising set
-in the controller. A warm reboot reuses the running AIC8800 firmware
-(`fw_state=reused`), and the controller keeps the previous boot's advertising
-set across HCI Reset. Without the cleanup, the controller rejects
+in the controller. The controller keeps its advertising sets across HCI
+Reset whenever its firmware keeps running, for example when the Bluetooth
+stack restarts without a reboot; only the WL_EN reset during Wi-Fi driver
+startup clears them. Without the cleanup, the controller rejects
 `LE Set Extended Advertising Parameters` with `Command Disallowed (0x0c)`,
 `bluetoothd` logs `Failed to add advertisement: Busy (0x0a)` every two seconds,
 and `ble_service.log` repeats `register BLE advertisement: Failed to register
