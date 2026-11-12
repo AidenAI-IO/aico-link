@@ -23,6 +23,8 @@ from release import business
 
 PUBLIC_KEY = ROOT / "overlay-debian/usr/share/keyrings/aico-archive-keyring.asc"
 PAGES_LIMIT = 900 * 1024 * 1024
+# Signed indexes, the key and the landing page stay far below this reserve.
+METADATA_RESERVE = 16 * 1024 * 1024
 
 
 def sha256(path):
@@ -34,7 +36,15 @@ def suite_for(record):
     return f"{record['channel']}-c{record['platform']['contract']}"
 
 
-def select_records(records, repo, keep=3):
+def package_name(record):
+    return f"aico-business_{record['version']}-1_armhf.deb"
+
+
+def package_size(records):
+    return sum(record["assets"][package_name(record)]["size"] for record in records)
+
+
+def select_records(records, repo, keep=3, budget=PAGES_LIMIT - METADATA_RESERVE):
     if keep < 2:
         raise ValueError("Retain at least two versions per contract for cached APT indexes")
     history = validate_history(records, repo)
@@ -45,16 +55,27 @@ def select_records(records, repo, keep=3):
         and f"aiden-business_{record['version']}-1_armhf.deb" in record["assets"]
         and f"aico-business_{record['version']}-1_armhf.deb" not in record["assets"]
     }
-    suites = {}
+    suites, current = {}, {}
     for record in history:
         if record["platform"]["base_release"] in legacy_bases:
             continue
         suites.setdefault(suite_for(record), []).append(record)
-    return {suite: items[-keep:] for suite, items in sorted(suites.items())}
+        current[record["channel"]] = suite_for(record)
+    # Hybrid updates install OTA before APT, so a device on a superseded contract
+    # reads its suite only until it moves to the channel's current contract.
+    selected = {suite: items[-keep:] if suite in current.values() else items[-1:]
+                for suite, items in suites.items()}
+    superseded = sorted((suite for suite in selected if suite not in current.values()),
+                        key=lambda suite: version_tuple(selected[suite][-1]["version"]))
+    while package_size(r for items in selected.values() for r in items) > budget:
+        if not superseded:
+            raise ValueError("Current platform contracts alone exceed the APT site budget")
+        del selected[superseded.pop(0)]
+    return dict(sorted(selected.items()))
 
 
 def fetch_package(record, cache):
-    name = f"aico-business_{record['version']}-1_armhf.deb"
+    name = package_name(record)
     expected = record["assets"][name]
     directory = cache / record["tag"]
     directory.mkdir(parents=True, exist_ok=True)

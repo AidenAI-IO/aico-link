@@ -204,6 +204,9 @@ type ToolResultMeta struct {
 	ObservationComplete bool   `json:"observation_complete,omitempty"`
 	ProcessingErrorCode string `json:"processing_error_code,omitempty"`
 	ArtifactStoreError  string `json:"artifact_store_error,omitempty"`
+	// IsError records that the tool execution failed, so history keeps the
+	// failure the live stream reported. It is not sent to the model.
+	IsError bool `json:"is_error,omitempty"`
 	// RequiresComplete marks a complete result from a tool whose output is
 	// only useful in full. Current-turn pruning must not replace it with a
 	// placeholder; conversation compaction may still summarize it.

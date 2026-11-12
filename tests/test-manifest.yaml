@@ -75,6 +75,7 @@ suites:
     command: |
       node src/agent/internal/agent/web_ui_test/streaming_text.test.js
       node src/agent/internal/agent/web_ui_test/history_reconciliation.test.js
+      node src/agent/internal/agent/web_ui_test/markdown.test.js
       node --test --experimental-vm-modules \
         tests/*.mjs \
         tests/contracts/*.test.mjs \
