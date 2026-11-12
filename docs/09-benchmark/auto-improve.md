@@ -51,7 +51,8 @@ flowchart TD
    - `external`: hardware, firmware, app or service code the runner cannot execute.
 
    The session sees earlier issues and is told not to re-propose findings people
-   rejected.
+   rejected. A cause that an open issue already tracks is proposed again with that
+   issue's targets, so it is reproduced and the issue gets a follow-up comment.
 3. **Evidence checks.** Trusted code drops a finding that cites a task not
    observed failing in the window, cites no existing repository source file, or
    has no evidence. Agent findings must target agent-eligible failures that the

@@ -647,7 +647,9 @@ def test_existing_issues_are_updated_and_rejected_findings_are_not_refiled(tmp_p
     assert [d["action"] for d in drafts] == ([action] if action else [])
     assert (runs == ["a:one"]) is reproduced
     if action == "comment":
-        assert drafts[0]["number"] == 7 and "auto-improve-observation:40-1__41-1__42-1" in drafts[0]["observation"]
+        comment = drafts[0]["observation"]
+        assert drafts[0]["number"] == 7 and "auto-improve-observation:40-1__41-1__42-1" in comment
+        assert "analyzed on `main` `0123456789ab`" in comment and "finding-1/daily-observations.json" in comment
     if action == "create" and existing["user"]["login"] == "github-actions[bot]":
         assert "Possibly a regression of #7" in drafts[0]["body"]
     if action is None:

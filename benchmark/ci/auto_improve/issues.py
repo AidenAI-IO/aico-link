@@ -119,7 +119,8 @@ def observation(finding: dict, manifest: dict, run_url: str) -> str:
              f"Still observed in {window(manifest)}, analyzed on {revision(manifest)}.", ""]
     for target in finding["key"]["targets"]:
         lines.append(f"- `{target}`: failed in {finding['failures_by_target'].get(target, 0)}/{finding['window_runs']} "
-                     f"daily runs" + ("; reproduced" if target in reproduced else ""))
+                     f"daily runs" + ("; reproduced" if target in reproduced else "; not reproduced"))
+    lines += ["", f"Daily outcomes: `finding-{finding['number']}/daily-observations.json` in the evidence artifact."]
     if run_url:
-        lines += ["", f"Evidence artifacts (14-day retention): {run_url}"]
+        lines += [f"Evidence artifacts (14-day retention): {run_url}"]
     return "\n".join(lines)

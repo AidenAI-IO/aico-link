@@ -164,7 +164,10 @@ DIAGNOSIS_PROMPT = (
     "use symptom kind=none, pattern=''. Hardware, firmware, app or service code that this benchmark cannot "
     "execute is external_code. existing_issues lists earlier findings and how people resolved them: do not "
     "propose a finding a person closed as not planned or false positive unless new evidence contradicts that "
-    "outcome. Each failure detail contains observations from all selected daily runs; prefer persistent causes "
+    "outcome. If an OPEN issue already tracks a cause that still fails in this window, still propose it as a "
+    "cluster with exactly that issue's targets (those still failing): the pipeline reproduces it and adds a "
+    "follow-up to the issue instead of filing a duplicate. Never propose new targets for an open issue's cause "
+    "in the same cluster; a different cause is its own cluster. Each failure detail contains observations from all selected daily runs; prefer persistent causes "
     "and mark a cluster supported only when the evidence establishes its cause. Do not propose code edits.")
 
 AUDIT_PROMPT = (
