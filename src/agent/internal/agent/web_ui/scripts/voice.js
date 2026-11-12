@@ -35,6 +35,9 @@ let voiceActivity = 'idle';
 let voiceLocal = null;
 let voiceStatusRequest = 0;
 let voiceStatusFailures = 0;
+// True from pressing End until the agent has answered. A stop names no
+// session, so a session started meanwhile could be the one it ends.
+let voiceStopping = false;
 
 // createVoiceResampler converts Float32 frames between sample rates with
 // linear interpolation, carrying the fractional position across frames.
@@ -210,7 +213,7 @@ function handleRealtimeVoiceEvent(event) {
 }
 
 async function startRealtimeVoice() {
-    if (voiceModeActive()) return;
+    if (voiceModeActive() || voiceStopping) return;
     if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         const secureURL = realtimeVoiceSecureURL();
         if (secureURL) {
@@ -249,6 +252,7 @@ async function startRealtimeVoice() {
             return;
         }
         local.stream = stream;
+        applyLocalVoiceMute(local);
         await local.context.audioWorklet.addModule('/web-ui/scripts/voice_capture_worklet.js');
         if (local.ended) return;
         const source = local.context.createMediaStreamSource(local.stream);
@@ -265,6 +269,7 @@ async function startRealtimeVoice() {
         local.outputAnalyser.fftSize = 512;
         local.outputGain.connect(local.outputAnalyser);
         local.outputAnalyser.connect(local.context.destination);
+        applyLocalVoiceMute(local);
         openVoiceSocket(local);
         startVoiceMeter(local);
     } catch (err) {
@@ -502,21 +507,31 @@ async function endRealtimeVoice() {
     // Show the end at once; the agent confirms it on the next refresh.
     patchVoiceStatus({state: 'idle'});
     voiceActivity = 'idle';
+    voiceStopping = true;
     renderRealtimeVoice();
     try {
         await fetch('/api/realtime/voice/stop', {method: 'POST'});
     } catch (err) {
         setComposerHint('Could not end the voice session', true);
     }
+    voiceStopping = false;
     refreshRealtimeVoiceStatus();
+}
+
+// applyLocalVoiceMute puts a browser session's mute state on its audio
+// resources. The buttons work while the microphone prompt is still open,
+// before the stream and the output exist, so this also runs as each appears.
+function applyLocalVoiceMute(local) {
+    // A disabled track captures silence, so nothing leaves the browser.
+    if (local.stream) local.stream.getAudioTracks().forEach(track => { track.enabled = !local.muted; });
+    if (local.outputGain) local.outputGain.gain.value = local.speakerMuted ? 0 : 1;
 }
 
 async function toggleRealtimeVoiceMute() {
     const muted = !voiceView().muted;
     if (voiceLocal) {
         voiceLocal.muted = muted;
-        // A disabled track captures silence, so nothing leaves the browser.
-        voiceLocal.stream.getAudioTracks().forEach(track => { track.enabled = !muted; });
+        applyLocalVoiceMute(voiceLocal);
     }
     patchVoiceStatus({muted});
     renderRealtimeVoice();
@@ -529,7 +544,7 @@ async function toggleRealtimeVoiceSpeaker() {
     const speakerMuted = !voiceView().speakerMuted;
     if (voiceLocal) {
         voiceLocal.speakerMuted = speakerMuted;
-        voiceLocal.outputGain.gain.value = speakerMuted ? 0 : 1;
+        applyLocalVoiceMute(voiceLocal);
     }
     patchVoiceStatus({speaker_muted: speakerMuted});
     renderRealtimeVoice();

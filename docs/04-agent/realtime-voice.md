@@ -178,8 +178,9 @@ The Web UI uses these endpoints:
   `{"speaker_muted": bool}`, or both. A muted microphone sends silence, so the
   provider keeps receiving a continuous stream and its turn detection sees
   silence instead of a stall. A muted speaker plays silence in place of the
-  reply; transcripts, tools, and history continue. A notification that would
-  be spoken while the speaker is muted stays pending.
+  reply and drops speech already queued for playback; transcripts, tools, and
+  history continue. A notification that would be spoken while the speaker is
+  muted stays pending.
 - `GET /api/realtime/voice/ws` starts a `web` session. Binary frames carry
   signed 16-bit little-endian PCM in both directions. The agent sends JSON
   control messages: `capture_start` and `playback_start` carry the PCM format,
@@ -244,10 +245,9 @@ To use browser voice:
    macOS, open the file in Keychain Access and set it to Always Trust. Firefox
    keeps its own certificate store, so import it there as well.
 
-Certificate validity follows the board's clock. A board whose clock is far
-behind, for example one that has never been online, issues certificates a
-browser may reject as expired or not yet valid; they are reissued after the
-clock is set, and the browser then asks about the address again.
+Certificate validity follows the board's clock. The firmware sets a default
+system time close to the real time, so certificates issued before the clock
+is synchronized are still accepted by browsers.
 
 To replace the authority, delete `/userdata/agent/tls/` and restart both
 `aico-agent` and `aico-config-web`; restarting only one leaves the two

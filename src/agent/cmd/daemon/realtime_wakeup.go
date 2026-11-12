@@ -2018,6 +2018,19 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		case <-voice.StopRequested():
 			logging.Infof("agent", "realtime", "Conversation ended from the Web UI or by its browser leaving, returning to standby")
 			return nil
+		case <-voice.MuteChanged():
+			if !voice.SpeakerMuted() {
+				continue
+			}
+			// Later speech is replaced by silence as it arrives; this stops
+			// what the speaker or the browser already holds.
+			if activeNotificationToken != "" {
+				activeNotificationSilenced = true
+			}
+			if err := playback.dropQueued(playbackAudio, outputFormat); err != nil {
+				return fmt.Errorf("silence realtime playback: %w", err)
+			}
+			logging.Infof("agent", "realtime", "Speaker muted; dropped queued playback")
 		case err, ok := <-sessionErrors:
 			if !ok {
 				sessionErrors = nil
@@ -3696,6 +3709,24 @@ func (p *realtimePlaybackState) finishResponse(audio realtimePlaybackAudio, forc
 	return nil
 }
 
+// dropQueued discards audio the playback session has not played yet and
+// opens a fresh session. The position within the current reply is kept, so a
+// later barge-in still truncates the provider's reply at the right point.
+func (p *realtimePlaybackState) dropQueued(audio realtimePlaybackAudio, format agent.AudioFormat) error {
+	if p.session == nil {
+		return nil
+	}
+	itemID, submittedBytes, itemStartedAt := p.itemID, p.submittedBytes, p.itemStartedAt
+	if err := p.stop(audio); err != nil {
+		return err
+	}
+	if err := p.open(audio, format); err != nil {
+		return err
+	}
+	p.itemID, p.submittedBytes, p.itemStartedAt = itemID, submittedBytes, itemStartedAt
+	return nil
+}
+
 func (p *realtimePlaybackState) stop(audio realtimePlaybackAudio) error {
 	if p.session == nil {
 		return nil
@@ -3746,6 +3777,11 @@ func streamRealtimeAudio(ctx context.Context, audio realtimeRecordingAudio, sess
 			return
 		}
 		if len(chunk.PCM) == 0 {
+			// A quiet microphone must not keep this reader alive after its
+			// session has ended.
+			if ctx.Err() != nil {
+				return
+			}
 			continue
 		}
 		select {

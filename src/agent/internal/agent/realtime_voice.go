@@ -70,12 +70,15 @@ type RealtimeVoiceSession struct {
 	ready    atomic.Bool
 	muted    atomic.Bool
 	silenced atomic.Bool
-	stop     chan struct{}
-	stopOnce sync.Once
+	// muteChanged wakes the session loop after a mute change, so it can act
+	// on audio that is already queued.
+	muteChanged chan struct{}
+	stop        chan struct{}
+	stopOnce    sync.Once
 }
 
 func newRealtimeVoiceSession(audio RealtimeAudioIO) *RealtimeVoiceSession {
-	return &RealtimeVoiceSession{audio: audio, stop: make(chan struct{})}
+	return &RealtimeVoiceSession{audio: audio, muteChanged: make(chan struct{}, 1), stop: make(chan struct{})}
 }
 
 // Route reports where this session captures and plays audio.
@@ -111,6 +114,14 @@ func (v *RealtimeVoiceSession) Muted() bool {
 // played. The conversation, transcripts and tools continue unchanged.
 func (v *RealtimeVoiceSession) SpeakerMuted() bool {
 	return v != nil && v.silenced.Load()
+}
+
+// MuteChanged receives after the microphone or speaker mute changes.
+func (v *RealtimeVoiceSession) MuteChanged() <-chan struct{} {
+	if v == nil {
+		return nil
+	}
+	return v.muteChanged
 }
 
 // StopRequested is closed when the conversation is asked to end: the user
@@ -343,6 +354,10 @@ func (s *Server) setRealtimeVoiceMuted(microphone, speaker *bool) bool {
 	}
 	if speaker != nil {
 		active.silenced.Store(*speaker)
+	}
+	select {
+	case active.muteChanged <- struct{}{}:
+	default:
 	}
 	return true
 }

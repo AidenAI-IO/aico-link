@@ -107,8 +107,9 @@ func newLoopHarness(t *testing.T, tasks *agenttask.Manager) *loopHarness {
 			t.Error("wakeup loop did not stop")
 		}
 	})
-	// The loop installs its activation handler on start.
-	h.waitStatus(func(s agent.RealtimeVoiceStatus) bool { return s.Available }, "voice available")
+	// The loop publishes voice availability and then installs its wakeup
+	// watcher; wait for both.
+	h.waitStatus(func(s agent.RealtimeVoiceStatus) bool { return s.Available && h.wakeCallback.Load() != nil }, "the loop to start")
 	return h
 }
 

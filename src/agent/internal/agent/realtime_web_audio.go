@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -44,6 +45,8 @@ const (
 type webRealtimeFrame struct {
 	kind websocket.MessageType
 	data []byte
+	// speech is how long a binary frame plays for.
+	speech time.Duration
 }
 
 // webRealtimeAudio is the audio endpoint of a browser voice session. The
@@ -58,13 +61,21 @@ type webRealtimeAudio struct {
 	doneOnce sync.Once
 	wake     chan struct{}
 
-	mu         sync.Mutex
-	capturing  bool
-	closing    bool
-	out        []webRealtimeFrame
-	playbackID uint64
-	bytesPerS  int64
-	playEnd    time.Time
+	mu        sync.Mutex
+	closing   bool
+	out       []webRealtimeFrame
+	bytesPerS int64
+	// recordingID names the current capture and recordingStop ends its
+	// reader, so a reader left over from an earlier capture cannot take
+	// microphone frames meant for the next one. recordingStop is nil while
+	// nothing is captured.
+	recordingID   uint64
+	recordingStop chan struct{}
+	playbackID    uint64
+	// unsent counts speech frames queued or being written. playEnd is when
+	// the browser finishes playing the speech written so far.
+	unsent  int
+	playEnd time.Time
 }
 
 func newWebRealtimeAudio(conn *websocket.Conn) *webRealtimeAudio {
@@ -94,6 +105,7 @@ func (w *webRealtimeAudio) Close(reason string) {
 	ended, _ := json.Marshal(map[string]string{"type": "ended", "reason": reason})
 	// Speech still queued is not worth sending to a session that is over.
 	w.out = []webRealtimeFrame{{kind: websocket.MessageText, data: ended}, {}}
+	w.unsent = 0
 	w.mu.Unlock()
 	w.shutdown("")
 	w.signal()
@@ -150,6 +162,9 @@ func (w *webRealtimeAudio) enqueue(frame webRealtimeFrame) {
 		return
 	}
 	w.out = append(w.out, frame)
+	if frame.kind == websocket.MessageBinary {
+		w.unsent++
+	}
 	w.mu.Unlock()
 	w.signal()
 }
@@ -164,6 +179,7 @@ func (w *webRealtimeAudio) dropQueuedSpeech() {
 			kept = append(kept, frame)
 		}
 	}
+	w.unsent -= len(w.out) - len(kept)
 	w.out = kept
 	w.mu.Unlock()
 }
@@ -215,6 +231,19 @@ func (w *webRealtimeAudio) write() {
 			w.shutdown(fmt.Sprintf("write failed: %v", err))
 			return
 		}
+		if frame.kind == websocket.MessageBinary {
+			// The browser plays speech back to back as it arrives, and
+			// starts again from now after a gap.
+			w.mu.Lock()
+			if now := time.Now(); w.playEnd.Before(now) {
+				w.playEnd = now
+			}
+			w.playEnd = w.playEnd.Add(frame.speech)
+			if w.unsent > 0 {
+				w.unsent--
+			}
+			w.mu.Unlock()
+		}
 	}
 }
 
@@ -233,7 +262,7 @@ func (w *webRealtimeAudio) read() {
 		// Enqueue under the lock that StartRecording uses to clear the queue,
 		// so a frame from a previous capture never lands after the reset.
 		w.mu.Lock()
-		if w.capturing {
+		if w.recordingStop != nil {
 			select {
 			case w.mic <- pcm:
 			default:
@@ -259,37 +288,65 @@ type webRealtimeFormat struct {
 type webRealtimeRecording struct{ w *webRealtimeAudio }
 
 func (r webRealtimeRecording) StartRecording(format AudioFormat) (*RecordStartResult, error) {
-	r.w.mu.Lock()
+	w := r.w
+	w.mu.Lock()
 	// A reconnected session reuses this endpoint; audio captured for the
 	// previous one must not reach it.
-	drainWebRealtimeMic(r.w.mic)
-	r.w.capturing = true
-	r.w.mu.Unlock()
-	r.w.send(map[string]any{"type": "capture_start", "format": webRealtimeFormat(format)})
-	return &RecordStartResult{SessionID: 1}, nil
+	w.stopRecordingLocked()
+	w.recordingID++
+	id := w.recordingID
+	w.recordingStop = make(chan struct{})
+	w.mu.Unlock()
+	w.send(map[string]any{"type": "capture_start", "format": webRealtimeFormat(format)})
+	return &RecordStartResult{SessionID: id}, nil
+}
+
+// stopRecordingLocked ends the current capture and its reader, and drops
+// microphone audio not yet read. The caller holds w.mu.
+func (w *webRealtimeAudio) stopRecordingLocked() {
+	if w.recordingStop != nil {
+		close(w.recordingStop)
+		w.recordingStop = nil
+	}
+	drainWebRealtimeMic(w.mic)
 }
 
 // ReadRecordChunk returns an empty chunk when the browser sent nothing within
-// the timeout, and the end of the stream once it disconnected.
-func (r webRealtimeRecording) ReadRecordChunk(_ uint64, timeoutMs uint32) (*AudioChunkResult, error) {
+// the timeout, and the end of the stream once the browser disconnected or the
+// capture named by id was stopped.
+func (r webRealtimeRecording) ReadRecordChunk(id uint64, timeoutMs uint32) (*AudioChunkResult, error) {
+	w := r.w
+	w.mu.Lock()
+	stopped := w.recordingStop
+	if id != w.recordingID {
+		stopped = nil
+	}
+	w.mu.Unlock()
+	if stopped == nil {
+		return &AudioChunkResult{EndOfStream: true}, nil
+	}
 	timer := time.NewTimer(time.Duration(timeoutMs) * time.Millisecond)
 	defer timer.Stop()
 	select {
-	case pcm := <-r.w.mic:
+	case pcm := <-w.mic:
 		return &AudioChunkResult{PCM: pcm}, nil
-	case <-r.w.done:
+	case <-stopped:
+		return &AudioChunkResult{EndOfStream: true}, nil
+	case <-w.done:
 		return &AudioChunkResult{EndOfStream: true}, nil
 	case <-timer.C:
 		return &AudioChunkResult{}, nil
 	}
 }
 
-func (r webRealtimeRecording) StopRecording(uint64) error {
-	r.w.mu.Lock()
-	r.w.capturing = false
-	drainWebRealtimeMic(r.w.mic)
-	r.w.mu.Unlock()
-	r.w.send(map[string]string{"type": "capture_stop"})
+func (r webRealtimeRecording) StopRecording(id uint64) error {
+	w := r.w
+	w.mu.Lock()
+	if id == w.recordingID {
+		w.stopRecordingLocked()
+	}
+	w.mu.Unlock()
+	w.send(map[string]string{"type": "capture_stop"})
 	return nil
 }
 
@@ -322,48 +379,51 @@ func (p webRealtimePlayback) StartPlayback(format tts.AudioFormat) (uint64, erro
 // WritePlayChunk forwards speech to the browser. Empty writes are the
 // session's keep-alive and finalize markers, which the browser does not need.
 func (p webRealtimePlayback) WritePlayChunk(_ uint64, data []byte, _ bool) error {
-	if len(data) == 0 {
+	w := p.w
+	if len(data) == 0 || w.closed() {
 		return nil
 	}
-	w := p.w
 	w.mu.Lock()
+	var speech time.Duration
 	if w.bytesPerS > 0 {
-		now := time.Now()
-		if w.playEnd.Before(now) {
-			w.playEnd = now
-		}
-		w.playEnd = w.playEnd.Add(time.Duration(int64(len(data)) * int64(time.Second) / w.bytesPerS))
+		speech = time.Duration(int64(len(data)) * int64(time.Second) / w.bytesPerS)
 	}
 	w.mu.Unlock()
-	if w.closed() {
-		return nil
-	}
 	// The frame outlives this call, and the caller may reuse its buffer.
-	w.enqueue(webRealtimeFrame{kind: websocket.MessageBinary, data: append([]byte(nil), data...)})
+	w.enqueue(webRealtimeFrame{kind: websocket.MessageBinary, data: append([]byte(nil), data...), speech: speech})
 	return nil
 }
 
 func (p webRealtimePlayback) StopPlayback(uint64) error {
 	w := p.w
+	w.dropQueuedSpeech()
 	w.mu.Lock()
 	w.playEnd = time.Time{}
 	w.mu.Unlock()
-	w.dropQueuedSpeech()
 	w.send(map[string]string{"type": "playback_stop"})
 	return nil
 }
 
-// WaitForPlaybackDrain waits until the browser has had time to play what was
-// sent. The browser schedules PCM back to back as it arrives, so the
-// real-time length of the written audio bounds when it finishes.
+// webRealtimeDrainPoll is how often a drain re-checks speech that is still
+// waiting to be written.
+const webRealtimeDrainPoll = 20 * time.Millisecond
+
+// WaitForPlaybackDrain waits until every speech frame has been written to
+// the browser and the browser has had time to play it. It fails when the
+// browser leaves first, so speech that never arrived is not reported as
+// heard.
 func (p webRealtimePlayback) WaitForPlaybackDrain(ctx context.Context) error {
 	w := p.w
 	for {
 		w.mu.Lock()
+		unsent := w.unsent
 		wait := time.Until(w.playEnd.Add(webRealtimeDrainMargin))
 		w.mu.Unlock()
-		if wait <= 0 {
+		if unsent == 0 && wait <= 0 {
 			return nil
+		}
+		if unsent > 0 && wait < webRealtimeDrainPoll {
+			wait = webRealtimeDrainPoll
 		}
 		timer := time.NewTimer(wait)
 		select {
@@ -372,7 +432,7 @@ func (p webRealtimePlayback) WaitForPlaybackDrain(ctx context.Context) error {
 			return ctx.Err()
 		case <-w.done:
 			timer.Stop()
-			return nil
+			return errors.New("the browser disconnected before playback finished")
 		case <-timer.C:
 		}
 	}

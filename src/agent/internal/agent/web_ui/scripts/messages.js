@@ -617,7 +617,8 @@ function renderComposerPrimary() {
     const isLoading = loadingDiv.classList.contains('active');
     sendBtn.disabled = mode === 'send'
         ? fileUploadPending || !composerHasDraft() || (isLoading && !currentChatRequestId)
-        : mode === 'steer' ? fileUploadPending || pendingSteerSubmitting : false;
+        : mode === 'steer' ? fileUploadPending || pendingSteerSubmitting
+        : mode === 'voice' ? voiceStopping : false;
 }
 
 function setComposerState(isLoading) {

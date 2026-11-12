@@ -120,6 +120,12 @@ func TestWebRealtimeVoiceSessionCarriesBrowserAudio(t *testing.T) {
 	if err != nil || kind != websocket.MessageBinary || string(data) != string([]byte{5, 6}) {
 		t.Fatalf("speech frame = %v %v, %v", kind, data, err)
 	}
+	// Speech that reached the browser drains once it has had time to play.
+	if err := playback.(interface {
+		WaitForPlaybackDrain(context.Context) error
+	}).WaitForPlaybackDrain(ctx); err != nil {
+		t.Fatalf("drain after delivered speech: %v", err)
+	}
 
 	conn.Close(websocket.StatusNormalClosure, "")
 	select {
@@ -246,5 +252,68 @@ func TestStalledBrowserDoesNotBlockRealtimePlayback(t *testing.T) {
 	end, err := voice.Audio().Recording().ReadRecordChunk(1, 2000)
 	if err != nil || !end.EndOfStream {
 		t.Fatalf("microphone read = %+v, %v; want the stream ended for a browser that cannot keep up", end, err)
+	}
+}
+
+// A reconnected provider session captures again on the same endpoint. The
+// reader of the earlier capture must end instead of taking microphone audio
+// meant for the new one.
+func TestWebRealtimeRecordingEndsReaderOfEarlierCapture(t *testing.T) {
+	web := newWebRealtimeAudio(nil)
+	recording := web.Recording()
+	format := AudioFormat{SampleRate: 16000, Channels: 1, BitWidth: 16}
+	first, err := recording.StartRecording(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recording.StopRecording(first.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := recording.StartRecording(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web.mic <- []byte{1, 2}
+	if chunk, err := recording.ReadRecordChunk(first.SessionID, 1000); err != nil || !chunk.EndOfStream {
+		t.Fatalf("read on the earlier capture = %+v, %v; want the end of its stream", chunk, err)
+	}
+	if chunk, err := recording.ReadRecordChunk(second.SessionID, 1000); err != nil || string(chunk.PCM) != string([]byte{1, 2}) {
+		t.Fatalf("read on the new capture = %+v, %v; want the microphone frame", chunk, err)
+	}
+}
+
+// A playback drain confirms that speech reached the listener. It must wait
+// for speech still queued for a slow browser, and fail when the browser
+// leaves before that speech was written.
+func TestWebRealtimePlaybackDrainWaitsForUnsentSpeech(t *testing.T) {
+	// No writer runs, as when the browser has stopped taking data.
+	web := newWebRealtimeAudio(nil)
+	playback := web.Playback()
+	id, err := playback.StartPlayback(tts.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := playback.WritePlayChunk(id, make([]byte, 480), false); err != nil {
+		t.Fatal(err)
+	}
+	waiter := playback.(interface {
+		WaitForPlaybackDrain(context.Context) error
+	})
+	// The speech is 10 ms long, so its play time has long passed.
+	short, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := waiter.WaitForPlaybackDrain(short); err == nil {
+		t.Fatal("the drain completed while speech was still waiting to be written")
+	}
+	drained := make(chan error, 1)
+	go func() { drained <- waiter.WaitForPlaybackDrain(context.Background()) }()
+	web.shutdown("") // The browser leaves with the speech unsent.
+	select {
+	case err := <-drained:
+		if err == nil {
+			t.Fatal("the drain succeeded although the browser left before the speech was written")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the drain did not end after the browser left")
 	}
 }
