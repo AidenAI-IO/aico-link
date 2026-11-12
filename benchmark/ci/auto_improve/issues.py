@@ -30,11 +30,22 @@ def bullets(items: list, empty: str = "- None recorded") -> list[str]:
 
 
 def reproduce_command(task: dict, key: str) -> str:
-    """The local command that runs exactly the affected task from its suite."""
+    """The runner invocation CI uses for this task: isolated daemons, the case's mode and platform."""
     task_id = key.split(":", 1)[1]
-    return ("cd benchmark\n"
-            f"uv run python -m runner run --suite {task['suite']} --task-id {task_id} \\\n"
-            "  --agent-url http://127.0.0.1:8080")
+    flags = [f"--suite {task['suite']}", f"--task-id {task_id}", "--auto-agent-setup"]
+    if task.get("execution_mode", "backend-text") != "backend-text":
+        flags.append(f"--execution-mode {task['execution_mode']}")
+    if task.get("target_platform", "auto") != "auto":
+        flags.append(f"--target-platform {task['target_platform']}")
+    if task.get("environment") not in (None, "isolated"):
+        flags.append("--environment-url <environment bridge URL>")
+    return "cd benchmark\nuv run python -m runner run " + " \\\n  ".join(flags)
+
+
+def revision(manifest: dict) -> str:
+    """Where the analysis ran: the branch and commit, never assumed to be main."""
+    ref = str(manifest.get("execution_ref", "")).removeprefix("refs/heads/") or "local"
+    return f"`{ref}` `{manifest['base_sha'][:12]}`"
 
 
 def window(manifest: dict) -> str:
@@ -64,7 +75,8 @@ def body(finding: dict, manifest: dict, run_url: str) -> str:
              f"<!-- auto-improve-observation:{manifest['source']} -->", "", "## Summary", clean(issue["summary"]), ""]
     if finding.get("regression_of"):
         lines += ["Possibly a regression of " + ", ".join(f"#{n}" for n in finding["regression_of"]) + ".", ""]
-    lines += ["## Impact", clean(issue["impact"]), "", "| Task | Environment | Failed daily runs | Reproduced on main |",
+    lines += ["## Impact", clean(issue["impact"]), "",
+              f"| Task | Environment | Failed daily runs | Reproduced on {revision(manifest)} |",
               "| --- | --- | --- | --- |"]
     for target in key["targets"]:
         reproduced = finding.get("reproduction", {}).get(target)
@@ -74,20 +86,25 @@ def body(finding: dict, manifest: dict, run_url: str) -> str:
     lines += ["", "## Reproduce"]
     runnable = [t for t in key["targets"] if t in tasks and tasks[t].get("suite")]
     if runnable:
-        lines += ["Start an agent daemon for the task's environment (see the benchmark quickstart), then run:", ""]
+        lines += ["With the agent and judge model settings from the benchmark quickstart exported, run "
+                  "(the runner starts isolated agent daemons itself):", ""]
         for target in runnable:
             lines += ["```bash", reproduce_command(tasks[target], target), "```"]
+        if any(tasks[t].get("environment") not in (None, "isolated") for t in runnable):
+            lines += ["Start the task's environment bridge first and pass its URL, as described in the "
+                      "benchmark quickstart."]
     lines += ["", clean(issue["reproduction"]), "", "## Expected", clean(issue["expected"]), "",
               "## Actual", clean(issue["actual"]), "", "## Root cause", clean(issue["root_cause"]), "",
               "## Code locations", *[f"- `{loc}`" for loc in finding["code_locations"]], "",
-              "## Evidence", "Paths under `finding-*/` are in the run's evidence artifact linked below.", "",
+              "## Evidence", "Paths under `finding-*/` are in the run's evidence artifact linked below. "
+              f"`finding-{finding['number']}/daily-observations.json` holds each daily run's outcome for these tasks.", "",
               *bullets(issue["evidence"]), "", "## Acceptance criteria", *bullets(issue["acceptance_criteria"])]
     if issue.get("fix_direction"):
         lines += ["", "## Suggested direction", "Non-binding; verify against the code before following it.", "",
                   clean(issue["fix_direction"])]
-    lines += ["", "---", f"Filed by benchmark auto-improve from {window(manifest)} on `main` "
-              f"`{manifest['base_sha'][:12]}`. An independent read-only audit confirmed this finding against "
-              "the fresh reproduction and retained traces.",
+    lines += ["", "---", f"Filed by benchmark auto-improve from {window(manifest)}, analyzed on {revision(manifest)}. "
+              "An independent read-only audit confirmed this finding against the fresh reproduction and "
+              "retained traces.",
               f"Evidence artifacts (14-day retention): {run_url}" if run_url else "",
               "If the finding is wrong, close the issue as not planned (or label it `auto-improve:false-positive` and close it); "
               "the pipeline will not file these tasks again."]
@@ -99,10 +116,10 @@ def observation(finding: dict, manifest: dict, run_url: str) -> str:
     """A follow-up on an existing open issue; the marker keeps it to one comment per window."""
     reproduced = [t for t, r in finding.get("reproduction", {}).items() if r["reproduced"]]
     lines = [f"<!-- auto-improve-observation:{manifest['source']} -->",
-             f"Still observed in {window(manifest)} on `main` `{manifest['base_sha'][:12]}`.", ""]
+             f"Still observed in {window(manifest)}, analyzed on {revision(manifest)}.", ""]
     for target in finding["key"]["targets"]:
         lines.append(f"- `{target}`: failed in {finding['failures_by_target'].get(target, 0)}/{finding['window_runs']} "
-                     f"daily runs" + ("; reproduced on main" if target in reproduced else ""))
+                     f"daily runs" + ("; reproduced" if target in reproduced else ""))
     if run_url:
         lines += ["", f"Evidence artifacts (14-day retention): {run_url}"]
     return "\n".join(lines)

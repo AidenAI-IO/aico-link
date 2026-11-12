@@ -13,10 +13,11 @@ import zipfile
 
 import pytest
 
-from ci.auto_improve import control, driver, emulator, evidence, execution, github, policy, review
+from ci.auto_improve import control, driver, emulator, evidence, execution, github, issues, policy, review
 
 
-AUDIT_OUTPUT = {"verdict": "confirmed", "reason": "Fresh trace shows the same failure", "title": "Saves one-off plans",
+AUDIT_OUTPUT = {"verdict": "confirmed", "targets": ["a:one"], "reason": "Fresh trace shows the same failure",
+                "title": "Saves one-off plans",
                 "summary": "The agent stores a one-off appointment as long-term memory.",
                 "impact": "Memory fills with transient facts.", "reproduction": "Run the task once.",
                 "expected": "No memory is saved.", "actual": "A fact memory is saved.",
@@ -525,7 +526,8 @@ def analyze(tmp_path, monkeypatch, clusters, *, outcome="failed", audit=None, fe
         assert all(set(r) == {"reproduced", "reason", "symptom_excerpts", "result", "evidence"}
                    for r in payload["reproduction"].values())
         cited = ([f"attempts/{policy.digest(staged)[:20]}/tasks/one/trace.json: saved once"] if staged else [])
-        return {**AUDIT_OUTPUT, "evidence": cited + ["details/failure-001.json: 2/2 failures"], **(audit or {})}
+        return {**AUDIT_OUTPUT, "targets": payload["targets"],
+                "evidence": cited + ["details/failure-001.json: 2/2 failures"], **(audit or {})}
     monkeypatch.setattr(driver, "git", lambda *a: "0123456789abcdef")
     monkeypatch.setattr(driver, "tracked_files", lambda _repo: {"src/agent/memory.go", "benchmark/runner/judge.py"})
     monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda _repo: tasks)
@@ -550,8 +552,14 @@ def test_reproduced_and_audited_finding_becomes_one_issue_for_a_coding_agent(tmp
     meta = policy.issue_metadata({"user": {"login": "bot"}, "body": body}, {"bot"})
     assert {k: meta[k] for k in ("domain", "targets")} == {"domain": "agent", "targets": ["a:one"]}
     # The issue carries what a developer needs: command, observed impact, code and acceptance.
-    assert "--suite suites/memory_v1.json --task-id one" in body
+    # The reproduce command is the one CI runs, and the revision is where it really ran.
+    assert "--suite suites/memory_v1.json \\\n  --task-id one \\\n  --auto-agent-setup" in body
+    assert "--agent-url" not in body
+    assert "| Task | Environment | Failed daily runs | Reproduced on `main` `0123456789ab` |" in body
     assert "| `a:one` | isolated | 2/2 | yes |" in body
+    assert "analyzed on `main` `0123456789ab`" in body and "on `main` `" not in body.split("## Summary")[0]
+    observations = json.loads((out / "finding-1/daily-observations.json").read_text())
+    assert [o["source"] for o in observations["a:one"]] == ["41-1", "42-1"]
     assert "- `src/agent/memory.go:12`" in body and "The task passes 2/3 attempts" in body
     # Evidence points at files in the uploaded artifact, not the audit's temporary workspace.
     assert "attempts/" not in body and "details/failure" not in body
@@ -575,6 +583,8 @@ def test_reproduced_and_audited_finding_becomes_one_issue_for_a_coding_agent(tmp
     ({"audit": {"verdict": "insufficient_evidence"}}, "insufficient_evidence"),
     ({"audit": {"code_locations": ["src/agent/missing.go:3", "../etc/passwd"]}}, "insufficient_evidence"),
     ({"audit": {"acceptance_criteria": []}}, "insufficient_evidence"),
+    ({"audit": {"targets": []}}, "insufficient_evidence"),
+    ({"audit": {"targets": ["z:not-in-finding"]}}, "insufficient_evidence"),
 ])
 def test_unsupported_findings_are_never_filed(tmp_path, monkeypatch, change, status):
     options = {k: v for k, v in change.items() if k != "cluster"}
@@ -718,3 +728,33 @@ def test_dashboard_only_sources_do_not_block_a_failure_free_window(tmp_path):
     assert warnings == ["No completed suite manifests for source run 41-1"]
     # A window in which every source ran no task is settled too.
     assert evidence.source_failures_window(tmp_path, [("41", "1")], {}, empty=frozenset({"41-1"})) == ([], [])
+
+
+def test_audit_narrows_an_issue_to_one_root_cause(tmp_path, monkeypatch):
+    mixed = cluster(title="Saves plans and secrets", targets=["a:one", "a:secret"])
+    state, drafts, _, out = analyze(tmp_path, monkeypatch, [mixed], audit={"targets": ["a:secret"]})
+    [finding], [draft] = state["findings"], drafts
+    # The issue, its dedup identity and its evidence cover only the audited root cause.
+    assert finding["key"]["targets"] == ["a:secret"] and finding["diagnosed_targets"] == ["a:one", "a:secret"]
+    meta = policy.issue_metadata({"user": {"login": "b"}, "body": draft["body"]}, {"b"})
+    assert meta["targets"] == ["a:secret"] and "`a:one`" not in draft["body"]
+    assert list(json.loads((out / "finding-1/daily-observations.json").read_text())) == ["a:secret"]
+
+
+def test_narrowing_onto_rejected_tasks_is_suppressed(tmp_path, monkeypatch):
+    rejected = issue(9, ["a:secret"], state="closed", state_reason="not_planned")
+    mixed = cluster(title="Saves plans and secrets", targets=["a:one", "a:secret"])
+    state, drafts, _, _ = analyze(tmp_path, monkeypatch, [mixed], audit={"targets": ["a:secret"]}, feedback=[rejected])
+    assert drafts == [] and state["findings"][0]["status"] == "suppressed"
+
+
+@pytest.mark.parametrize("task,flags,bridge", [
+    ({"suite": "suites/s.json", "environment": "isolated"}, [], False),
+    ({"suite": "suites/s.json", "environment": "mobilegym", "execution_mode": "realtime-text",
+      "target_platform": "android"}, ["--execution-mode realtime-text", "--target-platform android"], True),
+])
+def test_reproduce_command_matches_the_ci_invocation(task, flags, bridge):
+    command = issues.reproduce_command(task, "case:t")
+    assert "--auto-agent-setup" in command and "--agent-url" not in command
+    assert all(flag in command for flag in flags)
+    assert ("--environment-url" in command) is bridge

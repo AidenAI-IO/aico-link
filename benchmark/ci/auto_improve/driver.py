@@ -178,13 +178,50 @@ AUDIT_PROMPT = (
     "reason; is it an agent, benchmark or external defect as claimed, or actually evaluator scoping, setup, "
     "environment or model flakiness; do the cited code locations really implement the failing behavior? "
     "Return verdict=confirmed only if the evidence establishes both the failure and its cause; refuted if the "
-    "evidence contradicts the finding; otherwise insufficient_evidence. For a confirmed finding, write the issue "
+    "evidence contradicts the finding; otherwise insufficient_evidence. One issue must describe one root cause "
+    "with one fix: in targets, list only the confirmed targets that share it (at least one that reproduced), and "
+    "leave out targets whose cause or fix differs, even if the diagnosis grouped them; they can be reported "
+    "separately. Write the issue about those targets only. For a confirmed finding, write the issue "
     "for a developer who will fix it locally with a coding agent: a specific title (no prefix), a summary, "
     "the user-visible impact, reproduction notes beyond the standard command (setup, environment, what to "
     "look for), expected and actual behavior, the root cause, code_locations as repository paths with optional "
     ":line, evidence as short citations of trace/judge/screenshot files, and acceptance_criteria that a fix must "
-    "meet (for example the target tasks passing at least 2 of 3 attempts). fix_direction is an optional, "
-    "non-binding hint; leave it empty when unsure. Do not quote secrets.")
+    "meet (for example the target tasks passing at least 2 of 3 attempts). In the issue, keep what was observed "
+    "(expected, actual, evidence) separate from the root-cause analysis and from fix_direction. fix_direction is "
+    "an optional, non-binding hint: before proposing one, check it against legitimate uses of the same code, "
+    "including the neighboring tasks that must keep passing, and leave it empty if it could block valid behavior "
+    "or you are unsure. Do not quote secrets.")
+
+
+def write_observations(out: Path, finding: dict, failures: list[dict]) -> None:
+    """Retain each daily run's outcome for the finding's tasks, so an issue's history is checkable."""
+    by_key = {f["key"]: f for f in failures}
+    rows = {target: [{"source": o.get("source"), "status": o.get("status"), "repeat": o.get("repeat"),
+                      "failure_class": o.get("failure_class"), "agent_eligible": o.get("agent_eligible"),
+                      "hard_assertion_failures": o.get("hard_assertion_failures"),
+                      "error": (o.get("metrics") or {}).get("error"),
+                      "git_sha": (o.get("manifest") or {}).get("git_sha"),
+                      "agent_model": (o.get("manifest") or {}).get("agent_model")}
+                     for o in by_key.get(target, {}).get("observations", [])]
+            for target in finding["key"]["targets"]}
+    write(out / f"finding-{finding['number']}" / "daily-observations.json", rows)
+
+
+def rescope(finding: dict, targets: list[str], failures: list[dict], feedback: list[dict],
+            trusted: set[str], out: Path) -> None:
+    """Narrow a finding to the audit's one-root-cause targets and recompute its identity and dedup plan."""
+    if targets == finding["key"]["targets"]:
+        return
+    finding["diagnosed_targets"] = finding["key"]["targets"]
+    key = policy.finding_key(finding["key"]["domain"], targets)
+    finding.update({"key": key, "signature": policy.digest(key)[:24],
+                    "failing_runs": policy.failing_runs(failures, targets),
+                    "failures_by_target": {t: finding["failures_by_target"][t] for t in targets},
+                    "tasks": {t: finding["tasks"][t] for t in targets if t in finding["tasks"]},
+                    "reproduction": {t: r for t, r in finding.get("reproduction", {}).items() if t in targets},
+                    "reproduced_targets": [t for t in finding.get("reproduced_targets", []) if t in targets],
+                    "plan": policy.plan_issue(key, feedback, trusted)})
+    write_observations(out, finding, failures)
 
 
 def audit_attempt(record: dict) -> dict:
@@ -324,8 +361,10 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
             finding.update({"key": key, "source_paths": checked["source_paths"], "signature": policy.digest(key)[:24],
                             "failing_runs": policy.failing_runs(failures, key["targets"]), "window_runs": window_runs,
                             "failures_by_target": {t: policy.failing_runs(failures, [t]) for t in key["targets"]},
-                            "tasks": {t: {k: tasks[t][k] for k in ("suite", "environment", "case_id")}
+                            "tasks": {t: {k: tasks[t].get(k) for k in
+                                          ("suite", "environment", "case_id", "execution_mode", "target_platform")}
                                       for t in key["targets"] if t in tasks}})
+            write_observations(out, finding, failures)
             plan = policy.plan_issue(key, feedback, trusted)
             finding["plan"] = plan
             if plan["action"] == "suppress":
@@ -401,12 +440,18 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
                 if parsed and parsed[0] in tracked:
                     locations.append(f"{parsed[0]}:{parsed[1]}" if parsed[1] else parsed[0])
             required_text = ("title", "summary", "impact", "expected", "actual", "root_cause")
+            scoped = list(dict.fromkeys(t for t in verdict["targets"] if t in finding["key"]["targets"]))
             if verdict["verdict"] != "confirmed":
                 finding.update({"status": verdict["verdict"], "reason": verdict["reason"]})
             elif not locations or not verdict["acceptance_criteria"] or not all(verdict[k].strip() for k in required_text):
                 finding.update({"status": "insufficient_evidence",
                                 "reason": "Audit confirmed without existing code locations or complete issue content"})
+            elif not scoped or (finding["key"]["domain"] in policy.REPRODUCIBLE_DOMAINS
+                                and not set(scoped) & set(finding.get("reproduced_targets", []))):
+                finding.update({"status": "insufficient_evidence",
+                                "reason": "Audit confirmed no reproduced target as one root cause"})
             else:
+                rescope(finding, scoped, failures, feedback, trusted, out)
                 finding.update({"status": "confirmed", "issue": verdict, "code_locations": list(dict.fromkeys(locations))})
         drafts = decide(findings, max_new, state, out)
         write(out / "issues.json", drafts)
@@ -446,6 +491,10 @@ def decide(findings: list[dict], max_new: int, state: dict, out: Path) -> list[d
     confirmed = [f for f in findings if f["status"] == "confirmed"]
     for finding in sorted(confirmed, key=policy.rank):
         key, plan = finding["key"], finding["plan"]
+        if plan["action"] == "suppress":
+            # The audit narrowed the finding onto tasks a person already rejected.
+            finding.update({"status": "suppressed", "reason": f"Rejected earlier in #{plan['number']}"})
+            continue
         overlap = next((c for c in claimed if c["key"]["domain"] == key["domain"]
                         and set(c["key"]["targets"]) & set(key["targets"])), None)
         if overlap:

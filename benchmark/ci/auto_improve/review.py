@@ -38,6 +38,8 @@ DIAGNOSIS = object_schema({"summary": STRING, "clusters": {"type": "array", "ite
 # The independent audit decides whether a finding becomes an issue and writes its content.
 ISSUE_AUDIT = object_schema({
     "verdict": {"type": "string", "enum": ["confirmed", "refuted", "insufficient_evidence"]},
+    # The confirmed subset of targets that share one root cause and one fix; the issue covers only these.
+    "targets": STRINGS,
     "reason": STRING, "title": STRING, "summary": STRING, "impact": STRING, "reproduction": STRING,
     "expected": STRING, "actual": STRING, "root_cause": STRING, "code_locations": STRINGS,
     "evidence": STRINGS, "acceptance_criteria": STRINGS, "fix_direction": STRING})

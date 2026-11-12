@@ -194,6 +194,7 @@ jobs:
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/build/build.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/build/mobilegym-build.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/reproduction-runs/*/*/evidence/**
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/daily-observations.json
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/reproduction-runs/*/*/runner.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/reproduction-runs/*/*/rejudge-error.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/reproduction-runs/*/*/emulator/emulator.log

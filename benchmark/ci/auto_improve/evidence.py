@@ -47,7 +47,8 @@ def catalog_tasks(root: Path) -> dict[str, dict]:
                 continue
             tasks[f"{case.id}:{task['id']}"] = {"task": task, "case_id": case.id,
                                                   "environment": case.environment, "suite": case.suite,
-                                                  "runnable": case.runnable}
+                                                  "runnable": case.runnable, "execution_mode": case.execution_mode,
+                                                  "target_platform": case.target_platform}
     return tasks
 
 

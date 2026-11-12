@@ -68,9 +68,15 @@ flowchart TD
 5. **Audit.** A second read-only session receives the fresh attempt's evidence and
    the historical observations, and tries to refute the finding: evaluator
    scoping, setup, environment and model flakiness are checked before the claimed
-   cause. Only `confirmed` findings continue. The auditor writes the issue
-   content, and trusted code then checks that it cites at least one existing
-   repository file and states acceptance criteria.
+   cause. Only `confirmed` findings continue. One issue covers one root cause
+   with one fix: the auditor lists the targets that share it, including at least
+   one that reproduced, and the finding is narrowed to those before deduplication.
+   Targets the diagnosis grouped but whose cause differs are left for a later
+   finding. The auditor writes the issue content, keeping observations, root
+   cause and the optional fix direction apart, and only proposes a direction it
+   has checked against legitimate uses such as neighboring tasks. Trusted code
+   then checks that the issue cites at least one existing repository file and
+   states acceptance criteria.
 6. **Deduplication and limit.** Findings are identified by domain and target
    tasks, not by model wording. Against issues the pipeline filed earlier:
    - an open issue sharing a target receives one comment per window instead of a
@@ -100,11 +106,16 @@ Each issue is labeled `auto-improve`, its title starts with `[auto-improve][<dom
 
 - a summary and the user-visible impact;
 - a table of the affected tasks with their environment, how many daily runs
-  failed, and whether the task reproduced on `main`;
-- the local command that runs each task from its suite, plus any extra setup;
+  failed, and whether the task reproduced on the branch and commit the analysis
+  ran on (`main` for scheduled runs);
+- the command that runs each task the way CI does (`--auto-agent-setup`, plus
+  the case's execution mode and target platform), and a note when the task
+  needs an environment bridge;
 - expected and actual behavior, and the root cause;
 - code locations as repository paths with optional line numbers;
-- evidence citations and a link to the run's artifacts (14-day retention);
+- evidence citations and a link to the run's artifacts (14-day retention); each
+  finding's `daily-observations.json` there holds every daily run's outcome for
+  its tasks, so the failure history can be checked;
 - acceptance criteria a fix must meet, and an optional, non-binding fix direction.
 
 Model-written text is treated as untrusted: mentions are broken so they notify no
