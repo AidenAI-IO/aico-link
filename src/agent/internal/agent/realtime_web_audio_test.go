@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -126,7 +127,7 @@ func TestWebRealtimeVoiceSessionCarriesBrowserAudio(t *testing.T) {
 			t.Fatal("microphone stream did not end after the browser left")
 		}
 	}
-	s.EndRealtimeVoiceSession(voice)
+	s.EndRealtimeVoiceSession(voice, false)
 	audio.Close("")
 	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
 		t.Fatalf("status = %+v, want idle", status)
@@ -200,11 +201,82 @@ func TestStoppedWebRealtimeVoiceIsNotRequeued(t *testing.T) {
 		t.Fatal("browser session was not claimed")
 	}
 	s.stopRealtimeVoice()
-	s.EndRealtimeVoiceSession(voice)
-	if s.RequeueRealtimeAudioIO(voice) {
+	if s.EndRealtimeVoiceSession(voice, true) {
 		t.Fatal("a stopped browser session was requeued for the rotated session")
 	}
 	if s.RealtimeVoicePending() {
 		t.Fatal("a stopped browser session is still waiting to start")
 	}
+}
+
+// A stop and a provider rotation can race. Whichever lands first, the
+// browser must not end up queued for a new session.
+func TestStopRacingRotationNeverRequeuesWebRealtimeVoice(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		s := &Server{}
+		s.SetRealtimeVoiceActivation(func() {})
+		web := newTestWebRealtimeAudio(t)
+		if err := s.startWebRealtimeVoice(web); err != nil {
+			t.Fatal(err)
+		}
+		voice := s.ClaimRealtimeVoiceSession(Config{}, false)
+		if voice == nil {
+			t.Fatal("browser session was not claimed")
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); s.stopRealtimeVoice() }()
+		go func() { defer wg.Done(); s.EndRealtimeVoiceSession(voice, true) }()
+		wg.Wait()
+		if s.RealtimeVoicePending() {
+			t.Fatalf("run %d: a stopped browser session is queued for the rotated session", i)
+		}
+	}
+}
+
+// A rotation of a browser session nobody stopped keeps its endpoint.
+func TestRotationRequeuesRunningWebRealtimeVoice(t *testing.T) {
+	s := &Server{}
+	s.SetRealtimeVoiceActivation(func() {})
+	web := &webRealtimeAudio{mic: make(chan []byte, 1), done: make(chan struct{})}
+	if err := s.startWebRealtimeVoice(web); err != nil {
+		t.Fatal(err)
+	}
+	voice := s.ClaimRealtimeVoiceSession(Config{}, false)
+	if !s.EndRealtimeVoiceSession(voice, true) || !s.RealtimeVoicePending() {
+		t.Fatal("a rotated browser session was not kept for the next session")
+	}
+}
+
+// newTestWebRealtimeAudio returns a browser endpoint backed by a real
+// WebSocket, so closing it behaves as in production.
+func newTestWebRealtimeAudio(t *testing.T) *webRealtimeAudio {
+	t.Helper()
+	accepted := make(chan *websocket.Conn, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The hijacked connection outlives this handler, so return at once;
+		// waiting here would keep srv.Close from finishing.
+		if conn, err := websocket.Accept(w, r, nil); err == nil {
+			accepted <- conn
+		}
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cut the connections instead of a graceful close: nothing reads the
+	// server side after the test, so a close handshake would wait forever.
+	t.Cleanup(srv.CloseClientConnections)
+	// Drain whatever the endpoint sends so its writes never block.
+	go func() {
+		for {
+			if _, _, err := client.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}()
+	return newWebRealtimeAudio(<-accepted)
 }

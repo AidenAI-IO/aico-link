@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"aico-agent/internal/agent"
@@ -502,17 +501,9 @@ func runRealtimeWakeupMode(cfg agent.Config, sigChan chan os.Signal, newWatcher 
 // runRealtimeWakeupModeWithServer owns the realtime voice path. The legacy wakeup
 // runners remain separate so they can be restored without changing this path.
 func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, server *agent.Server, runtime *agent.Runtime, tasks *agenttask.Manager, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
-	events := make(chan struct{}, 1)
-	// The wakeup channel coalesces every source into one signal. A device
-	// activation records itself here so the loop can tell it apart from a
-	// browser voice start, which must never fall back to the board
-	// microphone once it is withdrawn.
-	var deviceActivation atomic.Bool
-	activateDevice := func() {
-		deviceActivation.Store(true)
-		signalWakeupEvent(events)
-	}
-	bridge := newRealtimeChatBridge(activateDevice)
+	activations := newRealtimeActivations()
+	events := activations.events
+	bridge := newRealtimeChatBridge(activations.Device)
 	voiceNotificationTicker := time.NewTicker(realtimeNotificationPoll)
 	defer voiceNotificationTicker.Stop()
 	var notificationFallbackCancel context.CancelFunc
@@ -616,7 +607,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			// A browser starting a voice session from the Web UI wakes the
 			// loop like any other activation; the session then takes the
 			// browser's audio endpoint instead of the device.
-			server.SetRealtimeVoiceActivation(func() { signalWakeupEvent(events) })
+			server.SetRealtimeVoiceActivation(activations.Wake)
 			defer server.SetRealtimeVoiceActivation(nil)
 		}
 	}
@@ -624,7 +615,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 	var watchers []wakeupWatcher
 	var err error
 	if !cfg.Benchmark.RealtimeText {
-		watchers, err = startWakeupWatchers(newWatcher, activateDevice)
+		watchers, err = startWakeupWatchers(newWatcher, activations.Device)
 	}
 	if err != nil {
 		logging.Warnf("agent", "realtime", "MCU wakeup unavailable: %v; /api/chat activation remains enabled", err)
@@ -677,11 +668,14 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			if failureAnnouncementCancel != nil {
 				// Do not cut the failure announcement short for a task update;
 				// activating after it exits keeps the user informed about both.
+				// Record it as a device activation now, so the later wakeup
+				// opens the device instead of being skipped.
+				activations.DeferDevice()
 				pendingActivation = true
 				continue
 			}
 			logging.Infof("agent", "realtime", "Background task update ready, activating realtime voice model...")
-			activateDevice()
+			activations.Device()
 		case <-events:
 			// Realtime is the preferred consumer. Stop idle standalone speech
 			// before opening the realtime audio session.
@@ -715,7 +709,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			}
 			var media realtimeSessionMedia
 			if server != nil && !cfg.Benchmark.RealtimeText {
-				deviceRequested := deviceActivation.Swap(false) || chatBridgeHasPending(bridge) || rotatedDevice
+				deviceRequested := activations.TakeDevice() || chatBridgeHasPending(bridge) || rotatedDevice
 				rotatedDevice = false
 				media.voice = server.ClaimRealtimeVoiceSession(cfg, deviceRequested)
 				if media.voice == nil {
@@ -749,11 +743,9 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 					startFailureAnnouncement(sessionErr)
 				}
 			}
-			// A device activation during the session was served by it. Clear
-			// the flag before draining: one that arrives during the drain sets
-			// it again, and is re-signalled below instead of being lost.
-			deviceActivation.Store(false)
-			drainRealtimeWakeups(events, failureAnnouncementDone != nil)
+			// Device activations during the session were served by it. Settle
+			// clears them and drains their queued wakeups, keeping any that
+			// arrives meanwhile, and re-wakes the loop for the reasons below.
 			// A provider rotation continues the same conversation on the same
 			// route, unless the user asked to stop it.
 			if rotated && media.voice.Stopped() {
@@ -764,9 +756,9 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			// down. Preserve that activation after clearing stale wake events.
 			// A browser voice start queued during teardown would otherwise
 			// lose its wakeup to the drain above and stay connecting.
-			if rotated || deviceActivation.Load() || chatBridgeHasPending(bridge) || (server != nil && server.RealtimeVoicePending()) {
-				signalWakeupEvent(events)
-			}
+			activations.Settle(failureAnnouncementDone != nil, func() bool {
+				return rotated || chatBridgeHasPending(bridge) || (server != nil && server.RealtimeVoicePending())
+			})
 			if !rotated {
 				// A new standby period may face a different TTS state, and the
 				// user has had a chance to hear the clip already, so re-arm it.
@@ -1491,11 +1483,11 @@ func finishRealtimeSessionMedia(server *agent.Server, media realtimeSessionMedia
 	if server == nil {
 		return
 	}
-	server.EndRealtimeVoiceSession(media.voice)
-	if media.audio == nil {
+	rotated := errors.Is(sessionErr, realtimevoice.ErrSessionRotated)
+	if server.EndRealtimeVoiceSession(media.voice, rotated) {
 		return
 	}
-	if errors.Is(sessionErr, realtimevoice.ErrSessionRotated) && server.RequeueRealtimeAudioIO(media.voice) {
+	if media.audio == nil {
 		return
 	}
 	reason := ""

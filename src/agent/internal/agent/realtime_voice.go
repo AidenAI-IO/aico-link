@@ -234,39 +234,33 @@ func (v *RealtimeVoiceSession) Audio() RealtimeAudioIO {
 	return v.audio
 }
 
-// RequeueRealtimeAudioIO keeps the browser endpoint of session for the next
-// session when the provider rotates the current one. It reports whether the
-// endpoint was kept; the caller closes it otherwise. A session the user asked
-// to stop is never carried over.
-func (s *Server) RequeueRealtimeAudioIO(session *RealtimeVoiceSession) bool {
-	if s == nil || session == nil || session.Stopped() {
+// EndRealtimeVoiceSession withdraws session from the published status. When
+// rotated is true and the session is a browser session nobody asked to stop,
+// its endpoint is kept for the next session and EndRealtimeVoiceSession
+// reports true; the caller closes the endpoint otherwise.
+//
+// The stop check and the requeue happen under the lock that stop requests
+// also take, so a stop either lands before the requeue and prevents it, or
+// after it and withdraws the requeued start.
+func (s *Server) EndRealtimeVoiceSession(session *RealtimeVoiceSession, rotated bool) bool {
+	if s == nil || session == nil {
+		return false
+	}
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active == session {
+		c.active = nil
+	}
+	if !rotated || session.Stopped() || c.pending != nil || c.activate == nil {
 		return false
 	}
 	web, ok := session.audio.(*webRealtimeAudio)
 	if !ok || web.closed() {
 		return false
 	}
-	c := &s.realtimeVoice
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.pending != nil || c.activate == nil {
-		return false
-	}
 	c.pending = web
 	return true
-}
-
-// EndRealtimeVoiceSession withdraws session from the published status.
-func (s *Server) EndRealtimeVoiceSession(session *RealtimeVoiceSession) {
-	if s == nil || session == nil {
-		return
-	}
-	c := &s.realtimeVoice
-	c.mu.Lock()
-	if c.active == session {
-		c.active = nil
-	}
-	c.mu.Unlock()
 }
 
 // RealtimeVoiceStatus reports the current realtime voice state.
@@ -320,11 +314,10 @@ func (s *Server) releaseWebRealtimeVoice(web *webRealtimeAudio) {
 	if c.pending == web {
 		c.pending = nil
 	}
-	active := c.active
-	c.mu.Unlock()
-	if active != nil && active.audio == web {
+	if active := c.active; active != nil && active.audio == web {
 		active.requestStop()
 	}
+	c.mu.Unlock()
 }
 
 func (s *Server) stopRealtimeVoice() bool {
@@ -333,12 +326,14 @@ func (s *Server) stopRealtimeVoice() bool {
 	active := c.active
 	pending := c.pending
 	c.pending = nil
+	// Mark the session stopped while holding the lock, so a rotation that
+	// ends it concurrently sees the stop and does not requeue its endpoint.
+	if active != nil {
+		active.requestStop()
+	}
 	c.mu.Unlock()
 	if pending != nil {
 		pending.Close("")
-	}
-	if active != nil {
-		active.requestStop()
 	}
 	return active != nil || pending != nil
 }
