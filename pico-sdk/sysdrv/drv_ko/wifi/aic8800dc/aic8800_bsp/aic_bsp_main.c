@@ -373,35 +373,62 @@ static int __init aicbsp_init(void)
 
 	aicbsp_info.cpmode = testmode;
 
-	aicbsp_resv_mem_init();
+	ret = aicbsp_resv_mem_init();
+	if (ret)
+		return ret;
 
 	sema_init(&aicbsp_probe_semaphore, 0);
 
 	ret = platform_driver_register(&aicbsp_driver);
 	if (ret) {
 		pr_err("register platform driver failed: %d\n", ret);
-		return ret;
+		goto free_resv;
 	}
 
 	aicbsp_pdev = platform_device_alloc("aic-bsp", -1);
+	if (!aicbsp_pdev) {
+		ret = -ENOMEM;
+		goto unregister_driver;
+	}
 	ret = platform_device_add(aicbsp_pdev);
 	if (ret) {
 		pr_err("register platform device failed: %d\n", ret);
-		return ret;
+		platform_device_put(aicbsp_pdev);
+		aicbsp_pdev = NULL;
+		goto unregister_driver;
 	}
 
 	ret = sysfs_create_group(&(aicbsp_pdev->dev.kobj),
 				 &aicbsp_attribute_group);
 	if (ret) {
 		pr_err("register sysfs create group failed!\n");
-		return ret;
+		goto unregister_device;
 	}
 
 	mutex_init(&aicbsp_power_lock);
 #if defined CONFIG_PLATFORM_ROCKCHIP || defined CONFIG_PLATFORM_ROCKCHIP2
-	aicbsp_set_subsys(AIC_BLUETOOTH, AIC_PWR_ON);
+	ret = aicbsp_set_subsys(AIC_BLUETOOTH, AIC_PWR_ON);
+	if (ret < 0) {
+		pr_err("aicbsp firmware initialization failed: %d\n", ret);
+		mutex_destroy(&aicbsp_power_lock);
+		sysfs_remove_group(&aicbsp_pdev->dev.kobj,
+				   &aicbsp_attribute_group);
+		goto unregister_device;
+	}
 #endif
 	return 0;
+
+unregister_device:
+	platform_device_unregister(aicbsp_pdev);
+	aicbsp_pdev = NULL;
+unregister_driver:
+	platform_driver_unregister(&aicbsp_driver);
+free_resv:
+	aicbsp_resv_mem_deinit();
+#ifdef CONFIG_PREALLOC_TXQ
+	aicwf_prealloc_txq_free();
+#endif
+	return ret;
 }
 
 void aicbsp_sdio_exit(void);
@@ -415,7 +442,7 @@ static void __exit aicbsp_exit(void)
 	}
 #endif
 	sysfs_remove_group(&(aicbsp_pdev->dev.kobj), &aicbsp_attribute_group);
-	platform_device_del(aicbsp_pdev);
+	platform_device_unregister(aicbsp_pdev);
 	platform_driver_unregister(&aicbsp_driver);
 	mutex_destroy(&aicbsp_power_lock);
 	aicbsp_resv_mem_deinit();

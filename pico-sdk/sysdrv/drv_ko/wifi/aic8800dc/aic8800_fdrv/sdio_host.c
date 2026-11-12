@@ -11,6 +11,7 @@
 #include "rwnx_tx.h"
 #include "rwnx_platform.h"
 #include "aicwf_debug.h"
+#include "aicwf_txrxif.h"
 
 /**
  ****************************************************************************************
@@ -136,6 +137,14 @@ int aicwf_rwnx_sdio_platform_init(struct aic_sdio_dev *sdiodev)
 
 	rwnx_plat->sdiodev = sdiodev;
 	ret = rwnx_platform_init(rwnx_plat, &drvdata);
+	if (ret) {
+		/* The platform must outlive every bus callback on failed probe. */
+		if (sdiodev->bus_if->state != BUS_DOWN_ST)
+			aicwf_sdio_abort_init(sdiodev);
+		if (g_rwnx_plat == rwnx_plat)
+			g_rwnx_plat = NULL;
+		kfree(rwnx_plat);
+	}
 
 	return ret;
 }

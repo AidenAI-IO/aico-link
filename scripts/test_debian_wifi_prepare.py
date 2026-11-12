@@ -45,10 +45,15 @@ class StartupFixture(unittest.TestCase):
             path = self.lib / name
             path.write_text(script)
             path.chmod(0o755)
-        for path in (self.lib / "aico-boot-timeline", self.lib / "agent",
-                     self.bin / "logger"):
+        for path in (self.lib / "aico-boot-timeline", self.bin / "logger"):
             path.write_text("#!/bin/sh\nexit 0\n")
             path.chmod(0o755)
+        (self.lib / "agent").write_text('#!/bin/sh\nexit "${AGENT_STATUS:-0}"\n')
+        (self.lib / "agent").chmod(0o755)
+        (self.bin / "rmmod").write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$1" >> "$FIXTURE/unloads"\n'
+            'rmdir "$FIXTURE/sys/module/$1"\n')
+        (self.bin / "rmmod").chmod(0o755)
         # Record the reset state at every delay. The staged SDIO functions
         # appear only once the host has been rebound, as on the board.
         (self.bin / "sleep").write_text("""#!/bin/sh
@@ -118,6 +123,10 @@ if module == "aic8800_fdrv":
 
     def load_names(self):
         path = self.root / "loads"
+        return path.read_text().splitlines() if path.exists() else []
+
+    def unload_names(self):
+        path = self.root / "unloads"
         return path.read_text().splitlines() if path.exists() else []
 
 
@@ -203,6 +212,23 @@ class WifiDriverTest(StartupFixture):
         result = self.run_helper("aico-wifi-driver", FAIL_MODULE="aic8800_bsp")
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("aic8800_fdrv", self.load_names())
+        self.assertEqual(self.unload_names(), [])
+
+    def test_fdrv_failure_unloads_bsp_so_a_retry_resets_again(self):
+        result = self.run_helper("aico-wifi-driver", FAIL_MODULE="aic8800_fdrv")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.unload_names(), ["aic8800_bsp"])
+        (self.driver / "unbind").unlink()
+        result = self.run_helper("aico-wifi-driver")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.driver / "unbind").read_text().strip(), HOST)
+        self.assertEqual(self.load_names()[-2:], ["aic8800_bsp", "aic8800_fdrv"])
+
+    def test_failure_with_live_interface_keeps_modules(self):
+        result = self.run_helper("aico-wifi-driver", AGENT_STATUS="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("region-apply", result.stderr)
+        self.assertEqual(self.unload_names(), [])
 
     def test_missing_mandatory_bsp_fails_without_fdrv(self):
         (self.modules / "aic8800_bsp.ko").unlink()

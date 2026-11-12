@@ -13,6 +13,7 @@
 
 #include <linux/spinlock.h>
 #include <linux/completion.h>
+#include <linux/mutex.h>
 #include <linux/module.h>
 #include "aic_bsp_export.h"
 
@@ -104,10 +105,13 @@ struct rwnx_cmd {
 	lmac_msg_id_t reqid;
 	struct rwnx_cmd_a2emsg *a2e_msg;
 	char *e2a_msg;
+	u16 cfm_len;
+	bool check_memaddr;
+	u32 cfm_memaddr;
 	u32 tkn;
 	u16 flags;
 	struct completion complete;
-	u32 result;
+	int result;
 };
 
 struct aic_sdio_dev;
@@ -117,6 +121,8 @@ typedef int (*msg_cb_fct)(struct rwnx_cmd *cmd, struct rwnx_cmd_e2amsg *msg);
 struct rwnx_cmd_mgr {
 	enum rwnx_cmd_mgr_state state;
 	spinlock_t lock;
+	/* Covers both transport TX and CFM wait; the TX buffer is shared. */
+	struct mutex cmd_lock;
 	u32 next_tkn;
 	u32 queue_sz;
 	u32 max_queue_sz;
@@ -140,7 +146,7 @@ void rwnx_cmd_mgr_init(struct rwnx_cmd_mgr *cmd_mgr);
 void rwnx_cmd_mgr_deinit(struct rwnx_cmd_mgr *cmd_mgr);
 int cmd_mgr_queue_force_defer(struct rwnx_cmd_mgr *cmd_mgr,
 			      struct rwnx_cmd *cmd);
-void rwnx_set_cmd_tx(void *dev, struct lmac_msg *msg, uint len);
+int rwnx_set_cmd_tx(void *dev, struct lmac_msg *msg, uint len);
 
 enum {
 	TASK_NONE = (u8)-1,

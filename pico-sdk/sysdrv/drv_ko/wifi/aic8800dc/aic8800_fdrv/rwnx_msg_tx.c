@@ -323,7 +323,7 @@ static int rwnx_send_msg(struct rwnx_hw *rwnx_hw, const void *msg_params,
 		rwnx_msg_free(rwnx_hw, msg_params);
 		sdio_err("bus is down\n");
 		rwnx_wakeup_unlock(rwnx_hw->ws_tx);
-		return 0;
+		return -ENETDOWN;
 	}
 #endif
 
@@ -355,13 +355,17 @@ static int rwnx_send_msg(struct rwnx_hw *rwnx_hw, const void *msg_params,
 	//nonblock = is_non_blocking_msg(msg->id);
 	nonblock = 0;
 	cmd = rwnx_cmd_malloc(); //kzalloc(sizeof(struct rwnx_cmd), nonblock ? GFP_ATOMIC : GFP_KERNEL);
+	if (!cmd) {
+		kfree(msg);
+		rwnx_wakeup_unlock(rwnx_hw->ws_tx);
+		return -ENOMEM;
+	}
 	cmd->result = -EINTR;
 	cmd->id = msg->id;
 	cmd->reqid = reqid;
 	cmd->a2e_msg = msg;
 	cmd->e2a_msg = cfm;
-	if (nonblock)
-		cmd->flags = RWNX_CMD_FLAG_NONBLOCK;
+	cmd->flags = nonblock ? RWNX_CMD_FLAG_NONBLOCK : 0;
 	if (reqcfm)
 		cmd->flags |= RWNX_CMD_FLAG_REQ_CFM;
 
@@ -402,11 +406,13 @@ static int rwnx_send_msg(struct rwnx_hw *rwnx_hw, const void *msg_params,
 #endif
 	}
 
-	if (!reqcfm || ret)
+	if (!reqcfm || ret) {
+		kfree(cmd->a2e_msg);
 		rwnx_cmd_free(cmd); //kfree(cmd);
+	}
 
 	rwnx_wakeup_unlock(rwnx_hw->ws_tx);
-	return 0;
+	return ret;
 }
 
 static int rwnx_send_msg1(struct rwnx_hw *rwnx_hw, const void *msg_params,
@@ -429,13 +435,17 @@ static int rwnx_send_msg1(struct rwnx_hw *rwnx_hw, const void *msg_params,
 	//nonblock = is_non_blocking_msg(msg->id);
 	nonblock = 0;
 	cmd = rwnx_cmd_malloc(); //kzalloc(sizeof(struct rwnx_cmd), nonblock ? GFP_ATOMIC : GFP_KERNEL);
+	if (!cmd) {
+		kfree(msg);
+		rwnx_wakeup_unlock(rwnx_hw->ws_tx);
+		return -ENOMEM;
+	}
 	cmd->result = -EINTR;
 	cmd->id = msg->id;
 	cmd->reqid = reqid;
 	cmd->a2e_msg = msg;
 	cmd->e2a_msg = cfm;
-	if (nonblock)
-		cmd->flags = RWNX_CMD_FLAG_NONBLOCK;
+	cmd->flags = nonblock ? RWNX_CMD_FLAG_NONBLOCK : 0;
 	if (reqcfm)
 		cmd->flags |= RWNX_CMD_FLAG_REQ_CFM;
 
@@ -448,15 +458,13 @@ static int rwnx_send_msg1(struct rwnx_hw *rwnx_hw, const void *msg_params,
 			ret = cmd_mgr_queue_force_defer(rwnx_hw->cmd_mgr, cmd);
 	}
 
-	if (!reqcfm || ret)
+	if (!reqcfm || ret) {
+		kfree(cmd->a2e_msg);
 		rwnx_cmd_free(cmd); //kfree(cmd);
-
-	if (!ret)
-		ret = cmd->result;
+	}
 
 	rwnx_wakeup_unlock(rwnx_hw->ws_tx);
-	//return ret;
-	return 0;
+	return ret;
 }
 
 /******************************************************************************

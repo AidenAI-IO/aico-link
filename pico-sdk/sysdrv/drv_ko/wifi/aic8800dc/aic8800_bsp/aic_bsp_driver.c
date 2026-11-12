@@ -41,105 +41,76 @@ static void cmd_dump(const struct rwnx_cmd *cmd)
 	       cmd->tkn, cmd->flags, cmd->result, cmd->id, cmd->reqid);
 }
 
-static void cmd_complete(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
+/* The synchronous sender owns cmd and a2e_msg until queue() returns. */
+static void cmd_complete(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd,
+			 int result)
 {
-	//printk("cmdcmp\n");
 	lockdep_assert_held(&cmd_mgr->lock);
 
-	list_del(&cmd->list);
+	list_del_init(&cmd->list);
 	cmd_mgr->queue_sz--;
-
+	cmd->flags &= ~(RWNX_CMD_FLAG_WAIT_CFM | RWNX_CMD_FLAG_WAIT_ACK);
 	cmd->flags |= RWNX_CMD_FLAG_DONE;
-	if (cmd->flags & RWNX_CMD_FLAG_NONBLOCK) {
-		kfree(cmd);
-	} else {
-		if (RWNX_CMD_WAIT_COMPLETE(cmd->flags)) {
-			cmd->result = 0;
-			complete(&cmd->complete);
-		}
-	}
+	cmd->result = result;
+	complete(&cmd->complete);
 }
 
 static int cmd_mgr_queue(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 {
-	bool defer_push = false;
-	int err = 0;
+	long waited;
+	int err;
+
+	/* A CFM can arrive before TX returns, so list_empty() is insufficient. */
+	if (!mutex_trylock(&cmd_mgr->cmd_lock))
+		return -EBUSY;
 
 	spin_lock_bh(&cmd_mgr->lock);
-
-	if (cmd_mgr->state == RWNX_CMD_MGR_STATE_CRASHED) {
-		printk(KERN_CRIT "cmd queue crashed\n");
-		cmd->result = -EPIPE;
-		spin_unlock_bh(&cmd_mgr->lock);
-		return -EPIPE;
+	if (cmd_mgr->state != RWNX_CMD_MGR_STATE_INITED) {
+		err = cmd_mgr->state == RWNX_CMD_MGR_STATE_CRASHED ?
+			-EPIPE : -ESHUTDOWN;
+		goto unlock;
 	}
-
 	if (!list_empty(&cmd_mgr->cmds)) {
-		struct rwnx_cmd *last;
-
-		if (cmd_mgr->queue_sz == cmd_mgr->max_queue_sz) {
-			printk(KERN_CRIT "Too many cmds (%d) already queued\n",
-			       cmd_mgr->max_queue_sz);
-			cmd->result = -ENOMEM;
-			spin_unlock_bh(&cmd_mgr->lock);
-			return -ENOMEM;
-		}
-		last = list_entry(cmd_mgr->cmds.prev, struct rwnx_cmd, list);
-		if (last->flags &
-		    (RWNX_CMD_FLAG_WAIT_ACK | RWNX_CMD_FLAG_WAIT_PUSH)) {
-			cmd->flags |= RWNX_CMD_FLAG_WAIT_PUSH;
-			defer_push = true;
-		}
+		err = -EBUSY;
+		goto unlock;
 	}
 
-	if (cmd->flags & RWNX_CMD_FLAG_REQ_CFM)
-		cmd->flags |= RWNX_CMD_FLAG_WAIT_CFM;
-
+	cmd->flags |= RWNX_CMD_FLAG_WAIT_CFM;
 	cmd->tkn = cmd_mgr->next_tkn++;
-	cmd->result = -EINTR;
-
-	if (!(cmd->flags & RWNX_CMD_FLAG_NONBLOCK))
-		init_completion(&cmd->complete);
-
+	cmd->result = -EINPROGRESS;
+	init_completion(&cmd->complete);
 	list_add_tail(&cmd->list, &cmd_mgr->cmds);
 	cmd_mgr->queue_sz++;
 	spin_unlock_bh(&cmd_mgr->lock);
 
-	if (!defer_push) {
-		//printk("queue:id=%x, param_len=%u\n", cmd->a2e_msg->id, cmd->a2e_msg->param_len);
-		rwnx_set_cmd_tx((void *)(cmd_mgr->sdiodev), cmd->a2e_msg,
-				sizeof(struct lmac_msg) +
-					cmd->a2e_msg->param_len);
-		//rwnx_ipc_msg_push(rwnx_hw, cmd, RWNX_CMD_A2EMSG_LEN(cmd->a2e_msg));
-		kfree(cmd->a2e_msg);
-	} else {
-		//WAKE_CMD_WORK(cmd_mgr);
-		printk("ERR: never defer push!!!!");
-		return 0;
-	}
-
-	if (!(cmd->flags & RWNX_CMD_FLAG_NONBLOCK)) {
-		unsigned long tout = msecs_to_jiffies(
-			RWNX_80211_CMD_TIMEOUT_MS * cmd_mgr->queue_sz);
-		if (!wait_for_completion_killable_timeout(&cmd->complete,
-							  tout)) {
-			printk(KERN_CRIT "cmd timed-out\n");
-			cmd_dump(cmd);
-			spin_lock_bh(&cmd_mgr->lock);
+	err = rwnx_set_cmd_tx(cmd_mgr->sdiodev, cmd->a2e_msg,
+			      RWNX_CMD_A2EMSG_LEN(cmd->a2e_msg));
+	if (err) {
+		spin_lock_bh(&cmd_mgr->lock);
+		if (cmd_mgr->state != RWNX_CMD_MGR_STATE_DEINIT)
 			cmd_mgr->state = RWNX_CMD_MGR_STATE_CRASHED;
-			if (!(cmd->flags & RWNX_CMD_FLAG_DONE)) {
-				cmd->result = -ETIMEDOUT;
-				cmd_complete(cmd_mgr, cmd);
-			}
-			spin_unlock_bh(&cmd_mgr->lock);
-			err = -ETIMEDOUT;
-		} else {
-			kfree(cmd);
-		}
-	} else {
-		cmd->result = 0;
+		if (!(cmd->flags & RWNX_CMD_FLAG_DONE))
+			cmd_complete(cmd_mgr, cmd, err);
+		else
+			cmd->result = err;
+		goto unlock;
 	}
 
+	waited = wait_for_completion_killable_timeout(&cmd->complete,
+			msecs_to_jiffies(RWNX_80211_CMD_TIMEOUT_MS));
+	spin_lock_bh(&cmd_mgr->lock);
+	/* A reply racing the timeout/signal still owns a completed result. */
+	if (!(cmd->flags & RWNX_CMD_FLAG_DONE)) {
+		err = waited < 0 ? waited : -ETIMEDOUT;
+		cmd_mgr->state = RWNX_CMD_MGR_STATE_CRASHED;
+		cmd_complete(cmd_mgr, cmd, err);
+		printk(KERN_ERR "BSP command failed: %d\n", err);
+		cmd_dump(cmd);
+	}
+	err = cmd->result;
+unlock:
+	spin_unlock_bh(&cmd_mgr->lock);
+	mutex_unlock(&cmd_mgr->cmd_lock);
 	return err;
 }
 
@@ -164,41 +135,38 @@ static int cmd_mgr_msgind(struct rwnx_cmd_mgr *cmd_mgr,
 {
 	struct rwnx_cmd *cmd;
 	bool found = false;
+	int result;
 
-	//printk("cmd->id=%x\n", msg->id);
-	spin_lock(&cmd_mgr->lock);
-	list_for_each_entry (cmd, &cmd_mgr->cmds, list) {
-		if (cmd->reqid == msg->id &&
-		    (cmd->flags & RWNX_CMD_FLAG_WAIT_CFM)) {
-			if (!cmd_mgr_run_callback(cmd_mgr, cmd, msg, cb)) {
-				found = true;
-				cmd->flags &= ~RWNX_CMD_FLAG_WAIT_CFM;
+	spin_lock_bh(&cmd_mgr->lock);
+	list_for_each_entry(cmd, &cmd_mgr->cmds, list) {
+		if (cmd->reqid != msg->id ||
+		    !(cmd->flags & RWNX_CMD_FLAG_WAIT_CFM))
+			continue;
 
-				if (WARN((msg->param_len >
-					  RWNX_CMD_E2AMSG_LEN_MAX),
-					 "Unexpect E2A msg len %d > %d\n",
-					 msg->param_len,
-					 RWNX_CMD_E2AMSG_LEN_MAX)) {
-					msg->param_len =
-						RWNX_CMD_E2AMSG_LEN_MAX;
-				}
-
-				if (cmd->e2a_msg && msg->param_len)
-					memcpy(cmd->e2a_msg, &msg->param,
-					       msg->param_len);
-
-				if (RWNX_CMD_WAIT_COMPLETE(cmd->flags))
-					cmd_complete(cmd_mgr, cmd);
-
-				break;
-			}
+		found = true;
+		result = 0;
+		/* Validate before callbacks or copying into a caller's buffer. */
+		if (msg->param_len != cmd->cfm_len ||
+		    msg->param_len > RWNX_CMD_E2AMSG_LEN_MAX ||
+		    (cmd->check_memaddr &&
+		     (msg->param_len < sizeof(u32) ||
+		      msg->param[0] != cmd->cfm_memaddr))) {
+			result = -EPROTO;
+			cmd_mgr->state = RWNX_CMD_MGR_STATE_CRASHED;
+			printk(KERN_ERR "Invalid BSP confirmation id=%u len=%u expected=%u\n",
+			       msg->id, msg->param_len, cmd->cfm_len);
+		} else if (cmd_mgr_run_callback(cmd_mgr, cmd, msg, cb)) {
+			break;
+		} else if (cmd->e2a_msg && msg->param_len) {
+			memcpy(cmd->e2a_msg, msg->param, msg->param_len);
 		}
+		cmd_complete(cmd_mgr, cmd, result);
+		break;
 	}
-	spin_unlock(&cmd_mgr->lock);
+	spin_unlock_bh(&cmd_mgr->lock);
 
 	if (!found)
 		cmd_mgr_run_callback(cmd_mgr, NULL, msg, cb);
-
 	return 0;
 }
 
@@ -218,18 +186,22 @@ static void cmd_mgr_drain(struct rwnx_cmd_mgr *cmd_mgr)
 	struct rwnx_cmd *cur, *nxt;
 
 	spin_lock_bh(&cmd_mgr->lock);
-	list_for_each_entry_safe (cur, nxt, &cmd_mgr->cmds, list) {
-		list_del(&cur->list);
-		cmd_mgr->queue_sz--;
-		if (!(cur->flags & RWNX_CMD_FLAG_NONBLOCK))
-			complete(&cur->complete);
-	}
+	cmd_mgr->state = RWNX_CMD_MGR_STATE_DEINIT;
+	list_for_each_entry_safe(cur, nxt, &cmd_mgr->cmds, list)
+		cmd_complete(cmd_mgr, cur, -ESHUTDOWN);
 	spin_unlock_bh(&cmd_mgr->lock);
+
+	/* Do not destroy locks while the synchronous sender is retiring. */
+	mutex_lock(&cmd_mgr->cmd_lock);
+	mutex_unlock(&cmd_mgr->cmd_lock);
 }
 
 void rwnx_cmd_mgr_init(struct rwnx_cmd_mgr *cmd_mgr)
 {
-	cmd_mgr->max_queue_sz = RWNX_CMD_MAX_QUEUED;
+	cmd_mgr->max_queue_sz = 1;
+	cmd_mgr->queue_sz = 0;
+	cmd_mgr->next_tkn = 0;
+	mutex_init(&cmd_mgr->cmd_lock);
 	INIT_LIST_HEAD(&cmd_mgr->cmds);
 	cmd_mgr->state = RWNX_CMD_MGR_STATE_INITED;
 	spin_lock_init(&cmd_mgr->lock);
@@ -258,15 +230,22 @@ void rwnx_cmd_mgr_deinit(struct rwnx_cmd_mgr *cmd_mgr)
 		cmd_mgr->drain(cmd_mgr);
 	if (cmd_mgr->print)
 		cmd_mgr->print(cmd_mgr);
-	memset(cmd_mgr, 0, sizeof(*cmd_mgr));
+	/* Keep the DEINIT state and synchronization objects valid for waiters. */
 }
 
-void rwnx_set_cmd_tx(void *dev, struct lmac_msg *msg, uint len)
+int rwnx_set_cmd_tx(void *dev, struct lmac_msg *msg, uint len)
 {
 	struct aic_sdio_dev *sdiodev = (struct aic_sdio_dev *)dev;
 	struct aicwf_bus *bus = sdiodev->bus_if;
 	u8 *buffer = bus->cmd_buf;
 	u16 index = 0;
+
+	/* Reserve alignment and the link tail used by aicwf_sdio_tx_msg(). */
+	if (len != RWNX_CMD_A2EMSG_LEN(msg) ||
+	    len > CMD_BUF_MAX - 8 - TX_ALIGNMENT - TAIL_LEN)
+		return -EMSGSIZE;
+	if (bus->state != BUS_UP_ST)
+		return -ENETDOWN;
 
 	memset(buffer, 0, CMD_BUF_MAX);
 	buffer[0] = (len + 4) & 0x00ff;
@@ -294,7 +273,7 @@ void rwnx_set_cmd_tx(void *dev, struct lmac_msg *msg, uint len)
 	index += 2;
 	memcpy(&buffer[index], (u8 *)msg->param, msg->param_len);
 
-	aicwf_bus_txmsg(bus, buffer, len + 8);
+	return aicwf_bus_txmsg(bus, buffer, len + 8);
 }
 
 static inline void *rwnx_msg_zalloc(lmac_msg_id_t const id,
@@ -324,52 +303,49 @@ static inline void *rwnx_msg_zalloc(lmac_msg_id_t const id,
 	return msg->param;
 }
 
-static void rwnx_msg_free(struct lmac_msg *msg, const void *msg_params)
-{
-	kfree(msg);
-}
-
 static int rwnx_send_msg(struct aic_sdio_dev *sdiodev, const void *msg_params,
-			 int reqcfm, lmac_msg_id_t reqid, void *cfm)
+			 int reqcfm, lmac_msg_id_t reqid, void *cfm,
+			 u16 cfm_len)
 {
 	struct lmac_msg *msg;
 	struct rwnx_cmd *cmd;
-	bool nonblock;
-	int ret = 0;
+	int ret;
 
 	msg = container_of((void *)msg_params, struct lmac_msg, param);
-	if (sdiodev->bus_if->state == BUS_DOWN_ST) {
-		rwnx_msg_free(msg, msg_params);
-		printk("bus is down\n");
-		return 0;
+	/* This BSP uses synchronous requests only; never silently drop a CFM. */
+	if (!reqcfm || cfm_len > RWNX_CMD_E2AMSG_LEN_MAX) {
+		ret = -EINVAL;
+		goto free_msg;
+	}
+	if (sdiodev->bus_if->state != BUS_UP_ST) {
+		ret = -ENETDOWN;
+		goto free_msg;
 	}
 
-	nonblock = 0;
-	cmd = kzalloc(sizeof(struct rwnx_cmd),
-		      nonblock ? GFP_ATOMIC : GFP_KERNEL);
-	cmd->result = -EINTR;
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
+	if (!cmd) {
+		ret = -ENOMEM;
+		goto free_msg;
+	}
+	INIT_LIST_HEAD(&cmd->list);
 	cmd->id = msg->id;
 	cmd->reqid = reqid;
 	cmd->a2e_msg = msg;
 	cmd->e2a_msg = cfm;
-	if (nonblock)
-		cmd->flags = RWNX_CMD_FLAG_NONBLOCK;
-	if (reqcfm)
-		cmd->flags |= RWNX_CMD_FLAG_REQ_CFM;
+	cmd->cfm_len = cfm_len;
+	cmd->flags = RWNX_CMD_FLAG_REQ_CFM;
+	if (msg->id == DBG_MEM_READ_REQ) {
+		const struct dbg_mem_read_req *req = msg_params;
 
-	if (reqcfm) {
-		cmd->flags &=
-			~RWNX_CMD_FLAG_WAIT_ACK; // we don't need ack any more
-		ret = sdiodev->cmd_mgr.queue(&sdiodev->cmd_mgr, cmd);
-	} else {
-		rwnx_set_cmd_tx((void *)(sdiodev), cmd->a2e_msg,
-				sizeof(struct lmac_msg) +
-					cmd->a2e_msg->param_len);
+		cmd->check_memaddr = true;
+		cmd->cfm_memaddr = req->memaddr;
 	}
 
-	if (!reqcfm)
-		kfree(cmd);
-
+	ret = sdiodev->cmd_mgr.queue(&sdiodev->cmd_mgr, cmd);
+	/* queue() retires the request under the RX lock before returning. */
+	kfree(cmd);
+free_msg:
+	kfree(msg);
 	return ret;
 }
 
@@ -377,6 +353,10 @@ int rwnx_send_dbg_mem_block_write_req(struct aic_sdio_dev *sdiodev,
 				      u32 mem_addr, u32 mem_size, u32 *mem_data)
 {
 	struct dbg_mem_block_write_req *mem_blk_write_req;
+
+	if (mem_size > sizeof(mem_blk_write_req->memdata) ||
+	    (mem_size && !mem_data))
+		return -EINVAL;
 
 	/* Build the DBG_MEM_BLOCK_WRITE_REQ message */
 	mem_blk_write_req =
@@ -388,11 +368,13 @@ int rwnx_send_dbg_mem_block_write_req(struct aic_sdio_dev *sdiodev,
 	/* Set parameters for the DBG_MEM_BLOCK_WRITE_REQ message */
 	mem_blk_write_req->memaddr = mem_addr;
 	mem_blk_write_req->memsize = mem_size;
-	memcpy(mem_blk_write_req->memdata, mem_data, mem_size);
+	if (mem_size)
+		memcpy(mem_blk_write_req->memdata, mem_data, mem_size);
 
 	/* Send the DBG_MEM_BLOCK_WRITE_REQ message to LMAC FW */
 	return rwnx_send_msg(sdiodev, mem_blk_write_req, 1,
-			     DBG_MEM_BLOCK_WRITE_CFM, NULL);
+			     DBG_MEM_BLOCK_WRITE_CFM, NULL,
+			     sizeof(struct dbg_mem_block_write_cfm));
 }
 
 int rwnx_send_dbg_mem_read_req(struct aic_sdio_dev *sdiodev, u32 mem_addr,
@@ -410,7 +392,8 @@ int rwnx_send_dbg_mem_read_req(struct aic_sdio_dev *sdiodev, u32 mem_addr,
 	mem_read_req->memaddr = mem_addr;
 
 	/* Send the DBG_MEM_READ_REQ message to LMAC FW */
-	return rwnx_send_msg(sdiodev, mem_read_req, 1, DBG_MEM_READ_CFM, cfm);
+	return rwnx_send_msg(sdiodev, mem_read_req, 1, DBG_MEM_READ_CFM, cfm,
+			     sizeof(*cfm));
 }
 
 int rwnx_send_dbg_mem_write_req(struct aic_sdio_dev *sdiodev, u32 mem_addr,
@@ -431,7 +414,7 @@ int rwnx_send_dbg_mem_write_req(struct aic_sdio_dev *sdiodev, u32 mem_addr,
 
 	/* Send the DBG_MEM_WRITE_REQ message to LMAC FW */
 	return rwnx_send_msg(sdiodev, mem_write_req, 1, DBG_MEM_WRITE_CFM,
-			     NULL);
+			     NULL, sizeof(struct dbg_mem_write_cfm));
 }
 
 int rwnx_send_dbg_mem_mask_write_req(struct aic_sdio_dev *sdiodev, u32 mem_addr,
@@ -453,7 +436,8 @@ int rwnx_send_dbg_mem_mask_write_req(struct aic_sdio_dev *sdiodev, u32 mem_addr,
 
 	/* Send the DBG_MEM_MASK_WRITE_REQ message to LMAC FW */
 	return rwnx_send_msg(sdiodev, mem_mask_write_req, 1,
-			     DBG_MEM_MASK_WRITE_CFM, NULL);
+			     DBG_MEM_MASK_WRITE_CFM, NULL,
+			     sizeof(struct dbg_mem_mask_write_cfm));
 }
 
 int rwnx_send_dbg_start_app_req(struct aic_sdio_dev *sdiodev, u32 boot_addr,
@@ -477,19 +461,15 @@ int rwnx_send_dbg_start_app_req(struct aic_sdio_dev *sdiodev, u32 boot_addr,
 
 	/* Send the DBG_START_APP_REQ message to LMAC FW */
 	return rwnx_send_msg(sdiodev, start_app_req, 1, DBG_START_APP_CFM,
-			     start_app_cfm);
+			     start_app_cfm, sizeof(*start_app_cfm));
 }
-
-static msg_cb_fct dbg_hdlrs[MSG_I(DBG_MAX)] = {};
-
-static msg_cb_fct *msg_hdlrs[] = {
-	[TASK_DBG] = dbg_hdlrs,
-};
 
 void rwnx_rx_handle_msg(struct aic_sdio_dev *sdiodev, struct ipc_e2a_msg *msg)
 {
-	sdiodev->cmd_mgr.msgind(&sdiodev->cmd_mgr, msg,
-				msg_hdlrs[MSG_T(msg->id)][MSG_I(msg->id)]);
+	/* BSP has no unsolicited handlers. Runtime firmware can send other
+	 * task IDs, so dispatch only against the pending confirmation.
+	 */
+	sdiodev->cmd_mgr.msgind(&sdiodev->cmd_mgr, msg, NULL);
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
@@ -2304,7 +2284,7 @@ int aicbsp_driver_fw_init(struct aic_sdio_dev *sdiodev)
 				aicbsp_firmware_list = fw_8800d80_u02;
 		}
 		if (aicbsp_system_config_8800d80(sdiodev))
-			return -1;
+			return -EIO;
 	} else if (sdiodev->chipid == PRODUCT_ID_AIC8800D80X2) {
 		btenable = 1;
 		if (rwnx_send_dbg_mem_read_req(sdiodev, mem_addr,
@@ -2329,7 +2309,7 @@ int aicbsp_driver_fw_init(struct aic_sdio_dev *sdiodev)
 	if (testmode != 4) {
 		if (btenable == 1) {
 			if (aicbt_init(sdiodev))
-				return -1;
+				return -EIO;
 		}
 	}
 #endif

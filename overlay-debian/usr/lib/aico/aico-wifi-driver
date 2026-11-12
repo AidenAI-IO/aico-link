@@ -28,7 +28,33 @@ case "${lp_on}" in
         exit 1
         ;;
 esac
-trap 'status=$?; [ "$status" -eq 0 ] || mark "failed stage=${stage} status=${status}"; exit "$status"' EXIT
+# AIC modules inserted by this invocation, most recent first.
+inserted=
+# aico-wifi-prepare refuses to reset the module under a loaded AIC driver.
+# Without an interface, unload what this run inserted so a retry can reset.
+unload_inserted() {
+    if [ -e /sys/class/net/wlan0 ]; then
+        return 0
+    fi
+    for name in $inserted; do
+        if rmmod "$name"; then
+            log "stage=${stage} module=${name} action=unload result=success"
+        else
+            log "stage=${stage} module=${name} action=unload result=failed"
+        fi
+    done
+}
+cleanup() {
+    status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ]; then
+        unload_inserted
+        mark "failed stage=${stage} status=${status}"
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 insert_if_present() {
     module=$1
     shift
@@ -54,6 +80,9 @@ insert_if_present() {
         return 1
     fi
     log "stage=${stage} module=${module} action=load result=success"
+    case "$sys_name" in
+        aic8800_*) inserted="$sys_name $inserted" ;;
+    esac
 }
 
 log "stage=begin he_on=${he_on} lp_on=${lp_on} ko_dir=${ko_dir}"
