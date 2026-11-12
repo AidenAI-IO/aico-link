@@ -303,6 +303,17 @@ function handleSemanticEvent(event) {
             });
             refreshHistoryFromContext();
             return;
+        case 'transcript.segment_final': {
+            // The reply usually starts streaming before the provider has
+            // transcribed what the user said, and history refreshes wait for
+            // a live reply to finish. Show the user's words now, above that
+            // reply, instead of after it; the refresh at the end of the
+            // response replaces this with the stored message.
+            const text = semanticText(payload).trim();
+            if (text) addLiveUserTranscript({type: 'user', content: text, source: 'voice', timestamp});
+            refreshHistoryFromContext();
+            return;
+        }
         case 'state.updated':
             // State is persisted before the model starts, but history refreshes
             // are paused during a run to protect live assistant drafts. Render

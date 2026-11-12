@@ -726,6 +726,21 @@ function addMessage(msg, beforeRequestId) {
     renderLiveMessage(msg, beforeRequestId);
 }
 
+// addLiveUserTranscript shows what the user said in a voice turn. The reply
+// to it may already be streaming, so the message goes above the live reply
+// drafts rather than at the end.
+function addLiveUserTranscript(msg) {
+    const drafts = new Set(Object.values(streamingAssistantDrafts).map(messageIdentity));
+    const index = projectedMessages.findIndex(item => drafts.has(messageIdentity(item)));
+    if (index < 0) {
+        addMessage(msg);
+        return;
+    }
+    projectedMessages = projectedMessages.slice(0, index).concat(msg, projectedMessages.slice(index));
+    renderedHistoryFingerprint = null;
+    reconcileConversation(projectedMessages, true);
+}
+
 function renderLiveMessage(msg, beforeRequestId) {
     if (isContextMarkerMessage(msg) || isToolMessage(msg)) {
         // Markers and tool messages may join or split an activity group.
