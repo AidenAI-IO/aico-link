@@ -61,11 +61,17 @@ function noted(card, note) {
 /**
  * The board's web terminal (ttyd). Over USB it is served on port 3000, which
  * the companion app recognises and opens in its own terminal screen; any
- * other address reaches it through the Agent on 8080, as the classic page did.
+ * other address reaches it through the Agent, on 8443 from an HTTPS page and
+ * 8080 otherwise, as the classic page did.
  */
 export function terminalUrl(location = window.location) {
   const url = new URL(location.href);
-  url.port = url.hostname === '192.168.42.1' ? '3000' : '8080';
+  if (url.hostname === '192.168.42.1') {
+    url.protocol = 'http:';
+    url.port = '3000';
+  } else {
+    url.port = url.protocol === 'https:' ? '8443' : '8080';
+  }
   url.pathname = '/webtty/';
   url.search = '';
   url.hash = '';

@@ -501,10 +501,9 @@ func runRealtimeWakeupMode(cfg agent.Config, sigChan chan os.Signal, newWatcher 
 // runRealtimeWakeupModeWithServer owns the realtime voice path. The legacy wakeup
 // runners remain separate so they can be restored without changing this path.
 func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, server *agent.Server, runtime *agent.Runtime, tasks *agenttask.Manager, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
-	events := make(chan struct{}, 1)
-	bridge := newRealtimeChatBridge(func() {
-		signalWakeupEvent(events)
-	})
+	activations := newRealtimeActivations()
+	events := activations.events
+	bridge := newRealtimeChatBridge(activations.Device)
 	voiceNotificationTicker := time.NewTicker(realtimeNotificationPoll)
 	defer voiceNotificationTicker.Stop()
 	var notificationFallbackCancel context.CancelFunc
@@ -604,12 +603,19 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 	if server != nil {
 		server.SetRealtimeChatHandler(bridge.Handle)
 		defer server.SetRealtimeChatHandler(nil)
+		if !cfg.Benchmark.RealtimeText {
+			// A browser starting a voice session from the Web UI wakes the
+			// loop like any other activation; the session then takes the
+			// browser's audio endpoint instead of the device.
+			server.SetRealtimeVoiceActivation(activations.Wake)
+			defer server.SetRealtimeVoiceActivation(nil)
+		}
 	}
 	logging.Infof("agent", "ready", "Starting realtime MCU wakeup listener...")
 	var watchers []wakeupWatcher
 	var err error
 	if !cfg.Benchmark.RealtimeText {
-		watchers, err = startWakeupWatchers(newWatcher, func() { signalWakeupEvent(events) })
+		watchers, err = startWakeupWatchers(newWatcher, activations.Wakeup)
 	}
 	if err != nil {
 		logging.Warnf("agent", "realtime", "MCU wakeup unavailable: %v; /api/chat activation remains enabled", err)
@@ -619,6 +625,19 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 
 	logging.Infof("agent", "ready", "Waiting for realtime activation (/api/chat or %s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 	var taskWake taskWakeState
+	// voice is the conversation in progress. It spans the provider sessions
+	// that carry it, so a session the provider rotates reconnects with the
+	// same audio endpoint, mute state and stop request. It stays nil without
+	// an agent server, where sessions use the device and have no controls.
+	var voice *agent.RealtimeVoiceSession
+	endVoice := func(reason string) {
+		if voice != nil {
+			server.EndRealtimeVoiceSession(voice, reason)
+			voice = nil
+		}
+		activations.SetRunning(false)
+	}
+	defer endVoice("")
 	for {
 		if reloadRequested(reload) {
 			bridge.failQueued("voice configuration changed; retry the request")
@@ -659,11 +678,14 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			if failureAnnouncementCancel != nil {
 				// Do not cut the failure announcement short for a task update;
 				// activating after it exits keeps the user informed about both.
+				// Record it as a device activation now, so the later wakeup
+				// opens the device instead of being skipped.
+				activations.DeferDevice()
 				pendingActivation = true
 				continue
 			}
 			logging.Infof("agent", "realtime", "Background task update ready, activating realtime voice model...")
-			signalWakeupEvent(events)
+			activations.Device()
 		case <-events:
 			// Realtime is the preferred consumer. Stop idle standalone speech
 			// before opening the realtime audio session.
@@ -677,13 +699,6 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 				continue
 			}
 			logging.Infof("agent", "realtime", "Activation requested, connecting realtime voice model...")
-			rotated := false
-			// The session is about to consume every terminal update available
-			// now. Record that watermark before it runs: an update produced
-			// while it is connected and dropped by its teardown is then still
-			// announced by a later activation, while an update it delivered is
-			// no longer pending and cannot open an empty session.
-			taskWake.observeSession(agentTaskTerminalSequence(tasks))
 			var semanticSink streamcontract.EventSink
 			if server != nil {
 				semanticSink = server.RealtimeEventSink()
@@ -695,30 +710,73 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 					}
 				}
 			}
-			sessionErr := runRealtimeSessionWithSink(cfg, sigChan, runtime, tasks, semanticSink, bridge)
+			realtimeBeforeClaim()
+			if voice == nil {
+				// A browser waiting to start brings its own audio; the device
+				// opens only for a device activation or a queued chat request.
+				deviceRequested := activations.TakeDevice() || chatBridgeHasPending(bridge)
+				if server != nil && !cfg.Benchmark.RealtimeText {
+					voice = server.ClaimRealtimeVoiceSession(cfg, deviceRequested)
+					if voice == nil {
+						// The only wakeup came from a browser start that was
+						// since withdrawn. Opening the device would start a
+						// session nobody asked for.
+						logging.Infof("agent", "realtime", "Browser voice start was withdrawn before it began; staying in standby")
+						continue
+					}
+				}
+				activations.SetRunning(true)
+			}
+			// The session is about to consume every terminal update available
+			// now. Record that watermark only once a session opens: a wakeup
+			// that opens nothing must leave an update queued behind it able
+			// to activate the loop. An update produced while the session is
+			// connected and dropped by its teardown is still announced by a
+			// later activation, while one it delivered is no longer pending
+			// and cannot open an empty session.
+			taskWake.observeSession(agentTaskTerminalSequence(tasks))
+			sessionErr := realtimeSessionRunner(cfg, sigChan, runtime, tasks, semanticSink, voice, bridge)
+			rotated := errors.Is(sessionErr, realtimevoice.ErrSessionRotated)
+			if rotated && voice.Stopped() {
+				// The conversation was ended while the provider was rotating
+				// its session; do not reconnect.
+				rotated, sessionErr = false, nil
+			}
+			route := voice.Route()
+			if !rotated {
+				reason := ""
+				if sessionErr != nil && !errors.Is(sessionErr, errRealtimeShutdown) {
+					reason = sessionErr.Error()
+				}
+				endVoice(reason)
+			}
 			if errors.Is(sessionErr, errRealtimeShutdown) {
 				return
-			} else if errors.Is(sessionErr, realtimevoice.ErrSessionRotated) {
+			} else if rotated {
 				// The provider capped session lifetime rather than failing, so the
 				// conversation continues in a fresh session instead of dropping back
 				// to idle. Queued chat requests are kept: they remain answerable
 				// after the handover.
-				rotated = true
 				logging.Warnf("agent", "realtime", "session rotated by provider, reconnecting: %v", sessionErr)
 			} else if sessionErr != nil {
 				logging.Errorf("agent", "realtime", "session ended: %v", sessionErr)
 				bridge.failQueued(sessionErr.Error())
 				// The failed Realtime session cannot voice its own failure. Start
 				// the standalone announcement without blocking activation handling;
-				// a new activation cancels this speech first.
-				startFailureAnnouncement(sessionErr)
+				// a new activation cancels this speech first. A browser session
+				// reports its failure in the Web UI instead of on the device.
+				if route == agent.RealtimeAudioRouteDevice {
+					startFailureAnnouncement(sessionErr)
+				}
 			}
-			drainRealtimeWakeups(events, failureAnnouncementDone != nil)
-			// An API request can arrive while the previous session is tearing
-			// down. Preserve that activation after clearing stale wake events.
-			if rotated || chatBridgeHasPending(bridge) {
-				signalWakeupEvent(events)
-			}
+			// Device activations during the session were served by it. Settle
+			// clears them and drains their queued wakeups, keeping any that
+			// arrives meanwhile, and wakes the loop again to reconnect a
+			// rotated session, to answer an API request that arrived during
+			// teardown, or to start a browser voice session queued meanwhile.
+			activations.Settle(failureAnnouncementDone != nil, func() bool {
+				return rotated || chatBridgeHasPending(bridge) || (server != nil && server.RealtimeVoicePending())
+			})
 			if !rotated {
 				// A new standby period may face a different TTS state, and the
 				// user has had a chance to hear the clip already, so re-arm it.
@@ -1399,28 +1457,58 @@ func positiveRate(primary, fallback int) int {
 }
 
 func runRealtimeSession(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, chatBridges ...*realtimeChatBridge) error {
-	return runRealtimeSessionWithSink(cfg, sigChan, runtime, tasks, nil, chatBridges...)
+	return runRealtimeSessionWithSink(cfg, sigChan, runtime, tasks, nil, nil, chatBridges...)
 }
 
 func runRealtimeSessionWithRegistry(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, registry *realtimevoice.ProviderRegistry, chatBridges ...*realtimeChatBridge) (returnErr error) {
-	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, registry, nil, realtimeResponseIdleTimeout, chatBridges...)
+	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, registry, nil, realtimeResponseIdleTimeout, nil, chatBridges...)
 }
 
-func runRealtimeSessionWithSink(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, sink streamcontract.EventSink, chatBridges ...*realtimeChatBridge) error {
-	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, realtimevoice.DefaultProviderRegistry(), sink, realtimeResponseIdleTimeout, chatBridges...)
+func runRealtimeSessionWithSink(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, sink streamcontract.EventSink, voice *agent.RealtimeVoiceSession, chatBridges ...*realtimeChatBridge) error {
+	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, realtimevoice.DefaultProviderRegistry(), sink, realtimeResponseIdleTimeout, voice, chatBridges...)
 }
+
+// realtimeSessionRunner runs one realtime session for the wakeup loop. Tests
+// replace it to drive the loop without a provider or audio devices.
+var realtimeSessionRunner = runRealtimeSessionWithSink
+
+// realtimeBeforeClaim runs as the loop starts handling an activation, before
+// it claims a session. Tests use it to land events in that gap.
+var realtimeBeforeClaim = func() {}
 
 func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, registry *realtimevoice.ProviderRegistry, idleTimeout time.Duration, chatBridges ...*realtimeChatBridge) (returnErr error) {
-	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, registry, nil, idleTimeout, chatBridges...)
+	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, registry, nil, idleTimeout, nil, chatBridges...)
 }
 
-func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, registry *realtimevoice.ProviderRegistry, sink streamcontract.EventSink, idleTimeout time.Duration, chatBridges ...*realtimeChatBridge) (returnErr error) {
+// runRealtimeSessionWithRegistryAndSink runs one provider session of a
+// realtime conversation. voice carries the conversation's audio endpoint and
+// its Web UI controls; nil uses the device audio without controls.
+func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, registry *realtimevoice.ProviderRegistry, sink streamcontract.EventSink, idleTimeout time.Duration, voice *agent.RealtimeVoiceSession, chatBridges ...*realtimeChatBridge) (returnErr error) {
 	var chatBridge *realtimeChatBridge
 	if len(chatBridges) > 0 {
 		chatBridge = chatBridges[0]
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if stop := voice.StopRequested(); stop != nil {
+		// A stop from the Web UI also covers the time before the session
+		// loop starts: it cancels the provider connection instead of letting
+		// it finish and then opening the microphone. Whatever that
+		// cancellation interrupts is not a failure: the conversation ended
+		// because someone asked it to.
+		defer func() {
+			if voice.Stopped() && !errors.Is(returnErr, errRealtimeShutdown) {
+				returnErr = nil
+			}
+		}()
+		go func() {
+			select {
+			case <-stop:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+	}
 	var runtimeTools []langtools.Tool
 	if !cfg.UseBackendAgentEffective() && runtime != nil {
 		runtimeTools = runtime.AvailableTools()
@@ -1450,10 +1538,18 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	connectCtx, connectCancel := context.WithTimeout(ctx, realtimeConnectTimeout)
 	session, err := registry.Open(connectCtx, providerName, realtimevoice.ProviderConfig{Endpoint: cfg.VoiceModel.Endpoint, BaseURL: cfg.VoiceModel.BaseURL, AgentID: cfg.VoiceModel.AgentID, UpstreamProvider: cfg.VoiceModel.UpstreamProvider, WorkspaceID: cfg.VoiceModel.WorkspaceID, Region: cfg.VoiceModel.Region, AuthMode: cfg.VoiceModel.AuthMode, ProjectID: cfg.VoiceModel.ProjectID, Location: cfg.VoiceModel.Location, RealtimeProtocol: cfg.VoiceModel.RealtimeProtocol}, sessionConfig, realtimevoice.DeviceMediaConfig{Input: realtimeVoiceDeviceFormat(cfg), Output: realtimeVoicePlaybackDeviceFormat(cfg)})
 	connectCancel()
+	if voice.Stopped() {
+		if err == nil {
+			_ = session.Close()
+		}
+		logging.Infof("agent", "realtime", "Conversation ended while connecting, returning to standby")
+		return nil
+	}
 	if err != nil {
 		return markRealtimeProviderFailure(fmt.Errorf("connect realtime voice model: %w", err))
 	}
 	defer session.Close()
+	voice.MarkReady()
 	info := session.Info()
 	semanticEmitter := newRealtimeSemanticEmitter(sink)
 	if semanticEmitter != nil {
@@ -1502,9 +1598,12 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		}
 		playbackAudio.backend = &benchmarkSilentPlayback{}
 	} else {
-		audioService := agent.NewAudioServiceClient(cfg.Audio.SocketOrDefault())
-		recordingAudio := agent.NewConfiguredAudioRecordingBackend(cfg, audioService, nil)
-		playbackAudio.backend = agent.NewConfiguredAudioPlaybackBackend(cfg, audioService, nil)
+		audioIO := voice.Audio()
+		if audioIO == nil {
+			audioIO = agent.NewDeviceRealtimeAudioIO(cfg)
+		}
+		recordingAudio := audioIO.Recording()
+		playbackAudio.backend = audioIO.Playback()
 		inputFormat := realtimeAgentAudioFormat(info.InputFormatOrDefault(16000))
 		recording, err := recordingAudio.StartRecording(inputFormat)
 		if err != nil {
@@ -1534,7 +1633,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		outputFormat.BitWidth,
 		providerOutputRate != int(outputFormat.SampleRate),
 	)
-	playback := realtimePlaybackState{finalizeResponses: cfg.AudioBackendOrDefault() == agent.AudioBackendLocal}
+	playback := realtimePlaybackState{finalizeResponses: voice.Route() == agent.RealtimeAudioRouteDevice && cfg.AudioBackendOrDefault() == agent.AudioBackendLocal}
 	if err := playback.open(playbackAudio, outputFormat); err != nil {
 		return fmt.Errorf("open realtime playback: %w", err)
 	}
@@ -1692,6 +1791,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	activeNotificationToken := ""
 	activeNotificationResponseID := ""
 	activeNotificationAudioWritten := false
+	activeNotificationSilenced := false
 	responseSuppressed := false
 	suppressedNotificationResponsePending := false
 	suppressedNotificationResponseIDs := make(map[string]struct{})
@@ -1822,6 +1922,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		if !currentAdmission().canInjectVoiceNotification() {
 			return nil
 		}
+		if voice.SpeakerMuted() {
+			// A notification is spoken only to be heard. Keep it pending
+			// until the speaker is unmuted or the next standby period.
+			return nil
+		}
 		prepared := runtime.PrepareVoiceNotification(ctx)
 		if prepared.DeliveryToken == "" || strings.TrimSpace(prepared.Text) == "" {
 			return nil
@@ -1837,6 +1942,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		activeNotificationToken = prepared.DeliveryToken
 		activeNotificationResponseID = ""
 		activeNotificationAudioWritten = false
+		activeNotificationSilenced = false
 		requestResponse()
 		return nil
 	}
@@ -1909,6 +2015,22 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			return nil
 		case <-sigChan:
 			return errRealtimeShutdown
+		case <-voice.StopRequested():
+			logging.Infof("agent", "realtime", "Conversation ended from the Web UI or by its browser leaving, returning to standby")
+			return nil
+		case <-voice.MuteChanged():
+			if !voice.SpeakerMuted() {
+				continue
+			}
+			// Later speech is replaced by silence as it arrives; this stops
+			// what the speaker or the browser already holds.
+			if activeNotificationToken != "" {
+				activeNotificationSilenced = true
+			}
+			if err := playback.dropQueued(playbackAudio, outputFormat); err != nil {
+				return fmt.Errorf("silence realtime playback: %w", err)
+			}
+			logging.Infof("agent", "realtime", "Speaker muted; dropped queued playback")
 		case err, ok := <-sessionErrors:
 			if !ok {
 				sessionErrors = nil
@@ -1951,6 +2073,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			if activeNotificationToken == "" {
 				continue
 			}
+			if err == nil && (voice.SpeakerMuted() || activeNotificationSilenced) {
+				// A mute after the last audio chunk silences what was still
+				// queued; the notice was not heard, so keep it pending.
+				err = errors.New("realtime notification was muted before playback finished")
+			}
 			if err != nil {
 				runtime.ReportSpokenTextDelivery(activeNotificationToken, err)
 				if stopErr := playback.stop(playbackAudio); stopErr != nil {
@@ -1962,6 +2089,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			activeNotificationToken = ""
 			activeNotificationResponseID = ""
 			activeNotificationAudioWritten = false
+			activeNotificationSilenced = false
 			if err := tryInjectVoiceNotification(); err != nil {
 				return err
 			}
@@ -2010,6 +2138,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					return err
 				}
 				return nil
+			}
+			if voice.Muted() {
+				// Keep the provider's input stream continuous while muted so
+				// its turn detection sees silence rather than a stalled feed.
+				pcm = make([]byte, len(pcm))
 			}
 			if err := session.SendAudio(ctx, pcm); err != nil {
 				return markRealtimeProviderFailure(err)
@@ -2187,6 +2320,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					activeNotificationToken = ""
 					activeNotificationResponseID = ""
 					activeNotificationAudioWritten = false
+					activeNotificationSilenced = false
 				}
 				logging.Infof("agent", "realtime", "Input speech started: provider=%s session_id=%s item_id=%s audio_start_ms=%d; interrupting local playback", providerName, info.ID, event.ItemID, event.AudioStartMS)
 				if canInterrupt {
@@ -2311,8 +2445,14 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					pendingResponseRequestID = ""
 					pendingResponseUpdateIDs = nil
 				}
-				if semanticEmitter != nil && collaboration != nil {
+				if semanticEmitter != nil {
+					// Observers tie the response to the chat request that
+					// started it; without the turn ID the Web UI shows the
+					// request's own reply a second time under the provider's
+					// response ID. Voice turns have no request and keep it empty.
 					semanticEmitter.turnID = currentTurnID
+				}
+				if semanticEmitter != nil && collaboration != nil {
 					semanticEmitter.collaboration = &streamcontract.Collaboration{Version: 1,
 						ResponseRequestID: responseRequestID, UpdateIDs: append([]string(nil), responseUpdateIDs...), ProviderSessionID: info.ID}
 				}
@@ -2426,11 +2566,23 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if len(pcm) > 0 {
 					watchdog.progress()
 				}
+				audible := len(pcm) > 0
+				if voice.SpeakerMuted() {
+					// Keep the playback position moving so barge-in still
+					// truncates the provider's reply at the right point, but
+					// play silence instead of speech.
+					pcm = make([]byte, len(pcm))
+					audible = false
+				}
 				if err := playback.appendItem(playbackAudio, outputFormat, event.ItemID, pcm); err != nil {
 					return err
 				}
 				if activeNotificationToken != "" {
-					activeNotificationAudioWritten = activeNotificationAudioWritten || len(pcm) > 0
+					// Only speech the user heard in full counts as delivered; a
+					// notification muted at any point stays pending and is
+					// retried.
+					activeNotificationAudioWritten = activeNotificationAudioWritten || audible
+					activeNotificationSilenced = activeNotificationSilenced || (len(pcm) > 0 && !audible)
 				}
 			case realtimevoice.EventToolCall:
 				if !turnState.acceptsResponseEvent(event.ResponseID) {
@@ -2586,6 +2738,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					activeChat = nil
 				}
 				currentTurnID = ""
+				if semanticEmitter != nil {
+					// Speech before the next response belongs to no chat
+					// request; do not label it with the finished one.
+					semanticEmitter.turnID = ""
+				}
 				if err := tryStartQueuedChat(); err != nil {
 					return err
 				}
@@ -2598,6 +2755,8 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						deliveryErr = fmt.Errorf("realtime notification response ended with status %q", event.Status)
 					} else if !activeNotificationAudioWritten {
 						deliveryErr = errors.New("realtime notification response produced no audio")
+					} else if activeNotificationSilenced {
+						deliveryErr = errors.New("realtime notification was muted before it finished")
 					}
 					if deliveryErr == nil {
 						if err := playback.finishResponse(playbackAudio, true); err != nil {
@@ -2612,6 +2771,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						activeNotificationToken = ""
 						activeNotificationResponseID = ""
 						activeNotificationAudioWritten = false
+						activeNotificationSilenced = false
 					} else {
 						drainCtx, cancel := context.WithTimeout(ctx, realtimeNotificationDrain)
 						notificationDrainCancel = cancel
@@ -3549,6 +3709,24 @@ func (p *realtimePlaybackState) finishResponse(audio realtimePlaybackAudio, forc
 	return nil
 }
 
+// dropQueued discards audio the playback session has not played yet and
+// opens a fresh session. The position within the current reply is kept, so a
+// later barge-in still truncates the provider's reply at the right point.
+func (p *realtimePlaybackState) dropQueued(audio realtimePlaybackAudio, format agent.AudioFormat) error {
+	if p.session == nil {
+		return nil
+	}
+	itemID, submittedBytes, itemStartedAt := p.itemID, p.submittedBytes, p.itemStartedAt
+	if err := p.stop(audio); err != nil {
+		return err
+	}
+	if err := p.open(audio, format); err != nil {
+		return err
+	}
+	p.itemID, p.submittedBytes, p.itemStartedAt = itemID, submittedBytes, itemStartedAt
+	return nil
+}
+
 func (p *realtimePlaybackState) stop(audio realtimePlaybackAudio) error {
 	if p.session == nil {
 		return nil
@@ -3599,6 +3777,11 @@ func streamRealtimeAudio(ctx context.Context, audio realtimeRecordingAudio, sess
 			return
 		}
 		if len(chunk.PCM) == 0 {
+			// A quiet microphone must not keep this reader alive after its
+			// session has ended.
+			if ctx.Err() != nil {
+				return
+			}
 			continue
 		}
 		select {

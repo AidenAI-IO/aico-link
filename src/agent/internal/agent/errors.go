@@ -35,6 +35,9 @@ const (
 	CodeBridgeNotConnected = "bridge_not_connected"
 	CodeAppNotInstalled    = "app_not_installed"
 	CodeModuleUnavailable  = "module_unavailable"
+	// A batch stopped because the screen did not confirm a step's expected
+	// state; the remaining steps did not run.
+	CodeStepExpectationUnmet = "step_expectation_unmet"
 
 	// user_action_required — needs human in the loop
 	CodePermissionDenied = "permission_denied"
@@ -79,9 +82,10 @@ var codeRegistry = map[string]ToolErrorSpec{
 	CodeAppNoLaunchTarget:  {Category: CategoryInvalidInput, Severity: "warning"},
 
 	// precondition_failed
-	CodeBridgeNotConnected: {Category: CategoryPreconditionFailed, Severity: "warning"},
-	CodeAppNotInstalled:    {Category: CategoryPreconditionFailed, Severity: "warning"},
-	CodeModuleUnavailable:  {Category: CategoryPreconditionFailed, Severity: "warning"},
+	CodeBridgeNotConnected:   {Category: CategoryPreconditionFailed, Severity: "warning"},
+	CodeAppNotInstalled:      {Category: CategoryPreconditionFailed, Severity: "warning"},
+	CodeModuleUnavailable:    {Category: CategoryPreconditionFailed, Severity: "warning"},
+	CodeStepExpectationUnmet: {Category: CategoryPreconditionFailed, Severity: "info"},
 
 	// user_action_required
 	CodePermissionDenied: {Category: CategoryUserActionRequired, Severity: "warning"},

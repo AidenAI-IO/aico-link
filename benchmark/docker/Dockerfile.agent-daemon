@@ -12,7 +12,8 @@ COPY src/agent/go.mod src/agent/go.sum ./
 RUN go mod download
 
 COPY src/agent/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o daemon ./cmd/daemon
+RUN CGO_ENABLED=0 GOOS=linux go build -o daemon ./cmd/daemon && \
+    CGO_ENABLED=0 GOOS=linux go build -o benchmark-mcu ./cmd/benchmark-mcu
 
 # The Agent's shell runs inside this container. The controller ships Python 3.13
 # with only the standard library, so the runtime matches it: shell commands that
@@ -22,6 +23,7 @@ FROM python:3.13-slim AS agent-daemon-runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=agent-daemon-builder /build/daemon /usr/local/bin/daemon
+COPY --from=agent-daemon-builder /build/benchmark-mcu /usr/local/bin/benchmark-mcu
 COPY benchmark/docker/agent-daemon-entrypoint.sh /usr/local/bin/agent-daemon-entrypoint
 # The controller has python3 at /usr/bin/python3; keep that path working here.
 RUN ln -sf /usr/local/bin/python3 /usr/bin/python3
