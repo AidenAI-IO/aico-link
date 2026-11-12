@@ -86,7 +86,7 @@ def publish(client: GitHub, artifacts: Path, branch: str) -> list[str]:
     require_main_branch(branch)
     manifest = json.loads((artifacts / "manifest.json").read_text())
     require_main_branch(manifest.get("base_branch", ""))
-    if manifest.get("execution_ref") != f"refs/heads/{BASE_BRANCH}":
+    if manifest.get("execution_ref") not in (f"refs/heads/{BASE_BRANCH}", policy.LIVE_TRIAL_REF):
         raise ValueError("Branch-test findings cannot be published")
     drafts_file = artifacts / "issues.json"
     drafts = json.loads(drafts_file.read_text()) if drafts_file.is_file() else []
