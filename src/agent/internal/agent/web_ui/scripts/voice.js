@@ -12,15 +12,29 @@ const voiceMuteBtn = document.getElementById('voiceMuteBtn');
 const voiceSpeakerBtn = document.getElementById('voiceSpeakerBtn');
 const voiceStatusPollMs = 1500;
 const voiceStartTimeoutMs = 30000;
+// How long to wait for a suspended audio context to start. A browser that
+// does not allow audio leaves resume() pending rather than rejecting it.
+const voiceResumeTimeoutMs = 2000;
 const voiceCaptureFrameMs = 20;
 const voicePlaybackLeadSeconds = 0.04;
-const defaultInputPlaceholder = inputEl ? inputEl.placeholder : '';
+// Keep at most this much microphone audio waiting to be sent. On a slow link
+// newer speech matters more than a backlog, which would reach the agent long
+// after it was spoken.
+const voiceSendBacklogBytes = 32000;
+// A status poll may fail this many times in a row before the page gives up
+// on the session it shows; one dropped request must not hide a conversation.
+const voiceStatusFailureLimit = 3;
+const voiceIdleStatus = {available: false, state: 'idle', muted: false, speaker_muted: false};
+const defaultInputPlaceholder = inputEl.placeholder;
 
-let voiceStatus = {available: false, state: 'idle', muted: false, speaker_muted: false};
+// voiceStatus is the agent's view, refreshed by polling. voiceLocal is the
+// browser session this tab started, if any; it owns the microphone, the
+// audio context and the socket.
+let voiceStatus = voiceIdleStatus;
 let voiceActivity = 'idle';
 let voiceLocal = null;
-let voiceStatusTimer = null;
-let voiceStatusRefreshPending = false;
+let voiceStatusRequest = 0;
+let voiceStatusFailures = 0;
 
 // createVoiceResampler converts Float32 frames between sample rates with
 // linear interpolation, carrying the fractional position across frames.
@@ -55,66 +69,80 @@ function floatToPCM16(samples) {
 }
 
 function pcm16ToChannels(buffer, channels) {
-    const count = Math.max(1, channels || 1);
-    const bytes = buffer.byteLength - (buffer.byteLength % (2 * count));
+    const bytes = buffer.byteLength - (buffer.byteLength % (2 * channels));
     const pcm = new Int16Array(buffer, 0, bytes / 2);
-    const frames = pcm.length / count;
+    const frames = pcm.length / channels;
     const result = [];
-    for (let c = 0; c < count; c++) {
+    for (let c = 0; c < channels; c++) {
         const channel = new Float32Array(frames);
-        for (let i = 0; i < frames; i++) channel[i] = pcm[i * count + c] / 0x8000;
+        for (let i = 0; i < frames; i++) channel[i] = pcm[i * channels + c] / 0x8000;
         result.push(channel);
     }
     return result;
 }
 
+// patchVoiceStatus applies a change this page just made, ahead of the agent
+// confirming it. Polls already in flight predate the change and are dropped.
+function patchVoiceStatus(patch) {
+    voiceStatusRequest++;
+    voiceStatus = Object.assign({}, voiceStatus, patch);
+}
+
 function voiceModeActive() {
-    return !!voiceLocal || voiceStatus.state === 'connecting' || voiceStatus.state === 'active';
+    return !!voiceLocal || voiceStatus.state !== 'idle';
 }
 
-function voiceStatusLabel() {
-    if (voiceLocal && !voiceLocal.capturing) return 'Connecting…';
-    if (!voiceLocal && voiceStatus.state === 'connecting') return 'Connecting…';
-    const speakerMuted = !!(voiceStatus.speaker_muted || (voiceLocal && voiceLocal.speakerMuted));
-    if (voiceStatus.muted && speakerMuted) return 'Microphone and speaker muted';
-    if (voiceStatus.muted) return 'Microphone muted';
-    if (speakerMuted && voiceActivity === 'speaking') return 'Speaker muted';
-    const where = voiceLocal ? '' : voiceStatus.route === 'web' ? ' · audio in another browser' : ' · audio on device';
-    switch (voiceActivity) {
-        case 'listening': return 'Listening' + where;
-        case 'thinking': return 'Thinking' + where;
-        case 'speaking': return 'Speaking' + where;
-        default: return 'Ready' + where;
-    }
+// voiceView is everything the page shows, derived in one place so the orb,
+// the label and the buttons cannot disagree.
+function voiceView() {
+    const local = voiceLocal;
+    const playing = !!local && local.context && local.nextPlayTime > local.context.currentTime;
+    return {
+        active: voiceModeActive(),
+        connecting: local ? !local.capturing : voiceStatus.state === 'connecting',
+        // A browser session mutes in this tab at once; the agent's state
+        // follows, and is all there is for a session elsewhere.
+        muted: local ? local.muted : !!voiceStatus.muted,
+        speakerMuted: local ? local.speakerMuted : !!voiceStatus.speaker_muted,
+        // The reply is generated faster than it is spoken, so a browser
+        // session keeps "speaking" until its queued audio has played.
+        activity: playing && voiceActivity === 'idle' ? 'speaking' : voiceActivity,
+        where: local ? '' : voiceStatus.route === 'web' ? ' · audio in another browser' : ' · audio on device'
+    };
 }
 
-// The orb floats just above the composer, which grows with its input and
-// attachments, so follow its height instead of a fixed offset.
-const voiceComposerEl = document.querySelector('.composer');
-if (voiceComposerEl && window.ResizeObserver) {
-    new ResizeObserver(function() {
-        voiceStageEl.parentElement.style.setProperty('--voice-composer-height', voiceComposerEl.offsetHeight + 'px');
-    }).observe(voiceComposerEl);
+function voiceStatusLabel(view) {
+    if (view.connecting) return 'Connecting…';
+    if (view.muted && view.speakerMuted) return 'Microphone and speaker muted';
+    if (view.muted) return 'Microphone muted';
+    if (view.speakerMuted && view.activity === 'speaking') return 'Speaker muted';
+    const label = {listening: 'Listening', thinking: 'Thinking', speaking: 'Speaking'}[view.activity] || 'Ready';
+    return label + view.where;
 }
+
+// The orb floats just above whatever sits under the message list: the
+// activity row, a pending steer and the composer, which grows with its input
+// and attachments. Follow the list's bottom edge instead of a fixed offset.
+new ResizeObserver(function() {
+    const content = voiceStageEl.parentElement;
+    content.style.setProperty('--voice-stage-bottom', (content.clientHeight - conversationEl.offsetTop - conversationEl.offsetHeight) + 'px');
+}).observe(conversationEl);
 
 function renderRealtimeVoice() {
-    const active = voiceModeActive();
+    const view = voiceView();
     const wasActive = document.body.classList.contains('voice-mode');
-    voiceStageEl.classList.toggle('hidden', !active);
-    document.body.classList.toggle('voice-mode', active);
-    const muted = !!(voiceStatus.muted || (voiceLocal && voiceLocal.muted));
-    const speakerMuted = !!(voiceStatus.speaker_muted || (voiceLocal && voiceLocal.speakerMuted));
-    renderVoiceToggle(voiceMuteBtn, active, muted, 'microphone');
-    renderVoiceToggle(voiceSpeakerBtn, active, speakerMuted, 'speaker');
-    if (typeof renderComposerPrimary === 'function') renderComposerPrimary();
-    const connecting = (voiceLocal && !voiceLocal.capturing) || (!voiceLocal && voiceStatus.state === 'connecting');
-    voiceOrbEl.dataset.activity = connecting ? 'connecting' : muted && voiceActivity === 'listening' ? 'idle' : voiceActivity;
-    voiceStatusEl.textContent = voiceStatusLabel();
-    if (inputEl) inputEl.placeholder = active ? 'Type a message…' : defaultInputPlaceholder;
-    if (!active) voiceOrbEl.style.removeProperty('--voice-level');
+    voiceStageEl.classList.toggle('hidden', !view.active);
+    document.body.classList.toggle('voice-mode', view.active);
+    renderVoiceToggle(voiceMuteBtn, view.active, view.muted, 'microphone');
+    renderVoiceToggle(voiceSpeakerBtn, view.active, view.speakerMuted, 'speaker');
+    renderComposerPrimary();
+    voiceOrbEl.dataset.activity = view.connecting ? 'connecting' : view.muted && view.activity === 'listening' ? 'idle' : view.activity;
+    voiceStatusEl.textContent = voiceStatusLabel(view);
+    inputEl.placeholder = view.active ? 'Type a message…' : defaultInputPlaceholder;
+    if (!view.active) voiceOrbEl.style.removeProperty('--voice-level');
     // Entering voice mode adds room under the last message for the orb; keep
     // the reader at the bottom so the latest message stays above the fade.
-    if (active && !wasActive) scrollToBottom();
+    if (view.active && !wasActive) scrollToBottom();
 }
 
 function renderVoiceToggle(button, visible, off, name) {
@@ -125,29 +153,34 @@ function renderVoiceToggle(button, visible, off, name) {
     button.setAttribute('aria-label', button.title);
 }
 
+// refreshRealtimeVoiceStatus reads the agent's state. Requests may overlap;
+// only the newest one is applied, so a refresh made right after an action is
+// never lost behind an older poll.
 async function refreshRealtimeVoiceStatus() {
-    if (voiceStatusRefreshPending) return;
-    voiceStatusRefreshPending = true;
+    const request = ++voiceStatusRequest;
+    let next = null;
     try {
         const res = await fetch('/api/realtime/voice', {cache: 'no-store'});
-        if (!res.ok) throw new Error(await res.text());
-        const next = await res.json();
-        const wasActive = voiceStatus.state !== 'idle';
-        voiceStatus = Object.assign({available: false, state: 'idle', muted: false, speaker_muted: false}, next);
-        if (voiceStatus.state === 'idle' || !wasActive) voiceActivity = 'idle';
+        if (res.ok) next = await res.json();
     } catch (err) {
-        // An older agent has no voice endpoint; keep the button hidden.
-        voiceStatus = {available: false, state: 'idle', muted: false, speaker_muted: false};
-    } finally {
-        voiceStatusRefreshPending = false;
+        // Counted below.
+    }
+    if (request !== voiceStatusRequest) return;
+    if (next) {
+        voiceStatusFailures = 0;
+        if (voiceStatus.state === 'idle' || next.state === 'idle') voiceActivity = 'idle';
+        voiceStatus = Object.assign({}, voiceIdleStatus, next);
+    } else if (++voiceStatusFailures >= voiceStatusFailureLimit) {
+        // The agent is unreachable, or too old to have a voice endpoint.
+        voiceStatus = voiceIdleStatus;
+        voiceActivity = 'idle';
     }
     renderRealtimeVoice();
 }
 
 function startRealtimeVoiceStatusPolling() {
     refreshRealtimeVoiceStatus().then(startRealtimeVoiceFromLocation);
-    if (voiceStatusTimer) clearInterval(voiceStatusTimer);
-    voiceStatusTimer = setInterval(function() {
+    setInterval(function() {
         if (!document.hidden || voiceLocal) refreshRealtimeVoiceStatus();
     }, voiceStatusPollMs);
 }
@@ -177,7 +210,7 @@ function handleRealtimeVoiceEvent(event) {
 }
 
 async function startRealtimeVoice() {
-    if (voiceLocal || voiceModeActive()) return;
+    if (voiceModeActive()) return;
     if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         const secureURL = realtimeVoiceSecureURL();
         if (secureURL) {
@@ -190,10 +223,13 @@ async function startRealtimeVoice() {
         return;
     }
     const local = {
-        socket: null, stream: null, context: null, capture: null, resampler: null,
-        captureFormat: null, playbackFormat: {sample_rate: 24000, channels: 1, bit_width: 16},
-        capturing: false, muted: false, speakerMuted: false, pending: [], pendingSamples: 0,
-        sources: new Set(), nextPlayTime: 0, inputAnalyser: null, outputAnalyser: null, outputGain: null,
+        socket: null, stream: null, context: null, capture: null,
+        // Set by capture_start and playback_start before any audio flows.
+        captureRate: 0, resample: null, playbackFormat: null,
+        capturing: false, muted: false, speakerMuted: false,
+        pending: [], pendingSamples: 0, sendStalled: false,
+        sources: new Set(), nextPlayTime: 0, playingTimer: null,
+        inputAnalyser: null, outputAnalyser: null, outputGain: null,
         meterFrame: 0, startTimer: null, ended: false, endReason: ''
     };
     voiceLocal = local;
@@ -232,20 +268,22 @@ async function startRealtimeVoice() {
         openVoiceSocket(local);
         startVoiceMeter(local);
     } catch (err) {
-        const reason = local.ended ? '' : voiceStartErrorMessage(err);
-        teardownLocalVoice(local, reason);
+        teardownLocalVoice(local, voiceStartErrorMessage(err));
     }
 }
 
 // realtimeVoiceSecureURL returns this page on the agent's HTTPS port, with a
-// marker that starts voice once it loads, or '' when HTTPS is unavailable.
+// marker that offers voice once it loads, or '' when HTTPS is unavailable.
+// The marker is a query parameter so it survives a sign-in on the way: the
+// HTTPS page is a different site to the browser, which may ask for the device
+// password again, and the sign-in redirect keeps the query but not a fragment.
 function realtimeVoiceSecureURL() {
     const port = Number(voiceStatus.https_port) || 0;
     if (!port || location.protocol === 'https:') return '';
     const url = new URL(location.href);
     url.protocol = 'https:';
     url.port = String(port);
-    url.hash = 'voice';
+    url.searchParams.set('voice', '1');
     return url.toString();
 }
 
@@ -253,14 +291,12 @@ function realtimeVoiceSecureURL() {
 // Starting on load would run without a user gesture, and browsers keep the
 // audio of such a page suspended.
 function startRealtimeVoiceFromLocation() {
-    if (location.hash !== '#voice') return;
-    history.replaceState(null, '', location.pathname + location.search);
+    const url = new URL(location.href);
+    if (!url.searchParams.has('voice')) return;
+    url.searchParams.delete('voice');
+    history.replaceState(null, '', url.pathname + url.search + url.hash);
     if (!voiceStatus.available || voiceModeActive()) return;
-    setComposerHint('Press the voice button to start talking.', false);
-    if (composerHintTimer) {
-        clearTimeout(composerHintTimer);
-        composerHintTimer = null;
-    }
+    setComposerHint('Press the voice button to start talking.', false, true);
     sendBtn.focus();
 }
 
@@ -285,11 +321,10 @@ function openVoiceSocket(local) {
             playVoicePCM(local, event.data);
         }
     };
-    socket.onclose = function() {
-        teardownLocalVoice(local, local.endReason);
-    };
-    socket.onerror = function() {
-        if (!local.endReason) local.endReason = 'Voice connection failed';
+    socket.onclose = function(event) {
+        // The agent says why it ended a session; a socket that closes without
+        // that was cut off, which the user should hear about too.
+        teardownLocalVoice(local, local.endReason || (event.wasClean ? '' : 'The voice connection was lost'));
     };
 }
 
@@ -302,8 +337,8 @@ function handleVoiceControlMessage(local, text) {
     }
     switch (message.type) {
         case 'capture_start':
-            local.captureFormat = message.format || {sample_rate: 16000, channels: 1, bit_width: 16};
-            local.resampler = createVoiceResampler(local.context.sampleRate, local.captureFormat.sample_rate || 16000);
+            local.captureRate = message.format.sample_rate;
+            local.resample = createVoiceResampler(local.context.sampleRate, local.captureRate);
             local.pending = [];
             local.pendingSamples = 0;
             beginVoiceCapture(local);
@@ -312,8 +347,7 @@ function handleVoiceControlMessage(local, text) {
             local.capturing = false;
             break;
         case 'playback_start':
-            if (message.format) local.playbackFormat = message.format;
-            stopVoicePlayback(local);
+            local.playbackFormat = message.format;
             break;
         case 'playback_stop':
             stopVoicePlayback(local);
@@ -327,10 +361,6 @@ function handleVoiceControlMessage(local, text) {
 
 // Capture only counts as started once the audio context runs; a suspended
 // context sends and plays nothing while the page would claim to listen.
-// How long to wait for a suspended audio context to start. A browser that
-// does not allow audio leaves resume() pending rather than rejecting it.
-const voiceResumeTimeoutMs = 2000;
-
 async function beginVoiceCapture(local) {
     if (local.context.state === 'suspended') {
         let timer = null;
@@ -351,24 +381,24 @@ async function beginVoiceCapture(local) {
         return;
     }
     local.capturing = true;
-    if (local.startTimer) clearTimeout(local.startTimer);
-    refreshRealtimeVoiceStatus();
+    clearTimeout(local.startTimer);
+    // A mute pressed before the agent picked the session up was refused;
+    // apply it now so the buttons keep telling the truth.
+    if (local.muted || local.speakerMuted) {
+        postRealtimeVoiceMute({muted: local.muted, speaker_muted: local.speakerMuted}, 'Could not restore the mute state');
+    } else {
+        refreshRealtimeVoiceStatus();
+    }
     renderRealtimeVoice();
 }
 
-// Keep at most this much microphone audio waiting to be sent. On a slow link
-// newer speech matters more than a backlog, which would reach the agent long
-// after it was spoken.
-const voiceSendBacklogBytes = 32000;
-
 function handleVoiceCaptureFrame(local, samples) {
-    if (!local.capturing || !local.resampler || !local.socket || local.socket.readyState !== WebSocket.OPEN) return;
-    const resampled = local.resampler(samples);
+    if (!local.capturing || local.socket.readyState !== WebSocket.OPEN) return;
+    const resampled = local.resample(samples);
     if (!resampled.length) return;
     local.pending.push(resampled);
     local.pendingSamples += resampled.length;
-    const rate = local.captureFormat.sample_rate || 16000;
-    if (local.pendingSamples < rate * voiceCaptureFrameMs / 1000) return;
+    if (local.pendingSamples < local.captureRate * voiceCaptureFrameMs / 1000) return;
     const frame = new Float32Array(local.pendingSamples);
     let offset = 0;
     local.pending.forEach(chunk => {
@@ -380,20 +410,19 @@ function handleVoiceCaptureFrame(local, samples) {
     if (local.socket.bufferedAmount > voiceSendBacklogBytes) {
         // The connection is not keeping up; drop this frame rather than queue
         // stale audio behind it.
-        local.droppedFrames = (local.droppedFrames || 0) + 1;
-        if (local.droppedFrames === 1) console.warn('[voice] connection is slow; dropping microphone audio');
+        if (!local.sendStalled) console.warn('[voice] connection is slow; dropping microphone audio');
+        local.sendStalled = true;
         return;
     }
-    local.droppedFrames = 0;
+    local.sendStalled = false;
     local.socket.send(floatToPCM16(frame).buffer);
 }
 
 function playVoicePCM(local, buffer) {
-    if (!local.context || !buffer || buffer.byteLength < 2) return;
-    const format = local.playbackFormat || {};
-    const channels = pcm16ToChannels(buffer, format.channels || 1);
-    if (!channels[0].length) return;
-    const audioBuffer = local.context.createBuffer(channels.length, channels[0].length, format.sample_rate || 24000);
+    const format = local.playbackFormat;
+    if (!format || buffer.byteLength < 2 * format.channels) return;
+    const channels = pcm16ToChannels(buffer, format.channels);
+    const audioBuffer = local.context.createBuffer(channels.length, channels[0].length, format.sample_rate);
     channels.forEach((data, index) => audioBuffer.copyToChannel(data, index));
     const source = local.context.createBufferSource();
     source.buffer = audioBuffer;
@@ -404,6 +433,9 @@ function playVoicePCM(local, buffer) {
     local.nextPlayTime += audioBuffer.duration;
     local.sources.add(source);
     source.onended = () => local.sources.delete(source);
+    // Show the reply as finished once the queued audio has played out.
+    clearTimeout(local.playingTimer);
+    local.playingTimer = setTimeout(renderRealtimeVoice, (local.nextPlayTime - now) * 1000 + 50);
 }
 
 function stopVoicePlayback(local) {
@@ -416,10 +448,10 @@ function stopVoicePlayback(local) {
     });
     local.sources.clear();
     local.nextPlayTime = 0;
+    clearTimeout(local.playingTimer);
 }
 
 function voiceAnalyserLevel(analyser, samples) {
-    if (!analyser) return 0;
     analyser.getFloatTimeDomainData(samples);
     let sum = 0;
     for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
@@ -442,53 +474,51 @@ function startVoiceMeter(local) {
     local.meterFrame = requestAnimationFrame(tick);
 }
 
+// teardownLocalVoice releases everything a browser session holds. It runs
+// once per session; reason, when set, is shown to the user.
 function teardownLocalVoice(local, reason) {
-    if (local.ended && voiceLocal !== local) {
-        // Already torn down; still release resources that arrived since.
-        if (local.stream) local.stream.getTracks().forEach(track => track.stop());
-        return;
-    }
+    if (local.ended) return;
     local.ended = true;
-    if (local.startTimer) clearTimeout(local.startTimer);
-    if (local.meterFrame) cancelAnimationFrame(local.meterFrame);
+    clearTimeout(local.startTimer);
+    cancelAnimationFrame(local.meterFrame);
     local.capturing = false;
     if (local.socket && local.socket.readyState <= WebSocket.OPEN) local.socket.close();
     if (local.capture) local.capture.port.onmessage = null;
     if (local.stream) local.stream.getTracks().forEach(track => track.stop());
-    if (local.context) {
-        stopVoicePlayback(local);
-        local.context.close().catch(() => {});
-    }
+    stopVoicePlayback(local);
+    if (local.context) local.context.close().catch(() => {});
     if (voiceLocal === local) voiceLocal = null;
     voiceActivity = 'idle';
+    // The session this tab carried is over. Do not wait for the next poll to
+    // say so, or the page would briefly show it as running in another browser.
+    if (voiceStatus.route === 'web') patchVoiceStatus({state: 'idle'});
     if (reason) setComposerHint(reason, true);
     renderRealtimeVoice();
     refreshRealtimeVoiceStatus();
 }
 
 async function endRealtimeVoice() {
-    const local = voiceLocal;
-    if (local) {
-        local.endReason = '';
-        teardownLocalVoice(local, '');
-    }
+    if (voiceLocal) teardownLocalVoice(voiceLocal, '');
+    // Show the end at once; the agent confirms it on the next refresh.
+    patchVoiceStatus({state: 'idle'});
+    voiceActivity = 'idle';
+    renderRealtimeVoice();
     try {
         await fetch('/api/realtime/voice/stop', {method: 'POST'});
     } catch (err) {
-        console.error('Failed to stop voice:', err);
+        setComposerHint('Could not end the voice session', true);
     }
-    voiceActivity = 'idle';
     refreshRealtimeVoiceStatus();
 }
 
 async function toggleRealtimeVoiceMute() {
-    const muted = !(voiceStatus.muted || (voiceLocal && voiceLocal.muted));
+    const muted = !voiceView().muted;
     if (voiceLocal) {
         voiceLocal.muted = muted;
         // A disabled track captures silence, so nothing leaves the browser.
-        if (voiceLocal.stream) voiceLocal.stream.getAudioTracks().forEach(track => { track.enabled = !muted; });
+        voiceLocal.stream.getAudioTracks().forEach(track => { track.enabled = !muted; });
     }
-    voiceStatus = Object.assign({}, voiceStatus, {muted});
+    patchVoiceStatus({muted});
     renderRealtimeVoice();
     await postRealtimeVoiceMute({muted}, 'Could not change the microphone state');
 }
@@ -496,12 +526,12 @@ async function toggleRealtimeVoiceMute() {
 // The agent silences the reply on either audio route; a browser session also
 // mutes its own output so speech already queued in this tab stops at once.
 async function toggleRealtimeVoiceSpeaker() {
-    const speakerMuted = !(voiceStatus.speaker_muted || (voiceLocal && voiceLocal.speakerMuted));
+    const speakerMuted = !voiceView().speakerMuted;
     if (voiceLocal) {
         voiceLocal.speakerMuted = speakerMuted;
-        if (voiceLocal.outputGain) voiceLocal.outputGain.gain.value = speakerMuted ? 0 : 1;
+        voiceLocal.outputGain.gain.value = speakerMuted ? 0 : 1;
     }
-    voiceStatus = Object.assign({}, voiceStatus, {speaker_muted: speakerMuted});
+    patchVoiceStatus({speaker_muted: speakerMuted});
     renderRealtimeVoice();
     await postRealtimeVoiceMute({speaker_muted: speakerMuted}, 'Could not change the speaker state');
 }
@@ -513,6 +543,8 @@ async function postRealtimeVoiceMute(body, failure) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body)
         });
+        // 409: the session is not running yet, or no longer. A browser
+        // session applies its state again once capture starts.
         if (!res.ok && res.status !== 409) throw new Error(await res.text());
     } catch (err) {
         setComposerHint(failure, true);

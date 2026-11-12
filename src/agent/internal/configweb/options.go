@@ -188,8 +188,11 @@ func (o Options) Validate() error {
 	if o.Port < 1 || o.Port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535")
 	}
-	if o.HTTPSPort < 0 || o.HTTPSPort > 65535 || (o.HTTPSPort != 0 && o.HTTPSPort == o.Port) {
-		return fmt.Errorf("https-port must be 0 or a port between 1 and 65535 other than port")
+	if o.HTTPSPort < 0 || o.HTTPSPort > 65535 || (o.HTTPSPort != 0 && (o.HTTPSPort == o.Port || o.HTTPSPort == o.USBTerminalPort)) {
+		return fmt.Errorf("https-port must be 0 or a port between 1 and 65535 other than port and usb-terminal-port")
+	}
+	if o.HTTPSPort != 0 && strings.TrimSpace(o.TLSDir) == "" {
+		return fmt.Errorf("https-port requires tls-dir")
 	}
 	if o.WiFiBackend != "legacy" && o.WiFiBackend != "systemd-networkd" {
 		return fmt.Errorf("unsupported Wi-Fi backend %q", o.WiFiBackend)

@@ -15,9 +15,8 @@ import (
 type realtimeActivations struct {
 	events chan struct{}
 	device atomic.Bool
-	// running is set while a session runs. A wake word or button press then
-	// belongs to the conversation already in progress and must not queue a
-	// device session to start when it ends.
+	// running is set while a conversation runs. A wake word or button press
+	// then belongs to that conversation and is dropped.
 	running atomic.Bool
 	// stage, when set by tests, runs at each step of settle so a test can
 	// interleave an activation at a precise point.
@@ -35,8 +34,9 @@ func (a *realtimeActivations) Device() {
 }
 
 // Wakeup handles a wake word or MCU button press. It is ignored while a
-// session runs: the user is already talking, and queueing it would switch a
-// browser conversation to the board as soon as that conversation ended.
+// session runs: the user is already talking. Dropping it here, instead of
+// leaving it for Settle to clear, also keeps it from cutting short the
+// failure announcement of a session that goes on to fail.
 func (a *realtimeActivations) Wakeup() {
 	if a.running.Load() {
 		logging.Infof("agent", "wakeup", "Wakeup ignored: a realtime session is already running")

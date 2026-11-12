@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
@@ -39,10 +38,10 @@ func (s *Server) listenShare(addr string) (net.Listener, error) {
 
 // startUSBListener serves srv on a socket bound to the USB interface. Only
 // its connections are trusted; until it is bound, USB clients reach the main
-// listener and are treated like any other LAN client. A non-nil tlsConfig
-// serves HTTPS. It is passed explicitly because net/http fills in
-// srv.TLSConfig on a plain server when it starts serving.
-func (s *Server) startUSBListener(srv *http.Server, tlsConfig *tls.Config) {
+// listener and are treated like any other LAN client. useTLS is explicit
+// because net/http fills in srv.TLSConfig on a plain server when it starts
+// serving, so the field cannot tell the two apart.
+func (s *Server) startUSBListener(srv *http.Server, useTLS bool) {
 	if s.lanAccess == nil || s.usbIngress.Interface == "" || s.usbIngress.Address == "" {
 		return
 	}
@@ -78,12 +77,12 @@ func (s *Server) startUSBListener(srv *http.Server, tlsConfig *tls.Config) {
 			s.logger.Info("USB listener ready on %s (%s)", address, s.usbIngress.Interface)
 		}
 		trusted := lanaccess.TrustListener(listener)
-		if tlsConfig != nil {
-			// The trust marker must wrap the raw connection: the TLS server
-			// wraps each accepted conn, and ConnContext sees the inner one.
-			trusted = tls.NewListener(trusted, tlsConfig)
+		if useTLS {
+			err = srv.ServeTLS(trusted, "", "")
+		} else {
+			err = srv.Serve(trusted)
 		}
-		if err := srv.Serve(trusted); err != nil &&
+		if err != nil &&
 			!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) && s.logger != nil {
 			s.logger.Warn("USB listener stopped: %v", err)
 		}

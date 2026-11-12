@@ -6,13 +6,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"aico-agent/internal/agent/tts"
 	"nhooyr.io/websocket"
 )
+
+// dialWebVoice opens the voice socket against a server that serves only it.
+func dialWebVoice(t *testing.T, s *Server) (context.Context, *websocket.Conn) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(s.handleRealtimeVoiceSocket))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
+	return ctx, conn
+}
 
 func readWebVoiceControl(t *testing.T, ctx context.Context, conn *websocket.Conn) map[string]any {
 	t.Helper()
@@ -30,6 +44,16 @@ func readWebVoiceControl(t *testing.T, ctx context.Context, conn *websocket.Conn
 	return message
 }
 
+func waitWebVoice(t *testing.T, ctx context.Context, what string, ok func() bool) {
+	t.Helper()
+	for !ok() {
+		if ctx.Err() != nil {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // A browser-started session must carry its audio over the socket in both
 // directions, and the browser leaving must end the session's microphone
 // stream so the session returns to standby.
@@ -37,19 +61,7 @@ func TestWebRealtimeVoiceSessionCarriesBrowserAudio(t *testing.T) {
 	s := &Server{}
 	activated := make(chan struct{}, 1)
 	s.SetRealtimeVoiceActivation(func() { activated <- struct{}{} })
-	srv := httptest.NewServer(http.HandlerFunc(s.handleRealtimeVoiceSocket))
-	defer srv.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-	if got := readWebVoiceControl(t, ctx, conn)["type"]; got != "accepted" {
-		t.Fatalf("first message = %v, want accepted", got)
-	}
+	ctx, conn := dialWebVoice(t, s)
 	select {
 	case <-activated:
 	case <-ctx.Done():
@@ -127,37 +139,22 @@ func TestWebRealtimeVoiceSessionCarriesBrowserAudio(t *testing.T) {
 			t.Fatal("microphone stream did not end after the browser left")
 		}
 	}
-	s.EndRealtimeVoiceSession(voice, false)
-	audio.Close("")
+	s.EndRealtimeVoiceSession(voice, "")
 	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
 		t.Fatalf("status = %+v, want idle", status)
 	}
 }
 
-// A browser start released before the session loop reaches it must not make
-// the loop open the board microphone for its leftover wakeup.
-func TestReleasedWebRealtimeVoiceStartOpensNoSession(t *testing.T) {
+// A browser start withdrawn before the session loop reaches it must not make
+// the loop open the board microphone for its leftover wakeup, and must leave
+// nothing behind that would swallow a later device activation.
+func TestWithdrawnWebRealtimeVoiceStartOpensNoSession(t *testing.T) {
 	s := &Server{}
 	s.SetRealtimeVoiceActivation(func() {})
-	srv := httptest.NewServer(http.HandlerFunc(s.handleRealtimeVoiceSocket))
-	defer srv.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := readWebVoiceControl(t, ctx, conn)["type"]; got != "accepted" {
-		t.Fatalf("first message = %v, want accepted", got)
-	}
+	ctx, conn := dialWebVoice(t, s)
+	waitWebVoice(t, ctx, "the queued start", s.RealtimeVoicePending)
 	conn.Close(websocket.StatusNormalClosure, "")
-	for s.RealtimeVoicePending() {
-		if ctx.Err() != nil {
-			t.Fatal("browser disconnect did not withdraw the queued start")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	waitWebVoice(t, ctx, "the start to be withdrawn", func() bool { return !s.RealtimeVoicePending() })
 
 	if voice := s.ClaimRealtimeVoiceSession(Config{}, false); voice != nil {
 		t.Fatalf("claimed a %s session for a withdrawn browser start", voice.Route())
@@ -165,8 +162,6 @@ func TestReleasedWebRealtimeVoiceStartOpensNoSession(t *testing.T) {
 	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
 		t.Fatalf("status = %+v, want idle", status)
 	}
-	// A withdrawn browser start leaves nothing behind that would swallow a
-	// later device activation.
 	if voice := s.ClaimRealtimeVoiceSession(Config{}, true); voice == nil || voice.Route() != RealtimeAudioRouteDevice {
 		t.Fatalf("device activation after a withdrawn browser start claimed %+v, want a device session", voice)
 	}
@@ -177,146 +172,79 @@ func TestReleasedWebRealtimeVoiceStartOpensNoSession(t *testing.T) {
 func TestClosedWebRealtimeVoiceStartDoesNotFallBackToDevice(t *testing.T) {
 	s := &Server{}
 	s.SetRealtimeVoiceActivation(func() {})
-	web := &webRealtimeAudio{mic: make(chan []byte, 1), done: make(chan struct{})}
+	web := newWebRealtimeAudio(nil)
 	if err := s.startWebRealtimeVoice(web); err != nil {
 		t.Fatal(err)
 	}
-	web.shutdown() // Disconnected; releaseWebRealtimeVoice has not run yet.
+	web.shutdown("") // Disconnected; releaseWebRealtimeVoice has not run yet.
 	if voice := s.ClaimRealtimeVoiceSession(Config{}, false); voice != nil {
 		t.Fatalf("claimed a %s session for a closed browser endpoint", voice.Route())
 	}
 }
 
-// A browser session the user stopped must not carry over a provider
-// rotation into a new session that has no stop request.
-func TestStoppedWebRealtimeVoiceIsNotRequeued(t *testing.T) {
+// A session that was asked to stop is over for the Web UI at once, even
+// though the loop is still tearing it down: the status is idle and a new
+// browser start queues behind it instead of being refused as busy.
+func TestStoppedRealtimeVoiceSessionYieldsToNewBrowserStart(t *testing.T) {
 	s := &Server{}
 	s.SetRealtimeVoiceActivation(func() {})
-	web := &webRealtimeAudio{mic: make(chan []byte, 1), done: make(chan struct{})}
-	if err := s.startWebRealtimeVoice(web); err != nil {
-		t.Fatal(err)
+	voice := s.ClaimRealtimeVoiceSession(Config{}, true)
+	if status := s.RealtimeVoiceStatus(); status.State != "connecting" || status.Route != RealtimeAudioRouteDevice {
+		t.Fatalf("status = %+v, want a connecting device session", status)
 	}
+	s.stopRealtimeVoice()
+	if !voice.Stopped() {
+		t.Fatal("stop did not reach the running session")
+	}
+	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
+		t.Fatalf("status after stop = %+v, want idle", status)
+	}
+	if s.setRealtimeVoiceMuted(boolPtr(true), nil) {
+		t.Fatal("a stopped session still accepted a mute")
+	}
+
+	ctx, _ := dialWebVoice(t, s)
+	waitWebVoice(t, ctx, "the new browser start to queue", s.RealtimeVoicePending)
+	if status := s.RealtimeVoiceStatus(); status.State != "connecting" || status.Route != RealtimeAudioRouteWeb {
+		t.Fatalf("status = %+v, want the new browser start connecting", status)
+	}
+	// The old session's teardown must not take the new start with it.
+	s.EndRealtimeVoiceSession(voice, "")
+	if next := s.ClaimRealtimeVoiceSession(Config{}, false); next == nil || next.Route() != RealtimeAudioRouteWeb {
+		t.Fatalf("claimed %+v, want the new browser session", next)
+	}
+}
+
+// A browser that stops reading must not stall the session loop: playback
+// writes return at once, and the session's microphone stream ends once the
+// backlog is full.
+func TestStalledBrowserDoesNotBlockRealtimePlayback(t *testing.T) {
+	s := &Server{}
+	s.SetRealtimeVoiceActivation(func() {})
+	ctx, _ := dialWebVoice(t, s) // Never read from: the browser has stalled.
+	waitWebVoice(t, ctx, "the queued start", s.RealtimeVoicePending)
 	voice := s.ClaimRealtimeVoiceSession(Config{}, false)
 	if voice == nil {
 		t.Fatal("browser session was not claimed")
 	}
-	s.stopRealtimeVoice()
-	if s.EndRealtimeVoiceSession(voice, true) {
-		t.Fatal("a stopped browser session was requeued for the rotated session")
-	}
-	if s.RealtimeVoicePending() {
-		t.Fatal("a stopped browser session is still waiting to start")
-	}
-}
-
-// A stop and a provider rotation can race. Whichever lands first, the
-// browser must not end up queued for a new session.
-func TestStopRacingRotationNeverRequeuesWebRealtimeVoice(t *testing.T) {
-	for i := 0; i < 50; i++ {
-		s := &Server{}
-		s.SetRealtimeVoiceActivation(func() {})
-		web := newTestWebRealtimeAudio(t)
-		if err := s.startWebRealtimeVoice(web); err != nil {
-			t.Fatal(err)
-		}
-		voice := s.ClaimRealtimeVoiceSession(Config{}, false)
-		if voice == nil {
-			t.Fatal("browser session was not claimed")
-		}
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() { defer wg.Done(); s.stopRealtimeVoice() }()
-		go func() { defer wg.Done(); s.EndRealtimeVoiceSession(voice, true) }()
-		wg.Wait()
-		if s.RealtimeVoicePending() {
-			t.Fatalf("run %d: a stopped browser session is queued for the rotated session", i)
-		}
-	}
-}
-
-// A rotation of a browser session nobody stopped keeps its endpoint.
-func TestRotationRequeuesRunningWebRealtimeVoice(t *testing.T) {
-	s := &Server{}
-	s.SetRealtimeVoiceActivation(func() {})
-	web := &webRealtimeAudio{mic: make(chan []byte, 1), done: make(chan struct{})}
-	if err := s.startWebRealtimeVoice(web); err != nil {
-		t.Fatal(err)
-	}
-	voice := s.ClaimRealtimeVoiceSession(Config{}, false)
-	if !s.EndRealtimeVoiceSession(voice, true) || !s.RealtimeVoicePending() {
-		t.Fatal("a rotated browser session was not kept for the next session")
-	}
-}
-
-// newTestWebRealtimeAudio returns a browser endpoint backed by a real
-// WebSocket, so closing it behaves as in production.
-func newTestWebRealtimeAudio(t *testing.T) *webRealtimeAudio {
-	t.Helper()
-	accepted := make(chan *websocket.Conn, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The hijacked connection outlives this handler, so return at once;
-		// waiting here would keep srv.Close from finishing.
-		if conn, err := websocket.Accept(w, r, nil); err == nil {
-			accepted <- conn
-		}
-	}))
-	t.Cleanup(srv.Close)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	client, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	playback := voice.Audio().Playback()
+	id, err := playback.StartPlayback(tts.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Cut the connections instead of a graceful close: nothing reads the
-	// server side after the test, so a close handshake would wait forever.
-	t.Cleanup(srv.CloseClientConnections)
-	// Drain whatever the endpoint sends so its writes never block.
-	go func() {
-		for {
-			if _, _, err := client.Read(context.Background()); err != nil {
-				return
-			}
+	// More speech than the socket buffers and the backlog can hold.
+	chunk := make([]byte, 64<<10)
+	started := time.Now()
+	for i := 0; i < 2*webRealtimeSendQueue; i++ {
+		if err := playback.WritePlayChunk(id, chunk, false); err != nil {
+			t.Fatal(err)
 		}
-	}()
-	return newWebRealtimeAudio(<-accepted)
-}
-
-// A device session rotated by the provider stays published until its
-// successor is claimed, so a stop pressed in that gap still ends voice
-// instead of reopening the device.
-func TestStopDuringDeviceRotationOpensNoSuccessor(t *testing.T) {
-	s := &Server{}
-	s.SetRealtimeVoiceActivation(func() {})
-	voice := s.ClaimRealtimeVoiceSession(Config{}, true)
-	if voice == nil || voice.Route() != RealtimeAudioRouteDevice {
-		t.Fatalf("claimed %+v, want a device session", voice)
 	}
-	if s.EndRealtimeVoiceSession(voice, true) {
-		t.Fatal("a device session has no browser endpoint to requeue")
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("playback writes to a stalled browser took %s; the session loop would stall", elapsed)
 	}
-	if !s.stopRealtimeVoice() {
-		t.Fatal("stop during the rotation handoff found no session to stop")
-	}
-	if next := s.ClaimRealtimeVoiceSession(Config{}, true); next != nil {
-		t.Fatalf("a stopped rotation opened a %s successor", next.Route())
-	}
-	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
-		t.Fatalf("status = %+v, want idle", status)
-	}
-}
-
-// Without a stop, the rotated device session hands over to its successor.
-func TestDeviceRotationClaimsSuccessor(t *testing.T) {
-	s := &Server{}
-	s.SetRealtimeVoiceActivation(func() {})
-	voice := s.ClaimRealtimeVoiceSession(Config{}, true)
-	s.EndRealtimeVoiceSession(voice, true)
-	next := s.ClaimRealtimeVoiceSession(Config{}, true)
-	if next == nil || next == voice {
-		t.Fatalf("rotation claimed %+v, want a new device session", next)
-	}
-	s.EndRealtimeVoiceSession(next, false)
-	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
-		t.Fatalf("status = %+v, want idle", status)
+	end, err := voice.Audio().Recording().ReadRecordChunk(1, 2000)
+	if err != nil || !end.EndOfStream {
+		t.Fatalf("microphone read = %+v, %v; want the stream ended for a browser that cannot keep up", end, err)
 	}
 }

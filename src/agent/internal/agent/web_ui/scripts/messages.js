@@ -590,20 +590,21 @@ function updateEmptyState() {
     emptyStateEl.classList.toggle('hidden', messagesDiv.children.length > 0);
 }
 
+function composerHasDraft() {
+    return inputEl.value.trim() !== '' || draftAttachments.length > 0;
+}
+
 // The composer's round primary button sends a draft, steers a running
 // request, starts realtime voice when the box is empty, or ends a running
 // voice session. Its mode follows the draft and the voice state.
 function composerPrimaryMode() {
-    const hasDraft = inputEl.value.trim() !== '' || draftAttachments.length > 0;
-    const voiceActive = typeof voiceModeActive === 'function' && voiceModeActive();
     // Typed text always goes to the conversation: steer a running request,
     // otherwise send. With an empty box, a voice session's End stays
     // reachable even while a request runs; Stop still cancels the request.
-    if (hasDraft) return currentChatRequestId ? 'steer' : 'send';
-    if (voiceActive) return 'end';
+    if (composerHasDraft()) return currentChatRequestId ? 'steer' : 'send';
+    if (voiceModeActive()) return 'end';
     if (currentChatRequestId) return 'steer';
-    if (typeof voiceStatus !== 'undefined' && voiceStatus.available) return 'voice';
-    return 'send';
+    return voiceStatus.available ? 'voice' : 'send';
 }
 
 const composerPrimaryLabels = {send: 'Send', steer: 'Steer', voice: 'Start voice', end: 'End voice'};
@@ -613,10 +614,9 @@ function renderComposerPrimary() {
     sendBtn.dataset.mode = mode;
     sendBtn.title = composerPrimaryLabels[mode];
     sendBtn.setAttribute('aria-label', composerPrimaryLabels[mode]);
-    const hasDraft = inputEl.value.trim() !== '' || draftAttachments.length > 0;
     const isLoading = loadingDiv.classList.contains('active');
     sendBtn.disabled = mode === 'send'
-        ? fileUploadPending || !hasDraft || (isLoading && !currentChatRequestId)
+        ? fileUploadPending || !composerHasDraft() || (isLoading && !currentChatRequestId)
         : mode === 'steer' ? fileUploadPending || pendingSteerSubmitting : false;
 }
 

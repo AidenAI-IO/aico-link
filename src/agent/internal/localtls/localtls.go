@@ -18,7 +18,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -39,8 +38,6 @@ import (
 )
 
 const (
-	// DefaultDir is shared by the Agent and Config Web.
-	DefaultDir = "/userdata/agent/tls"
 	// AuthorityPath serves the public authority certificate.
 	AuthorityPath = "/tls/ca.pem"
 
@@ -70,7 +67,6 @@ type Authority struct {
 	cert   *x509.Certificate
 	pem    []byte
 	key    *ecdsa.PrivateKey
-	now    func() time.Time
 	mu     sync.Mutex
 	leaves map[string]*tls.Certificate
 }
@@ -114,15 +110,11 @@ func Load(dir string) (*Authority, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load TLS authority: %w", err)
 	}
-	cert, err := x509.ParseCertificate(pair.Certificate[0])
-	if err != nil {
-		return nil, fmt.Errorf("parse TLS authority: %w", err)
-	}
 	key, ok := pair.PrivateKey.(*ecdsa.PrivateKey)
-	if !ok || !cert.IsCA {
+	if !ok || !pair.Leaf.IsCA {
 		return nil, errors.New("TLS authority must be an ECDSA certificate authority")
 	}
-	return &Authority{dir: dir, cert: cert, pem: certPEM, key: key, now: time.Now, leaves: make(map[string]*tls.Certificate)}, nil
+	return &Authority{dir: dir, cert: pair.Leaf, pem: certPEM, key: key, leaves: make(map[string]*tls.Certificate)}, nil
 }
 
 func lockDir(dir string) (func(), error) {
@@ -201,63 +193,61 @@ func serialNumber() (*big.Int, error) {
 	return serial, nil
 }
 
-// PEM returns the public authority certificate.
-func (a *Authority) PEM() []byte { return append([]byte(nil), a.pem...) }
-
-// Certificate returns the authority certificate.
-func (a *Authority) Certificate() *x509.Certificate { return a.cert }
-
-// TLSConfig returns a server configuration that presents a certificate for
-// the address each connection arrived on. It pins HTTP/1.1: the Agent's event
-// stream and voice socket rely on HTTP/1.1 flushing and connection hijacking.
-func (a *Authority) TLSConfig() *tls.Config {
-	return &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: a.GetCertificate, NextProtos: []string{"http/1.1"}}
+// Configure makes server serve TLS with a certificate for the address each
+// connection arrived on. It pins HTTP/1.1: the Agent's event stream and voice
+// socket rely on HTTP/1.1 flushing and connection hijacking. Serve with
+// server.ServeTLS(listener, "", "").
+func (a *Authority) Configure(server *http.Server) {
+	server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: a.getCertificate, NextProtos: []string{"http/1.1"}}
+	// A non-nil empty map keeps net/http from offering HTTP/2.
+	server.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){}
 }
 
-// GetCertificate implements tls.Config.GetCertificate. Clients that connect by
-// IP address send no server name, so the certificate is chosen by the local
-// address the connection arrived on.
-func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+// getCertificate implements tls.Config.GetCertificate. Clients that connect
+// by IP address send no server name, so the certificate is chosen by the
+// local address the connection arrived on.
+func (a *Authority) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	ip := net.IPv4(127, 0, 0, 1)
-	if hello != nil && hello.Conn != nil {
-		if addr, ok := hello.Conn.LocalAddr().(*net.TCPAddr); ok && addr.IP != nil && !addr.IP.IsUnspecified() {
-			ip = addr.IP
-		}
+	if addr, ok := hello.Conn.LocalAddr().(*net.TCPAddr); ok && !addr.IP.IsUnspecified() {
+		ip = addr.IP
 	}
-	return a.CertificateFor(ip)
+	return a.certificateFor(ip)
 }
 
-// CertificateFor returns the certificate for ip, reusing the stored one while
+// certificateFor returns the certificate for ip, reusing the stored one while
 // it remains valid so a browser's decision about it keeps applying.
-func (a *Authority) CertificateFor(ip net.IP) (*tls.Certificate, error) {
+func (a *Authority) certificateFor(ip net.IP) (*tls.Certificate, error) {
 	if v4 := ip.To4(); v4 != nil {
 		ip = v4
 	}
 	name := ip.String()
-	now := a.now()
+	now := time.Now()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if leaf := a.leaves[name]; usable(leaf, now) {
 		return leaf, nil
 	}
-	path := filepath.Join(a.dir, leafDirName, strings.NewReplacer(":", "_", "%", "_").Replace(name)+".pem")
-	// Another service may have stored a certificate for this address.
-	unlock, err := lockDir(a.dir)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	if leaf, err := a.readLeaf(path); err == nil && usable(leaf, now) && leaf.Leaf.VerifyHostname(name) == nil {
-		a.leaves[name] = leaf
-		return leaf, nil
+	path := filepath.Join(a.dir, leafDirName, strings.ReplaceAll(name, ":", "_")+".pem")
+	// Another service may have stored a certificate for this address. A
+	// directory that cannot be locked, such as a read-only one, cannot share
+	// certificates, but this service still issues its own for this run.
+	unlock, lockErr := lockDir(a.dir)
+	if lockErr == nil {
+		defer unlock()
+		if leaf, err := a.readLeaf(path); err == nil && usable(leaf, now) && leaf.Leaf.VerifyHostname(name) == nil {
+			a.leaves[name] = leaf
+			return leaf, nil
+		}
 	}
 	leaf, keyPEM, err := a.issue(ip, now)
 	if err != nil {
 		return nil, err
 	}
-	data := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Certificate[0]}), keyPEM...)
-	// A certificate that cannot be stored still serves this run.
-	_ = writeFileAtomic(path, data, 0o600)
+	if lockErr == nil {
+		data := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Certificate[0]}), keyPEM...)
+		// A certificate that cannot be stored still serves this run.
+		_ = writeFileAtomic(path, data, 0o600)
+	}
 	a.leaves[name] = leaf
 	return leaf, nil
 }
@@ -275,15 +265,10 @@ func (a *Authority) readLeaf(path string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	leaf, err := x509.ParseCertificate(pair.Certificate[0])
-	if err != nil {
-		return nil, err
-	}
-	if err := leaf.CheckSignatureFrom(a.cert); err != nil {
+	if err := pair.Leaf.CheckSignatureFrom(a.cert); err != nil {
 		return nil, err
 	}
 	pair.Certificate = append(pair.Certificate, a.cert.Raw)
-	pair.Leaf = leaf
 	return &pair, nil
 }
 
@@ -333,8 +318,7 @@ func (a *Authority) issue(ip net.IP, now time.Time) (*tls.Certificate, []byte, e
 // Installing a root is a trust decision, so the download is offered only on
 // a channel a LAN attacker cannot rewrite: the USB link or the board itself.
 // A LAN request is refused even when signed in, because a plain-HTTP response
-// could have been replaced on the way. The SHA-256 fingerprint is sent in a
-// header so the user can compare it with the one Settings shows over USB.
+// could have been replaced on the way.
 func (a *Authority) ServeAuthority(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -346,26 +330,8 @@ func (a *Authority) ServeAuthority(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/x-x509-ca-cert")
 	w.Header().Set("Content-Disposition", `attachment; filename="aico-link-ca.pem"`)
-	w.Header().Set("X-Aico-CA-SHA256", a.Fingerprint())
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(a.pem)
-}
-
-// Fingerprint returns the authority certificate's SHA-256 fingerprint as
-// colon-separated hex, the form browsers and keychains display.
-func (a *Authority) Fingerprint() string {
-	sum := sha256.Sum256(a.cert.Raw)
-	parts := make([]string, len(sum))
-	for i, b := range sum {
-		parts[i] = fmt.Sprintf("%02X", b)
-	}
-	return strings.Join(parts, ":")
-}
-
-// DisableHTTP2 keeps net/http from negotiating HTTP/2 on a server that serves
-// TLS itself, matching TLSConfig.
-func DisableHTTP2(server *http.Server) {
-	server.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){}
 }
 
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {

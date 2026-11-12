@@ -15,6 +15,15 @@ import (
 // come from the board's local authority in tlsDir, which Config Web shares.
 // Call before Start.
 func (s *Server) EnableHTTPS(addr, tlsDir string) error {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	if _, httpPort, err := net.SplitHostPort(s.addr); err == nil && port == httpPort {
+		// With the LAN guard on, listeners share ports, so this would bind
+		// and then split connections between HTTP and HTTPS.
+		return errors.New("the HTTPS port must differ from the HTTP port")
+	}
 	authority, err := localtls.Load(tlsDir)
 	if err != nil {
 		return err
@@ -51,13 +60,12 @@ func (s *Server) startHTTPS(handler http.Handler) {
 	srv := &http.Server{
 		Addr:              s.httpsAddr,
 		Handler:           handler,
-		TLSConfig:         s.httpsAuthority.TLSConfig(),
 		ReadHeaderTimeout: agentHTTPReadHeaderTimeout,
 		ReadTimeout:       agentHTTPReadTimeout,
 		IdleTimeout:       agentHTTPIdleTimeout,
 		ConnContext:       lanaccess.ConnContext,
 	}
-	localtls.DisableHTTP2(srv)
+	s.httpsAuthority.Configure(srv)
 	listener, err := s.listenShare(s.httpsAddr)
 	if err != nil {
 		if s.logger != nil {
@@ -76,7 +84,7 @@ func (s *Server) startHTTPS(handler http.Handler) {
 	if s.logger != nil {
 		s.logger.Info("Starting HTTPS server on %s", s.httpsAddr)
 	}
-	s.startUSBListener(srv, srv.TLSConfig)
+	s.startUSBListener(srv, true)
 	s.httpsServing.Store(true)
 	go func() {
 		err := srv.ServeTLS(listener, "", "")

@@ -22,8 +22,8 @@ and USB-ECM access use the same API behavior.
 | Parameter | Default Value |
 | --- | --- |
 | Port | `80` |
-| HTTPS port | `443` |
-| TLS directory | `/userdata/agent/tls` |
+| HTTPS port | Off; the shipped unit sets `443` |
+| TLS directory | None; the shipped unit sets `/userdata/agent/tls` |
 | Config | `/userdata/agent/agent.toml` |
 | Binary | `/usr/lib/aico/agent config-web` |
 | Web root | `/usr/share/aico/config-web` |

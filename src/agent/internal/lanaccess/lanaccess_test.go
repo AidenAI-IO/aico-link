@@ -170,6 +170,36 @@ func TestTrustListenerMarksConnections(t *testing.T) {
 	}
 }
 
+// An HTTPS server hands ConnContext its TLS wrapper. A USB listener's trust
+// must be seen through it, and an ordinary TLS listener must not gain it.
+func TestConnContextSeesTrustThroughTLS(t *testing.T) {
+	for _, usb := range []bool{true, false} {
+		var trusted bool
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Loopback requests count as trusted on their own. Give the
+			// request a LAN address so only the listener's marker can make
+			// it trusted.
+			r.RemoteAddr = "192.168.50.10:50000"
+			trusted = IsTrusted(r)
+		}))
+		if usb {
+			srv.Listener = TrustListener(srv.Listener)
+		}
+		srv.Config.ConnContext = ConnContext
+		srv.StartTLS()
+		resp, err := srv.Client().Get(srv.URL)
+		if err != nil {
+			srv.Close()
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		srv.Close()
+		if trusted != usb {
+			t.Fatalf("TLS request on a listener with usb=%t: trusted=%t", usb, trusted)
+		}
+	}
+}
+
 func TestRetryListenRecoversAfterTransientFailures(t *testing.T) {
 	attempts := 0
 	var seen []int

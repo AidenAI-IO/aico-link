@@ -1,10 +1,6 @@
 package main
 
-import (
-	"testing"
-
-	"aico-agent/internal/agent"
-)
+import "testing"
 
 // A device activation that arrives at any point while a finished session is
 // settled must survive: it stays recorded and wakes the loop again.
@@ -58,39 +54,6 @@ func TestRealtimeActivationsKeepDeferredDeviceWake(t *testing.T) {
 	<-a.events
 	if !a.TakeDevice() {
 		t.Fatal("a deferred task update did not claim the device")
-	}
-}
-
-type fakeRealtimeClaimer struct{ session *agent.RealtimeVoiceSession }
-
-func (f fakeRealtimeClaimer) ClaimRealtimeVoiceSession(agent.Config, bool) *agent.RealtimeVoiceSession {
-	return f.session
-}
-
-// A wakeup that opens no session, such as a withdrawn browser start, must not
-// advance the task watermark; otherwise a task update queued behind it would
-// look already announced and never open a session.
-func TestWithdrawnWakeupKeepsTaskUpdateActivatable(t *testing.T) {
-	var taskWake taskWakeState
-	const pendingUpdate = 7
-	if _, opened := claimRealtimeSessionMedia(fakeRealtimeClaimer{}, agent.Config{}, newRealtimeActivations(), &taskWake, pendingUpdate, false); opened {
-		t.Fatal("a withdrawn browser start opened a session")
-	}
-	if !taskWake.shouldActivate(pendingUpdate) {
-		t.Fatal("the task update queued behind a withdrawn wakeup can no longer activate the loop")
-	}
-}
-
-// A wakeup that does open a session records the updates it will consume.
-func TestOpenedSessionConsumesTaskWatermark(t *testing.T) {
-	var taskWake taskWakeState
-	const pendingUpdate = 7
-	session := &agent.RealtimeVoiceSession{}
-	if _, opened := claimRealtimeSessionMedia(fakeRealtimeClaimer{session: session}, agent.Config{}, newRealtimeActivations(), &taskWake, pendingUpdate, true); !opened {
-		t.Fatal("a device activation opened no session")
-	}
-	if taskWake.shouldActivate(pendingUpdate) {
-		t.Fatal("an update the session consumed would activate the loop again")
 	}
 }
 

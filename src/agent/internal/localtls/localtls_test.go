@@ -6,8 +6,7 @@ import (
 	"net"
 	"net/http"
 	"testing"
-
-	"aico-agent/internal/lanaccess"
+	"time"
 )
 
 // A browser that trusts the board authority must accept a connection by IP
@@ -20,7 +19,7 @@ func TestAuthorityServesStableTrustedIPCertificates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstLeaf, err := first.CertificateFor(net.ParseIP("192.168.42.1"))
+	firstLeaf, err := first.certificateFor(net.ParseIP("192.168.42.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,10 +28,10 @@ func TestAuthorityServesStableTrustedIPCertificates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !restarted.Certificate().Equal(first.Certificate()) {
+	if !restarted.cert.Equal(first.cert) {
 		t.Fatal("restart replaced the authority; trusted browsers would see a warning again")
 	}
-	again, err := restarted.CertificateFor(net.ParseIP("192.168.42.1"))
+	again, err := restarted.certificateFor(net.ParseIP("192.168.42.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,29 +39,19 @@ func TestAuthorityServesStableTrustedIPCertificates(t *testing.T) {
 		t.Fatal("restart issued a new certificate; browsers that accepted the warning would be asked again")
 	}
 
-	var trusted, ordinary bool
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Serve as the USB listeners do: trust marker under the TLS layer.
-	srv := &http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Loopback requests count as trusted on their own. Give the
-			// request a LAN address so only the listener's trust marker,
-			// seen through the TLS layer, can make it trusted.
-			r.RemoteAddr = "192.168.50.10:50000"
-			trusted = lanaccess.IsTrusted(r)
-			w.WriteHeader(http.StatusNoContent)
-		}),
-		ConnContext: lanaccess.ConnContext,
-	}
-	DisableHTTP2(srv)
-	go func() { _ = srv.Serve(tls.NewListener(lanaccess.TrustListener(listener), restarted.TLSConfig())) }()
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	restarted.Configure(srv)
+	go func() { _ = srv.ServeTLS(listener, "", "") }()
 	defer srv.Close()
 
 	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(first.PEM())
+	pool.AppendCertsFromPEM(first.pem)
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
 	// Connecting by IP sends no server name, as a browser at 192.168.42.1 does.
 	resp, err := client.Get("https://" + listener.Addr().String())
@@ -70,37 +59,8 @@ func TestAuthorityServesStableTrustedIPCertificates(t *testing.T) {
 		t.Fatalf("HTTPS request with the board authority trusted: %v", err)
 	}
 	resp.Body.Close()
-	if !trusted {
-		t.Fatal("a request on a trusted (USB) listener lost its trust over TLS")
-	}
 
-	// The same request on an ordinary listener must not be trusted, or the
-	// assertion above would pass without the marker.
-	plain, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	plainSrv := &http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r.RemoteAddr = "192.168.50.10:50000"
-			ordinary = lanaccess.IsTrusted(r)
-			w.WriteHeader(http.StatusNoContent)
-		}),
-		ConnContext: lanaccess.ConnContext,
-	}
-	DisableHTTP2(plainSrv)
-	go func() { _ = plainSrv.Serve(tls.NewListener(plain, restarted.TLSConfig())) }()
-	defer plainSrv.Close()
-	resp, err = client.Get("https://" + plain.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if ordinary {
-		t.Fatal("a LAN request on an ordinary TLS listener was trusted")
-	}
-
-	public, _, err := restarted.issue(net.ParseIP("8.8.8.8"), restarted.now())
+	public, _, err := restarted.issue(net.ParseIP("8.8.8.8"), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

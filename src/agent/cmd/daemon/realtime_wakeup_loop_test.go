@@ -22,6 +22,7 @@ import (
 // loopSessionRecord is one session the wakeup loop ran.
 type loopSessionRecord struct {
 	route agent.RealtimeAudioRoute
+	voice *agent.RealtimeVoiceSession
 }
 
 // loopHarness runs the real realtime wakeup loop with a scripted session
@@ -32,10 +33,10 @@ type loopHarness struct {
 	http     *httptest.Server
 	tasks    *agenttask.Manager
 	sessions chan loopSessionRecord
-	// script decides how each session ends. It receives the session's media
-	// and returns the session error.
+	// script decides how each session ends: each step returns the error of
+	// the next session. A session without a step ends normally.
 	mu     sync.Mutex
-	script []func(realtimeSessionMedia) error
+	script []func() error
 	done   chan struct{}
 	signal chan os.Signal
 	// wakeCallback is the loop's MCU/GPIO wakeup callback.
@@ -76,10 +77,10 @@ func newLoopHarness(t *testing.T, tasks *agenttask.Manager) *loopHarness {
 	t.Cleanup(h.http.Close)
 
 	oldRunner := realtimeSessionRunner
-	realtimeSessionRunner = func(_ agent.Config, _ chan os.Signal, _ *agent.Runtime, _ *agenttask.Manager, _ streamcontract.EventSink, media realtimeSessionMedia, _ ...*realtimeChatBridge) error {
-		h.sessions <- loopSessionRecord{route: media.route()}
+	realtimeSessionRunner = func(_ agent.Config, _ chan os.Signal, _ *agent.Runtime, _ *agenttask.Manager, _ streamcontract.EventSink, voice *agent.RealtimeVoiceSession, _ ...*realtimeChatBridge) error {
+		h.sessions <- loopSessionRecord{route: voice.Route(), voice: voice}
 		h.mu.Lock()
-		var step func(realtimeSessionMedia) error
+		var step func() error
 		if len(h.script) > 0 {
 			step, h.script = h.script[0], h.script[1:]
 		}
@@ -87,7 +88,7 @@ func newLoopHarness(t *testing.T, tasks *agenttask.Manager) *loopHarness {
 		if step == nil {
 			return nil
 		}
-		return step(media)
+		return step()
 	}
 	t.Cleanup(func() { realtimeSessionRunner = oldRunner })
 
@@ -111,7 +112,7 @@ func newLoopHarness(t *testing.T, tasks *agenttask.Manager) *loopHarness {
 	return h
 }
 
-func (h *loopHarness) then(steps ...func(realtimeSessionMedia) error) {
+func (h *loopHarness) then(steps ...func() error) {
 	h.mu.Lock()
 	h.script = append(h.script, steps...)
 	h.mu.Unlock()
@@ -144,13 +145,18 @@ func (h *loopHarness) waitStatus(ok func(agent.RealtimeVoiceStatus) bool, what s
 	}
 }
 
-func (h *loopHarness) stop() {
-	resp, err := http.Post(h.http.URL+"/api/realtime/voice/stop", "application/json", nil)
+func (h *loopHarness) post(path, body string) {
+	resp, err := http.Post(h.http.URL+path, "application/json", strings.NewReader(body))
 	if err != nil {
 		h.t.Fatal(err)
 	}
 	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		h.t.Fatalf("POST %s = %s", path, resp.Status)
+	}
 }
+
+func (h *loopHarness) stop() { h.post("/api/realtime/voice/stop", "") }
 
 // startBrowser opens the voice socket as the Web UI does, and returns a
 // function that withdraws the start by disconnecting.
@@ -187,22 +193,14 @@ func (h *loopHarness) noSession(what string) {
 	}
 }
 
-// A stop pressed while a device session is being rotated by the provider
-// ends voice: the loop opens no successor, and the stopped session does not
-// stay published and keep blocking browser starts. The stop lands after the
-// session's teardown and before the loop decides whether to continue.
-func TestWakeupLoopStopDuringDeviceRotationReleasesVoice(t *testing.T) {
+// A stop pressed while the provider is rotating a session ends voice: the
+// loop does not reconnect, and voice returns to idle.
+func TestWakeupLoopStopDuringRotationEndsVoice(t *testing.T) {
 	h := newLoopHarness(t, nil)
-	h.then(func(realtimeSessionMedia) error { return realtimevoice.ErrSessionRotated })
-	stopped := false
-	oldHook := realtimeAfterSessionTeardown
-	realtimeAfterSessionTeardown = func() {
-		if !stopped {
-			stopped = true
-			h.stop()
-		}
-	}
-	t.Cleanup(func() { realtimeAfterSessionTeardown = oldHook })
+	h.then(func() error {
+		h.stop()
+		return realtimevoice.ErrSessionRotated
+	})
 
 	h.wake()
 	if got := h.nextSession("the wake activation").route; got != agent.RealtimeAudioRouteDevice {
@@ -210,6 +208,57 @@ func TestWakeupLoopStopDuringDeviceRotationReleasesVoice(t *testing.T) {
 	}
 	h.noSession("a stop during rotation")
 	h.waitStatus(func(s agent.RealtimeVoiceStatus) bool { return s.State == "idle" }, "voice idle after stop")
+}
+
+// A provider rotation continues the same conversation: the browser keeps
+// carrying the audio and a mute set before the rotation still applies.
+func TestWakeupLoopRotationKeepsBrowserConversation(t *testing.T) {
+	h := newLoopHarness(t, nil)
+	rotatedDone := make(chan struct{})
+	h.then(func() error {
+		h.post("/api/realtime/voice/mute", `{"muted":true}`)
+		return realtimevoice.ErrSessionRotated
+	}, func() error {
+		<-rotatedDone
+		return nil
+	})
+	defer h.startBrowser()()
+
+	first := h.nextSession("the browser start")
+	second := h.nextSession("the rotated session")
+	defer close(rotatedDone)
+	if first.route != agent.RealtimeAudioRouteWeb || second.voice != first.voice {
+		t.Fatalf("rotation ran %s then %s sessions on different conversations=%t; want one browser conversation",
+			first.route, second.route, second.voice != first.voice)
+	}
+	if !second.voice.Muted() {
+		t.Fatal("the microphone mute was lost across the rotation")
+	}
+}
+
+// A wake word or button press during a conversation must not open the board
+// microphone once that conversation ends.
+func TestWakeupLoopIgnoresBoardWakeupDuringSession(t *testing.T) {
+	h := newLoopHarness(t, nil)
+	h.then(func() error {
+		h.wake()
+		return nil
+	})
+	defer h.startBrowser()()
+
+	if got := h.nextSession("the browser start").route; got != agent.RealtimeAudioRouteWeb {
+		t.Fatalf("first session route = %s, want web", got)
+	}
+	h.noSession("a board wakeup during a browser session")
+	// In standby the same wakeup starts a device session. Presses closer
+	// together than the debounce interval are dropped before they reach the
+	// loop, so let it pass first.
+	h.waitStatus(func(s agent.RealtimeVoiceStatus) bool { return s.State == "idle" }, "voice idle")
+	time.Sleep(wakeupDebounceInterval)
+	h.wake()
+	if got := h.nextSession("a wakeup in standby").route; got != agent.RealtimeAudioRouteDevice {
+		t.Fatalf("standby wakeup opened a %s session, want device", got)
+	}
 }
 
 // A browser start withdrawn before the loop reaches it must not hide a task

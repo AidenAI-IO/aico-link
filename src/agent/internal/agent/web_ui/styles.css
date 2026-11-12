@@ -446,6 +446,8 @@ textarea:focus-visible {
 }
 
 .workspace-content {
+    /* Positions the voice stage over the message list. */
+    position: relative;
     min-height: 0;
     flex: 1;
     display: flex;
@@ -490,10 +492,16 @@ textarea:focus-visible {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* The message list scrolls without a visible scrollbar. */
+    scrollbar-width: none;
     padding: 10px 18px 0;
     background:
         linear-gradient(180deg, rgba(255, 255, 255, 0.24), transparent 120px),
         transparent;
+}
+
+.conversation::-webkit-scrollbar {
+    display: none;
 }
 
 .conversation-inner {
@@ -741,11 +749,10 @@ textarea:focus-visible {
 .composer-footer {
     justify-content: space-between;
     gap: 10px;
-    flex-wrap: wrap;
 }
 
 .composer-actions {
-    gap: 8px;
+    gap: 6px;
 }
 
 .tool-section {
@@ -904,15 +911,19 @@ details.tool-details summary {
 
 .composer-input {
     width: 100%;
-    min-height: 26px;
+    min-height: 44px;
     max-height: 168px;
     border: none;
-    outline: none;
     resize: none;
     background: transparent;
     color: var(--text);
     line-height: 1.5;
-    font-size: 0.95rem;
+    font-size: 0.98rem;
+}
+
+/* The rounded box shows focus; the text area draws no ring of its own. */
+.composer-input:focus-visible {
+    outline: none;
 }
 
 .composer-input::placeholder {
@@ -981,14 +992,14 @@ details.tool-details summary {
 }
 
 .composer-footer {
-    margin-top: 8px;
+    margin-top: 6px;
 }
 
 .composer-toolbar {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
+    min-width: 0;
 }
 
 .composer-btn {
@@ -1016,6 +1027,13 @@ details.tool-details summary {
 
 .composer-hint {
     font-size: 0.76rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.composer-hint:empty {
+    display: none;
 }
 
 .composer-hint.error {
@@ -1234,15 +1252,6 @@ details.tool-details summary {
     .composer {
         padding: 10px;
     }
-
-    .composer-footer {
-        align-items: flex-start;
-    }
-
-    .composer-actions {
-        width: 100%;
-        justify-content: flex-end;
-    }
 }
 
 /* Zed-inspired editor surface: quiet dark chrome, sharp panels, and focused
@@ -1299,10 +1308,10 @@ button, textarea, select, .tool-block, .tool-lab-input {
 .tool-section-label, .tool-meta-key, .sidebar-kicker { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
 .tool-block { border-color: var(--line); background: var(--surface-code); color: #d6d8de; }
 .tool-meta-item, .episode-panel, .episode-event, .attachment-card, .draft-attachment { border-radius: 5px; background: var(--surface-soft); border-color: var(--line); }
-.tool-lab-select, .tool-lab-input, .composer-input { background: #111216; border-color: var(--line); color: var(--text); }
+.tool-lab-select, .tool-lab-input { background: #111216; border-color: var(--line); color: var(--text); }
 .tool-lab-input[readonly] { background: #15161a; }
 .composer { padding: 10px 18px 18px; background: #121316; border-color: var(--line); }
-.composer-shell { border-radius: 6px; padding: 12px; background: var(--panel); border-color: var(--line); box-shadow: none; }
+.composer-shell { border-radius: 24px; padding: 14px 14px 12px 18px; background: var(--panel); border-color: var(--line); box-shadow: none; }
 .composer-shell:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(138,180,255,.18); }
 .composer-btn, .episode-link { border-radius: 5px; background: var(--panel-strong); color: var(--muted-strong); border-color: var(--line); }
 .composer-btn:hover, .episode-link:hover { border-color: var(--accent); color: var(--accent); }
@@ -1800,7 +1809,7 @@ body { background: #f5f5f7; color: var(--text); }
 .topbar { background: #fbfbfc; }
 .conversation, .composer { background: #f7f7f8; }
 .new-chat-btn { background: #fff; color: var(--muted-strong); }
-.tool-lab-select, .tool-lab-input, .composer-input { background: #fff; color: var(--text); }
+.tool-lab-select, .tool-lab-input { background: #fff; color: var(--text); }
 .tool-block { color: var(--text); }
 .tool-lab-input[readonly] { background: #f7f7f8; }
 .composer-shell { background: #fff; }
@@ -1820,16 +1829,12 @@ body { background: #f5f5f7; color: var(--text); }
 /* Realtime voice mode. The same presentation serves device and browser audio.
    The orb floats over the bottom of the message list instead of taking its own
    row, and the list fades out underneath it rather than ending at an edge. */
-.workspace-content {
-    position: relative;
-}
-
 .voice-stage {
     position: absolute;
     left: 0;
     right: 0;
-    /* Sit just above the composer; --voice-composer-height is set from JS. */
-    bottom: var(--voice-composer-height, 120px);
+    /* Sit on the bottom edge of the message list; set from voice.js. */
+    bottom: var(--voice-stage-bottom, 120px);
     z-index: 2;
     display: flex;
     flex-direction: column;
@@ -1837,11 +1842,6 @@ body { background: #f5f5f7; color: var(--text); }
     gap: 10px;
     padding: 0 18px 14px;
     pointer-events: none;
-}
-
-.voice-stage.hidden,
-.voice-toggle.hidden {
-    display: none;
 }
 
 /* Messages fade out over the orb's area so it reads as floating on them. */
@@ -1921,59 +1921,8 @@ body.voice-mode .conversation {
     .voice-orb, .voice-orb-cloud { animation: none !important; }
 }
 
-/* The message list scrolls without a visible scrollbar. */
-.conversation {
-    scrollbar-width: none;
-}
-
-.conversation::-webkit-scrollbar {
-    display: none;
-}
-
-/* Composer, after the voice-first reference: a rounded box with the text on
-   top, an add-file button at the bottom left, and icon toggles beside one
-   round primary button at the bottom right. */
-.composer-shell {
-    border-radius: 24px;
-    padding: 14px 14px 12px 18px;
-}
-
-.composer-input,
-.composer-input:focus,
-.composer-input:focus-visible {
-    min-height: 44px;
-    font-size: 0.98rem;
-    background: transparent !important;
-    border: 0;
-    /* The rounded box shows focus; the text area draws no ring of its own. */
-    outline: none;
-    box-shadow: none;
-}
-
-.composer-footer {
-    margin-top: 6px;
-    flex-wrap: nowrap;
-}
-
-.composer-toolbar {
-    flex-wrap: nowrap;
-    min-width: 0;
-}
-
-.composer-hint {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.composer-hint:empty {
-    display: none;
-}
-
-.composer-actions {
-    gap: 6px;
-}
-
+/* Composer buttons: an add-file button at the bottom left, and icon toggles
+   beside one round primary button at the bottom right. */
 .composer-icon-btn,
 .composer-primary-btn {
     display: inline-flex;
@@ -1981,7 +1930,7 @@ body.voice-mode .conversation {
     justify-content: center;
     flex: 0 0 auto;
     padding: 0;
-    border-radius: 50% !important;
+    border-radius: 50%;
     cursor: pointer;
     transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
 }

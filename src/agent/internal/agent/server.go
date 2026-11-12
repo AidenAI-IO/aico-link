@@ -799,10 +799,10 @@ func (s *Server) Start() error {
 
 	errCh := make(chan error, 1)
 	defer s.Close()
-	s.startUSBListener(srv, nil)
+	s.startUSBListener(srv, false)
 	s.startHTTPS(handler)
 	if shareServer != nil {
-		s.startUSBListener(shareServer, nil)
+		s.startUSBListener(shareServer, false)
 		go func() {
 			err := shareServer.Serve(shareListener)
 			if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) && s.logger != nil {

@@ -27,20 +27,6 @@ func configHTTPServer(address string, handler http.Handler, usb bool) *http.Serv
 // board's local authority, with the same USB ingress marking as HTTP.
 func configHTTPSServer(address string, handler http.Handler, usb bool, authority *localtls.Authority) *http.Server {
 	server := configHTTPServer(address, handler, usb)
-	server.TLSConfig = authority.TLSConfig()
-	localtls.DisableHTTP2(server)
+	authority.Configure(server)
 	return server
-}
-
-// withAuthorityDownload adds the authority certificate download in front of
-// the portal. It is public: the certificate carries no secret, and a browser
-// must be able to fetch it before the user signs in.
-func withAuthorityDownload(handler http.Handler, authority *localtls.Authority) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == localtls.AuthorityPath {
-			authority.ServeAuthority(w, r)
-			return
-		}
-		handler.ServeHTTP(w, r)
-	})
 }

@@ -153,27 +153,45 @@ for every endpoint; only the audio path differs.
 | `web` | The voice button in the Web UI | The browser that pressed it, over `/api/realtime/voice/ws` |
 
 The Web UI shows the same voice mode for both routes: an orb above the
-composer, a mute button, and an end button. Text typed in the composer during
-the session is injected into the live session as before. Only the tab that
-started a `web` session captures and plays audio; other tabs, and every tab
-during a `device` session, only display it.
+composer, microphone and speaker mute buttons, and an end button. Text typed
+in the composer during the session is injected into the live session as
+before. Only the tab that started a `web` session captures and plays audio;
+other tabs, and every tab during a `device` session, only display it.
+
+One conversation runs at a time. A wake word or button press during a
+conversation is ignored, so it cannot open the board microphone when a `web`
+conversation ends. When the provider caps a session's lifetime, the daemon
+reconnects and the conversation continues on the same route with its mute
+state.
 
 The Web UI uses these endpoints:
 
 - `GET /api/realtime/voice` returns `available` (realtime input mode is
-  active), `state` (`idle`, `connecting`, or `active`), `route`, and `muted`.
+  active), `state` (`idle`, `connecting`, or `active`), `route`, `muted`,
+  `speaker_muted`, and `https_port` (the Agent's HTTPS port while it is
+  serving, used to reopen a plain HTTP page where the microphone is allowed).
+  A conversation that was asked to stop reports `idle` at once, while the
+  daemon is still closing it.
 - `POST /api/realtime/voice/stop` ends the session on either route and returns
   the daemon to standby.
-- `POST /api/realtime/voice/mute` with `{"muted": true}` replaces microphone
-  input with silence for the rest of the session. The provider keeps receiving
-  a continuous stream, so its turn detection sees silence instead of a stall.
+- `POST /api/realtime/voice/mute` takes `{"muted": bool}`,
+  `{"speaker_muted": bool}`, or both. A muted microphone sends silence, so the
+  provider keeps receiving a continuous stream and its turn detection sees
+  silence instead of a stall. A muted speaker plays silence in place of the
+  reply; transcripts, tools, and history continue. A notification that would
+  be spoken while the speaker is muted stays pending.
 - `GET /api/realtime/voice/ws` starts a `web` session. Binary frames carry
   signed 16-bit little-endian PCM in both directions. The agent sends JSON
   control messages: `capture_start` and `playback_start` carry the PCM format,
-  `playback_stop` drops queued speech after a barge-in, and `ended` carries the
-  reason the session ended. Closing the socket ends the session. Only one
-  session runs at a time, so the endpoint rejects a start while another
+  `capture_stop` ends microphone capture, `playback_stop` drops queued speech
+  after a barge-in, and `ended` carries the reason the session ended. Closing
+  the socket ends the session. The endpoint rejects a start while another
   session is connecting or active.
+
+The daemon never waits on the browser: reply audio is queued and written to
+the socket in the background. A browser that falls about 40 seconds of speech
+behind is disconnected, and the session ends. The Agent log records why a
+browser voice socket closed.
 
 Browser echo cancellation is not guaranteed to remove speech played through
 Web Audio, so use headphones if the reply interrupts itself. A failed `web`
@@ -211,7 +229,8 @@ To use browser voice:
 
 1. Open `https://192.168.42.1:8443` (or the board's Wi-Fi address on port
    8443). Pressing the voice button on a plain HTTP page opens this address
-   automatically.
+   automatically; over Wi-Fi the browser may ask for the device password
+   again there, because it treats the HTTPS page as a different site.
 2. Accept the browser's certificate warning for this address. Installing the
    authority is not required: the page is still a secure context after the
    warning is accepted. Each address is a separate site, so USB and Wi-Fi
@@ -221,16 +240,19 @@ To use browser voice:
    on that device. Download it from `/tls/ca.pem` over the USB link, for
    example `http://192.168.42.1/tls/ca.pem`. The download is refused over
    Wi-Fi, even after signing in: installing a root is a trust decision, and a
-   plain-HTTP response on the local network could have been replaced. The
-   response carries the authority's SHA-256 fingerprint in the
-   `X-Aico-CA-SHA256` header; compare it with the fingerprint your system
-   shows before trusting the file. On macOS, open the file in Keychain Access
-   and set it to Always Trust. Firefox keeps its own certificate store, so
-   import it there as well.
+   plain-HTTP response on the local network could have been replaced. On
+   macOS, open the file in Keychain Access and set it to Always Trust. Firefox
+   keeps its own certificate store, so import it there as well.
 
-Deleting `/userdata/agent/tls/` makes the board create a new authority on the
-next service start; browsers that trusted the old one then show the warning
-again.
+Certificate validity follows the board's clock. A board whose clock is far
+behind, for example one that has never been online, issues certificates a
+browser may reject as expired or not yet valid; they are reissued after the
+clock is set, and the browser then asks about the address again.
+
+To replace the authority, delete `/userdata/agent/tls/` and restart both
+`aico-agent` and `aico-config-web`; restarting only one leaves the two
+services on different authorities. Browsers that trusted the old authority
+then show the warning again.
 
 ## Configuration
 

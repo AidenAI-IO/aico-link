@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"aico-agent/internal/agent/tts"
 )
@@ -57,21 +56,26 @@ func (d deviceRealtimeAudio) Recording() AudioRecordingBackend  { return d.recor
 func (d deviceRealtimeAudio) Playback() tts.AudioServiceBackend { return d.playback }
 func (deviceRealtimeAudio) Close(string)                        {}
 
-// RealtimeVoiceSession is the control surface of one running realtime voice
-// session. The daemon owns the session loop; the Web UI reads its status and
-// asks it to stop or to mute the microphone through the Server.
+// RealtimeVoiceSession is the control surface of one realtime voice
+// conversation. The daemon owns the session loop; the Web UI reads its status
+// and asks it to stop or to mute either side through the Server.
+//
+// A conversation outlives the provider sessions that carry it: when the
+// provider caps a session's lifetime, the loop reconnects with the same
+// RealtimeVoiceSession, so its audio endpoint, mute state and stop request
+// carry over. A nil *RealtimeVoiceSession is a device conversation without
+// Web UI controls, as the loop runs without an agent server.
 type RealtimeVoiceSession struct {
-	route     RealtimeAudioRoute
-	audio     RealtimeAudioIO
-	startedAt time.Time
-	ready     atomic.Bool
-	muted     atomic.Bool
-	silenced  atomic.Bool
-	// rotating is set, under the controller lock, while the session waits for
-	// the provider-rotation successor that will replace it.
-	rotating bool
+	audio    RealtimeAudioIO
+	ready    atomic.Bool
+	muted    atomic.Bool
+	silenced atomic.Bool
 	stop     chan struct{}
 	stopOnce sync.Once
+}
+
+func newRealtimeVoiceSession(audio RealtimeAudioIO) *RealtimeVoiceSession {
+	return &RealtimeVoiceSession{audio: audio, stop: make(chan struct{})}
 }
 
 // Route reports where this session captures and plays audio.
@@ -79,7 +83,16 @@ func (v *RealtimeVoiceSession) Route() RealtimeAudioRoute {
 	if v == nil {
 		return RealtimeAudioRouteDevice
 	}
-	return v.route
+	return v.audio.Route()
+}
+
+// Audio returns the endpoint the session captures and plays through, or nil
+// for a nil session.
+func (v *RealtimeVoiceSession) Audio() RealtimeAudioIO {
+	if v == nil {
+		return nil
+	}
+	return v.audio
 }
 
 // MarkReady records that the provider session is connected.
@@ -100,7 +113,8 @@ func (v *RealtimeVoiceSession) SpeakerMuted() bool {
 	return v != nil && v.silenced.Load()
 }
 
-// StopRequested is closed when a user asks to end the session.
+// StopRequested is closed when the conversation is asked to end: the user
+// pressed End, or the browser that carries its audio disconnected.
 func (v *RealtimeVoiceSession) StopRequested() <-chan struct{} {
 	if v == nil {
 		return nil
@@ -108,7 +122,7 @@ func (v *RealtimeVoiceSession) StopRequested() <-chan struct{} {
 	return v.stop
 }
 
-// Stopped reports whether a user asked to end the session.
+// Stopped reports whether the conversation was asked to end.
 func (v *RealtimeVoiceSession) Stopped() bool {
 	if v == nil {
 		return false
@@ -135,8 +149,7 @@ type RealtimeVoiceStatus struct {
 	Route RealtimeAudioRoute `json:"route,omitempty"`
 	Muted bool               `json:"muted"`
 	// SpeakerMuted is true while reply audio is dropped instead of played.
-	SpeakerMuted bool       `json:"speaker_muted"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
+	SpeakerMuted bool `json:"speaker_muted"`
 	// HTTPSPort is the agent's HTTPS port, or 0 when HTTPS is off. A page
 	// opened over plain HTTP uses it to reopen itself where the browser
 	// allows microphone access.
@@ -152,6 +165,10 @@ type RealtimeVoiceStatus struct {
 // only for a device activation, so a browser start withdrawn before the loop
 // reaches it opens nothing. Claiming the next session and publishing it
 // happen under one lock, so a browser start never slips between them.
+//
+// A session that was asked to stop is over for every observer, even while
+// the loop is still tearing it down: the status reports idle and a new
+// browser start may queue behind it.
 type realtimeVoiceController struct {
 	mu       sync.Mutex
 	activate func()
@@ -184,126 +201,53 @@ func (s *Server) SetRealtimeVoiceActivation(activate func()) {
 	}
 }
 
-// ClaimRealtimeVoiceSession selects the audio endpoint for the session about
-// to open and publishes it as connecting. A browser waiting to start wins;
-// otherwise the device is used only when deviceRequested reports a device
-// activation. It returns nil when there is nothing to open, for example when
-// the only wakeup came from a browser start that was since withdrawn, or when
-// the session being rotated was stopped during the handoff. The caller must
-// pass a non-nil result to EndRealtimeVoiceSession.
+// ClaimRealtimeVoiceSession selects the audio endpoint for the conversation
+// about to open and publishes it as connecting. A browser waiting to start
+// wins; otherwise the device is used only when deviceRequested reports a
+// device activation. It returns nil when there is nothing to open, for
+// example when the only wakeup came from a browser start that was since
+// withdrawn. The caller must pass a non-nil result to
+// EndRealtimeVoiceSession once the conversation is over.
 func (s *Server) ClaimRealtimeVoiceSession(cfg Config, deviceRequested bool) *RealtimeVoiceSession {
-	if s == nil {
-		if !deviceRequested {
-			return nil
-		}
-		audio := NewDeviceRealtimeAudioIO(cfg)
-		return &RealtimeVoiceSession{route: audio.Route(), audio: audio, startedAt: time.Now(), stop: make(chan struct{})}
-	}
 	c := &s.realtimeVoice
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// A rotated session stays published until this claim replaces it, so a
-	// stop pressed during the handoff reached it. Honour that stop here.
-	if previous := c.active; previous != nil && previous.rotating {
-		c.active = nil
-		if previous.Stopped() {
-			c.pending = nil
-			return nil
-		}
-	}
 	var audio RealtimeAudioIO
 	if c.pending != nil && !c.pending.closed() {
+		// A closed endpoint is not replaced by the device: the browser asked
+		// for its own audio.
 		audio = c.pending
-	}
-	c.pending = nil
-	if audio == nil && !deviceRequested {
-		return nil
-	}
-	if audio == nil {
+	} else if deviceRequested {
 		audio = NewDeviceRealtimeAudioIO(cfg)
 	}
-	session := &RealtimeVoiceSession{route: audio.Route(), audio: audio, startedAt: time.Now(), stop: make(chan struct{})}
-	c.active = session
-	return session
+	c.pending = nil
+	if audio == nil {
+		return nil
+	}
+	c.active = newRealtimeVoiceSession(audio)
+	return c.active
 }
 
 // RealtimeVoicePending reports whether a browser voice start is waiting for
 // the session loop.
 func (s *Server) RealtimeVoicePending() bool {
-	if s == nil {
-		return false
-	}
 	c := &s.realtimeVoice
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.pending != nil && !c.pending.closed()
 }
 
-// Audio returns the endpoint the session captures and plays through.
-func (v *RealtimeVoiceSession) Audio() RealtimeAudioIO {
-	if v == nil {
-		return nil
-	}
-	return v.audio
-}
-
-// EndRealtimeVoiceSession withdraws session from the published status. When
-// rotated is true and the session is a browser session nobody asked to stop,
-// its endpoint is kept for the next session and EndRealtimeVoiceSession
-// reports true; the caller closes the endpoint otherwise.
-//
-// The stop check and the requeue happen under the lock that stop requests
-// also take, so a stop either lands before the requeue and prevents it, or
-// after it and withdraws the requeued start.
-func (s *Server) EndRealtimeVoiceSession(session *RealtimeVoiceSession, rotated bool) bool {
-	if s == nil || session == nil {
-		return false
-	}
+// EndRealtimeVoiceSession withdraws session from the published status and
+// releases its audio endpoint. reason is shown to the browser that carried
+// the audio; it is empty for a normal end.
+func (s *Server) EndRealtimeVoiceSession(session *RealtimeVoiceSession, reason string) {
 	c := &s.realtimeVoice
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.active == session {
-		if rotated && !session.Stopped() && c.activate != nil {
-			// Keep the session published through the handoff, so a stop
-			// pressed before the next session is claimed still reaches it.
-			session.rotating = true
-		} else {
-			c.active = nil
-		}
-	}
-	if !rotated || session.Stopped() || c.pending != nil || c.activate == nil {
-		return false
-	}
-	web, ok := session.audio.(*webRealtimeAudio)
-	if !ok || web.closed() {
-		return false
-	}
-	c.pending = web
-	return true
-}
-
-// ContinueRealtimeVoiceRotation decides, under the controller lock, whether
-// a rotated session continues into a successor. It reports false, and
-// withdraws the session, when the user stopped it during the handoff. A
-// session that continues stays published until the next claim replaces it,
-// so a stop that arrives after this call still reaches it there.
-func (s *Server) ContinueRealtimeVoiceRotation(session *RealtimeVoiceSession) bool {
-	if session == nil {
-		return false
-	}
-	if s == nil {
-		return !session.Stopped()
-	}
-	c := &s.realtimeVoice
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !session.Stopped() {
-		return true
-	}
 	if c.active == session {
 		c.active = nil
 	}
-	return false
+	c.mu.Unlock()
+	session.audio.Close(reason)
 }
 
 // RealtimeVoiceStatus reports the current realtime voice state.
@@ -312,22 +256,29 @@ func (s *Server) RealtimeVoiceStatus() RealtimeVoiceStatus {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	status := RealtimeVoiceStatus{Available: c.activate != nil, State: "idle"}
-	switch {
-	case c.active != nil:
+	switch active := c.running(); {
+	case active != nil:
 		status.State = "connecting"
-		if c.active.ready.Load() {
+		if active.ready.Load() {
 			status.State = "active"
 		}
-		status.Route = c.active.route
-		status.Muted = c.active.muted.Load()
-		status.SpeakerMuted = c.active.silenced.Load()
-		startedAt := c.active.startedAt
-		status.StartedAt = &startedAt
+		status.Route = active.Route()
+		status.Muted = active.muted.Load()
+		status.SpeakerMuted = active.silenced.Load()
 	case c.pending != nil:
 		status.State = "connecting"
 		status.Route = RealtimeAudioRouteWeb
 	}
 	return status
+}
+
+// running returns the published session unless it was asked to stop. The
+// caller holds c.mu.
+func (c *realtimeVoiceController) running() *RealtimeVoiceSession {
+	if c.active == nil || c.active.Stopped() {
+		return nil
+	}
+	return c.active
 }
 
 // startWebRealtimeVoice queues a browser endpoint and wakes the session loop.
@@ -338,7 +289,7 @@ func (s *Server) startWebRealtimeVoice(web *webRealtimeAudio) error {
 		c.mu.Unlock()
 		return errRealtimeVoiceUnavailable
 	}
-	if c.active != nil || c.pending != nil {
+	if c.running() != nil || c.pending != nil {
 		c.mu.Unlock()
 		return errRealtimeVoiceBusy
 	}
@@ -363,28 +314,26 @@ func (s *Server) releaseWebRealtimeVoice(web *webRealtimeAudio) {
 	c.mu.Unlock()
 }
 
-func (s *Server) stopRealtimeVoice() bool {
+// stopRealtimeVoice ends the running session and withdraws a queued browser
+// start.
+func (s *Server) stopRealtimeVoice() {
 	c := &s.realtimeVoice
 	c.mu.Lock()
-	active := c.active
 	pending := c.pending
 	c.pending = nil
-	// Mark the session stopped while holding the lock, so a rotation that
-	// ends it concurrently sees the stop and does not requeue its endpoint.
-	if active != nil {
-		active.requestStop()
+	if c.active != nil {
+		c.active.requestStop()
 	}
 	c.mu.Unlock()
 	if pending != nil {
 		pending.Close("")
 	}
-	return active != nil || pending != nil
 }
 
 func (s *Server) setRealtimeVoiceMuted(microphone, speaker *bool) bool {
 	c := &s.realtimeVoice
 	c.mu.Lock()
-	active := c.active
+	active := c.running()
 	c.mu.Unlock()
 	if active == nil {
 		return false

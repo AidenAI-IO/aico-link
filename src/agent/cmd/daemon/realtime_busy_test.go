@@ -165,7 +165,7 @@ func startBusyTestSessionConfigured(t *testing.T, timeout time.Duration, blockCr
 	done := make(chan error, 1)
 	sink := busyTestSemanticSink
 	go func() {
-		done <- runRealtimeSessionWithRegistryAndSink(cfg, signals, nil, nil, registry, sink, timeout, realtimeSessionMedia{}, bridge)
+		done <- runRealtimeSessionWithRegistryAndSink(cfg, signals, nil, nil, registry, sink, timeout, nil, bridge)
 	}()
 	t.Cleanup(func() {
 		signals <- os.Interrupt

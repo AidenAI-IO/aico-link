@@ -38,6 +38,7 @@ type Server struct {
 	usbHTTP                  *http.Server
 	https                    *http.Server
 	usbHTTPS                 *http.Server
+	authority                *localtls.Authority
 	usbRetryStop             chan struct{}
 	usbRetryOnce             sync.Once
 	storage                  storageController
@@ -139,20 +140,13 @@ func NewServer(options Options) (*Server, error) {
 	if options.LANGuard {
 		handler = lanaccess.Guard(s.lanAccess, s)
 	}
-	var authority *localtls.Authority
 	if options.HTTPSPort > 0 {
-		dir := options.TLSDir
-		if strings.TrimSpace(dir) == "" {
-			dir = localtls.DefaultDir
-		}
-		loaded, err := localtls.Load(dir)
+		authority, err := localtls.Load(options.TLSDir)
 		if err != nil {
 			// HTTPS adds browser features; the portal keeps serving HTTP.
 			logging.Warnf("config_web", "config_web", "HTTPS disabled: %v", err)
 		} else {
-			authority = loaded
-			// Users fetch the authority over plain HTTP before trusting it.
-			handler = withAuthorityDownload(handler, authority)
+			s.authority = authority
 		}
 	}
 	usbOnly := options.BindAddress == options.USBAddress
@@ -161,11 +155,11 @@ func NewServer(options Options) (*Server, error) {
 		s.usbHTTP = configHTTPServer(net.JoinHostPort(options.USBAddress, strconv.Itoa(options.Port)), handler, true)
 		s.usbRetryStop = make(chan struct{})
 	}
-	if authority != nil {
+	if s.authority != nil {
 		httpsAddr := net.JoinHostPort(options.BindAddress, strconv.Itoa(options.HTTPSPort))
-		s.https = configHTTPSServer(httpsAddr, handler, usbOnly, authority)
+		s.https = configHTTPSServer(httpsAddr, handler, usbOnly, s.authority)
 		if options.BindAddress == "0.0.0.0" {
-			s.usbHTTPS = configHTTPSServer(net.JoinHostPort(options.USBAddress, strconv.Itoa(options.HTTPSPort)), handler, true, authority)
+			s.usbHTTPS = configHTTPSServer(net.JoinHostPort(options.USBAddress, strconv.Itoa(options.HTTPSPort)), handler, true, s.authority)
 		}
 	}
 	if s.usbTerminal != nil && s.usbRetryStop == nil {
@@ -191,7 +185,7 @@ func (s *Server) ListenAndServe() error {
 	// A separate SO_BINDTODEVICE socket establishes the USB ingress boundary.
 	// The wildcard portal remains available on Wi-Fi, but its connections are
 	// never maintenance-authorized, even when addressed to the USB IP.
-	errorsCh := make(chan error, 5)
+	errorsCh := make(chan error, 3)
 	if s.usbTerminal != nil {
 		go s.serveUSBTerminal()
 	}
@@ -202,9 +196,7 @@ func (s *Server) ListenAndServe() error {
 		go s.serveUSBListener(s.usbHTTP, false, errorsCh)
 	}
 	if s.usbHTTPS != nil {
-		// HTTPS adds browser features; its failure must not end the portal,
-		// so it reports to the log rather than errorsCh.
-		go s.serveUSBListener(s.usbHTTPS, true, nil)
+		go s.serveUSBListener(s.usbHTTPS, true, errorsCh)
 	}
 	device := ""
 	if s.options.BindAddress == s.options.USBAddress {
@@ -263,14 +255,11 @@ func (s *Server) serveUSBListener(server *http.Server, useTLS bool, errorsCh cha
 	default:
 	}
 	if useTLS {
-		err := server.ServeTLS(listener, "", "")
-		if errorsCh == nil {
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logging.Warnf("config_web", "config_web", "USB HTTPS listener stopped; HTTP keeps serving: %v", err)
-			}
-			return
+		// HTTPS adds browser features; its failure must not end the portal,
+		// so it reports to the log rather than errorsCh.
+		if err := server.ServeTLS(listener, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logging.Warnf("config_web", "config_web", "USB HTTPS listener stopped; HTTP keeps serving: %v", err)
 		}
-		errorsCh <- err
 		return
 	}
 	errorsCh <- server.Serve(listener)
@@ -318,6 +307,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.authority != nil && r.URL.Path == localtls.AuthorityPath {
+		s.authority.ServeAuthority(w, r)
+		return
+	}
 	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 		s.APIHandler().ServeHTTP(w, r)
 		return

@@ -260,6 +260,7 @@ function handleSemanticEvent(event) {
         return;
     }
 
+    // voice.js is absent from the unit tests that load this file.
     if (typeof handleRealtimeVoiceEvent === 'function') handleRealtimeVoiceEvent(event);
     const payload = event.payload || {};
     const requestId = semanticRequestID(event, payload);
