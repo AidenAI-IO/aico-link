@@ -74,6 +74,8 @@ func TestStateHookTurnDecisionScreenshot(t *testing.T) {
 		{name: "screen not needed", enabled: true, body: answer(0.05), wantScreenshot: false, wantAsked: 1},
 		{name: "unsure keeps screenshot", enabled: true, body: answer(0.5), wantScreenshot: true, wantAsked: 1},
 		{name: "failed request keeps screenshot", enabled: true, body: `not json`, wantScreenshot: true, wantAsked: 1},
+		{name: "out-of-range noul keeps screenshot", enabled: true, body: answer(-0.5), wantScreenshot: true, wantAsked: 1},
+		{name: "missing answer keeps screenshot", enabled: true, body: `{"answers":{}}`, wantScreenshot: true, wantAsked: 1},
 		{name: "disabled asks nothing", enabled: false, body: answer(0.05), wantScreenshot: true, wantAsked: 0},
 	}
 	for _, tc := range cases {
@@ -92,16 +94,21 @@ func TestStateHookTurnDecisionScreenshot(t *testing.T) {
 }
 
 // A follow-up is judged together with the exchange before it, so the request
-// carries the previous user turn, the tools it used and the final reply.
+// carries the previous user turn, the tools it used and the final reply, also
+// after a tool run longer than the tool-name window.
 func TestStateHookTurnDecisionSendsPreviousTurn(t *testing.T) {
 	server := newDecisionServer(t, `{"answers":{"screen":{"type":"noul","noul":0.95}}}`)
 	_, manager := turnDecisionHookRuntime(t, true, server.URL, nil)
-	if err := manager.AppendMessages([]messages.Message{
-		{Role: messages.MessageRoleUser, Content: "open the calculator"},
-		{Role: messages.MessageRoleToolCall, ToolCalls: []messages.ToolCall{{ID: "c1", Name: "open_app", Arguments: `{}`}}},
-		{Role: messages.MessageRoleToolResult, ToolResults: []messages.ToolResult{{ToolCallID: "c1", Content: "ok"}}},
-		{Role: messages.MessageRoleAssistant, Content: "The calculator is open."},
-	}); err != nil {
+	run := []messages.Message{{Role: messages.MessageRoleUser, Content: "open the calculator"}}
+	for i := 0; i < previousTurnTailMessages; i++ {
+		id := fmt.Sprintf("c%d", i)
+		run = append(run,
+			messages.Message{Role: messages.MessageRoleToolCall, ToolCalls: []messages.ToolCall{{ID: id, Name: "open_app", Arguments: `{}`}}},
+			messages.Message{Role: messages.MessageRoleToolResult, ToolResults: []messages.ToolResult{{ToolCallID: id, Content: "ok"}}},
+		)
+	}
+	run = append(run, messages.Message{Role: messages.MessageRoleAssistant, Content: "The calculator is open."})
+	if err := manager.AppendMessages(run); err != nil {
 		t.Fatal(err)
 	}
 	server.mu.Lock()
@@ -119,6 +126,23 @@ func TestStateHookTurnDecisionSendsPreviousTurn(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("request lacks %q: %s", want, body)
 		}
+	}
+}
+
+// A turn with the user's own image keeps it instead of a screenshot, so the
+// decision model is not asked.
+func TestStateHookTurnDecisionSkippedForUserImage(t *testing.T) {
+	server := newDecisionServer(t, `{"answers":{"screen":{"type":"noul","noul":0.05}}}`)
+	_, manager := turnDecisionHookRuntime(t, true, server.URL, nil)
+	if err := manager.AppendMessage(messages.Message{
+		Role:        messages.MessageRoleUser,
+		Content:     "what is in this picture",
+		Attachments: []messages.Attachment{{MIMEType: "image/jpeg"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.requestCount(); got != 0 {
+		t.Fatalf("decision requests = %d, want 0", got)
 	}
 }
 

@@ -1494,15 +1494,16 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 				Message: &message,
 			}
 		}
-		// The decision model reads the utterance while the screenshot is
-		// captured, so it only adds latency when it is the slower of the two.
-		turn := r.startTurnDecision(message.Content)
 		// A user turn carries a fresh screenshot, grounded when UI Grounding
 		// is on, unless the user attached an image of their own or the
 		// decision model is sure the screen is not needed.
 		var attachment *messages.Attachment
 		var grounding *screenshotGrounding
 		if !messageHasImageAttachment(message) {
+			// The decision model reads the utterance while the screenshot is
+			// captured, so it only adds latency when it is the slower of the
+			// two. A turn with the user's own image needs no decision.
+			turn := r.startTurnDecision(message.Content)
 			attachment, grounding = r.captureStateScreenshot(func() bool {
 				return !turn().SkipScreenshot
 			})
