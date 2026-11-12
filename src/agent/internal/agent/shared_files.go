@@ -322,14 +322,7 @@ func deleteSharedFile(w http.ResponseWriter, r *http.Request, rel string) {
 		return
 	}
 	defer root.Close()
-	// openSharedFile rejects a symbolic link or special file at any depth.
-	file, err := openSharedFile(root, rel)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	_ = file.Close()
-	if err := root.Remove(rel); err != nil {
+	if err := removeSharedEntry(root, rel); err != nil {
 		switch {
 		case errors.Is(err, os.ErrNotExist):
 			http.NotFound(w, r)
@@ -341,6 +334,60 @@ func deleteSharedFile(w http.ResponseWriter, r *http.Request, rel string) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// sharedRemoveHook runs between validating the parent folder and removing the
+// entry; tests use it to swap folders in that window.
+var sharedRemoveHook func()
+
+// removeSharedEntry removes rel without following symbolic links. It opens each
+// parent folder in turn and checks that the open handle is the folder Lstat saw,
+// then removes the last name inside that handle. Swapping a parent for a link
+// afterwards cannot redirect the removal to another folder.
+func removeSharedEntry(root *os.Root, rel string) error {
+	parts := strings.Split(rel, "/")
+	dir := root
+	for _, name := range parts[:len(parts)-1] {
+		info, err := dir.Lstat(name)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return os.ErrNotExist
+		}
+		next, err := dir.OpenRoot(name)
+		if err != nil {
+			return err
+		}
+		if dir != root {
+			dir.Close()
+		}
+		dir = next
+		opened, err := dir.Stat(".")
+		if err != nil {
+			dir.Close()
+			return err
+		}
+		if !os.SameFile(info, opened) {
+			dir.Close()
+			return os.ErrNotExist
+		}
+	}
+	if dir != root {
+		defer dir.Close()
+	}
+	name := parts[len(parts)-1]
+	info, err := dir.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return os.ErrNotExist
+	}
+	if sharedRemoveHook != nil {
+		sharedRemoveHook()
+	}
+	return dir.Remove(name)
 }
 
 func listSharedFiles(rel string) ([]sharedFile, error) {

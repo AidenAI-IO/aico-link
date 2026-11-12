@@ -487,3 +487,38 @@ func TestSharedFilesDelete(t *testing.T) {
 		t.Fatalf("file outside the shared root changed: %q %v", data, err)
 	}
 }
+
+func TestSharedFilesDeleteStaysInValidatedFolder(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AICO_SHARE_DIR", dir)
+	for _, rel := range []string{"outputs/report.pdf", "archive/report.pdf"} {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(rel)), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(rel), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// After validation, outputs moves away and a link to archive takes its name.
+	sharedRemoveHook = func() {
+		if err := os.Rename(filepath.Join(dir, "outputs"), filepath.Join(dir, "moved")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("archive", filepath.Join(dir, "outputs")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { sharedRemoveHook = nil })
+	request := httptest.NewRequest(http.MethodDelete, "http://board:8080/api/files?path=outputs/report.pdf", nil)
+	response := httptest.NewRecorder()
+	(&Server{}).sharedFilesHandler().ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "archive", "report.pdf")); err != nil {
+		t.Fatalf("file in the swapped-in folder was removed: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "moved", "report.pdf")); !os.IsNotExist(err) {
+		t.Fatalf("validated file still exists: %v", err)
+	}
+}
