@@ -64,6 +64,7 @@ type Server struct {
 	httpsServer             *http.Server
 	httpsAddr               string
 	httpsAuthority          *localtls.Authority
+	httpsServing            atomic.Bool
 	httpListener            net.Listener
 	usbListeners            []net.Listener
 	usbListenStops          []chan struct{}

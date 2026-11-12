@@ -58,11 +58,11 @@ func TestWebRealtimeVoiceSessionCarriesBrowserAudio(t *testing.T) {
 		t.Fatalf("status = %+v, want a connecting web session", status)
 	}
 
-	audio := s.TakeRealtimeAudioIO(Config{})
-	if audio.Route() != RealtimeAudioRouteWeb {
-		t.Fatalf("route = %s, want web", audio.Route())
+	voice := s.ClaimRealtimeVoiceSession(Config{})
+	if voice == nil || voice.Route() != RealtimeAudioRouteWeb {
+		t.Fatalf("claimed %+v, want the browser session", voice)
 	}
-	voice := s.BeginRealtimeVoiceSession(audio)
+	audio := voice.Audio()
 	voice.MarkReady()
 	if status := s.RealtimeVoiceStatus(); status.State != "active" || status.Route != RealtimeAudioRouteWeb {
 		t.Fatalf("status = %+v, want an active web session", status)
@@ -128,6 +128,39 @@ func TestWebRealtimeVoiceSessionCarriesBrowserAudio(t *testing.T) {
 	}
 	s.EndRealtimeVoiceSession(voice)
 	audio.Close("")
+	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
+		t.Fatalf("status = %+v, want idle", status)
+	}
+}
+
+// A browser start released before the session loop reaches it must not make
+// the loop open the board microphone for its leftover wakeup.
+func TestReleasedWebRealtimeVoiceStartOpensNoSession(t *testing.T) {
+	s := &Server{}
+	s.SetRealtimeVoiceActivation(func() {})
+	srv := httptest.NewServer(http.HandlerFunc(s.handleRealtimeVoiceSocket))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readWebVoiceControl(t, ctx, conn)["type"]; got != "accepted" {
+		t.Fatalf("first message = %v, want accepted", got)
+	}
+	conn.Close(websocket.StatusNormalClosure, "")
+	for s.RealtimeVoicePending() {
+		if ctx.Err() != nil {
+			t.Fatal("browser disconnect did not withdraw the queued start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	if voice := s.ClaimRealtimeVoiceSession(Config{}); voice != nil {
+		t.Fatalf("claimed a %s session for a withdrawn browser start", voice.Route())
+	}
 	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
 		t.Fatalf("status = %+v, want idle", status)
 	}

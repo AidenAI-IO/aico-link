@@ -202,7 +202,9 @@ func (s *Server) ListenAndServe() error {
 		go s.serveUSBListener(s.usbHTTP, false, errorsCh)
 	}
 	if s.usbHTTPS != nil {
-		go s.serveUSBListener(s.usbHTTPS, true, errorsCh)
+		// HTTPS adds browser features; its failure must not end the portal,
+		// so it reports to the log rather than errorsCh.
+		go s.serveUSBListener(s.usbHTTPS, true, nil)
 	}
 	device := ""
 	if s.options.BindAddress == s.options.USBAddress {
@@ -220,7 +222,12 @@ func (s *Server) ListenAndServe() error {
 		} else {
 			defer httpsListener.Close()
 			logging.Infof("config_web", "config_web", "HTTPS listening on %s", s.https.Addr)
-			go func() { errorsCh <- s.https.ServeTLS(httpsListener, "", "") }()
+			go func() {
+				err := s.https.ServeTLS(httpsListener, "", "")
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					logging.Warnf("config_web", "config_web", "HTTPS listener stopped; HTTP keeps serving: %v", err)
+				}
+			}()
 		}
 	}
 	go func() { errorsCh <- s.http.Serve(listener) }()
@@ -256,7 +263,14 @@ func (s *Server) serveUSBListener(server *http.Server, useTLS bool, errorsCh cha
 	default:
 	}
 	if useTLS {
-		errorsCh <- server.ServeTLS(listener, "", "")
+		err := server.ServeTLS(listener, "", "")
+		if errorsCh == nil {
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logging.Warnf("config_web", "config_web", "USB HTTPS listener stopped; HTTP keeps serving: %v", err)
+			}
+			return
+		}
+		errorsCh <- err
 		return
 	}
 	errorsCh <- server.Serve(listener)

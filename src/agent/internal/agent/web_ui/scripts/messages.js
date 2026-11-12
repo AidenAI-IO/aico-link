@@ -595,9 +595,13 @@ function updateEmptyState() {
 // voice session. Its mode follows the draft and the voice state.
 function composerPrimaryMode() {
     const hasDraft = inputEl.value.trim() !== '' || draftAttachments.length > 0;
+    const voiceActive = typeof voiceModeActive === 'function' && voiceModeActive();
+    // Typed text always goes to the conversation: steer a running request,
+    // otherwise send. With an empty box, a voice session's End stays
+    // reachable even while a request runs; Stop still cancels the request.
+    if (hasDraft) return currentChatRequestId ? 'steer' : 'send';
+    if (voiceActive) return 'end';
     if (currentChatRequestId) return 'steer';
-    if (hasDraft) return 'send';
-    if (typeof voiceModeActive === 'function' && voiceModeActive()) return 'end';
     if (typeof voiceStatus !== 'undefined' && voiceStatus.available) return 'voice';
     return 'send';
 }

@@ -110,26 +110,26 @@ func (w *webRealtimeAudio) serve(ctx context.Context) {
 		if kind != websocket.MessageBinary || len(data) < 2 {
 			continue
 		}
-		w.mu.Lock()
-		capturing := w.capturing
-		w.mu.Unlock()
-		if !capturing {
-			continue
-		}
 		pcm := data[:len(data)&^1]
-		select {
-		case w.mic <- pcm:
-		default:
-			// The session fell behind; keep the newest audio.
-			select {
-			case <-w.mic:
-			default:
-			}
+		// Enqueue under the lock that StartRecording uses to clear the queue,
+		// so a frame from a previous capture never lands after the reset.
+		w.mu.Lock()
+		if w.capturing {
 			select {
 			case w.mic <- pcm:
 			default:
+				// The session fell behind; keep the newest audio.
+				select {
+				case <-w.mic:
+				default:
+				}
+				select {
+				case w.mic <- pcm:
+				default:
+				}
 			}
 		}
+		w.mu.Unlock()
 	}
 }
 
@@ -143,6 +143,9 @@ type webRealtimeRecording struct{ w *webRealtimeAudio }
 
 func (r webRealtimeRecording) StartRecording(format AudioFormat) (*RecordStartResult, error) {
 	r.w.mu.Lock()
+	// A rotated session reuses this endpoint; audio captured for the previous
+	// session must not reach the new one.
+	drainWebRealtimeMic(r.w.mic)
 	r.w.capturing = true
 	r.w.mu.Unlock()
 	r.w.send(map[string]any{"type": "capture_start", "format": webRealtimeFormat(format)})
@@ -167,9 +170,20 @@ func (r webRealtimeRecording) ReadRecordChunk(_ uint64, timeoutMs uint32) (*Audi
 func (r webRealtimeRecording) StopRecording(uint64) error {
 	r.w.mu.Lock()
 	r.w.capturing = false
+	drainWebRealtimeMic(r.w.mic)
 	r.w.mu.Unlock()
 	r.w.send(map[string]string{"type": "capture_stop"})
 	return nil
+}
+
+func drainWebRealtimeMic(mic chan []byte) {
+	for {
+		select {
+		case <-mic:
+		default:
+			return
+		}
+	}
 }
 
 type webRealtimePlayback struct{ w *webRealtimeAudio }

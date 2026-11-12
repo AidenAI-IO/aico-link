@@ -129,11 +129,19 @@ type RealtimeVoiceStatus struct {
 
 // realtimeVoiceController joins Web UI requests with the realtime session
 // loop. Its zero value is ready for use.
+//
+// A browser start queues its endpoint in pending and wakes the loop. The loop
+// cannot tell which source woke it, so a browser start that is released
+// before the loop claims it leaves cancelled set: the loop then skips that
+// wakeup instead of opening the board microphone for a session nobody asked
+// for. Claiming the next session and publishing it happen under one lock, so
+// a browser start never slips between them unseen.
 type realtimeVoiceController struct {
-	mu       sync.Mutex
-	activate func()
-	pending  *webRealtimeAudio
-	active   *RealtimeVoiceSession
+	mu        sync.Mutex
+	activate  func()
+	pending   *webRealtimeAudio
+	cancelled bool
+	active    *RealtimeVoiceSession
 }
 
 var (
@@ -161,20 +169,55 @@ func (s *Server) SetRealtimeVoiceActivation(activate func()) {
 	}
 }
 
-// TakeRealtimeAudioIO returns the audio endpoint for the session about to
-// open: a browser waiting to start a voice session, otherwise the device.
-func (s *Server) TakeRealtimeAudioIO(cfg Config) RealtimeAudioIO {
-	if s != nil {
-		c := &s.realtimeVoice
-		c.mu.Lock()
-		pending := c.pending
-		c.pending = nil
-		c.mu.Unlock()
-		if pending != nil && !pending.closed() {
-			return pending
-		}
+// ClaimRealtimeVoiceSession selects the audio endpoint for the session about
+// to open and publishes it as connecting: a browser waiting to start, or
+// otherwise the device. It returns nil when the wakeup came from a browser
+// start that has since been released, so no session should open. The caller
+// must pass a non-nil result to EndRealtimeVoiceSession.
+func (s *Server) ClaimRealtimeVoiceSession(cfg Config) *RealtimeVoiceSession {
+	if s == nil {
+		audio := NewDeviceRealtimeAudioIO(cfg)
+		return &RealtimeVoiceSession{route: audio.Route(), audio: audio, startedAt: time.Now(), stop: make(chan struct{})}
 	}
-	return NewDeviceRealtimeAudioIO(cfg)
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var audio RealtimeAudioIO
+	switch {
+	case c.pending != nil && !c.pending.closed():
+		audio = c.pending
+	case c.cancelled:
+		c.cancelled = false
+		c.pending = nil
+		return nil
+	default:
+		audio = NewDeviceRealtimeAudioIO(cfg)
+	}
+	c.pending = nil
+	c.cancelled = false
+	session := &RealtimeVoiceSession{route: audio.Route(), audio: audio, startedAt: time.Now(), stop: make(chan struct{})}
+	c.active = session
+	return session
+}
+
+// RealtimeVoicePending reports whether a browser voice start is waiting for
+// the session loop.
+func (s *Server) RealtimeVoicePending() bool {
+	if s == nil {
+		return false
+	}
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.pending != nil
+}
+
+// Audio returns the endpoint the session captures and plays through.
+func (v *RealtimeVoiceSession) Audio() RealtimeAudioIO {
+	if v == nil {
+		return nil
+	}
+	return v.audio
 }
 
 // RequeueRealtimeAudioIO keeps a browser endpoint for the next session when
@@ -192,21 +235,8 @@ func (s *Server) RequeueRealtimeAudioIO(audio RealtimeAudioIO) bool {
 		return false
 	}
 	c.pending = web
+	c.cancelled = false
 	return true
-}
-
-// BeginRealtimeVoiceSession publishes a session that is connecting with the
-// given audio endpoint. The caller must call EndRealtimeVoiceSession.
-func (s *Server) BeginRealtimeVoiceSession(audio RealtimeAudioIO) *RealtimeVoiceSession {
-	session := &RealtimeVoiceSession{route: audio.Route(), audio: audio, startedAt: time.Now(), stop: make(chan struct{})}
-	if s == nil {
-		return session
-	}
-	c := &s.realtimeVoice
-	c.mu.Lock()
-	c.active = session
-	c.mu.Unlock()
-	return session
 }
 
 // EndRealtimeVoiceSession withdraws session from the published status.
@@ -259,6 +289,7 @@ func (s *Server) startWebRealtimeVoice(web *webRealtimeAudio) error {
 		return errRealtimeVoiceBusy
 	}
 	c.pending = web
+	c.cancelled = false
 	activate := c.activate
 	c.mu.Unlock()
 	activate()
@@ -272,6 +303,7 @@ func (s *Server) releaseWebRealtimeVoice(web *webRealtimeAudio) {
 	c.mu.Lock()
 	if c.pending == web {
 		c.pending = nil
+		c.cancelled = true
 	}
 	active := c.active
 	c.mu.Unlock()
@@ -285,7 +317,10 @@ func (s *Server) stopRealtimeVoice() bool {
 	c.mu.Lock()
 	active := c.active
 	pending := c.pending
-	c.pending = nil
+	if pending != nil {
+		c.pending = nil
+		c.cancelled = true
+	}
 	c.mu.Unlock()
 	if pending != nil {
 		pending.Close("")

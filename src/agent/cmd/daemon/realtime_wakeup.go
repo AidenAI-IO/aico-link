@@ -704,8 +704,18 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			}
 			var media realtimeSessionMedia
 			if server != nil && !cfg.Benchmark.RealtimeText {
-				media.audio = server.TakeRealtimeAudioIO(cfg)
-				media.voice = server.BeginRealtimeVoiceSession(media.audio)
+				media.voice = server.ClaimRealtimeVoiceSession(cfg)
+				if media.voice == nil {
+					// The wakeup came from a browser start that was released
+					// before this loop reached it. Opening the device here
+					// would start a session nobody asked for.
+					logging.Infof("agent", "realtime", "Browser voice start was withdrawn before it began; staying in standby")
+					if chatBridgeHasPending(bridge) {
+						signalWakeupEvent(events)
+					}
+					continue
+				}
+				media.audio = media.voice.Audio()
 			}
 			sessionErr := runRealtimeSessionWithMedia(cfg, sigChan, runtime, tasks, semanticSink, media, bridge)
 			finishRealtimeSessionMedia(server, media, sessionErr)
@@ -732,7 +742,9 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			drainRealtimeWakeups(events, failureAnnouncementDone != nil)
 			// An API request can arrive while the previous session is tearing
 			// down. Preserve that activation after clearing stale wake events.
-			if rotated || chatBridgeHasPending(bridge) {
+			// A browser voice start queued during teardown would otherwise
+			// lose its wakeup to the drain above and stay connecting.
+			if rotated || chatBridgeHasPending(bridge) || (server != nil && server.RealtimeVoicePending()) {
 				signalWakeupEvent(events)
 			}
 			if !rotated {
@@ -2670,6 +2682,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					activeChat = nil
 				}
 				currentTurnID = ""
+				if semanticEmitter != nil {
+					// Speech before the next response belongs to no chat
+					// request; do not label it with the finished one.
+					semanticEmitter.turnID = ""
+				}
 				if err := tryStartQueuedChat(); err != nil {
 					return err
 				}

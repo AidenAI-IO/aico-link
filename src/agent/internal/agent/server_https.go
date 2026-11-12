@@ -24,9 +24,11 @@ func (s *Server) EnableHTTPS(addr, tlsDir string) error {
 	return nil
 }
 
-// HTTPSPort returns the configured HTTPS port, or 0 when HTTPS is off.
+// HTTPSPort returns the HTTPS port while its listener is serving, or 0. The
+// Web UI sends users there for microphone access, so a port that failed to
+// bind must not be reported.
 func (s *Server) HTTPSPort() int {
-	if s == nil || s.httpsAuthority == nil {
+	if s == nil || s.httpsAuthority == nil || !s.httpsServing.Load() {
 		return 0
 	}
 	_, port, err := net.SplitHostPort(s.httpsAddr)
@@ -75,8 +77,10 @@ func (s *Server) startHTTPS(handler http.Handler) {
 		s.logger.Info("Starting HTTPS server on %s", s.httpsAddr)
 	}
 	s.startUSBListener(srv, srv.TLSConfig)
+	s.httpsServing.Store(true)
 	go func() {
 		err := srv.ServeTLS(listener, "", "")
+		s.httpsServing.Store(false)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) && s.logger != nil {
 			s.logger.Warn("HTTPS listener stopped: %v", err)
 		}

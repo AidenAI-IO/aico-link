@@ -200,13 +200,21 @@ async function startRealtimeVoice() {
     voiceActivity = 'idle';
     renderRealtimeVoice();
     try {
-        local.stream = await navigator.mediaDevices.getUserMedia({
+        // Create the audio context inside the click so the browser lets it
+        // run; one created after the permission prompt may stay suspended.
+        local.context = new (window.AudioContext || window.webkitAudioContext)({latencyHint: 'interactive'});
+        const stream = await navigator.mediaDevices.getUserMedia({
             audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true}
         });
-        if (local.ended) throw new Error('');
-        local.context = new (window.AudioContext || window.webkitAudioContext)({latencyHint: 'interactive'});
+        if (local.ended) {
+            // The user ended voice while the permission prompt was open;
+            // release the microphone that was granted afterwards.
+            stream.getTracks().forEach(track => track.stop());
+            return;
+        }
+        local.stream = stream;
         await local.context.audioWorklet.addModule('/web-ui/scripts/voice_capture_worklet.js');
-        if (local.ended) throw new Error('');
+        if (local.ended) return;
         const source = local.context.createMediaStreamSource(local.stream);
         local.inputAnalyser = local.context.createAnalyser();
         local.inputAnalyser.fftSize = 512;
@@ -241,13 +249,19 @@ function realtimeVoiceSecureURL() {
     return url.toString();
 }
 
-// A page opened from realtimeVoiceSecureURL starts voice after its first
-// status check. Browsers may still require a click before playing audio, so
-// the start button stays available if this attempt cannot begin.
+// A page opened from realtimeVoiceSecureURL asks for one click to start.
+// Starting on load would run without a user gesture, and browsers keep the
+// audio of such a page suspended.
 function startRealtimeVoiceFromLocation() {
     if (location.hash !== '#voice') return;
     history.replaceState(null, '', location.pathname + location.search);
-    if (voiceStatus.available && !voiceModeActive()) startRealtimeVoice();
+    if (!voiceStatus.available || voiceModeActive()) return;
+    setComposerHint('Press the voice button to start talking.', false);
+    if (composerHintTimer) {
+        clearTimeout(composerHintTimer);
+        composerHintTimer = null;
+    }
+    sendBtn.focus();
 }
 
 function voiceStartErrorMessage(err) {
@@ -292,10 +306,7 @@ function handleVoiceControlMessage(local, text) {
             local.resampler = createVoiceResampler(local.context.sampleRate, local.captureFormat.sample_rate || 16000);
             local.pending = [];
             local.pendingSamples = 0;
-            local.capturing = true;
-            if (local.startTimer) clearTimeout(local.startTimer);
-            if (local.context.state === 'suspended') local.context.resume();
-            refreshRealtimeVoiceStatus();
+            beginVoiceCapture(local);
             break;
         case 'capture_stop':
             local.capturing = false;
@@ -314,6 +325,32 @@ function handleVoiceControlMessage(local, text) {
     renderRealtimeVoice();
 }
 
+// Capture only counts as started once the audio context runs; a suspended
+// context sends and plays nothing while the page would claim to listen.
+async function beginVoiceCapture(local) {
+    if (local.context.state === 'suspended') {
+        try {
+            await local.context.resume();
+        } catch (err) {
+            // Checked below.
+        }
+    }
+    if (local.ended) return;
+    if (local.context.state !== 'running') {
+        teardownLocalVoice(local, 'The browser blocked audio. Press the voice button to start again.');
+        return;
+    }
+    local.capturing = true;
+    if (local.startTimer) clearTimeout(local.startTimer);
+    refreshRealtimeVoiceStatus();
+    renderRealtimeVoice();
+}
+
+// Keep at most this much microphone audio waiting to be sent. On a slow link
+// newer speech matters more than a backlog, which would reach the agent long
+// after it was spoken.
+const voiceSendBacklogBytes = 32000;
+
 function handleVoiceCaptureFrame(local, samples) {
     if (!local.capturing || !local.resampler || !local.socket || local.socket.readyState !== WebSocket.OPEN) return;
     const resampled = local.resampler(samples);
@@ -330,6 +367,14 @@ function handleVoiceCaptureFrame(local, samples) {
     });
     local.pending = [];
     local.pendingSamples = 0;
+    if (local.socket.bufferedAmount > voiceSendBacklogBytes) {
+        // The connection is not keeping up; drop this frame rather than queue
+        // stale audio behind it.
+        local.droppedFrames = (local.droppedFrames || 0) + 1;
+        if (local.droppedFrames === 1) console.warn('[voice] connection is slow; dropping microphone audio');
+        return;
+    }
+    local.droppedFrames = 0;
     local.socket.send(floatToPCM16(frame).buffer);
 }
 
@@ -388,7 +433,11 @@ function startVoiceMeter(local) {
 }
 
 function teardownLocalVoice(local, reason) {
-    if (local.ended && voiceLocal !== local) return;
+    if (local.ended && voiceLocal !== local) {
+        // Already torn down; still release resources that arrived since.
+        if (local.stream) local.stream.getTracks().forEach(track => track.stop());
+        return;
+    }
     local.ended = true;
     if (local.startTimer) clearTimeout(local.startTimer);
     if (local.meterFrame) cancelAnimationFrame(local.meterFrame);

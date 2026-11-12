@@ -18,6 +18,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -33,6 +34,7 @@ import (
 	"sync"
 	"time"
 
+	"aico-agent/internal/lanaccess"
 	"golang.org/x/sys/unix"
 )
 
@@ -327,14 +329,37 @@ func (a *Authority) issue(ip net.IP, now time.Time) (*tls.Certificate, []byte, e
 
 // ServeAuthority serves the public authority certificate so a user can trust
 // it and open the board's HTTPS pages without a warning.
+//
+// Installing a root is a trust decision, so the download is offered only on
+// a channel a LAN attacker cannot rewrite: the USB link or the board itself.
+// A LAN request is refused even when signed in, because a plain-HTTP response
+// could have been replaced on the way. The SHA-256 fingerprint is sent in a
+// header so the user can compare it with the one Settings shows over USB.
 func (a *Authority) ServeAuthority(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !lanaccess.IsTrusted(r) {
+		http.Error(w, "The certificate authority is available only over the USB connection.", http.StatusForbidden)
+		return
+	}
 	w.Header().Set("Content-Type", "application/x-x509-ca-cert")
 	w.Header().Set("Content-Disposition", `attachment; filename="aico-link-ca.pem"`)
+	w.Header().Set("X-Aico-CA-SHA256", a.Fingerprint())
+	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(a.pem)
+}
+
+// Fingerprint returns the authority certificate's SHA-256 fingerprint as
+// colon-separated hex, the form browsers and keychains display.
+func (a *Authority) Fingerprint() string {
+	sum := sha256.Sum256(a.cert.Raw)
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = fmt.Sprintf("%02X", b)
+	}
+	return strings.Join(parts, ":")
 }
 
 // DisableHTTP2 keeps net/http from negotiating HTTP/2 on a server that serves

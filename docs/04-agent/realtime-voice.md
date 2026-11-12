@@ -218,10 +218,15 @@ To use browser voice:
    addresses each need their own confirmation, and some browsers ask again
    after some time.
 3. Optionally, install the authority as a trusted root to remove the warning
-   on that device. Download it from `/tls/ca.pem` on any of the four ports,
-   for example `http://192.168.42.1/tls/ca.pem`. On macOS, open the file in
-   Keychain Access and set it to Always Trust. Firefox keeps its own
-   certificate store, so import it there as well.
+   on that device. Download it from `/tls/ca.pem` over the USB link, for
+   example `http://192.168.42.1/tls/ca.pem`. The download is refused over
+   Wi-Fi, even after signing in: installing a root is a trust decision, and a
+   plain-HTTP response on the local network could have been replaced. The
+   response carries the authority's SHA-256 fingerprint in the
+   `X-Aico-CA-SHA256` header; compare it with the fingerprint your system
+   shows before trusting the file. On macOS, open the file in Keychain Access
+   and set it to Always Trust. Firefox keeps its own certificate store, so
+   import it there as well.
 
 Deleting `/userdata/agent/tls/` makes the board create a new authority on the
 next service start; browsers that trusted the old one then show the warning
