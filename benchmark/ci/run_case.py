@@ -77,8 +77,8 @@ def _run_json(
         "stdout": subprocess.PIPE,
         "stderr": log_file,
     }
-    if timeout_seconds is not None:
-        popen_kwargs["start_new_session"] = os.name == "posix"
+    # A separate process group lets cancellation stop the command's whole tree.
+    popen_kwargs["start_new_session"] = os.name == "posix"
     proc = subprocess.Popen(command, **popen_kwargs)
     try:
         stdout, _ = proc.communicate(timeout=timeout_seconds)

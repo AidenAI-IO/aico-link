@@ -14,7 +14,8 @@ typically with a coding agent; the issue is written to be that agent's starting
 point. Nothing is changed in the repository automatically.
 
 A wrong issue costs more than a missed one. Every finding therefore passes
-mechanical evidence checks, a fresh run on current `main`, and an independent
+mechanical evidence checks, a fresh run on current `main` (or, for tasks this
+runner cannot execute, failures in at least two daily runs), and an independent
 audit before it is filed, and each run files at most three new issues.
 
 ```mermaid

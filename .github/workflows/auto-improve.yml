@@ -30,9 +30,11 @@ concurrency:
 jobs:
   analyze:
     if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'schedule' && vars.AUTO_IMPROVE_ENABLED == 'true'))
+      startsWith(github.ref, 'refs/heads/') &&
+      github.event_name != 'pull_request' && github.event_name != 'pull_request_target' &&
+      github.ref_name == 'main' &&
+      !(github.event_name != 'workflow_dispatch' &&
+        !(github.event_name == 'schedule' && vars.AUTO_IMPROVE_ENABLED == 'true'))
     runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
     timeout-minutes: 150
     env:
@@ -64,7 +66,7 @@ jobs:
       - name: Recover owned emulators from interrupted runs
         working-directory: benchmark
         run: |
-          uv run python -c 'import os; from pathlib import Path; from ci.auto_improve.emulator import cleanup_orphans; cleanup_orphans(Path(os.environ["AUTO_IMPROVE_WORK_ROOT"]))'
+          uv run python -c 'import os; from pathlib import Path; from ci.auto_improve.emulator import cleanup_orphans, cleanup_stale_work; root=Path(os.environ["AUTO_IMPROVE_WORK_ROOT"]); cleanup_orphans(root); print("removed:", cleanup_stale_work(root, "auto-improve-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"]))'
       - id: mode
         working-directory: benchmark
         env:

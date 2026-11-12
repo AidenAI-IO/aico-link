@@ -207,6 +207,25 @@ def cleanup_completed_work(root: Path, run_name: str) -> None:
     shutil.rmtree(work, ignore_errors=True)
 
 
+def cleanup_stale_work(root: Path, current: str) -> list[str]:
+    """Remove other runs' work directories that hold no live emulator.
+
+    Workflow concurrency allows one run at a time, so every directory but the current
+    one is inactive; a run that failed before upload would otherwise leave its downloads.
+    """
+    import re
+    removed = []
+    for work in sorted(root.glob("auto-improve-*")):
+        if (work.name == current or not re.fullmatch(r"auto-improve-[0-9]+-[0-9]+", work.name)
+                or work.is_symlink() or not work.is_dir()):
+            continue
+        if any(work.glob("result/finding-*/reproduction-runs/*/*/emulator/owner.json")):
+            continue
+        shutil.rmtree(work, ignore_errors=True)
+        removed.append(work.name)
+    return removed
+
+
 def prepare_companion(serial: str) -> None:
     """Enable only the pinned, preinstalled companion on the owned emulator."""
     def adb(*args: str) -> str:

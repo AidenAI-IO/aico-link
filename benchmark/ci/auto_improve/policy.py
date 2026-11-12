@@ -15,6 +15,8 @@ BASE_BRANCH = "main"
 # Findings that the runner can reproduce on current main. External code is not executed here.
 REPRODUCIBLE_DOMAINS = ("agent", "benchmark")
 DOMAINS = (*REPRODUCIBLE_DOMAINS, "external")
+# Characters of each evidence text searched for a symptom pattern.
+SYMPTOM_TEXT_LIMIT = 4000
 # Distinct failing daily runs required when a finding cannot be reproduced on main.
 PERSISTENT_RUNS = 2
 # New issues filed per run; updates to existing issues are not counted.
@@ -96,6 +98,9 @@ def validate_symptom(symptom: dict) -> None:
     pattern = symptom.get("pattern", "")
     if not isinstance(pattern, str) or len(pattern) > 200:
         raise InvalidFinding("Symptom pattern must be a short string")
+    # Quantified groups and backreferences can backtrack exponentially; a symptom needs neither.
+    if re.search(r"\)\s*[*+?{]|\\[1-9]|\(\?[=!<]", pattern):
+        raise InvalidFinding("Symptom pattern must not quantify groups, use backreferences or lookarounds")
     if symptom["kind"] in {"tool_error", "hard_assertion", "error_text"} and not pattern:
         raise InvalidFinding(f"Symptom {symptom['kind']} requires a pattern")
     try:
@@ -125,7 +130,8 @@ def symptom_matches(symptom: dict, row: dict, traces: list[dict]) -> list[str]:
                  if isinstance(result, dict) and result.get("content") and tool_result_failed(result)]
     else:
         texts = errors
-    return [text[:300] for text in texts if pattern.search(text)][:3]
+    # Bound the searched text too, so one long error string cannot stall the run.
+    return [text[:300] for text in texts if pattern.search(text[:SYMPTOM_TEXT_LIMIT])][:3]
 
 
 def reproduction(domain: str, row: dict, symptom: dict | None, traces: list[dict]) -> dict:

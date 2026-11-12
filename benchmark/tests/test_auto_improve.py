@@ -684,6 +684,7 @@ def test_model_text_cannot_notify_people_or_forge_issue_metadata(tmp_path, monke
     # References to other repositories would create backlinks there; they stay readable but inert.
     assert "other/repo#12" not in body and "github.com/other/repo/issues/34" not in body
     assert "other/repo#\u200b12" in body
+    assert issues.clean("see #123 and &#123;") == "see #\u200b123 and &#123;"
     assert policy.issue_metadata({"user": {"login": "b"}, "body": body}, {"b"})["targets"] == ["a:one"]
 
 
@@ -773,3 +774,48 @@ def test_reproduce_command_matches_the_ci_invocation(task, flags, bridge):
     assert "--auto-agent-setup" in command and "--agent-url" not in command
     assert all(flag in command for flag in flags)
     assert ("--environment-url" in command) is bridge
+
+
+@pytest.mark.parametrize("pattern", ["^(a+)+$", "(ab)*c", r"(x)\1", "(?=a)b", "(a|b){2,}"])
+def test_symptom_patterns_cannot_backtrack_catastrophically(pattern):
+    with pytest.raises(policy.InvalidFinding):
+        policy.validate_symptom({"kind": "error_text", "pattern": pattern})
+    policy.validate_symptom({"kind": "error_text", "pattern": "socket (missing|closed)"})
+
+
+def test_symptom_search_is_bounded_to_a_prefix_of_each_text():
+    row = {"metrics": {"error": "x" * policy.SYMPTOM_TEXT_LIMIT + "late marker"}}
+    assert policy.symptom_matches({"kind": "error_text", "pattern": "late marker"}, row, []) == []
+    row = {"metrics": {"error": "early marker" + "x" * 10000}}
+    assert policy.symptom_matches({"kind": "error_text", "pattern": "early marker"}, row, [])
+
+
+def test_footer_claims_a_fresh_reproduction_only_when_one_ran(tmp_path, monkeypatch):
+    _, drafts, _, _ = analyze(tmp_path, monkeypatch, [cluster(fix_target="external_code")])
+    assert "were not reproduced" in drafts[0]["body"] and "the fresh reproduction" not in drafts[0]["body"]
+
+
+def test_cancellation_survives_unreadable_evidence(tmp_path, monkeypatch):
+    from ci.plan import Catalog, SuiteCase
+    root = tmp_path / "root"
+    monkeypatch.setattr(execution, "load_catalog", lambda **_: Catalog((SuiteCase("case", "suite.json", "isolated"),)))
+    def fake_command(args, **kwargs):
+        run = root / "benchmark/runs" / args[4]
+        run.mkdir(parents=True)
+        (run / "manifest.json").write_text("{partial")
+        raise InterruptedError("Workflow interrupted by signal 15")
+    monkeypatch.setattr(execution, "command", fake_command)
+    out = tmp_path / "out"
+    with pytest.raises(InterruptedError):
+        execution.run_task(root, "case:t", 1, "image", out, deadline=time.monotonic() + 3600)
+    assert "JSONDecodeError" in (out / "evidence-error.log").read_text()
+
+
+def test_stale_work_directories_are_swept_but_live_emulators_are_kept(tmp_path):
+    for name in ("auto-improve-1-1", "auto-improve-2-1", "auto-improve-3-1", "other"):
+        (tmp_path / name / "source").mkdir(parents=True)
+    owner = tmp_path / "auto-improve-2-1/result/finding-1/reproduction-runs/t/1/emulator/owner.json"
+    owner.parent.mkdir(parents=True)
+    owner.write_text("{}")
+    assert emulator.cleanup_stale_work(tmp_path, "auto-improve-3-1") == ["auto-improve-1-1"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["auto-improve-2-1", "auto-improve-3-1", "other"]

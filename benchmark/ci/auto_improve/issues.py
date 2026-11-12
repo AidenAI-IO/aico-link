@@ -20,6 +20,7 @@ def clean(text: object, limit: int = FIELD_LIMIT) -> str:
     # Break @mentions and links to other issues so filing creates no notification or backlink.
     value = re.sub(r"(?<![\w`])@(?=[A-Za-z0-9])", "@\u200b", value)
     value = re.sub(r"\b([\w.-]+/[\w.-]+)#(\d+)", "\\1#\u200b\\2", value)
+    value = re.sub(r"(?<![\w&/])#(\d+)", "#\u200b\\1", value)
     value = re.sub(r"https?://github\.com/([\w.-]+/[\w.-]+)/(issues|pull)/(\d+)",
                    "github.com/\\1/\\2/\u200b\\3", value)
     return value if len(value) <= limit else value[:limit] + " …"
@@ -102,9 +103,11 @@ def body(finding: dict, manifest: dict, run_url: str) -> str:
     if issue.get("fix_direction"):
         lines += ["", "## Suggested direction", "Non-binding; verify against the code before following it.", "",
                   clean(issue["fix_direction"])]
+    basis = ("the fresh reproduction and retained traces" if finding.get("reproduced_targets") else
+             "the daily-run history and retained traces; this runner cannot execute these tasks, so they were "
+             "not reproduced")
     lines += ["", "---", f"Filed by benchmark auto-improve from {window(manifest)}, analyzed on {revision(manifest)}. "
-              "An independent read-only audit confirmed this finding against the fresh reproduction and "
-              "retained traces.",
+              f"An independent read-only audit confirmed this finding against {basis}.",
               f"Evidence artifacts (14-day retention): {run_url}" if run_url else "",
               "If the finding is wrong, close the issue as not planned (or label it `auto-improve:false-positive` and close it); "
               "the pipeline will not file these tasks again."]

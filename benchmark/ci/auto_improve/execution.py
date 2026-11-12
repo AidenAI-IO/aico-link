@@ -191,7 +191,15 @@ def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadli
                     except Exception as exc:  # keep the original judge_error rows; never mask the run outcome
                         (out / "rejudge-error.log").write_text(sanitize(f"{type(exc).__name__}: {exc}\n"))
             finally:
-                retain_evidence(run, out / "evidence")
+                if sys.exc_info()[0] is None:
+                    # A completed run with unreadable evidence is incomplete and fails here.
+                    retain_evidence(run, out / "evidence")
+                else:
+                    # A cancellation or failure is already propagating; keep it, and keep what evidence we can.
+                    try:
+                        retain_evidence(run, out / "evidence")
+                    except (OSError, ValueError) as exc:
+                        (out / "evidence-error.log").write_text(sanitize(f"{type(exc).__name__}: {exc}\n"))
     rows = [json.loads(line) for line in (run / "results.jsonl").read_text().splitlines() if line.strip()]
     if len(rows) != 1 or rows[0].get("task_id") != task_id:
         raise ValueError(f"Incomplete result for {key}")
