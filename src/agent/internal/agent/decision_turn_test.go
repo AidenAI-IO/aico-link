@@ -2,8 +2,13 @@ package agent
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/messages"
@@ -83,5 +88,63 @@ func TestStateHookTurnDecisionScreenshot(t *testing.T) {
 				t.Fatalf("screenshot attached = %v, want %v (state %#v)", got, tc.wantScreenshot, state)
 			}
 		})
+	}
+}
+
+// A follow-up is judged together with the exchange before it, so the request
+// carries the previous user turn, the tools it used and the final reply.
+func TestStateHookTurnDecisionSendsPreviousTurn(t *testing.T) {
+	server := newDecisionServer(t, `{"answers":{"screen":{"type":"noul","noul":0.95}}}`)
+	_, manager := turnDecisionHookRuntime(t, true, server.URL, nil)
+	if err := manager.AppendMessages([]messages.Message{
+		{Role: messages.MessageRoleUser, Content: "open the calculator"},
+		{Role: messages.MessageRoleToolCall, ToolCalls: []messages.ToolCall{{ID: "c1", Name: "open_app", Arguments: `{}`}}},
+		{Role: messages.MessageRoleToolResult, ToolResults: []messages.ToolResult{{ToolCallID: "c1", Content: "ok"}}},
+		{Role: messages.MessageRoleAssistant, Content: "The calculator is open."},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server.mu.Lock()
+	server.requests = nil
+	server.mu.Unlock()
+
+	turnStateMessage(t, manager, "now press 7 times 8")
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if len(server.requests) != 1 {
+		t.Fatalf("decision requests = %d, want 1", len(server.requests))
+	}
+	body, _ := json.Marshal(server.requests[0])
+	for _, want := range []string{"open the calculator", "open_app", "The calculator is open."} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("request lacks %q: %s", want, body)
+		}
+	}
+}
+
+// A decision model slower than turnDecisionTimeout delays the turn by at most
+// the timeout and keeps the screenshot.
+func TestStateHookTurnDecisionTimeoutKeepsScreenshot(t *testing.T) {
+	previous := turnDecisionTimeout
+	turnDecisionTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { turnDecisionTimeout = previous })
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+
+	_, manager := turnDecisionHookRuntime(t, true, server.URL, nil)
+	started := time.Now()
+	state := turnStateMessage(t, manager, "what is the weather today")
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("turn waited %v for a stalled decision model", elapsed)
+	}
+	if len(state.Attachments) != 1 {
+		t.Fatalf("screenshot attached = %d, want 1", len(state.Attachments))
 	}
 }
