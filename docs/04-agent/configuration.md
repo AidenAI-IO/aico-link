@@ -861,10 +861,13 @@ no effect.
 
 `touch_gesture` `tap_sequence` also logs `step_gate`. Its pixel check still
 runs between taps; when it sees a remaining target change (not a whole-screen
-change, which always stops), the decision model is asked whether the
-remaining targets are still visible and in place. A confident "yes" continues
-and makes that frame the new baseline; anything else, including a disabled
-decision model, stops the sequence as before.
+change, which always stops), the decision model gets the frame the taps were
+planned on and the changed frame, and is asked whether the remaining targets
+are the same controls, still in place. A confident "yes" is rechecked against a
+fresh frame, and only when the screen has not moved again does the sequence
+continue with that frame as the new baseline; anything else, including a
+disabled decision model, stops the sequence as before. A step-gate request is
+bounded at 4 seconds; a request that fails or times out counts as unchecked.
 
 Every decision writes one Agent log line under the `decision` component:
 `op=... provider=... dm={...} conf=... llm={...} agree=... dm_ms=... llm_ms=... fallback=...`,

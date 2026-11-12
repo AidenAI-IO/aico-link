@@ -5,10 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/jpeg"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"aico-agent/internal/agent/mnk"
 	"aico-agent/internal/agent/screen"
@@ -125,12 +129,15 @@ func TestTapSequenceGuardStopsWhenARemainingTargetIsCovered(t *testing.T) {
 	}
 }
 
-// A target change the pixel check sees goes to the decision model: a pass
-// continues and accepts the change as the new baseline, anything else stops,
-// and a whole-screen change never asks.
+// A target change the pixel check sees goes to the decision model with the
+// baseline and the changed frame. A pass continues only when a fresh frame
+// still matches the judged one, and that frame becomes the new baseline;
+// anything else stops, and a whole-screen change never asks.
 func TestTapSequenceGuardConfirmerDecidesTargetChanges(t *testing.T) {
 	menu := image.Rect(270, 460, 330, 500)
 	sheet := image.Rect(0, 0, 400, 500)
+	keypad := tapSequenceKeypadFrame(0, 0)
+	dimmed := tapSequenceKeypadFrame(0, 0, menu)
 	cases := []struct {
 		name      string
 		frames    []lumaFrame
@@ -141,16 +148,19 @@ func TestTapSequenceGuardConfirmerDecidesTargetChanges(t *testing.T) {
 	}{
 		{
 			name: "confirmed change continues and becomes the baseline",
-			// The second check sees the same accepted change and must not ask again.
-			frames:    []lumaFrame{tapSequenceKeypadFrame(0, 0, menu), tapSequenceKeypadFrame(0, 0, menu)},
+			// Check 1 sees the change and rechecks a fresh frame; check 2
+			// sees the same accepted change and must not ask again.
+			frames:    []lumaFrame{dimmed, dimmed, dimmed},
 			points:    tapSequenceTestPoints,
 			answer:    stepGateResult{Checked: true, Pass: true},
 			wantStops: []bool{false, false},
 			wantAsks:  1,
 		},
-		{name: "rejected change stops", frames: []lumaFrame{tapSequenceKeypadFrame(0, 0, menu)}, points: tapSequenceTestPoints,
+		{name: "screen moving during the check stops", frames: []lumaFrame{dimmed, keypad}, points: tapSequenceTestPoints,
+			answer: stepGateResult{Checked: true, Pass: true}, wantStops: []bool{true}, wantAsks: 1},
+		{name: "rejected change stops", frames: []lumaFrame{dimmed}, points: tapSequenceTestPoints,
 			answer: stepGateResult{Checked: true}, wantStops: []bool{true}, wantAsks: 1},
-		{name: "unchecked change stops", frames: []lumaFrame{tapSequenceKeypadFrame(0, 0, menu)}, points: tapSequenceTestPoints,
+		{name: "unchecked change stops", frames: []lumaFrame{dimmed}, points: tapSequenceTestPoints,
 			wantStops: []bool{true}, wantAsks: 1},
 		{name: "whole-screen change never asks", frames: []lumaFrame{tapSequenceKeypadFrame(0, 0, sheet)},
 			points: []normalizedPoint{tapSequenceTestKeys[0], tapSequenceTestKeys[8]}, answer: stepGateResult{Checked: true, Pass: true},
@@ -159,11 +169,14 @@ func TestTapSequenceGuardConfirmerDecidesTargetChanges(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			asks := 0
-			confirm := func(_ context.Context, remaining []normalizedPoint) stepGateResult {
+			confirm := func(_ context.Context, before, after lumaFrame, _ image.Rectangle, _ []normalizedPoint) stepGateResult {
 				asks++
+				if &before.y[0] != &keypad.y[0] || &after.y[0] != &dimmed.y[0] {
+					t.Fatalf("confirmer did not get the baseline and the changed frame")
+				}
 				return tc.answer
 			}
-			guard := newTapSequenceGuard(tapSequenceFrames(tc.frames...), nil, tapSequenceKeypadFrame(0, 0), tc.points, confirm)
+			guard := newTapSequenceGuard(tapSequenceFrames(tc.frames...), nil, keypad, tc.points, confirm)
 			for i, want := range tc.wantStops {
 				if stop, reason, err := guard(context.Background(), 1+i); err != nil || stop != want {
 					t.Fatalf("check %d: stop=%v reason=%q err=%v, want stop=%v", i+1, stop, reason, err, want)
@@ -173,6 +186,60 @@ func TestTapSequenceGuardConfirmerDecidesTargetChanges(t *testing.T) {
 				t.Fatalf("decision model asked %d times, want %d", asks, tc.wantAsks)
 			}
 		})
+	}
+}
+
+// The tap_sequence check sends the decision model both frames and passes only
+// on a confident "yes"; a slow decision model is cut off and leaves the stop.
+func TestTapSequenceConfirmerAsksWithBothFrames(t *testing.T) {
+	keypad := tapSequenceKeypadFrame(0, 0)
+	dimmed := tapSequenceKeypadFrame(0, 0, image.Rect(270, 460, 330, 500))
+	region := image.Rect(0, 0, keypad.width, keypad.height)
+	for _, tc := range []struct {
+		name     string
+		noul     float64
+		wantPass bool
+	}{
+		{name: "same controls", noul: 0.95, wantPass: true},
+		{name: "different controls", noul: 0.05},
+		{name: "unsure", noul: 0.6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newDecisionServer(t, fmt.Sprintf(`{"answers":{"met":{"type":"noul","noul":%g}}}`, tc.noul))
+			confirm := newTapSequenceConfirmer(testDecisionAdvisor(server))
+			got := confirm(context.Background(), keypad, dimmed, region, tapSequenceTestPoints[2:])
+			if got.Pass != tc.wantPass || !got.Checked {
+				t.Fatalf("result = %+v, want pass=%v", got, tc.wantPass)
+			}
+			server.mu.Lock()
+			assets, _ := server.requests[0]["assets"].(map[string]any)
+			server.mu.Unlock()
+			if len(assets) != 2 {
+				t.Fatalf("request carried %d images, want the baseline and the current frame", len(assets))
+			}
+		})
+	}
+
+	previous := stepGateTimeout
+	stepGateTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { stepGateTimeout = previous })
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(slow.Close)
+	t.Cleanup(func() { close(release) })
+	advisor := &decisionAdvisor{}
+	advisor.setConfig(func() DecisionModelConfig {
+		return DecisionModelConfig{Enabled: true, APIKey: "ts-key", BaseURL: slow.URL}
+	})
+	started := time.Now()
+	got := newTapSequenceConfirmer(advisor)(context.Background(), keypad, dimmed, region, tapSequenceTestPoints[2:])
+	if got.Pass || got.Checked || time.Since(started) > 2*time.Second {
+		t.Fatalf("slow decision model: result=%+v after %v, want unchecked within the timeout", got, time.Since(started))
 	}
 }
 

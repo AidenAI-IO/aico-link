@@ -213,7 +213,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		screen:         screen,
 		touchscreen:    hidCfg.PointerTouchscreen(),
 		captureFrame:   newFrameCapturer(provider),
-		confirmTargets: newTapSequenceConfirmer(decider, screenshot),
+		confirmTargets: newTapSequenceConfirmer(decider),
 	}
 	quickAction := &QuickActionTool{keyboard: keyboardTap, touch: touchGesture, iosKeyboardIsolation: iosKeyboardIsolation, decider: decider, screenshot: screenshot}
 	textInputHW := &textInputHardwareDeps{

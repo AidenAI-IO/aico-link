@@ -585,21 +585,38 @@ func (s *stepGateScreenshotTool) Call(context.Context, string) (string, error) {
 	return jsonString(s.shot), nil
 }
 
+// stepGateTestActions is a three-step action whose first step declares an
+// expectation, loaded in place of the bundled table for the test.
+const stepGateTestActions = `{"version":1,"actions":{"gated_test":{"label":"Gated test","category":"test","platforms":{"ios":{"status":"active","steps":[
+{"tool":"keyboard_tap","input":{"keys":["a"]},"expect":"the test page is open"},
+{"tool":"keyboard_tap","input":{"keys":["b"]}},
+{"tool":"keyboard_tap","input":{"keys":["c"]},"expect":"ignored on the last step"}]}}}}}`
+
 // A step's expect lets the batch continue only on a confident "yes"; "no", an
-// unsure answer, and a disabled decision model each behave as specified.
+// unsure answer, and a disabled decision model each behave as specified, and
+// expect on the last step asks nothing.
 func TestQuickActionStepExpectGatesSequence(t *testing.T) {
+	previous := globalQuickActions
+	globalQuickActions = newQuickActionsTable()
+	if err := globalQuickActions.loadFromBytes([]byte(stepGateTestActions), "test"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { globalQuickActions = previous })
+
+	// Each keyboard_tap writes a press and a release report.
+	const reportsPerStep = 2
 	cases := []struct {
-		name        string
-		enabled     bool
-		noul        float64
-		wantReports int
-		wantStop    bool
-		wantShots   int
+		name      string
+		enabled   bool
+		noul      float64
+		wantSteps int
+		wantStop  bool
+		wantShots int
 	}{
-		{name: "confident yes continues", enabled: true, noul: 0.95, wantReports: 10, wantShots: 1},
-		{name: "confident no stops", enabled: true, noul: 0.05, wantReports: 2, wantStop: true, wantShots: 1},
-		{name: "unsure stops", enabled: true, noul: 0.6, wantReports: 2, wantStop: true, wantShots: 1},
-		{name: "disabled runs unchecked", enabled: false, wantReports: 10, wantShots: 0},
+		{name: "confident yes continues", enabled: true, noul: 0.95, wantSteps: 3, wantShots: 1},
+		{name: "confident no stops", enabled: true, noul: 0.05, wantSteps: 1, wantStop: true, wantShots: 1},
+		{name: "unsure stops", enabled: true, noul: 0.6, wantSteps: 1, wantStop: true, wantShots: 1},
+		{name: "disabled runs unchecked", enabled: false, wantSteps: 3, wantShots: 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -619,7 +636,7 @@ func TestQuickActionStepExpectGatesSequence(t *testing.T) {
 				screenshot:   shots,
 			}
 			ctx, _ := WithToolError(context.Background())
-			if _, err := tool.Call(ctx, `{"action":"spotlight_search"}`); err != nil {
+			if _, err := tool.Call(ctx, `{"action":"gated_test"}`); err != nil {
 				t.Fatalf("Call failed: %v", err)
 			}
 			te := ToolErrorFromContext(ctx)
@@ -629,8 +646,8 @@ func TestQuickActionStepExpectGatesSequence(t *testing.T) {
 			if tc.wantStop && te.Details["failed_step"] != 1 {
 				t.Fatalf("failed_step = %v, want 1", te.Details["failed_step"])
 			}
-			if got := len(readKeyboardReports(t, dev, path)); got != tc.wantReports {
-				t.Fatalf("keyboard reports = %d, want %d", got, tc.wantReports)
+			if got := len(readKeyboardReports(t, dev, path)); got != tc.wantSteps*reportsPerStep {
+				t.Fatalf("keyboard reports = %d, want %d steps", got, tc.wantSteps)
 			}
 			if shots.calls != tc.wantShots || server.requestCount() != tc.wantShots {
 				t.Fatalf("screenshots = %d, decision requests = %d, want %d", shots.calls, server.requestCount(), tc.wantShots)
