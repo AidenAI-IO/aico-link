@@ -116,19 +116,29 @@ func normalizeQuotedText(text string) string {
 }
 
 // memoryRequestJudgeTimeout bounds the judgment so that a slow model cannot
-// hold up the reply; a timeout refuses the save.
+// hold up the reply.
 const memoryRequestJudgeTimeout = 20 * time.Second
 
-// memoryRequestJudge reports whether the user's recent messages ask the Agent
-// to remember something. userRequestQuoted only proves that a quote is the
-// user's own words; a statement such as "my Wi-Fi password is …" passes it
-// although nothing was requested. Telling a request from a statement in any
-// language needs a model, and the model that wanted to save is the one that
-// misread it, so a separate call answers that single question.
-type memoryRequestJudge func(ctx context.Context, userTexts []string) (bool, error)
+// memoryRequestVerdict is the judge's reading of one candidate memory.
+type memoryRequestVerdict struct {
+	// Secret is true when the content holds a password, PIN, card number, or
+	// similar secret.
+	Secret bool `json:"secret"`
+	// Asked is true when the user asked to remember this content itself.
+	Asked bool `json:"asked"`
+}
+
+// memoryRequestJudge reads the user's recent messages and one candidate
+// memory. userRequestQuoted only proves that a quote is the user's own words;
+// a statement such as "my Wi-Fi password is …" passes it although nothing was
+// requested, and a request to remember something else earlier in the window
+// says nothing about this secret. Telling these apart in any language needs a
+// model, and the model that wanted to save is the one that misread them, so a
+// separate call answers for this candidate alone.
+type memoryRequestJudge func(ctx context.Context, userTexts []string, content string) (memoryRequestVerdict, error)
 
 func newModelMemoryRequestJudge(model llms.Model) memoryRequestJudge {
-	return func(ctx context.Context, userTexts []string) (bool, error) {
+	return func(ctx context.Context, userTexts []string, content string) (memoryRequestVerdict, error) {
 		var quoted strings.Builder
 		for _, text := range userTexts {
 			if text = strings.TrimSpace(text); text != "" {
@@ -137,36 +147,46 @@ func newModelMemoryRequestJudge(model llms.Model) memoryRequestJudge {
 				quoted.WriteString("\n")
 			}
 		}
-		prompt := `Below are a user's most recent messages to an assistant, oldest first.
-Did the user explicitly ask the assistant to remember, save, note down, or keep some information for later?
-Only a request counts. Merely stating or sharing information, even a password, is not a request.
-Answer with JSON only: {"asked": true} or {"asked": false}.
+		prompt := `An assistant wants to save the candidate memory below to long-term memory. Answer two questions about it.
+secret: does the candidate contain a password, PIN, passcode, card number, or similar secret?
+asked: in the user's messages below, did the user explicitly ask the assistant to remember, save, or note down this candidate's information?
+Only a request about this information counts. Merely stating or sharing it, even a password, is not a request; neither is a request to remember something else. If a later message withdraws the request, answer false.
+Answer with JSON only: {"secret": true or false, "asked": true or false}.
 
-Messages:
+Candidate memory: ` + strconv.Quote(content) + `
+
+User messages, oldest first:
 ` + quoted.String()
 		callCtx, cancel := context.WithTimeout(ctx, memoryRequestJudgeTimeout)
 		defer cancel()
 		raw, err := llms.GenerateFromSinglePrompt(callCtx, model, prompt, llms.WithJSONMode(), llms.WithMaxTokens(64))
 		if err != nil {
-			return false, err
+			return memoryRequestVerdict{}, err
 		}
-		var verdict struct {
-			Asked bool `json:"asked"`
-		}
+		var verdict memoryRequestVerdict
 		if err := json.Unmarshal([]byte(stripJSONFences(raw)), &verdict); err != nil {
-			return false, fmt.Errorf("parse memory request judgment %q: %w", raw, err)
+			return memoryRequestVerdict{}, fmt.Errorf("parse memory request judgment %q: %w", raw, err)
 		}
-		return verdict.Asked, nil
+		return verdict, nil
 	}
 }
 
-// userAskedToKeep reports whether the judge confirms that the user asked to
-// remember something. Without a judge, or when it fails, the secret is not
-// saved: the user can ask again, but a secret written by mistake persists.
-func (t *SaveMemoryTool) userAskedToKeep(ctx context.Context, userTexts []string) bool {
-	if t.requestJudge == nil {
-		return false
+// minSecretLikeLength is the shortest run that mayHoldSecret considers; it
+// covers a four-digit PIN.
+const minSecretLikeLength = 4
+
+// mayHoldSecret reports whether content contains a run of ASCII letters and
+// digits with at least one digit, the shape of most passwords, PINs, and card
+// numbers. It only decides whether a save the model did not mark sensitive is
+// worth asking the judge about; it never refuses or marks a memory itself, so
+// a false match costs one judge call and a secret without digits is missed.
+func mayHoldSecret(content string) bool {
+	for _, run := range strings.FieldsFunc(content, func(r rune) bool {
+		return r > unicode.MaxASCII || !(unicode.IsLetter(r) || unicode.IsDigit(r))
+	}) {
+		if len(run) >= minSecretLikeLength && strings.IndexFunc(run, unicode.IsDigit) >= 0 {
+			return true
+		}
 	}
-	asked, err := t.requestJudge(ctx, userTexts)
-	return err == nil && asked
+	return false
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/messages"
+
+	"github.com/tmc/langchaingo/llms"
 )
 
 func TestParseMemorySensitiveKind(t *testing.T) {
@@ -47,7 +50,9 @@ func TestUserRequestQuoted(t *testing.T) {
 // that the user asked to keep the secret.
 func newRequestedSaveMemoryTool(store *LongTermMemoryStore) *SaveMemoryTool {
 	tool := NewSaveMemoryTool(store)
-	tool.requestJudge = func(context.Context, []string) (bool, error) { return true, nil }
+	tool.requestJudge = func(context.Context, []string, string) (memoryRequestVerdict, error) {
+		return memoryRequestVerdict{Secret: true, Asked: true}, nil
+	}
 	return tool
 }
 
@@ -99,9 +104,13 @@ func TestSaveMemoryToolRefusesSecretTheJudgeFindsUnrequested(t *testing.T) {
 	ctx := userRunContext("顺便说下，我家 Wi-Fi 密码是 qwer8826。")
 	input := `{"type":"fact","content":"家里 Wi-Fi 密码是 qwer8826","sensitive":"credential","user_request":"我家 Wi-Fi 密码是 qwer8826"}`
 	for name, judge := range map[string]memoryRequestJudge{
-		"no judge":    nil,
-		"not asked":   func(context.Context, []string) (bool, error) { return false, nil },
-		"judge error": func(context.Context, []string) (bool, error) { return true, context.DeadlineExceeded },
+		"no judge": nil,
+		"not asked": func(context.Context, []string, string) (memoryRequestVerdict, error) {
+			return memoryRequestVerdict{Secret: true}, nil
+		},
+		"judge error": func(context.Context, []string, string) (memoryRequestVerdict, error) {
+			return memoryRequestVerdict{Secret: true, Asked: true}, context.DeadlineExceeded
+		},
 	} {
 		tool.requestJudge = judge
 		if result := saveMemoryForTest(t, ctx, tool, input); result["status"] != "refused" {
@@ -110,6 +119,95 @@ func TestSaveMemoryToolRefusesSecretTheJudgeFindsUnrequested(t *testing.T) {
 	}
 	if files, _ := filepath.Glob(filepath.Join(root, "memories", "*.md")); len(files) != 0 {
 		t.Fatalf("stored %v, want nothing", files)
+	}
+}
+
+// judgeOnlyModel answers the judge prompt: asked is true only when the user
+// texts ask to remember the candidate's own subject, here the Wi-Fi password.
+type judgeOnlyModel struct{ prompts []string }
+
+func (m *judgeOnlyModel) GenerateContent(_ context.Context, messages []llms.MessageContent, _ ...llms.CallOption) (*llms.ContentResponse, error) {
+	var prompt strings.Builder
+	for _, message := range messages {
+		for _, part := range message.Parts {
+			if text, ok := part.(llms.TextContent); ok {
+				prompt.WriteString(text.Text)
+			}
+		}
+	}
+	m.prompts = append(m.prompts, prompt.String())
+	_, users, _ := strings.Cut(prompt.String(), "User messages")
+	asked := strings.Contains(users, "记住Wi-Fi密码")
+	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: fmt.Sprintf(`{"secret":true,"asked":%t}`, asked)}}}, nil
+}
+
+func (m *judgeOnlyModel) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
+	return llms.GenerateFromSinglePrompt(ctx, m, prompt, options...)
+}
+
+// A request to remember something else in the window must not authorize a
+// secret mentioned later: the judge is asked about the candidate itself.
+func TestSaveMemoryToolJudgesTheCandidateNotAnyEarlierRequest(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "long_term")
+	model := &judgeOnlyModel{}
+	tool := NewSaveMemoryTool(NewLongTermMemoryStore(root))
+	tool.SetRequestModel(model)
+	recorder := NewEpisodeRecorder(MemoryRetrieveRequest{Input: "顺便说下，我家 Wi-Fi 密码是 qwer8826。"}, MemoryContext{})
+	recorder.setPriorUserTexts([]string{"帮我记住，我喜欢喝茶。"})
+	ctx := WithEpisodeRecorder(context.Background(), recorder)
+	result := saveMemoryForTest(t, ctx, tool, `{"type":"fact","content":"家里 Wi-Fi 密码是 qwer8826","sensitive":"credential","user_request":"帮我记住"}`)
+	if result["status"] != "refused" {
+		t.Fatalf("result = %v, want refused", result)
+	}
+	if len(model.prompts) != 1 || !strings.Contains(model.prompts[0], "qwer8826") {
+		t.Fatalf("judge prompts = %q, want one naming the candidate", model.prompts)
+	}
+}
+
+// A secret the model did not mark sensitive still reaches the judge: it is
+// refused when unrequested and marked sensitive when requested. Content
+// without a secret-like run is saved without asking.
+func TestSaveMemoryToolJudgesUndeclaredSecret(t *testing.T) {
+	cases := []struct {
+		name       string
+		content    string
+		verdict    memoryRequestVerdict
+		judgeErr   error
+		wantStatus string
+		wantJudged bool
+		sensitive  bool
+	}{
+		{name: "unrequested", content: "家里 Wi-Fi 密码是 qwer8826", verdict: memoryRequestVerdict{Secret: true}, wantStatus: "refused", wantJudged: true},
+		{name: "requested", content: "保险箱密码是 5093", verdict: memoryRequestVerdict{Secret: true, Asked: true}, wantStatus: "saved", wantJudged: true, sensitive: true},
+		{name: "not a secret", content: "用户住在 1502 室", verdict: memoryRequestVerdict{}, wantStatus: "saved", wantJudged: true},
+		{name: "judge error", content: "用户的工号是 A1024", judgeErr: context.DeadlineExceeded, wantStatus: "saved", wantJudged: true},
+		{name: "no secret shape", content: "用户希望回复尽量简短", wantStatus: "saved"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+			tool := NewSaveMemoryTool(store)
+			judged := false
+			tool.requestJudge = func(context.Context, []string, string) (memoryRequestVerdict, error) {
+				judged = true
+				return tc.verdict, tc.judgeErr
+			}
+			input, _ := json.Marshal(map[string]any{"type": "fact", "content": tc.content, "durable": true})
+			result := saveMemoryForTest(t, userRunContext(tc.content), tool, string(input))
+			if result["status"] != tc.wantStatus || judged != tc.wantJudged {
+				t.Fatalf("result = %v, judged = %v; want %s, judged %v", result, judged, tc.wantStatus, tc.wantJudged)
+			}
+			if tc.wantStatus != "saved" {
+				return
+			}
+			parsed, err := readMemoryMarkdown(store.memoryPath(result["id"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.Item.Sensitive != tc.sensitive {
+				t.Fatalf("sensitive = %v, want %v", parsed.Item.Sensitive, tc.sensitive)
+			}
+		})
 	}
 }
 
@@ -282,7 +380,8 @@ func TestSaveMemoryToolClaimsNotificationDuplicate(t *testing.T) {
 func TestSaveMemoryToolMarksOrdinaryDuplicateSensitive(t *testing.T) {
 	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
 	tool := newRequestedSaveMemoryTool(store)
-	first := saveMemoryForTest(t, context.Background(), tool, `{"type":"fact","content":"保险箱密码 5093。"}`)
+	// Saved without a judge, as before undeclared secrets were judged.
+	first := saveMemoryForTest(t, context.Background(), NewSaveMemoryTool(store), `{"type":"fact","content":"保险箱密码 5093。"}`)
 	if first["status"] != "saved" {
 		t.Fatalf("first save = %v", first)
 	}

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"aico-agent/internal/logging"
+
 	"github.com/tmc/langchaingo/llms"
 )
 
@@ -251,6 +253,26 @@ func (t *SaveMemoryTool) SetRequestModel(model llms.Model) {
 	t.requestJudge = newModelMemoryRequestJudge(model)
 }
 
+// judgeRequest asks the judge about one candidate. Without a judge it fails,
+// so callers treat it like an unavailable model.
+func (t *SaveMemoryTool) judgeRequest(ctx context.Context, userTexts []string, content string) (memoryRequestVerdict, error) {
+	if t.requestJudge == nil {
+		return memoryRequestVerdict{}, fmt.Errorf("no memory request judge configured")
+	}
+	verdict, err := t.requestJudge(ctx, userTexts, content)
+	if err != nil {
+		logging.Warnf("agent", "memory", "save_memory request judgment failed: %v", err)
+	}
+	return verdict, err
+}
+
+func unrequestedSecretRefusal(sensitive memorySensitiveKind) map[string]string {
+	return map[string]string{
+		"status": "refused",
+		"reason": "the user did not ask to remember this " + string(sensitive) + "; a secret that is only mentioned is not saved. Do not retry; tell the user it was not remembered.",
+	}
+}
+
 func (t *SaveMemoryTool) Name() string { return "save_memory" }
 
 func (t *SaveMemoryTool) Description() string {
@@ -295,10 +317,13 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 	if strings.TrimSpace(req.Content) == "" {
 		return "", fmt.Errorf("content is required")
 	}
-	if req.Durable != nil && !*req.Durable && req.ReplacesID == "" {
+	// A correction is held to the same rule: a one-off plan must not replace
+	// a long-term memory either. An omitted durable is accepted, so a model
+	// that ignores the schema keeps saving as before.
+	if req.Durable != nil && !*req.Durable {
 		return encodeToolJSON(map[string]string{
 			"status": "refused",
-			"reason": "durable=false: one-off or time-bound information is not kept in long-term memory. Do not retry; reply without saying it was remembered or saved.",
+			"reason": "durable=false: one-off or time-bound information is not kept in long-term memory. Do not retry. Reply without saying or implying it was noted, saved, or remembered (no \"noted\", \"记下了\", \"I'll remember\"); you may offer to set a reminder instead.",
 		})
 	}
 	sensitive := parseMemorySensitiveKind(req.Sensitive)
@@ -310,11 +335,28 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 				"reason": "sensitive " + string(sensitive) + " without a user_request quoting the user's own words asking to remember it; secrets are not saved by default. Tell the user it was not remembered.",
 			})
 		}
-		if !t.userAskedToKeep(ctx, userTexts) {
+		// A declared secret is saved only on a confirmed request: the user
+		// can ask again, but a secret written by mistake persists.
+		verdict, err := t.judgeRequest(ctx, userTexts, req.Content)
+		if err != nil {
 			return encodeToolJSON(map[string]string{
 				"status": "refused",
-				"reason": "the user did not ask to remember this " + string(sensitive) + "; a secret that is only mentioned is not saved. Do not retry; tell the user it was not remembered.",
+				"reason": "could not confirm the user's request to keep this " + string(sensitive) + ", so it was not saved. Tell the user it was not remembered and that they can ask again.",
 			})
+		}
+		if !verdict.Asked {
+			return encodeToolJSON(unrequestedSecretRefusal(sensitive))
+		}
+	} else if mayHoldSecret(req.Content) {
+		// The model may leave sensitive unset on a secret. When the content
+		// could hold one, the judge decides; if it cannot, the save goes
+		// ahead as it would without the judge.
+		verdict, err := t.judgeRequest(ctx, EpisodeRecorderFromContext(ctx).UserTexts(), req.Content)
+		if err == nil && verdict.Secret {
+			if !verdict.Asked {
+				return encodeToolJSON(unrequestedSecretRefusal(memorySensitiveCredential))
+			}
+			sensitive = memorySensitiveCredential
 		}
 	}
 	if len(req.Evidence) == 0 {
