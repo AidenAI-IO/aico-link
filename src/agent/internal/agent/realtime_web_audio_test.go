@@ -280,3 +280,43 @@ func newTestWebRealtimeAudio(t *testing.T) *webRealtimeAudio {
 	}()
 	return newWebRealtimeAudio(<-accepted)
 }
+
+// A device session rotated by the provider stays published until its
+// successor is claimed, so a stop pressed in that gap still ends voice
+// instead of reopening the device.
+func TestStopDuringDeviceRotationOpensNoSuccessor(t *testing.T) {
+	s := &Server{}
+	s.SetRealtimeVoiceActivation(func() {})
+	voice := s.ClaimRealtimeVoiceSession(Config{}, true)
+	if voice == nil || voice.Route() != RealtimeAudioRouteDevice {
+		t.Fatalf("claimed %+v, want a device session", voice)
+	}
+	if s.EndRealtimeVoiceSession(voice, true) {
+		t.Fatal("a device session has no browser endpoint to requeue")
+	}
+	if !s.stopRealtimeVoice() {
+		t.Fatal("stop during the rotation handoff found no session to stop")
+	}
+	if next := s.ClaimRealtimeVoiceSession(Config{}, true); next != nil {
+		t.Fatalf("a stopped rotation opened a %s successor", next.Route())
+	}
+	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
+		t.Fatalf("status = %+v, want idle", status)
+	}
+}
+
+// Without a stop, the rotated device session hands over to its successor.
+func TestDeviceRotationClaimsSuccessor(t *testing.T) {
+	s := &Server{}
+	s.SetRealtimeVoiceActivation(func() {})
+	voice := s.ClaimRealtimeVoiceSession(Config{}, true)
+	s.EndRealtimeVoiceSession(voice, true)
+	next := s.ClaimRealtimeVoiceSession(Config{}, true)
+	if next == nil || next == voice {
+		t.Fatalf("rotation claimed %+v, want a new device session", next)
+	}
+	s.EndRealtimeVoiceSession(next, false)
+	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
+		t.Fatalf("status = %+v, want idle", status)
+	}
+}

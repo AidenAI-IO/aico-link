@@ -690,12 +690,6 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			}
 			logging.Infof("agent", "realtime", "Activation requested, connecting realtime voice model...")
 			rotated := false
-			// The session is about to consume every terminal update available
-			// now. Record that watermark before it runs: an update produced
-			// while it is connected and dropped by its teardown is then still
-			// announced by a later activation, while an update it delivered is
-			// no longer pending and cannot open an empty session.
-			taskWake.observeSession(agentTaskTerminalSequence(tasks))
 			var semanticSink streamcontract.EventSink
 			if server != nil {
 				semanticSink = server.RealtimeEventSink()
@@ -707,19 +701,20 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 					}
 				}
 			}
-			var media realtimeSessionMedia
-			if server != nil && !cfg.Benchmark.RealtimeText {
-				deviceRequested := activations.TakeDevice() || chatBridgeHasPending(bridge) || rotatedDevice
-				rotatedDevice = false
-				media.voice = server.ClaimRealtimeVoiceSession(cfg, deviceRequested)
-				if media.voice == nil {
-					// Only a browser start woke the loop, and it was withdrawn
-					// before the loop reached it. Opening the device would
-					// start a session nobody asked for.
-					logging.Infof("agent", "realtime", "Browser voice start was withdrawn before it began; staying in standby")
-					continue
-				}
-				media.audio = media.voice.Audio()
+			// A nil *agent.Server must reach the helper as a nil interface.
+			var claimer realtimeSessionClaimer
+			if server != nil {
+				claimer = server
+			}
+			media, opened := claimRealtimeSessionMedia(claimer, cfg, activations, &taskWake, agentTaskTerminalSequence(tasks), chatBridgeHasPending(bridge) || rotatedDevice)
+			rotatedDevice = false
+			if !opened {
+				// Nothing to open: the only wakeup came from a browser start
+				// that was withdrawn, or the user stopped a session while the
+				// provider was rotating it. Opening the device would start a
+				// session nobody asked for.
+				logging.Infof("agent", "realtime", "Voice start withdrawn or stopped before it began; staying in standby")
+				continue
 			}
 			sessionErr := runRealtimeSessionWithMedia(cfg, sigChan, runtime, tasks, semanticSink, media, bridge)
 			finishRealtimeSessionMedia(server, media, sessionErr)
@@ -1454,6 +1449,37 @@ func runRealtimeSessionWithMedia(cfg agent.Config, sigChan chan os.Signal, runti
 	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, realtimevoice.DefaultProviderRegistry(), sink, realtimeResponseIdleTimeout, media, chatBridges...)
 }
 
+// realtimeSessionClaimer is the part of the agent server the wakeup loop
+// uses to pick the next session's audio endpoint.
+type realtimeSessionClaimer interface {
+	ClaimRealtimeVoiceSession(agent.Config, bool) *agent.RealtimeVoiceSession
+}
+
+// claimRealtimeSessionMedia claims the next session and only then records the
+// task-update watermark it will consume. A wakeup that opens nothing, such as
+// a withdrawn browser start, must not advance the watermark, or a task update
+// queued behind it would be treated as already announced and never wake the
+// loop. extraDevice reports device demand the activations do not record, such
+// as a queued chat request or a device rotation. A nil server opens a
+// session with the default media, as tests and benchmarks expect.
+func claimRealtimeSessionMedia(server realtimeSessionClaimer, cfg agent.Config, activations *realtimeActivations, taskWake *taskWakeState, taskSeq uint64, extraDevice bool) (realtimeSessionMedia, bool) {
+	var media realtimeSessionMedia
+	deviceRequested := activations.TakeDevice() || extraDevice
+	if server != nil && !cfg.Benchmark.RealtimeText {
+		media.voice = server.ClaimRealtimeVoiceSession(cfg, deviceRequested)
+		if media.voice == nil {
+			return media, false
+		}
+		media.audio = media.voice.Audio()
+	}
+	// The session is about to consume every terminal update available now.
+	// An update produced while it is connected and dropped by its teardown is
+	// still announced by a later activation, while one it delivered is no
+	// longer pending and cannot open an empty session.
+	taskWake.observeSession(taskSeq)
+	return media, true
+}
+
 // realtimeSessionMedia selects the audio endpoint of one realtime session and
 // the Web UI controls published for it. The zero value uses the device audio
 // endpoint without published controls.
@@ -2067,6 +2093,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			}
 			if activeNotificationToken == "" {
 				continue
+			}
+			if err == nil && (media.voice.SpeakerMuted() || activeNotificationSilenced) {
+				// A mute after the last audio chunk silences what was still
+				// queued; the notice was not heard, so keep it pending.
+				err = errors.New("realtime notification was muted before playback finished")
 			}
 			if err != nil {
 				runtime.ReportSpokenTextDelivery(activeNotificationToken, err)

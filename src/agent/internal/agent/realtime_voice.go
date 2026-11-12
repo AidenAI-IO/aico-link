@@ -67,8 +67,11 @@ type RealtimeVoiceSession struct {
 	ready     atomic.Bool
 	muted     atomic.Bool
 	silenced  atomic.Bool
-	stop      chan struct{}
-	stopOnce  sync.Once
+	// rotating is set, under the controller lock, while the session waits for
+	// the provider-rotation successor that will replace it.
+	rotating bool
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // Route reports where this session captures and plays audio.
@@ -185,33 +188,43 @@ func (s *Server) SetRealtimeVoiceActivation(activate func()) {
 // to open and publishes it as connecting. A browser waiting to start wins;
 // otherwise the device is used only when deviceRequested reports a device
 // activation. It returns nil when there is nothing to open, for example when
-// the only wakeup came from a browser start that was since withdrawn. The
-// caller must pass a non-nil result to EndRealtimeVoiceSession.
+// the only wakeup came from a browser start that was since withdrawn, or when
+// the session being rotated was stopped during the handoff. The caller must
+// pass a non-nil result to EndRealtimeVoiceSession.
 func (s *Server) ClaimRealtimeVoiceSession(cfg Config, deviceRequested bool) *RealtimeVoiceSession {
-	var audio RealtimeAudioIO
-	if s != nil {
-		c := &s.realtimeVoice
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.pending != nil && !c.pending.closed() {
-			audio = c.pending
-		}
-		c.pending = nil
-		if audio == nil && !deviceRequested {
+	if s == nil {
+		if !deviceRequested {
 			return nil
 		}
-		if audio == nil {
-			audio = NewDeviceRealtimeAudioIO(cfg)
-		}
-		session := &RealtimeVoiceSession{route: audio.Route(), audio: audio, startedAt: time.Now(), stop: make(chan struct{})}
-		c.active = session
-		return session
+		audio := NewDeviceRealtimeAudioIO(cfg)
+		return &RealtimeVoiceSession{route: audio.Route(), audio: audio, startedAt: time.Now(), stop: make(chan struct{})}
 	}
-	if !deviceRequested {
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// A rotated session stays published until this claim replaces it, so a
+	// stop pressed during the handoff reached it. Honour that stop here.
+	if previous := c.active; previous != nil && previous.rotating {
+		c.active = nil
+		if previous.Stopped() {
+			c.pending = nil
+			return nil
+		}
+	}
+	var audio RealtimeAudioIO
+	if c.pending != nil && !c.pending.closed() {
+		audio = c.pending
+	}
+	c.pending = nil
+	if audio == nil && !deviceRequested {
 		return nil
 	}
-	audio = NewDeviceRealtimeAudioIO(cfg)
-	return &RealtimeVoiceSession{route: audio.Route(), audio: audio, startedAt: time.Now(), stop: make(chan struct{})}
+	if audio == nil {
+		audio = NewDeviceRealtimeAudioIO(cfg)
+	}
+	session := &RealtimeVoiceSession{route: audio.Route(), audio: audio, startedAt: time.Now(), stop: make(chan struct{})}
+	c.active = session
+	return session
 }
 
 // RealtimeVoicePending reports whether a browser voice start is waiting for
@@ -250,7 +263,13 @@ func (s *Server) EndRealtimeVoiceSession(session *RealtimeVoiceSession, rotated 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.active == session {
-		c.active = nil
+		if rotated && !session.Stopped() && c.activate != nil {
+			// Keep the session published through the handoff, so a stop
+			// pressed before the next session is claimed still reaches it.
+			session.rotating = true
+		} else {
+			c.active = nil
+		}
 	}
 	if !rotated || session.Stopped() || c.pending != nil || c.activate == nil {
 		return false
