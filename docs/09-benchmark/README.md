@@ -375,12 +375,13 @@ so it remains publishable after the source suite changes.
 
 The publisher writes explicit `failures.class.environment` and
 `failures.class.evaluation` counts, including zero, before capability scores.
-History requires both valid counts before accepting a capability measurement;
-missing counts are unknown, not zero. Older or partially published runs remain
-visible with a missing-metrics warning but no capability rate. Republish their
-original artifacts with the current publisher to restore verified history without
-rerunning device actions. Nonzero environment or evaluation counts mark coverage
-incomplete: workflow-level pass@1, pass@k, and pass^k are withheld, and weekly
+History defaults absent environment and evaluation failure counts to zero for
+compatibility with older publishers, which omitted zero-valued categories.
+Historical runs retain their capability rates without republishing artifacts.
+Explicit invalid counts still make the measurement unavailable, and missing
+task counts or capability scores remain unknown. Nonzero environment or
+evaluation counts mark coverage incomplete: workflow-level pass@1, pass@k, and
+pass^k are withheld, and weekly
 matched comparisons exclude datasets with incomplete window totals.
 
 ```bash

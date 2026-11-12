@@ -1317,6 +1317,10 @@ Completed current-run metrics supplement Langfuse while publication is delayed
 or fails. API failures, missing measurements, and unreadable local runs appear
 as data availability warnings. Unknown metrics remain unknown rather than
 becoming zero.
+For compatibility with older publishers, absent environment and evaluation
+failure counts default to zero. Explicit invalid or nonzero failure counts
+still prevent a complete capability measurement; missing task counts and
+capability scores remain unavailable.
 
 The dashboard focuses on individual datasets (each published benchmark suite
 maps to a Langfuse dataset). The default **Latest results** tab shows one
