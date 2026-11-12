@@ -160,6 +160,9 @@ function renderVoiceToggle(button, visible, off, name) {
 // only the newest one is applied, so a refresh made right after an action is
 // never lost behind an older poll.
 async function refreshRealtimeVoiceStatus() {
+    // While a stop is on its way the agent may still report the session as
+    // running. Showing that would offer End again; wait for the stop to settle.
+    if (voiceStopping) return;
     const request = ++voiceStatusRequest;
     let next = null;
     try {
@@ -503,8 +506,9 @@ function teardownLocalVoice(local, reason) {
 }
 
 async function endRealtimeVoice() {
+    if (voiceStopping) return;
     if (voiceLocal) teardownLocalVoice(voiceLocal, '');
-    // Show the end at once; the agent confirms it on the next refresh.
+    // Show the end at once; the agent confirms it on the refresh below.
     patchVoiceStatus({state: 'idle'});
     voiceActivity = 'idle';
     voiceStopping = true;
@@ -513,8 +517,9 @@ async function endRealtimeVoice() {
         await fetch('/api/realtime/voice/stop', {method: 'POST'});
     } catch (err) {
         setComposerHint('Could not end the voice session', true);
+    } finally {
+        voiceStopping = false;
     }
-    voiceStopping = false;
     refreshRealtimeVoiceStatus();
 }
 
