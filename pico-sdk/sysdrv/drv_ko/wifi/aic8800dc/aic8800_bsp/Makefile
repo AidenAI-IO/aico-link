@@ -69,7 +69,6 @@ $(MODULE_NAME)-y := \
 	aic8800d80_compat.o \
 	aic_bsp_main.o \
 	aic_bsp_driver.o \
-	aico_fw_state.o \
 	aicsdio.o \
 	aicsdio_txrxif.o \
 	md5.o

@@ -22,9 +22,6 @@ int mmc_io_rw_extended(struct mmc_card *card, int write, unsigned fn,
 	unsigned addr, int incr_addr, u8 *buf, unsigned blocks, unsigned blksz);
 int sdio_reset(struct mmc_host *host);
 void sdio_irq_work(struct work_struct *work);
-bool mmc_sdio_aic_retained_host(struct mmc_host *host);
-bool mmc_sdio_aic_retained_configured(struct mmc_host *host);
-bool mmc_sdio_aic_retained_allowed(struct mmc_host *host);
 
 static inline bool sdio_is_io_busy(u32 opcode, u32 arg)
 {

@@ -12,7 +12,6 @@
 #include <linux/mmc/sdio_func.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
-#include <linux/property.h>
 #include <linux/semaphore.h>
 #include <linux/debugfs.h>
 #include <linux/kthread.h>
@@ -942,10 +941,7 @@ static void aicwf_sdio_remove(struct sdio_func *func)
 
 	AICWFDBG(LOGINFO, "%s Enter\n", __func__);
 	host = func->card->host;
-	/* The retained board owns this capability across driver reloads. */
-	if (!device_property_read_bool(host->parent,
-				       "aico,aic8800d80-retained-sdio"))
-		host->caps &= ~MMC_CAP_NONREMOVABLE;
+	host->caps &= ~MMC_CAP_NONREMOVABLE;
 	bus_if = dev_get_drvdata(&func->dev);
 	if (!bus_if) {
 		return;
