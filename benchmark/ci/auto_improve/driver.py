@@ -188,7 +188,9 @@ AUDIT_PROMPT = (
     "separately. Write the issue about those targets only. For a confirmed finding, write the issue "
     "for a developer who will fix it locally with a coding agent: a specific title (no prefix), a summary, "
     "the user-visible impact, reproduction notes beyond the standard command (setup, environment, what to "
-    "look for), expected and actual behavior, the root cause, code_locations as repository paths with optional "
+    "look for), expected and actual behavior, the root cause, fix_layer (where the fix belongs), model_dependent "
+    "(true when the code or prompt already states the right behavior and the agent model does not follow it, so "
+    "a stronger model may pass; say in root_cause what a fix can still guard), code_locations as repository paths with optional "
     ":line, evidence as short citations of trace/judge/screenshot files, and acceptance_criteria that a fix must "
     "meet (for example the target tasks passing at least 2 of 3 attempts). In the issue, keep what was observed "
     "(expected, actual, evidence) separate from the root-cause analysis and from fix_direction. fix_direction is "
@@ -209,6 +211,7 @@ def write_observations(out: Path, finding: dict, failures: list[dict]) -> None:
                      for o in by_key.get(target, {}).get("observations", [])]
             for target in finding["key"]["targets"]}
     write(out / f"finding-{finding['number']}" / "daily-observations.json", rows)
+    finding["agent_models"] = sorted({o["agent_model"] for target in rows.values() for o in target if o["agent_model"]})
 
 
 def rescope(finding: dict, targets: list[str], failures: list[dict], feedback: list[dict],
@@ -327,6 +330,8 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
              "sources": [{"identity": i, "sha": s["run"]["head_sha"], "date": str(s["run"].get("created_at", ""))[:10]}
                          for i, s in zip(identities, sources)],
              "base_sha": base, "base_branch": policy.BASE_BRANCH, "execution_ref": execution_ref,
+             "repository_url": (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
+                                f"{os.environ['GITHUB_REPOSITORY']}" if os.environ.get("GITHUB_REPOSITORY") else ""),
              "warnings": warnings, "findings": [], "status": "running", "max_new_issues": max_new,
              "empty_sources": source.get("empty_artifacts", []),
              "configuration": {k: v for k, v in execution.benchmark_environment().items()

@@ -34,9 +34,9 @@ def reproduce_command(task: dict, key: str) -> str:
     """The runner invocation CI uses for this task: isolated daemons, the case's mode and platform."""
     task_id = key.split(":", 1)[1]
     flags = [f"--suite {task['suite']}", f"--task-id {task_id}", "--auto-agent-setup"]
-    if task.get("execution_mode", "backend-text") != "backend-text":
+    if (task.get("execution_mode") or "backend-text") != "backend-text":
         flags.append(f"--execution-mode {task['execution_mode']}")
-    if task.get("target_platform", "auto") != "auto":
+    if (task.get("target_platform") or "auto") != "auto":
         flags.append(f"--target-platform {task['target_platform']}")
     if task.get("environment") not in (None, "isolated"):
         flags.append("--environment-url <environment bridge URL>")
@@ -47,6 +47,33 @@ def revision(manifest: dict) -> str:
     """Where the analysis ran: the branch and commit, never assumed to be main."""
     ref = str(manifest.get("execution_ref", "")).removeprefix("refs/heads/") or "local"
     return f"`{ref}` `{manifest['base_sha'][:12]}`"
+
+
+def code_link(location: str, manifest: dict) -> str:
+    """A validated `path[:line]` as a permalink at the analyzed commit, so later edits do not shift it."""
+    path, _, line = location.partition(":")
+    if not manifest.get("repository_url"):
+        return f"`{location}`"
+    anchor = f"#L{line}" if line else ""
+    return f"[`{location}`]({manifest['repository_url']}/blob/{manifest['base_sha']}/{path}{anchor})"
+
+
+FIX_LAYERS = {"go_code": "Go code", "prompt": "system prompt", "tool_description": "tool description",
+              "skill": "skill", "benchmark_code": "benchmark code", "task_definition": "task definition",
+              "external_code": "external code"}
+
+
+def at_a_glance(finding: dict) -> list[str]:
+    """Two lines that tell the person fixing it where to start and whether the model is the problem."""
+    issue = finding["issue"]
+    layer = FIX_LAYERS.get(issue.get("fix_layer"), "unknown")
+    models = ", ".join(f"`{clean(m, 100)}`" for m in finding.get("agent_models", [])) or "unknown"
+    model = ("**Model-dependent**: the rule already exists and the agent model does not follow it; a stronger "
+             "model may pass, so decide whether to harden the code or accept it."
+             if issue.get("model_dependent") else "Not model-dependent: the defect is in the code or rules themselves.")
+    reproduced = len(finding.get("reproduced_targets", []))
+    return [f"**Fix in**: {layer} · **Agent model**: {models} · **Tasks**: {len(finding['key']['targets'])} "
+            f"({reproduced} reproduced)", "", model, ""]
 
 
 def window(manifest: dict) -> str:
@@ -73,7 +100,8 @@ def body(finding: dict, manifest: dict, run_url: str) -> str:
     tasks = finding["tasks"]
     # The issue itself is this window's observation, so a retried publish does not also comment.
     lines = [f"<!-- auto-improve {json.dumps(meta, sort_keys=True)} -->",
-             f"<!-- auto-improve-observation:{manifest['source']} -->", "", "## Summary", clean(issue["summary"]), ""]
+             f"<!-- auto-improve-observation:{manifest['source']} -->", "", *at_a_glance(finding),
+             "## Summary", clean(issue["summary"]), ""]
     if finding.get("regression_of"):
         lines += ["Possibly a regression of " + ", ".join(f"#{n}" for n in finding["regression_of"]) + ".", ""]
     lines += ["## Impact", clean(issue["impact"]), "",
@@ -94,9 +122,9 @@ def body(finding: dict, manifest: dict, run_url: str) -> str:
         if any(tasks[t].get("environment") not in (None, "isolated") for t in runnable):
             lines += ["Start the task's environment bridge first and pass its URL, as described in the "
                       "benchmark quickstart."]
-    lines += ["", clean(issue["reproduction"]), "", "## Expected", clean(issue["expected"]), "",
+    lines += ["", "**What to look for**: " + clean(issue["reproduction"]), "", "## Expected", clean(issue["expected"]), "",
               "## Actual", clean(issue["actual"]), "", "## Root cause", clean(issue["root_cause"]), "",
-              "## Code locations", *[f"- `{loc}`" for loc in finding["code_locations"]], "",
+              "## Code locations", *[f"- {code_link(loc, manifest)}" for loc in finding["code_locations"]], "",
               "## Evidence", "Paths under `finding-*/` are in the run's evidence artifact linked below. "
               f"`finding-{finding['number']}/daily-observations.json` holds each daily run's outcome for these tasks.", "",
               *bullets(issue["evidence"]), "", "## Acceptance criteria", *bullets(issue["acceptance_criteria"])]

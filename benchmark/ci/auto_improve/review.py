@@ -40,6 +40,10 @@ ISSUE_AUDIT = object_schema({
     "verdict": {"type": "string", "enum": ["confirmed", "refuted", "insufficient_evidence"]},
     # The confirmed subset of targets that share one root cause and one fix; the issue covers only these.
     "targets": STRINGS,
+    # Where the fix belongs, and whether the failure depends on the agent model ignoring an existing rule.
+    "fix_layer": {"type": "string", "enum": ["go_code", "prompt", "tool_description", "skill", "benchmark_code",
+                                              "task_definition", "external_code"]},
+    "model_dependent": {"type": "boolean"},
     "reason": STRING, "title": STRING, "summary": STRING, "impact": STRING, "reproduction": STRING,
     "expected": STRING, "actual": STRING, "root_cause": STRING, "code_locations": STRINGS,
     "evidence": STRINGS, "acceptance_criteria": STRINGS, "fix_direction": STRING})

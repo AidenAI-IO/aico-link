@@ -23,7 +23,7 @@ AUDIT_OUTPUT = {"verdict": "confirmed", "targets": ["a:one"], "reason": "Fresh t
                 "expected": "No memory is saved.", "actual": "A fact memory is saved.",
                 "root_cause": "The admission rule accepts dated plans.", "code_locations": ["src/agent/memory.go:12"],
                 "evidence": ["attempts/x/tasks/t/trace.json"], "acceptance_criteria": ["The task passes 2/3 attempts"],
-                "fix_direction": ""}
+                "fix_direction": "", "fix_layer": "go_code", "model_dependent": True}
 
 
 def row(repeat, success=True, **metrics):
@@ -429,7 +429,7 @@ def cluster(**overrides):
 
 def observation(source, success=False, eligible=True):
     return {"source": source, "status": "passed" if success else "failed", "agent_eligible": eligible,
-            "metrics": {"success": success, "agent_eligible": eligible}}
+            "metrics": {"success": success, "agent_eligible": eligible}, "manifest": {"agent_model": "m1"}}
 
 
 def analyze(tmp_path, monkeypatch, clusters, *, outcome="failed", audit=None, feedback=(), evaluation_issues=(),
@@ -439,6 +439,7 @@ def analyze(tmp_path, monkeypatch, clusters, *, outcome="failed", audit=None, fe
         for field in ("MODEL", "PROVIDER", "BASE_URL", "API_KEY"):
             monkeypatch.setenv(f"BENCHMARK_{kind}_{field}", "synthetic")
     monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
     if max_issues is not None:
         monkeypatch.setenv("AUTO_IMPROVE_MAX_ISSUES", str(max_issues))
     repo, source, out = tmp_path / "repo", tmp_path / "source", tmp_path / "out"
@@ -509,7 +510,11 @@ def test_reproduced_and_audited_finding_becomes_one_issue_for_a_coding_agent(tmp
     assert "analyzed on `main` `0123456789ab`" in body and "on `main` `" not in body.split("## Summary")[0]
     observations = json.loads((out / "finding-1/daily-observations.json").read_text())
     assert [o["source"] for o in observations["a:one"]] == ["41-1", "42-1"]
-    assert "- `src/agent/memory.go:12`" in body and "The task passes 2/3 attempts" in body
+    # Code locations are permalinks at the analyzed commit; the header says where to fix and which model failed.
+    assert ("- [`src/agent/memory.go:12`](https://github.com/o/r/blob/0123456789abcdef/src/agent/memory.go#L12)"
+            in body and "The task passes 2/3 attempts" in body)
+    assert body.split("## Summary")[0].count("**Fix in**: Go code · **Agent model**: `m1` · **Tasks**: 1 (1 reproduced)") == 1
+    assert "**Model-dependent**" in body
     # Evidence points at files in the uploaded artifact, not the audit's temporary workspace.
     assert "attempts/" not in body and "details/failure" not in body
     assert "finding-1/reproduction-runs/" in body and "daily-run observations of a:one: 2/2 failures" in body

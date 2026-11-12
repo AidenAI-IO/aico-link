@@ -105,6 +105,11 @@ issue written by someone else cannot suppress or redirect findings.
 
 Each issue is labeled `auto-improve`, its title starts with `[auto-improve][<domain>]`, and it contains:
 
+- a header stating where the fix belongs (Go code, prompt, tool description,
+  skill, benchmark code, task definition or external code), the agent models
+  that failed, and whether the failure is model-dependent: the code or prompt
+  already states the right behavior and the model does not follow it, so the
+  maintainer decides whether to harden the code or accept it;
 - a summary and the user-visible impact;
 - a table of the affected tasks with their environment, how many daily runs
   failed, and whether the task reproduced on the branch and commit the analysis
@@ -113,7 +118,8 @@ Each issue is labeled `auto-improve`, its title starts with `[auto-improve][<dom
   the case's execution mode and target platform), and a note when the task
   needs an environment bridge;
 - expected and actual behavior, and the root cause;
-- code locations as repository paths with optional line numbers;
+- code locations as permalinks at the analyzed commit, so later edits do not
+  shift the cited lines;
 - evidence citations and a link to the run's artifacts (14-day retention); each
   finding's `daily-observations.json` there holds every daily run's outcome for
   its tasks, so the failure history can be checked;
