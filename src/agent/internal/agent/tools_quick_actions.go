@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"aico-agent/internal/agent/mnk"
 )
 
 //go:embed quick_actions.json
@@ -318,6 +320,7 @@ func loadQuickActionsForConfig(configDir string, logger *Logger) {
 
 // QuickActionTool executes predefined platform-specific shortcuts and gestures.
 type QuickActionTool struct {
+	systemActions        mnk.SystemActionProvider
 	keyboard             *KeyboardTapTool
 	touch                *TouchGestureTool
 	deviceTypeFn         func() string
@@ -661,6 +664,25 @@ func (t *QuickActionTool) delegate(ctx context.Context, toolName, payload string
 			return "", nil, fmt.Errorf("touch_gesture is not available")
 		}
 		output, err = t.touch.Call(subCtx, payload)
+	case "system_action":
+		var args mnk.SystemActionParams
+		if parseErr := decodeStrictJSONObject(payload, &args); parseErr != nil {
+			err = mnk.InvalidArgumentsf("invalid system action: %v", parseErr)
+		} else if err = mnk.ValidateSystemAction(args.Action); err == nil {
+			if t.systemActions == nil {
+				err = mnk.ModuleUnavailable("native system actions are not supported by this provider")
+			} else {
+				var supported bool
+				supported, err = t.systemActions.SupportsSystemAction(subCtx, args.Action)
+				if err == nil && !supported {
+					err = mnk.ModuleUnavailable("native system action is not supported by this provider")
+				}
+				if err == nil {
+					err = t.systemActions.SystemAction(subCtx, args.Action)
+				}
+			}
+		}
+		output, err = mapMNKAdapterResult(subCtx, "ok", err)
 	default:
 		return "", nil, fmt.Errorf("unsupported delegated tool %q", toolName)
 	}

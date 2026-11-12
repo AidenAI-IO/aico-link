@@ -15,11 +15,12 @@ from .tools_api import DesktopToolsAPIHandler, MAX_REQUEST_BODY_BYTES
 
 
 class DesktopBridgeServer:
-    def __init__(self, device: DesktopDevice | None = None, host: str = "127.0.0.1", port: int = 0, action_settle_sec: float = 0.2, *, tools_factory=DesktopToolsAPIHandler, mnk_executor=execute_mnk_request):
+    def __init__(self, device: DesktopDevice | None = None, host: str = "127.0.0.1", port: int = 0, action_settle_sec: float = 0.2, *, tools_factory=DesktopToolsAPIHandler, mnk_executor=execute_mnk_request, handler_factory=None):
         self.state = DesktopBridgeState(device=device or DesktopDevice())
         self.host, self.port = host, int(port)
         self.tools_api = tools_factory(self.state, action_settle_sec)
         self.mnk_executor = mnk_executor
+        self.handler_factory = handler_factory or _handler_for
         self.bridge_type = getattr(self.state.device, "bridge_type", "desktop")
         self.setup_tokens = SetupTokenRegistry()
         self._httpd: ThreadingHTTPServer | None = None
@@ -28,7 +29,7 @@ class DesktopBridgeServer:
 
     def start(self) -> str:
         if self._httpd is not None: return self.base_url
-        self._httpd = ThreadingHTTPServer((self.host, self.port), _handler_for(self)); self._httpd.daemon_threads = True
+        self._httpd = ThreadingHTTPServer((self.host, self.port), self.handler_factory(self)); self._httpd.daemon_threads = True
         host, port = self._httpd.server_address[:2]; self.base_url = f"http://{host}:{port}"
         self._thread = threading.Thread(target=self._httpd.serve_forever, name="desktop-environment-bridge", daemon=True); self._thread.start(); return self.base_url
 

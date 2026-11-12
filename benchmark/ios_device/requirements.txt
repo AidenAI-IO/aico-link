@@ -1,0 +1,3 @@
+# Optional host-only dependency. Keep the Docker benchmark environment unchanged.
+pymobiledevice3==11.52.1
+pillow>=10.2.0

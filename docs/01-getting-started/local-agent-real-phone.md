@@ -84,7 +84,7 @@ Terminal 3. Config Web does not start or restart the daemon.
 
 ## Terminal 2: Connect the Phone
 
-Follow one of the two paths below and keep its bridge running.
+Follow one of the three paths below and keep its bridge running.
 
 ### Android Through ADB
 
@@ -153,6 +153,21 @@ This bridge supports committed Unicode input, including Chinese, through the
 Mac's text input path. The [bridge reference](../../benchmark/iphone_mirroring/README.md)
 describes permissions, input behavior, and unsupported gestures.
 
+### iPhone Directly Through USB and WDA
+
+Use the [direct iOS device bridge](../../benchmark/ios_device/README.md) when
+experiments need system permission dialogs, direct capture, or control without
+the Mirroring window. This route requires Xcode, a signed WebDriverAgent runner,
+USB trust, Developer Mode, and an unlocked phone. Follow that guide for build
+and installation, start the bridge on port `8896` with task ID `ios-device`,
+and copy its `ios_device/quick_actions.json` into a separate Agent data
+directory. Then use the iPhone daemon command below with endpoint
+`http://127.0.0.1:8896` and task ID `ios-device`.
+
+The bridge supports inspecting and explicitly selecting notification,
+location, and camera dialogs. Optional app-specific rules can choose known
+prompts automatically before screenshots; unknown prompts stay visible.
+
 ## Terminal 3: Start the Agent
 
 Use the shared setup block from above in this terminal. Set host-writable
@@ -219,9 +234,10 @@ curl --fail http://127.0.0.1:8080/api/providers/screenshot \
 
 A successful response has `ok: true`, a non-stale `data.meta`, and a base64 JPEG
 in `data.image`. The capture backend should be `adb` for Android or
-`iphone-mirroring` for iPhone. An iPhone connection dialog is also capturable:
-inspect the phone screen, keep the phone locked, and finish connecting in
-Apple's app before an interactive task.
+`iphone-mirroring` for Mirroring or `ios-device` for direct USB/WDA.
+For Mirroring, its connection dialog is also capturable: inspect the phone
+screen, keep the phone locked, and finish connecting in Apple's app before an
+interactive task. Direct USB/WDA requires the phone to remain unlocked.
 
 ## Stop, Restore, or Switch Targets
 

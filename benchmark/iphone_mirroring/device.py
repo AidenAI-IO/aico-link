@@ -5,10 +5,10 @@ import json
 import math
 import subprocess
 import threading
-import unicodedata
 from pathlib import Path
 
 from desktop.bridge.device import DesktopDeviceError
+from mnk_provider import validate_insert_text
 
 
 def parse_insets(value: str) -> tuple[float, ...]:
@@ -118,10 +118,3 @@ class MirroringDevice:
         if key is None:
             raise ValueError(f"unsupported iPhone Mirroring quick action: {action}")
         self.press(["meta", key])
-
-
-def validate_insert_text(text):
-    if (not isinstance(text, str) or not text or
-            any(0xD800 <= ord(c) <= 0xDFFF or (unicodedata.category(c) == "Cc" and c not in "\n\t") for c in text) or
-            len(text.encode("utf-16-le")) > 8192):
-        raise ValueError("insert_text requires 1–4096 UTF-16 units without control characters other than newline/tab")

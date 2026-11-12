@@ -32,34 +32,43 @@ func ValidateInsertionText(text string) error {
 }
 
 func (p *HTTPProvider) SupportsTextInsertion(ctx context.Context) (bool, error) {
+	caps, err := p.queryCapabilities(ctx)
+	return caps.InsertText, err
+}
+
+type httpCapabilities struct {
+	InsertText    bool     `json:"insert_text"`
+	SystemActions []string `json:"system_actions"`
+}
+
+func (p *HTTPProvider) queryCapabilities(ctx context.Context) (httpCapabilities, error) {
+	var empty httpCapabilities
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/api/providers/mnk", nil)
 	if err != nil {
-		return false, err
+		return empty, err
 	}
 	if p.taskID != "" {
 		req.Header.Set(BenchmarkTaskIDHeader, p.taskID)
 	}
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("query text insertion capability: %w", err)
+		return empty, fmt.Errorf("query input capabilities: %w", err)
 	}
 	defer resp.Body.Close()
 	// Existing bridges are POST-only and retain their original IME path.
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented {
-		return false, nil
+		return empty, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("query text insertion capability: HTTP %d", resp.StatusCode)
+		return empty, fmt.Errorf("query input capabilities: HTTP %d", resp.StatusCode)
 	}
 	var result struct {
-		Capabilities struct {
-			InsertText bool `json:"insert_text"`
-		} `json:"capabilities"`
+		Capabilities httpCapabilities `json:"capabilities"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&result); err != nil {
-		return false, fmt.Errorf("decode text insertion capability: %w", err)
+		return empty, fmt.Errorf("decode input capabilities: %w", err)
 	}
-	return result.Capabilities.InsertText, nil
+	return result.Capabilities, nil
 }
 
 func (p *HTTPProvider) InsertText(ctx context.Context, text string, replace bool) error {

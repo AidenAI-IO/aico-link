@@ -235,6 +235,7 @@ func (p *HTTPProvider) sendRequest(ctx context.Context, req MNKRequest) error {
 
 // MNKRequest represents an MNK operation request
 type MNKRequest struct {
+	SystemAction *SystemActionParams  `json:"system_action,omitempty"`
 	InsertText   *TextInsertionParams `json:"insert_text,omitempty"`
 	KeyboardText *KeyboardTextParams  `json:"keyboard_text,omitempty"`
 	Operation    string               `json:"operation"`
@@ -284,6 +285,10 @@ type DragPointParams struct {
 type TextInsertionParams struct {
 	Text    string `json:"text"`
 	Replace bool   `json:"replace,omitempty"`
+}
+
+type SystemActionParams struct {
+	Action string `json:"action"`
 }
 
 type KeyboardTextParams struct {

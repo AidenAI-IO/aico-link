@@ -113,6 +113,14 @@ type TextInsertionProvider interface {
 	InsertText(context.Context, string, bool) error
 }
 
+// SystemActionProvider optionally performs native system navigation. Quick
+// action bindings must opt in explicitly; touch and keyboard input retain
+// their existing meaning on every backend.
+type SystemActionProvider interface {
+	SupportsSystemAction(context.Context, string) (bool, error)
+	SystemAction(context.Context, string) error
+}
+
 // TouchAction is one low-level pointer/touch primitive. Coordinates use the
 // same normalized 0-1000 space as Provider. A point is optional for
 // touch_up (the current contact position is used) and required for the other

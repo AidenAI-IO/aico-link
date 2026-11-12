@@ -214,6 +214,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		captureFrame: newFrameCapturer(provider),
 	}
 	quickAction := &QuickActionTool{keyboard: keyboardTap, touch: touchGesture, iosKeyboardIsolation: iosKeyboardIsolation}
+	quickAction.systemActions, _ = mnkProvider.(mnk.SystemActionProvider)
 	textInputHW := &textInputHardwareDeps{
 		pointerMode:  hidCfg.PointerModeOrDefault(),
 		touchGesture: touchGesture,

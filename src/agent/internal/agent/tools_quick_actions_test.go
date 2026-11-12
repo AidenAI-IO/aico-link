@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -298,8 +299,9 @@ func TestQuickActionExecutesDelegatedKeyboardTap(t *testing.T) {
 
 	dev, path := newTestHIDDevice(t)
 	tool := &QuickActionTool{
-		keyboard:     testKeyboardTapTool(t, testMNKOpts{keyboard: dev}),
-		deviceTypeFn: func() string { return "macOS" },
+		keyboard:      testKeyboardTapTool(t, testMNKOpts{keyboard: dev}),
+		deviceTypeFn:  func() string { return "macOS" },
+		systemActions: &quickSystemActionStub{discoveryErr: errors.New("must not discover native actions for legacy bindings")},
 	}
 	out, err := tool.Call(context.Background(), `{"action":"copy"}`)
 	if err != nil {
@@ -314,6 +316,97 @@ func TestQuickActionExecutesDelegatedKeyboardTap(t *testing.T) {
 	}
 	if info.Size() < 16 {
 		t.Fatalf("expected keyboard press/release writes, got %d bytes", info.Size())
+	}
+}
+
+type quickSystemActionStub struct {
+	supported    bool
+	discoveryErr error
+	inputErr     error
+	calls        int
+}
+
+func TestNativeSystemActionOnlyExplicitBindings(t *testing.T) {
+	previous := globalQuickActions
+	t.Cleanup(func() { globalQuickActions = previous })
+	for _, tc := range []struct {
+		name, platform, config string
+	}{
+		{"HID iOS", "iOS", ""},
+		{"Android", "Android", ""},
+		{"iPhone Mirroring", "iOS", filepath.Join("..", "..", "..", "..", "benchmark", "iphone_mirroring", "quick_actions.json")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			globalQuickActions = newQuickActionsTable()
+			if tc.config != "" {
+				if err := globalQuickActions.loadFromFile(tc.config); err != nil {
+					t.Fatal(err)
+				}
+			}
+			provider := mnk.NewMockProvider()
+			stub := &quickSystemActionStub{supported: true, discoveryErr: errors.New("legacy Home must not discover native navigation")}
+			tool := &QuickActionTool{
+				deviceTypeFn:  func() string { return tc.platform },
+				keyboard:      &KeyboardTapTool{mnkProvider: provider},
+				touch:         &TouchGestureTool{mnkProvider: provider, screen: &screen.ScreenState{}},
+				systemActions: stub,
+			}
+			out, err := tool.Call(context.Background(), `{"action":"home"}`)
+			if err != nil || !quickActionResultOK(t, out) || stub.calls != 0 {
+				t.Fatalf("legacy Home changed: %s, %v, native calls=%d", out, err, stub.calls)
+			}
+		})
+	}
+}
+
+func (p *quickSystemActionStub) SupportsSystemAction(context.Context, string) (bool, error) {
+	return p.supported, p.discoveryErr
+}
+
+func (p *quickSystemActionStub) SystemAction(context.Context, string) error {
+	p.calls++
+	return p.inputErr
+}
+
+func TestNativeSystemActionQuickBinding(t *testing.T) {
+	previous := globalQuickActions
+	globalQuickActions = newQuickActionsTable()
+	t.Cleanup(func() { globalQuickActions = previous })
+	// Exercise the actual opt-in config shipped only with pymobiledevice3.
+	path := filepath.Join("..", "..", "..", "..", "benchmark", "ios_device", "quick_actions.json")
+	if err := globalQuickActions.loadFromFile(path); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		stub      *quickSystemActionStub
+		wantCalls int
+		wantOK    bool
+	}{
+		{"native", &quickSystemActionStub{supported: true}, 1, true},
+		{"legacy bridge", &quickSystemActionStub{}, 0, false},
+		{"discovery failed", &quickSystemActionStub{discoveryErr: errors.New("offline")}, 0, false},
+		{"delivery ambiguous", &quickSystemActionStub{supported: true, inputErr: errors.New("timeout: inspect before retrying")}, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := &QuickActionTool{systemActions: tc.stub, deviceTypeFn: func() string { return "iOS" }}
+			ctx, _ := WithToolError(context.Background())
+			out, err := tool.Call(ctx, `{"action":"home"}`)
+			if err != nil || (ToolErrorFromContext(ctx) == nil) != tc.wantOK || tc.stub.calls != tc.wantCalls {
+				t.Fatalf("Home = %s, %v; calls=%d", out, err, tc.stub.calls)
+			}
+			if tc.wantOK && !quickActionResultOK(t, out) {
+				t.Fatalf("Home did not succeed: %s", out)
+			}
+		})
+	}
+	// A failed Home must stop Spotlight before its downward swipe. Leaving the
+	// touch tool nil also detects an accidental attempt to execute that step.
+	stub := &quickSystemActionStub{supported: true, inputErr: errors.New("delivery ambiguous")}
+	tool := &QuickActionTool{systemActions: stub, deviceTypeFn: func() string { return "iOS" }}
+	ctx, _ := WithToolError(context.Background())
+	if out, err := tool.Call(ctx, `{"action":"spotlight_search"}`); err != nil || ToolErrorFromContext(ctx) == nil || stub.calls != 1 {
+		t.Fatalf("Spotlight continued/replayed after failed Home: %s, %v, calls=%d", out, err, stub.calls)
 	}
 }
 

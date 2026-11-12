@@ -40,7 +40,18 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"capabilities": map[string]bool{"insert_text": supported}})
+		caps := map[string]any{"insert_text": supported}
+		if provider, ok := h.provider.(SystemActionProvider); ok {
+			home, err := provider.SupportsSystemAction(r.Context(), "home")
+			if err != nil {
+				h.writeError(w, http.StatusBadGateway, "system action capability unavailable")
+				return
+			}
+			if home {
+				caps["system_actions"] = []string{"home"}
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"capabilities": caps})
 		return
 	}
 	// Only accept POST requests
@@ -103,6 +114,24 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				if execErr == nil {
 					execErr = provider.InsertText(reqCtx, req.InsertText.Text, req.InsertText.Replace)
+				}
+			}
+		}
+	case "system_action":
+		if req.SystemAction == nil {
+			execErr = InvalidArguments("system_action params required")
+		} else if execErr = ValidateSystemAction(req.SystemAction.Action); execErr == nil {
+			provider, ok := h.provider.(SystemActionProvider)
+			if !ok {
+				execErr = ModuleUnavailable("native system actions are not supported by this provider")
+			} else {
+				var supported bool
+				supported, execErr = provider.SupportsSystemAction(reqCtx, req.SystemAction.Action)
+				if execErr == nil && !supported {
+					execErr = ModuleUnavailable("native system action is not supported by this provider")
+				}
+				if execErr == nil {
+					execErr = provider.SystemAction(reqCtx, req.SystemAction.Action)
 				}
 			}
 		}
