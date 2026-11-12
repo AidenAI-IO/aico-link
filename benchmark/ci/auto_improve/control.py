@@ -139,12 +139,12 @@ def cli() -> int:
             status = json.loads(manifest.read_text()).get("status", "") if manifest else ""
         except (OSError, ValueError):
             status = ""
-        name = policy.artifact_name(args.ref, evidence_identity(args.identity), status,
-                                    args.publish.lower() == "true")
+        marker = policy.processed_marker(args.ref, evidence_identity(args.identity), status,
+                                         args.publish.lower() == "true")
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
-                stream.write(f"name={name}\n")
-        print(name)
+                stream.write(f"marker={marker}\n")
+        print(marker or "window stays eligible")
         return 0
     if args.operation == "policy":
         decision = execution_policy(args.event, args.ref, args.publish_requested.lower() == "true")

@@ -42,7 +42,8 @@ jobs:
       no_proxy: localhost,127.0.0.1,::1,host.docker.internal
     outputs:
       identity: ${{ steps.discover.outputs.identity }}
-      artifact: ${{ steps.artifact.outputs.name }}
+      artifact: auto-improve-${{ github.run_id }}-${{ github.run_attempt }}
+      marker: ${{ steps.marker.outputs.marker }}
       publish: ${{ steps.mode.outputs.publish }}
       ready: ${{ steps.driver.outputs.ready }}
     steps:
@@ -140,15 +141,15 @@ jobs:
         run: |
           report="$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/result/summary.md"
           if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
-      - name: Name the evidence artifact
-        id: artifact
+      - name: Decide whether this run can settle its window
+        id: marker
         if: always() && steps.discover.outputs.found == 'true'
         working-directory: benchmark
         env:
           IDENTITY: ${{ steps.discover.outputs.identity }}
           PUBLISH: ${{ steps.mode.outputs.publish }}
-        # Only a settled, publishing run marks its sources processed; an errored, blocked,
-        # cancelled or analyze-only run is uploaded as auto-improve-retry-* so it is retried.
+        # The marker that excludes these daily runs from later discovery is uploaded only once
+        # nothing is left to file; errored, cancelled or analyze-only runs leave them eligible.
         run: >-
           uv run python -m ci.auto_improve.control artifact --ref "$GITHUB_REF" --identity "$IDENTITY"
           --publish "${PUBLISH:-false}"
@@ -158,9 +159,8 @@ jobs:
         if: always() && steps.discover.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
-          # If naming fails, still keep the evidence under a name nothing consumes:
-          # it neither marks sources processed nor enables publication.
-          name: ${{ steps.artifact.outputs.name || format('auto-improve-unnamed-{0}-{1}', github.run_id, github.run_attempt) }}
+          # Evidence only; discovery never treats it as processing a window.
+          name: auto-improve-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 14
           # Do not upload daemon configurations or CLI sessions.
           path: |
@@ -181,6 +181,15 @@ jobs:
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/reproduction-runs/*/*/runner.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/finding-*/reproduction-runs/*/*/rejudge-error.log
           if-no-files-found: warn
+      - name: Mark the window processed when nothing is left to file
+        if: >-
+          steps.marker.outputs.marker != '' && steps.evidence.outcome == 'success' &&
+          fromJSON(steps.driver.outputs.ready || '0') == 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.marker.outputs.marker }}
+          retention-days: 14
+          path: ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/manifest.json
       - name: Remove uploaded work files
         if: always() && steps.evidence.outcome == 'success'
         working-directory: benchmark
@@ -219,3 +228,11 @@ jobs:
         run: >-
           uv run python -m ci.auto_improve.control publish
           --out "$GITHUB_WORKSPACE/auto-improve-result" --branch main
+      - name: Mark the window processed
+        # Reached only if every issue action above succeeded; a failure leaves the window eligible.
+        if: needs.analyze.outputs.marker != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.analyze.outputs.marker }}
+          retention-days: 14
+          path: auto-improve-result/manifest.json

@@ -152,7 +152,7 @@ class GitHub:
         created = urllib.parse.quote(">=" + cutoff.strftime("%Y-%m-%d"))
         runs = self.pages(f"actions/workflows/benchmark.yml/runs?event=schedule&created={created}", "workflow_runs")
         artifacts = self.auto_improve_artifacts(cutoff)
-        # Only a settled run claims its sources; auto-improve-retry-* artifacts keep them eligible.
+        # Only a processed marker claims its sources; it is uploaded after any issue actions succeed.
         processed = {identity for a in artifacts
                      if not a.get("expired") and a["name"].startswith("auto-improve-source-")
                      for identity in a["name"].removeprefix("auto-improve-source-").split("__")}

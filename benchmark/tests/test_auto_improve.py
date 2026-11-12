@@ -83,17 +83,16 @@ def test_non_main_discovery_and_publication_are_rejected_before_side_effects(tmp
     assert not (tmp_path / "source").exists()
 
 
-@pytest.mark.parametrize("status,expected", [
-    ("completed", "auto-improve-source-"), ("no_failures", "auto-improve-source-"),
-    ("diagnosed", "auto-improve-retry-"), ("blocked", "auto-improve-retry-"),
-    ("error", "auto-improve-retry-"), ("", "auto-improve-retry-"),
+@pytest.mark.parametrize("status,publish,settles", [
+    ("completed", True, True), ("no_failures", True, True),
+    ("diagnosed", True, False), ("blocked", True, False), ("error", True, False), ("", True, False),
+    ("completed", False, False),
 ])
-def test_only_settled_runs_mark_sources_processed(status, expected):
-    assert policy.artifact_name("refs/heads/main", "41-1__42-1", status) == expected + "41-1__42-1"
-    # An analyze-only run files nothing, so it never consumes the window.
-    assert policy.artifact_name("refs/heads/main", "41-1__42-1", status, publish=False) == "auto-improve-retry-41-1__42-1"
+def test_only_settled_publishing_runs_may_mark_their_window_processed(status, publish, settles):
+    marker = policy.processed_marker("refs/heads/main", "41-1__42-1", status, publish)
+    assert marker == ("auto-improve-source-41-1__42-1" if settles else "")
     with pytest.raises(ValueError, match="only supports main"):
-        policy.artifact_name("refs/heads/feature", "41-1__42-1", status)
+        policy.processed_marker("refs/heads/feature", "41-1__42-1", status, publish)
 
 
 @pytest.mark.parametrize("event,ref,requested,expected", [
@@ -112,18 +111,17 @@ def test_runs_and_publication_are_limited_to_main(event, ref, requested, expecte
         assert policy.execution_policy(event, ref, requested) == {"publish": expected}
 
 
-@pytest.mark.parametrize("manifest,expected", [({"status": "completed"}, "auto-improve-source-"),
-                                               ({"status": "blocked"}, "auto-improve-retry-"),
-                                               (None, "auto-improve-retry-")])
-def test_artifact_command_names_by_settled_status(tmp_path, monkeypatch, manifest, expected):
+@pytest.mark.parametrize("manifest,expected", [({"status": "completed"}, "auto-improve-source-41-1__42-1"),
+                                               ({"status": "blocked"}, ""), (None, "")])
+def test_marker_command_reports_whether_the_run_can_settle(tmp_path, monkeypatch, manifest, expected):
     if manifest is not None:
         (tmp_path / "manifest.json").write_text(json.dumps(manifest))
     output = tmp_path / "output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setattr("sys.argv", ["control", "artifact", "--ref", "refs/heads/main",
-                                    "--identity", "41-1__42-1", "--out", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["control", "artifact", "--ref", "refs/heads/main", "--identity", "41-1__42-1",
+                                    "--publish", "true", "--out", str(tmp_path)])
     assert control.cli() == 0
-    assert output.read_text() == f"name={expected}41-1__42-1\n"
+    assert output.read_text() == f"marker={expected}\n"
 
 
 def test_workflow_policy_command_needs_no_github_credentials(tmp_path, monkeypatch):
@@ -610,7 +608,7 @@ def test_existing_issues_are_updated_and_rejected_findings_are_not_refiled(tmp_p
 def test_reproduction_failures_keep_the_window_unsettled(tmp_path, monkeypatch):
     state, drafts, _, _ = analyze(tmp_path, monkeypatch, [cluster()], run_error=RuntimeError("docker unavailable"))
     assert state["status"] == "blocked" and drafts == []
-    assert policy.artifact_name("refs/heads/main", "41-1", state["status"]).startswith("auto-improve-retry-")
+    assert policy.processed_marker("refs/heads/main", "41-1", state["status"], publish=True) == ""
 
 
 def test_model_text_cannot_notify_people_or_forge_issue_metadata(tmp_path, monkeypatch):

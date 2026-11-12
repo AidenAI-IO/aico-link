@@ -49,15 +49,15 @@ def execution_policy(event: str, ref: str, publish_requested: bool = False) -> d
     return {"publish": event == "schedule" or publish_requested}
 
 
-def artifact_name(ref: str, identity: str, status: str, publish: bool = True) -> str:
-    """Only a settled, publishing run marks its sources processed.
+def processed_marker(ref: str, identity: str, status: str, publish: bool) -> str:
+    """Name of the artifact that marks a window processed, or "" if this run may not settle it.
 
-    Failed runs and analyze-only manual runs keep the window eligible, so the next
-    scheduled run still files issues for it.
+    The workflow uploads the marker only once nothing is left to file: right after a settled
+    run with no issue actions, or after the publish job succeeds. Failed, cancelled and
+    analyze-only runs, and runs whose publication fails, leave the window eligible.
     """
     require_main_branch(ref.removeprefix("refs/heads/"))
-    prefix = "auto-improve-source-" if publish and status in SETTLED_STATUSES else "auto-improve-retry-"
-    return prefix + identity
+    return f"auto-improve-source-{identity}" if publish and status in SETTLED_STATUSES else ""
 
 
 def digest(value: Any) -> str:

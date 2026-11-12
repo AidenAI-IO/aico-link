@@ -151,11 +151,14 @@ The workflow runs only on `main`; other branches and pull requests never trigger
 - **Schedule.** Set `AUTO_IMPROVE_ENABLED=true`. Scheduled runs on `main` file
   issues.
 
-Only a settled run (`completed` or `no_failures`) that publishes uploads
-`auto-improve-source-<identity>` and marks its daily runs processed. A run that
-errors, is cancelled, could not execute a reproduction attempt, or only analyzed
-(a manual run without `publish_issues=true`) uploads `auto-improve-retry-<identity>`,
-so the next run analyzes the same window again.
+Each run uploads its evidence as `auto-improve-<run>-<attempt>`. A separate
+`auto-improve-source-<identity>` marker excludes the window's daily runs from
+later discovery, and it is uploaded only once nothing is left to file: by the
+publish job after every issue action succeeds, or directly when a settled run
+(`completed` or `no_failures`) has no issue action. A run that errors, is
+cancelled, could not execute a reproduction attempt, fails to publish, or only
+analyzed (a manual run without `publish_issues=true`) uploads no marker, so the
+next run analyzes the same window again.
 
 ## Configuration
 
