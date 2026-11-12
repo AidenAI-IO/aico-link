@@ -130,13 +130,23 @@ func TestAppendProactiveMessageWaitsForRunningTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	if _, err := runtime.AppendProactiveMessage(ctx, "later"); err == nil {
-		t.Fatal("AppendProactiveMessage() succeeded while a task held the run lock")
+	done := make(chan error, 1)
+	go func() {
+		_, err := runtime.AppendProactiveMessage(context.Background(), "later")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("AppendProactiveMessage() returned %v while a task held the run lock", err)
+	case <-time.After(50 * time.Millisecond):
 	}
 	unlock()
-	if _, err := runtime.AppendProactiveMessage(context.Background(), "later"); err != nil {
-		t.Fatalf("AppendProactiveMessage() after the task error = %v", err)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("AppendProactiveMessage() after the task error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("AppendProactiveMessage() did not resume after the task released the run lock")
 	}
 }

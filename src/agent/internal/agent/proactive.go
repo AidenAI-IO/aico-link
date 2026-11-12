@@ -66,18 +66,20 @@ func (r *Runtime) AppendProactiveMessage(ctx context.Context, content string) (M
 	if len(content) > proactiveMaxContentBytes {
 		return Message{}, fmt.Errorf("content exceeds %d bytes", proactiveMaxContentBytes)
 	}
+	unlock, err := r.lockRun(ctx)
+	if err != nil {
+		return Message{}, fmt.Errorf("wait for running task: %w", err)
+	}
+	defer unlock()
+
+	// Read the mode under the run gate: config apply holds it while it
+	// writes the config, so the mode cannot change before the append.
 	cfg := r.ConfigSnapshot()
 	// Realtime mode displays the user context, which the live voice session
 	// owns and writes through its own manager.
 	if cfg.InputModeOrDefault() == "realtime" {
 		return Message{}, errProactiveRealtimeUnsupported
 	}
-
-	unlock, err := r.lockRun(ctx)
-	if err != nil {
-		return Message{}, fmt.Errorf("wait for running task: %w", err)
-	}
-	defer unlock()
 
 	if r.contextManager == nil {
 		folder := agentpath.ContextManagerSessionFolder(cfg.ConfigDir)
