@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -262,8 +263,25 @@ func (t *SaveMemoryTool) judgeRequest(ctx context.Context, candidate memoryReque
 	}
 	started := time.Now()
 	verdict, err := t.requestJudge(ctx, candidate)
-	logging.Infof("agent", "memory", "save_memory request judgment secret=%t asked=%t err=%v elapsed_ms=%d", verdict.Secret, verdict.Asked, err, time.Since(started).Milliseconds())
+	// The candidate is often a secret and a provider error can echo the
+	// request, so only the error's category is logged.
+	logging.Infof("agent", "memory", "save_memory request judgment secret=%t asked=%t error=%s elapsed_ms=%d", verdict.Secret, verdict.Asked, memoryRequestJudgmentErrorKind(err), time.Since(started).Milliseconds())
 	return verdict, err
+}
+
+func memoryRequestJudgmentErrorKind(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, errMemoryRequestJudgmentParse):
+		return "parse"
+	default:
+		return "call"
+	}
 }
 
 func unrequestedSecretRefusal(sensitive memorySensitiveKind) map[string]string {

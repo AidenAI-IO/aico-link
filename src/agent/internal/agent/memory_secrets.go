@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -119,6 +120,10 @@ func normalizeQuotedText(text string) string {
 // hold up the reply.
 const memoryRequestJudgeTimeout = 20 * time.Second
 
+// errMemoryRequestJudgmentParse reports a judge response that is not the
+// expected JSON.
+var errMemoryRequestJudgmentParse = errors.New("parse memory request judgment")
+
 // memoryRequestVerdict is the judge's reading of one candidate memory.
 type memoryRequestVerdict struct {
 	// Secret is true when the content holds a password, PIN, card number, or
@@ -176,7 +181,8 @@ User messages, oldest first:
 		}
 		var verdict memoryRequestVerdict
 		if err := json.Unmarshal([]byte(stripJSONFences(raw)), &verdict); err != nil {
-			return memoryRequestVerdict{}, fmt.Errorf("parse memory request judgment %q: %w", raw, err)
+			// The response may repeat the secret, so it stays out of the error.
+			return memoryRequestVerdict{}, fmt.Errorf("%w: %v", errMemoryRequestJudgmentParse, err)
 		}
 		return verdict, nil
 	}
