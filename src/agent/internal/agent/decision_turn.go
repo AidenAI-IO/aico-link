@@ -178,9 +178,11 @@ func (r *Runtime) startTurnDecision(utterance string) func() turnDecision {
 			// Profile, preference and rule memories already reach the main
 			// model through the system prompt's user profile, so only the
 			// other types are offered. A browse by type returns the
-			// highest-priority ones and, by design, never a sensitive one;
-			// recall_memory still finds those by topic.
-			candidates, _ = store.Search(ctx, MemoryQuery{Types: turnRecallTypes, Limit: turnRecallCandidates})
+			// highest-priority ones and, by design, never a sensitive one.
+			// Notification-written memories are left out like in the user
+			// profile, because third parties control their text.
+			// recall_memory still finds both by topic.
+			candidates, _ = store.Search(ctx, MemoryQuery{Types: turnRecallTypes, Limit: turnRecallCandidates, excludeNotification: true})
 		}
 		done <- decideTurn(ctx, decider, utterance, previous, candidates)
 	}()

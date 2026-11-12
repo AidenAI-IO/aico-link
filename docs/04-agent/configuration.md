@@ -889,8 +889,9 @@ The same request also decides which saved memories bear on the request
 model through the system prompt's user profile, so only fact and procedure
 memories are offered: up to 20 of the highest-priority ones, of which up to 5
 confidently relevant ones are added to the turn's state message. Sensitive
-memories are never offered this way; `recall_memory` still finds them, and any
-memory not recalled automatically, by topic. An unsure answer or a failed
+memories and memories written from notifications are never offered this way,
+because a notification's text is controlled by third parties; `recall_memory`
+still finds them, and any memory not recalled automatically, by topic. An unsure answer or a failed
 request recalls nothing. The memory texts offered are sent to the decision
 model provider.
 

@@ -119,11 +119,11 @@ func TestStateHookTurnDecisionRecallsMemories(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server := newDecisionServer(t, tc.body)
 			store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
-			memories := []struct{ title, kind string }{{"Daughter", "fact"}, {"Coffee", "preference"}, {"Commute", "procedure"}}
+			memories := []struct{ title, kind, origin string }{{"Daughter", "fact", ""}, {"Coffee", "preference", ""}, {"Commute", "procedure", ""}, {"Parcel", "fact", memoryOriginNotification}}
 			for i, memory := range memories {
 				if _, err := store.AddMemory(context.Background(), MemoryItem{
 					ID: fmt.Sprintf("mem_170000000000000000%d_test", i), Type: memory.kind, Priority: 90 - i, Confidence: 1,
-					Title: memory.title, Content: memory.title + " note", EvidenceExcerpts: []string{memory.title},
+					Title: memory.title, Content: memory.title + " note", EvidenceExcerpts: []string{memory.title}, Origin: memory.origin,
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -142,8 +142,10 @@ func TestStateHookTurnDecisionRecallsMemories(t *testing.T) {
 			server.mu.Lock()
 			body, _ := json.Marshal(server.requests[0])
 			server.mu.Unlock()
-			if strings.Contains(string(body), "Coffee note") {
-				t.Fatalf("a preference was offered for recall: %s", body)
+			for _, excluded := range []string{"Coffee note", "Parcel note"} {
+				if strings.Contains(string(body), excluded) {
+					t.Fatalf("%q was offered for recall: %s", excluded, body)
+				}
 			}
 		})
 	}
