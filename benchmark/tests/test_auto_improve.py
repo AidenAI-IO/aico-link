@@ -1,0 +1,770 @@
+"""Behavioral contracts for unattended improvements, using synthetic evidence only."""
+from __future__ import annotations
+
+import base64
+from datetime import datetime, timedelta, timezone
+import io
+import json
+from pathlib import Path
+import stat
+import subprocess
+import time
+import zipfile
+
+import pytest
+
+from ci.auto_improve import control, driver, evidence, execution, github, issues, policy, review
+
+
+AUDIT_OUTPUT = {"verdict": "confirmed", "targets": ["a:one"], "reason": "Fresh trace shows the same failure",
+                "title": "Saves one-off plans",
+                "summary": "The agent stores a one-off appointment as long-term memory.",
+                "impact": "Memory fills with transient facts.", "reproduction": "Run the task once.",
+                "expected": "No memory is saved.", "actual": "A fact memory is saved.",
+                "root_cause": "The admission rule accepts dated plans.", "code_locations": ["src/agent/memory.go:12"],
+                "evidence": ["attempts/x/tasks/t/trace.json"], "acceptance_criteria": ["The task passes 2/3 attempts"],
+                "fix_direction": "", "fix_layer": "go_code", "model_dependent": True}
+
+
+def row(repeat, success=True, **metrics):
+    return {"repeat": repeat, "status": "passed" if success else "failed", "metrics": {
+        "agent_eligible": True, "success": success, "tool_calls": 3, "total_tokens": 100, **metrics}}
+
+
+def test_window_keeps_each_days_outcome_and_exact_task_definition(tmp_path):
+    for number, status in ((41, "failed"), (42, "passed")):
+        run = tmp_path / f"benchmark/runs/ci-{number}-1-case"
+        run.mkdir(parents=True)
+        (run / "manifest.json").write_text(json.dumps({"git_sha": str(number)}))
+        (run / "suite.json").write_text(json.dumps({"tasks": [{"id": "t", "rubric": [str(number)]}]}))
+        (run / "results.jsonl").write_text(json.dumps({"task_id": "t", "status": status}) + "\n")
+    failures, warnings = evidence.source_failures_window(tmp_path, [("41", "1"), ("42", "1")], {})
+    assert not warnings and len(failures) == 1
+    f = failures[0]
+    assert (f["failure_count"], f["run_count"]) == (1, 2)
+    assert [(o["source"], o["status"], o["task"]["rubric"]) for o in f["observations"]] == [
+        ("41-1", "failed", ["41"]), ("42-1", "passed", ["42"])]
+
+
+def test_tool_error_symptom_matches_only_failed_tool_results():
+    symptom = {"kind": "tool_error", "pattern": "socket"}
+    ok = {"content": json.dumps({"ok": True, "text": "socket ready"})}
+    failed = {"content": json.dumps({"ok": False, "error": "socket missing"})}
+    assert policy.symptom_matches(symptom, {}, [{"tool_results": [ok]}]) == []
+    assert policy.symptom_matches(symptom, {}, [{"tool_results": [ok, failed]}]) == [failed["content"]]
+
+
+def test_source_selection_delays_and_deduplicates():
+    now = datetime(2026, 1, 20, tzinfo=timezone.utc)
+    def run(number, hours, **extra):
+        return {"id": number, "run_attempt": 1, "status": "completed", "event": "schedule", "head_branch": "main",
+                "conclusion": "success", "created_at": (now - timedelta(hours=hours + 1)).isoformat(),
+                "updated_at": (now - timedelta(hours=hours)).isoformat(), **extra}
+    runs = [run(1, 4), run(2, 2), run(3, 6, event="pull_request"), run(4, 6, head_branch="fork"), run(5, 24 * 15), run(6, 5)]
+    assert [r["id"] for r in github.choose_window(runs, set(), branch="main", now=now)] == [6, 1]
+    assert github.choose_window(runs, {"1-1", "6-1"}, branch="main", now=now) == []
+    assert github.choose_window(runs, set(), branch="main", now=now, requested=("4",)) == []
+    assert github.choose_window(runs, {"1-1"}, branch="main", now=now, requested=("1",))[0]["id"] == 1
+    # Older late-finishing runs must not be lost behind a newer processed run.
+    assert github.choose_window(runs, {"1-1"}, branch="main", now=now)[0]["id"] == 6
+    with pytest.raises(ValueError, match="budget"):
+        github.choose_window(runs, set(), branch="main", now=now, limit=1)
+
+
+@pytest.mark.parametrize("branch", ["release", "develop", "refs/heads/main", ""])
+def test_non_main_discovery_and_publication_are_rejected_before_side_effects(tmp_path, branch):
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ValueError, match="only supports main"):
+        github.choose_window([], set(), branch=branch, now=now)
+    with pytest.raises(ValueError, match="only supports main"):
+        control.discover(None, tmp_path / "source", "42", branch)
+    with pytest.raises(ValueError, match="only supports main"):
+        control.publish(None, tmp_path, branch)
+    assert not (tmp_path / "source").exists()
+
+
+@pytest.mark.parametrize("status,publish,settles", [
+    ("completed", True, True), ("no_failures", True, True),
+    ("diagnosed", True, False), ("blocked", True, False), ("error", True, False), ("", True, False),
+    ("completed", False, False),
+])
+def test_only_settled_publishing_runs_may_mark_their_window_processed(status, publish, settles):
+    marker = policy.processed_marker("refs/heads/main", "41-1__42-1", status, publish)
+    assert marker == ("auto-improve-source-41-1__42-1" if settles else "")
+    with pytest.raises(ValueError, match="only supports main"):
+        policy.processed_marker("refs/heads/feature", "41-1__42-1", status, publish)
+
+
+@pytest.mark.parametrize("event,ref,requested,expected", [
+    ("schedule", "refs/heads/main", False, True),
+    ("workflow_dispatch", "refs/heads/main", False, False),
+    ("workflow_dispatch", "refs/heads/main", True, True),
+    ("push", "refs/heads/main", True, None),
+    ("workflow_dispatch", "refs/heads/feature", True, None),
+    ("schedule", "refs/heads/auto-improve-test/x", False, None),
+])
+def test_runs_and_publication_are_limited_to_main(event, ref, requested, expected):
+    if expected is None:
+        with pytest.raises(ValueError):
+            policy.execution_policy(event, ref, requested)
+    else:
+        assert policy.execution_policy(event, ref, requested) == {"publish": expected}
+
+
+@pytest.mark.parametrize("manifest,expected", [({"status": "completed"}, "auto-improve-source-41-1__42-1"),
+                                               ({"status": "blocked"}, ""), (None, "")])
+def test_marker_command_reports_whether_the_run_can_settle(tmp_path, monkeypatch, manifest, expected):
+    if manifest is not None:
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr("sys.argv", ["control", "artifact", "--ref", "refs/heads/main", "--identity", "41-1__42-1",
+                                    "--publish", "true", "--out", str(tmp_path)])
+    assert control.cli() == 0
+    assert output.read_text() == f"marker={expected}\n"
+
+
+def test_workflow_policy_command_needs_no_github_credentials(tmp_path, monkeypatch):
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr("sys.argv", ["control", "policy", "--event", "workflow_dispatch", "--ref", "refs/heads/main"])
+    assert control.cli() == 0
+    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert values == {"publish": "false"}
+
+
+def test_driver_rejects_non_main_source_even_when_given_local_artifacts(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "source.json").write_text(json.dumps({"run": {"head_branch": "feature"}}))
+    with pytest.raises(ValueError, match="only supports main"):
+        driver.run(tmp_path, source, tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("name,mode", [("../escape", 0), ("/escape", 0), ("link", stat.S_IFLNK | 0o777), ("..\\escape", 0)])
+def test_artifact_extraction_rejects_unsafe_entries(tmp_path, name, mode):
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        info = zipfile.ZipInfo(name)
+        info.external_attr = mode << 16
+        archive.writestr(info, "bad")
+    with pytest.raises(ValueError):
+        github.extract_archive(data.getvalue(), tmp_path / "out")
+    assert not (tmp_path / "escape").exists()
+
+
+def test_review_has_no_mutating_tools_or_publication_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_MODEL", "review-model")
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_API_KEY", "review-key")
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_BUDGET_USD", "0.01")
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_BASE_URL", "https://gateway.example/anthropic")
+    monkeypatch.setenv("GH_TOKEN", "never-forward")
+    monkeypatch.setenv("BENCHMARK_AGENT_API_KEY", "never-forward-either")
+    monkeypatch.setattr(review.shutil, "which", lambda _: "/bin/claude")
+    captured = {}
+    class Process:
+        returncode = 0
+        def communicate(self, prompt, timeout):
+            return json.dumps({"total_cost_usd": 12.5, "num_turns": 10,
+                               "structured_output": AUDIT_OUTPUT}), None
+    def popen(command, **kwargs):
+        captured.update(command=command, **kwargs)
+        return Process()
+    monkeypatch.setattr(review.subprocess, "Popen", popen)
+    assert review.ask(tmp_path, "audit", review.ISSUE_AUDIT)["verdict"] == "confirmed"
+    assert "GH_TOKEN" not in captured["env"] and "BENCHMARK_AGENT_API_KEY" not in captured["env"]
+    assert "--max-budget-usd" not in captured["command"]
+    assert json.loads((tmp_path / "session-usage.json").read_text())["total_cost_usd"] == 12.5
+    assert captured["command"][captured["command"].index("--tools") + 1] == "Read,Grep,Glob"
+    assert "--restricted" in captured["command"]
+    assert captured["env"]["ANTHROPIC_BASE_URL"] == "https://gateway.example/anthropic"
+    assert captured["env"]["ANTHROPIC_API_KEY"] == "review-key"
+
+
+@pytest.mark.parametrize("returncode,payload", [
+    (1, {"type": "result", "is_error": True, "errors": ["Gateway rejected synthetic-key"], "session_id": "private-session"}),
+    (0, {"is_error": True, "result": "Gateway rejected synthetic-key"}),
+])
+def test_review_preserves_stdout_errors_without_leaking_secrets(tmp_path, monkeypatch, returncode, payload):
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_MODEL", "review-model")
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_API_KEY", "synthetic-key")
+    monkeypatch.setattr(review.shutil, "which", lambda _: "/bin/claude")
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_BUDGET_USD", "0.01")
+    class Process:
+        def communicate(self, *args, **kwargs):
+            return json.dumps(payload), None
+    proc = Process()
+    proc.returncode = returncode
+    monkeypatch.setattr(review.subprocess, "Popen", lambda *args, **kwargs: proc)
+    with pytest.raises((RuntimeError, ValueError)):
+        review.ask(tmp_path, "audit", review.ISSUE_AUDIT)
+    saved = (tmp_path / "session-error.log").read_text()
+    assert "Gateway rejected" in saved
+    assert "synthetic-key" not in saved
+    assert "private-session" not in saved
+
+
+def test_failure_evidence_uses_source_rubric_and_keeps_unknown_tasks(tmp_path):
+    run = tmp_path / "benchmark/runs/ci-42-1-phone"
+    run.mkdir(parents=True)
+    (run / "manifest.json").write_text(json.dumps({"metrics_k": 1, "agent_model": "old-model"}))
+    (run / "suite.json").write_text(json.dumps({"tasks": [{"id": "tap", "rubric": ["original rule"]}]}))
+    (run / "results.jsonl").write_text(json.dumps({"task_id": "tap", "attempt": 1, "status": "failed"}) + "\n")
+    failures, warnings = evidence.source_failures_window(tmp_path, [("42", "1")], {})
+    assert not warnings
+    assert failures[0]["observations"][0]["task"]["rubric"] == ["original rule"]
+    assert failures[0]["observations"][0]["current_task"] is None
+
+
+def test_benchmark_environment_excludes_review_and_github_secrets(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "secret")
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_API_KEY", "secret")
+    monkeypatch.setenv("BENCHMARK_AGENT_API_KEY", "benchmark-only")
+    env = execution.benchmark_environment()
+    assert "GH_TOKEN" not in env and "AUTO_IMPROVE_REVIEW_API_KEY" not in env
+    assert env["BENCHMARK_AGENT_API_KEY"] == "benchmark-only"
+
+
+def test_review_workspace_does_not_copy_paths_from_untrusted_payload(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret").write_text("private")
+    out = tmp_path / "output"
+    out.mkdir()
+    stage = driver.workspace(out, "review", tmp_path,
+                             {"evidence": str(outside), "pre_image": str(outside / "secret")}, include_code=False)
+    assert not (stage / "images").exists()
+    assert not (stage / "attempts").exists()
+
+
+@pytest.mark.parametrize("costs,total,measured,complete", [
+    ([1.25, 2.5], 3.75, 2, True), ([None, 2.5], 2.5, 1, False),
+    ([None], None, 0, False), ([False, -1, float('nan')], None, 0, False),
+])
+def test_cost_reporting_distinguishes_missing_prices_from_zero(costs, total, measured, complete):
+    result = policy.review_cost_summary([{"total_cost_usd": cost} for cost in costs])
+    assert result == {"estimated_cost_usd": total, "measured_sessions": measured,
+                      "total_sessions": len(costs), "complete": complete}
+
+
+def test_diagnosis_index_keeps_large_evidence_in_addressable_files(tmp_path):
+    payload = {"failures": [{"key": "a:one", "status": "failed", "failure_class": "agent",
+                            "agent_eligible": True, "rubric": [{"id": "saved", "verdict": "no", "reason": "missing"}],
+                            "history": {"messages": ["detail " * 10000]},
+                            "task": {"prompt": "Save the note"}}],
+               "history": {"runs": [{"id": i, "details": "history " * 1000} for i in range(100)]},
+               "feedback": [], "configuration": {"model": "test"}}
+    stage = driver.workspace(tmp_path, "diagnosis", tmp_path, payload, include_code=False)
+    index = json.loads((stage / "input.json").read_text())
+    assert (stage / "input.json").stat().st_size < 10000
+    entry = index["failures"][0]
+    assert entry["key"] == "a:one" and entry["rubric"] == payload["failures"][0]["rubric"]
+    assert json.loads((stage / entry["detail_file"]).read_text()) == payload["failures"][0]
+    assert json.loads((stage / index["history"]["detail_file"]).read_text()) == payload["history"]
+
+
+def test_raw_artifact_paths_cannot_escape_run(tmp_path):
+    run = tmp_path / "benchmark/runs/ci-42-1-a"
+    run.mkdir(parents=True)
+    (run / "manifest.json").write_text('{}')
+    (run / "results.jsonl").write_text(json.dumps({"task_id": "../../other", "status": "failed", "attempt": 1}))
+    failures, warnings = evidence.source_failures_window(tmp_path, [("42", "1")], {})
+    assert not failures
+    assert warnings
+
+
+def test_judge_errors_are_rejudged_without_rerunning_the_agent(tmp_path, monkeypatch):
+    import time
+    import runner.rejudge as rejudge
+    run = tmp_path / "run"
+    run.mkdir()
+    executed = {"task_id": "t", "attempt": 1, "status": "judge_error", "final": "agent output",
+                "metrics": {"agent_eligible": False, "judge_error": "connection reset"}}
+    (run / "results.jsonl").write_text(json.dumps(executed) + "\n")
+    outcomes = iter(["judge_error", "passed"])
+    calls = []
+    def fake_rejudge(path, model, base_url, *, judge_api_key_env, only_judge_errors):
+        calls.append((model, judge_api_key_env, only_judge_errors))
+        row = json.loads((path / "results.jsonl").read_text())
+        row["status"] = next(outcomes)
+        (path / "results.rejudged.jsonl").write_text(json.dumps(row) + "\n")
+    monkeypatch.setenv("BENCHMARK_JUDGE_MODEL", "same-judge")
+    monkeypatch.setattr(rejudge, "rejudge_run", fake_rejudge)
+    monkeypatch.setattr(execution.time, "sleep", lambda _: None)
+    execution.rejudge_transient_errors(run, deadline=time.monotonic() + 3600, delays=(0, 0, 0))
+    assert calls == [("same-judge", "BENCHMARK_JUDGE_API_KEY", True)] * 2
+    result = json.loads((run / "results.jsonl").read_text())
+    assert result["status"] == "passed" and result["final"] == "agent output"
+    assert json.loads((run / "results.original.jsonl").read_text()) == executed
+    # Too little time left keeps the judge_error row, which the comparison gate rejects.
+    (run / "results.jsonl").write_text(json.dumps(executed) + "\n")
+    calls.clear()
+    execution.rejudge_transient_errors(run, deadline=time.monotonic() + 10, delays=(0,))
+    assert not calls and json.loads((run / "results.jsonl").read_text())["status"] == "judge_error"
+
+
+def write_run(run, status, *, report=True):
+    """A one-task run with the artifacts run_case checks for completeness."""
+    run.mkdir(parents=True, exist_ok=True)
+    counts = {"passed": 0, "failed": 0, "skipped": 0, "judge_error": 0, "timeout": 0, status: 1}
+    (run / "manifest.json").write_text(json.dumps({"totals": {"tasks": 1, **counts},
+                                                   "planned_task_attempts": [{"task_id": "t", "attempt": 1}]}))
+    (run / "results.jsonl").write_text(json.dumps({"task_id": "t", "attempt": 1, "status": status, "metrics": {}}) + "\n")
+    (run / "metrics.json").write_text("{}")
+    for name in ("summary.md",) + (("report.html",) if report else ()):
+        (run / name).write_text("x")
+
+
+@pytest.mark.parametrize("exit_code,status,report,accepted", [
+    (1, "judge_error", True, True),
+    (1, "judge_error", False, False),
+    (143, "judge_error", True, False),
+    (1, "failed", True, False),
+])
+def test_only_a_complete_judge_error_run_survives_a_failed_runner_exit(tmp_path, monkeypatch, exit_code, status,
+                                                                      report, accepted):
+    from ci.plan import Catalog, SuiteCase
+    root = tmp_path / "root"
+    monkeypatch.setattr(execution, "load_catalog", lambda **_: Catalog((SuiteCase("case", "suite.json", "isolated"),)))
+    def fake_command(args, **kwargs):
+        write_run(root / "benchmark/runs" / args[4], status, report=report)
+        raise execution.CommandFailed(exit_code, kwargs["log"])
+    monkeypatch.setattr(execution, "command", fake_command)
+    monkeypatch.setattr(execution, "rejudge_transient_errors", lambda run, **kwargs: None)
+    run = lambda: execution.run_task(root, "case:t", 1, "image", tmp_path / "out", deadline=time.monotonic() + 3600)
+    if accepted:
+        assert run()["status"] == "judge_error"
+    else:
+        # A cancellation, a missing report, or any other failure is never read as a result.
+        with pytest.raises(execution.CommandFailed):
+            run()
+
+
+@pytest.mark.parametrize("failure", [None, "timeout", "cancel_during_rejudge"])
+def test_run_task_rejudges_only_completed_runs_and_propagates_cancellation(tmp_path, monkeypatch, failure):
+    from ci.plan import Catalog, SuiteCase
+    root = tmp_path / "root"
+    run_dir = root / "benchmark/runs"
+    monkeypatch.setattr(execution, "load_catalog", lambda **_: Catalog((SuiteCase("case", "suite.json", "isolated"),)))
+    def fake_command(*args, **kwargs):
+        run = next(iter(run_dir.glob("*")), None) or run_dir / args[0][4]
+        run.mkdir(parents=True, exist_ok=True)
+        (run / "results.jsonl").write_text(json.dumps({"task_id": "t", "status": "judge_error"}) + "\n")
+        if failure == "timeout":
+            raise TimeoutError("runner timed out")
+    rejudged = []
+    def fake_rejudge(run, **kwargs):
+        rejudged.append(run)
+        if failure == "cancel_during_rejudge":
+            raise InterruptedError("Workflow interrupted by signal 15")
+    monkeypatch.setattr(execution, "command", fake_command)
+    monkeypatch.setattr(execution, "rejudge_transient_errors", fake_rejudge)
+    out = tmp_path / "out"
+    expected = {None: None, "timeout": TimeoutError, "cancel_during_rejudge": InterruptedError}[failure]
+    if expected:
+        with pytest.raises(expected):
+            execution.run_task(root, "case:t", 1, "image", out, deadline=time.monotonic() + 3600)
+    else:
+        assert execution.run_task(root, "case:t", 1, "image", out, deadline=time.monotonic() + 3600)["task_id"] == "t"
+    # A timed-out run is retained as evidence but never waits for a rejudge.
+    assert len(rejudged) == (0 if failure == "timeout" else 1)
+    assert (out / "evidence/results.jsonl").is_file() and not (out / "rejudge-error.log").exists()
+
+
+def test_evidence_redaction_keeps_json_valid(tmp_path, monkeypatch):
+    run, out = tmp_path / "run", tmp_path / "out"
+    run.mkdir()
+    secret = 'secret-with-"quotes"'
+    monkeypatch.setenv("BENCHMARK_AGENT_API_KEY", secret)
+    value = {"task_id": "test", "metrics": {"error": f"Provider rejected {secret}"}, "token": secret}
+    (run / "results.jsonl").write_text(json.dumps(value) + "\n")
+    execution.retain_evidence(run, out)
+    result = json.loads((out / "results.jsonl").read_text())
+    assert result["token"] == "[REDACTED]"
+    assert secret not in result["metrics"]["error"]
+
+
+@pytest.mark.parametrize("change", [{"verdict": "likely"}, {"code_locations": "src/a.go"}, {"extra": True}])
+def test_review_contract_rejects_values_outside_the_schema(change):
+    review.validate_output(AUDIT_OUTPUT, review.ISSUE_AUDIT)
+    with pytest.raises(ValueError):
+        review.validate_output({**AUDIT_OUTPUT, **change}, review.ISSUE_AUDIT)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_discovery_normalizes_artifact_root(tmp_path, monkeypatch, nested):
+    class API:
+        def discover(self, *args, **kwargs):
+            return {"identity": "40-1__41-1__42-1", "sources": [
+                {"artifact": {"id": i}, "identity": f"{i}-1", "run": {"id": i}} for i in (40, 41, 42)]}
+        def download(self, artifact, destination):
+            root = destination / "benchmark" if nested else destination
+            # Run 40 failed before any task ran, so its artifact holds only the dashboard.
+            if artifact["id"] != 40:
+                (root / "runs" / f"ci-{artifact['id']}-1-a").mkdir(parents=True)
+            root.mkdir(parents=True, exist_ok=True)
+            (root / "dashboard-data.json").write_text(json.dumps({"history": [artifact["id"]]}))
+        def issues(self):
+            return []
+        def pages(self, *args, **kwargs):
+            return []
+        def auto_improve_artifacts(self, cutoff):
+            return []
+    out = tmp_path / "source"
+    result = control.discover(API(), out, "", "main")
+    assert result["identity"] == "40-1__41-1__42-1" and result["empty_artifacts"] == ["40-1"]
+    assert sorted(p.name for p in (out / "benchmark/runs").iterdir()) == ["ci-41-1-a", "ci-42-1-a"]
+    assert json.loads((out / "history.json").read_text()) == {"history": [42]}
+
+
+def cluster(**overrides):
+    base = {"title": "Saves one-off plans", "cause": "Admission accepts dated plans",
+            "judge_review": "supported", "fix_target": "go_code", "symptom": {"kind": "none", "pattern": ""},
+            "targets": ["a:one"], "source_paths": ["src/agent/memory.go"], "evidence": ["trace step 2"]}
+    return {**base, **overrides}
+
+
+def observation(source, success=False, eligible=True):
+    return {"source": source, "status": "passed" if success else "failed", "agent_eligible": eligible,
+            "metrics": {"success": success, "agent_eligible": eligible},
+            "manifest": {"agent_model": "m2" if success else "m1"}}
+
+
+def analyze(tmp_path, monkeypatch, clusters, *, outcome="failed", audit=None, feedback=(), evaluation_issues=(),
+            failing_runs=2, eligible=True, run_error=None, max_issues=None):
+    """Run the driver on a synthetic two-day window with mocked model sessions and task runs."""
+    for kind in ("AGENT", "JUDGE"):
+        for field in ("MODEL", "PROVIDER", "BASE_URL", "API_KEY"):
+            monkeypatch.setenv(f"BENCHMARK_{kind}_{field}", "synthetic")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    if max_issues is not None:
+        monkeypatch.setenv("AUTO_IMPROVE_MAX_ISSUES", str(max_issues))
+    repo, source, out = tmp_path / "repo", tmp_path / "source", tmp_path / "out"
+    repo.mkdir(); source.mkdir()
+    (source / "source.json").write_text(json.dumps({"empty_artifacts": ["40-1"], "sources": [
+        {"run": {"id": i, "run_attempt": 1, "head_sha": "s", "head_branch": "main",
+                 "created_at": f"2026-11-{i - 31:02d}T18:00:00Z"}} for i in (40, 41, 42)]}))
+    (source / "feedback.json").write_text(json.dumps(list(feedback)))
+    keys = sorted({"a:one", *(t for c in clusters for t in c["targets"] if not t.startswith("z:"))})
+    tasks = {k: {"case_id": k.split(":")[0], "environment": "isolated", "runnable": True,
+                 "suite": "suites/memory_v1.json", "task": {"id": k.split(":")[1]}} for k in keys}
+    failures = [{"key": k, "observations": [observation(s, eligible=eligible) for s in ("41-1", "42-1")[:failing_runs]]
+                 + [observation(s, success=True) for s in ("41-1", "42-1")[failing_runs:]]} for k in keys]
+    runs = []
+    analyze.rejudge = []
+    def run_task(root, key, repeat, image, directory, **kwargs):
+        runs.append(key)
+        analyze.rejudge.append(kwargs["rejudge"])
+        if run_error:
+            raise run_error
+        trace = directory / "evidence/tasks" / key.split(":")[1] / "trace.json"
+        trace.parent.mkdir(parents=True)
+        trace.write_text(json.dumps({"tool_results": []}))
+        status = {"failed": row(1, False), "passed": row(1), "judge_error": {"status": "judge_error", "metrics": {}}}[outcome]
+        return {**status, "task_id": key.split(":")[1], "evidence": str(directory / "evidence")}
+    def ask(_out, name, _repo, payload, *args, **kwargs):
+        if name == "diagnosis":
+            return {"summary": "Window summary", "clusters": clusters, "evaluation_issues": [
+                {"task": t, "kind": "evaluator", "reason": "r", "evidence": []} for t in evaluation_issues]}
+        if callable(audit):
+            return audit(payload)
+        # Like a real auditor, cite the staged fresh attempt and a historical detail file.
+        staged = next((r["evidence"] for r in payload["reproduction"].values() if r["evidence"]), None)
+        assert all(set(r) == {"reproduced", "reason", "symptom_excerpts", "result", "evidence"}
+                   for r in payload["reproduction"].values())
+        cited = ([f"attempts/{policy.digest(staged)[:20]}/tasks/one/trace.json: saved once"] if staged else [])
+        return {**AUDIT_OUTPUT, "targets": payload["targets"],
+                "evidence": cited + ["details/failure-001.json: 2/2 failures"], **(audit or {})}
+    monkeypatch.setattr(driver, "git", lambda *a: "0123456789abcdef")
+    monkeypatch.setattr(driver, "tracked_files", lambda _repo: {"src/agent/memory.go", "benchmark/runner/judge.py"})
+    monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda _repo: tasks)
+    monkeypatch.setattr(driver.evidence, "source_failures_window", lambda *a, **k: (failures, []))
+    monkeypatch.setattr(driver, "ask", ask)
+    monkeypatch.setattr(driver.execution, "prepare", lambda *a, **k: None)
+    monkeypatch.setattr(driver.execution, "remove_images", lambda images: None)
+    monkeypatch.setattr(driver.execution, "run_task", run_task)
+    state = driver.run(repo, source, out)
+    drafts = json.loads((out / "issues.json").read_text()) if (out / "issues.json").is_file() else []
+    return state, drafts, runs, out
+
+
+def test_reproduced_and_audited_finding_becomes_one_issue_for_a_coding_agent(tmp_path, monkeypatch):
+    state, drafts, runs, out = analyze(tmp_path, monkeypatch, [cluster()])
+    assert state["status"] == "completed" and runs == ["a:one"] and analyze.rejudge == [True]
+    assert [f["status"] for f in state["findings"]] == ["issue_ready"]
+    [draft] = drafts
+    assert draft["action"] == "create" and draft["labels"] == ["auto-improve"]
+    assert draft["title"] == "[auto-improve][agent] Saves one-off plans"
+    body = draft["body"]
+    meta = policy.issue_metadata({"user": {"login": "bot"}, "body": body}, {"bot"})
+    assert {k: meta[k] for k in ("domain", "targets")} == {"domain": "agent", "targets": ["a:one"]}
+    # The issue carries what a developer needs: command, observed impact, code and acceptance.
+    # The reproduce command is the one CI runs, and the revision is where it really ran.
+    assert "--suite suites/memory_v1.json \\\n  --task-id one \\\n  --auto-agent-setup" in body
+    assert "--agent-url" not in body
+    assert "| Task | Environment | Failed daily runs | Reproduced on `main` `0123456789ab` |" in body
+    assert "| `a:one` | isolated | 2/2 | yes |" in body
+    assert "analyzed on `main` `0123456789ab`" in body and "on `main` `" not in body.split("## Summary")[0]
+    observations = json.loads((out / "finding-1/daily-observations.json").read_text())
+    assert [o["source"] for o in observations["a:one"]] == ["41-1", "42-1"]
+    # Code locations are permalinks at the analyzed commit; the header says where to fix and which model failed.
+    assert ("- [`src/agent/memory.go:12`](https://github.com/o/r/blob/0123456789abcdef/src/agent/memory.go#L12)"
+            in body and "The task passes 2/3 attempts" in body)
+    assert body.split("## Summary")[0].count("**Fix in**: Go code · **Agent model**: `m1` · **Tasks**: 1 (1 reproduced)") == 1
+    assert "**Model-dependent**" in body
+    # Evidence points at files in the uploaded artifact, not the audit's temporary workspace.
+    assert "attempts/" not in body and "details/failure" not in body
+    assert "finding-1/reproduction-runs/" in body and "daily-run observations of a:one: 2/2 failures" in body
+    assert "from 3 daily runs (2026-11-09 to 2026-11-11; 1 ran no tasks)" in body
+    assert (out / "issues/01-create.md").is_file()
+
+
+@pytest.mark.parametrize("change,status", [
+    ({"cluster": {"targets": ["z:unobserved"]}}, "invalid"),
+    ({"cluster": {"source_paths": ["src/agent/missing.go", "details/failure-001.json"]}}, "invalid"),
+    ({"cluster": {"evidence": []}}, "invalid"),
+    ({"cluster": {"judge_review": "disputed"}}, "report_only"),
+    ({"cluster": {"fix_target": "unknown"}}, "report_only"),
+    ({"cluster": {"fix_target": "benchmark_code"}}, "invalid"),
+    ({"evaluation_issues": ["a:one"]}, "invalid"),
+    ({"eligible": False}, "invalid"),
+    ({"outcome": "passed"}, "not_reproduced"),
+    ({"outcome": "judge_error"}, "not_reproduced"),
+    ({"audit": {"verdict": "refuted"}}, "refuted"),
+    ({"audit": {"verdict": "insufficient_evidence"}}, "insufficient_evidence"),
+    ({"audit": {"code_locations": ["src/agent/missing.go:3", "../etc/passwd"]}}, "insufficient_evidence"),
+    ({"audit": {"acceptance_criteria": []}}, "insufficient_evidence"),
+    ({"audit": {"targets": []}}, "insufficient_evidence"),
+    ({"audit": {"targets": ["z:not-in-finding"]}}, "insufficient_evidence"),
+])
+def test_unsupported_findings_are_never_filed(tmp_path, monkeypatch, change, status):
+    options = {k: v for k, v in change.items() if k != "cluster"}
+    state, drafts, _, _ = analyze(tmp_path, monkeypatch, [cluster(**change.get("cluster", {}))], **options)
+    assert [f["status"] for f in state["findings"]] == [status] and drafts == []
+    assert state["findings"][0].get("reason")
+
+
+def test_benchmark_findings_reproduce_their_symptom_without_rejudging(tmp_path, monkeypatch):
+    symptom = {"kind": "judge_error", "pattern": ""}
+    real = policy.reproduction
+    assert real("benchmark", {"status": "judge_error", "metrics": {}}, symptom, [])["reproduced"]
+    assert not real("benchmark", row(1, False), symptom, [])["reproduced"]
+    seen = []
+    monkeypatch.setattr(policy, "reproduction", lambda domain, row, s, traces: seen.append((domain, s)) or
+                        {"reproduced": True, "symptom_excerpts": ["judge_error"], "reason": "symptom observed"})
+    state, drafts, _, _ = analyze(tmp_path, monkeypatch, [cluster(fix_target="benchmark_code", symptom=symptom,
+                                                                  source_paths=["benchmark/runner/judge.py"])])
+    assert seen == [("benchmark", symptom)] and drafts[0]["title"].startswith("[auto-improve][benchmark]")
+    # Rejudging would hide the judge failure the finding is about.
+    assert analyze.rejudge == [False]
+
+
+@pytest.mark.parametrize("failing_runs,status", [(2, "issue_ready"), (1, "not_persistent")])
+def test_findings_the_runner_cannot_execute_need_repeated_daily_failures(tmp_path, monkeypatch, failing_runs, status):
+    state, drafts, runs, _ = analyze(tmp_path, monkeypatch, [cluster(fix_target="external_code")],
+                                     failing_runs=failing_runs)
+    assert runs == [] and [f["status"] for f in state["findings"]] == [status]
+    assert len(drafts) == (status == "issue_ready")
+    # The day that passed used another model; only the failing model is named.
+    assert state["findings"][0]["agent_models"] == ["m1"]
+
+
+def test_new_issues_are_ranked_capped_and_deduplicated_within_a_run(tmp_path, monkeypatch):
+    clusters = [cluster(title=f"Finding {i}", targets=[f"a:t{i}"]) for i in range(4)]
+    clusters.append(cluster(title="Same tasks again", targets=["a:t0", "a:t1"]))
+    state, drafts, _, _ = analyze(tmp_path, monkeypatch, clusters, max_issues=2)
+    statuses = {f["title"]: f["status"] for f in state["findings"]}
+    # The broadest reproduced finding ranks first; overlapping later findings are not duplicates.
+    assert statuses["Same tasks again"] == "issue_ready"
+    assert sorted(statuses.values()) == ["duplicate", "duplicate", "issue_ready", "issue_ready", "over_limit"]
+    assert [d["action"] for d in drafts] == ["create", "create"]
+
+
+def issue(number, targets, *, state="open", state_reason=None, author="github-actions[bot]", labels=()):
+    body = f'<!-- auto-improve {json.dumps({"domain": "agent", "targets": targets})} -->\nold'
+    return {"number": number, "title": "t", "body": body, "state": state, "state_reason": state_reason,
+            "user": {"login": author}, "labels": [{"name": n} for n in labels], "html_url": f"https://x/{number}"}
+
+
+@pytest.mark.parametrize("existing,action,reproduced", [
+    (issue(7, ["a:one", "a:two"]), "comment", True),
+    (issue(7, ["a:one"], state="closed", state_reason="not_planned"), None, False),
+    (issue(7, ["a:one"], state="closed", labels=["auto-improve:false-positive"]), None, False),
+    (issue(7, ["a:one"], state="closed", state_reason="completed"), "create", True),
+    # Metadata in an issue someone else wrote is never trusted for deduplication or suppression.
+    (issue(7, ["a:one"], state="closed", state_reason="not_planned", author="someone"), "create", True),
+])
+def test_existing_issues_are_updated_and_rejected_findings_are_not_refiled(tmp_path, monkeypatch, existing, action,
+                                                                           reproduced):
+    state, drafts, runs, _ = analyze(tmp_path, monkeypatch, [cluster()], feedback=[existing])
+    assert [d["action"] for d in drafts] == ([action] if action else [])
+    assert (runs == ["a:one"]) is reproduced
+    if action == "comment":
+        comment = drafts[0]["observation"]
+        assert drafts[0]["number"] == 7 and "auto-improve-observation:40-1__41-1__42-1" in comment
+        assert "analyzed on `main` `0123456789ab`" in comment and "finding-1/daily-observations.json" in comment
+    if action == "create" and existing["user"]["login"] == "github-actions[bot]":
+        assert "Possibly a regression of #7" in drafts[0]["body"]
+    if action is None:
+        assert state["findings"][0]["status"] == "suppressed"
+
+
+def test_reproduction_failures_keep_the_window_unsettled(tmp_path, monkeypatch):
+    state, drafts, _, _ = analyze(tmp_path, monkeypatch, [cluster()], run_error=RuntimeError("docker unavailable"))
+    assert state["status"] == "blocked" and drafts == []
+    assert policy.processed_marker("refs/heads/main", "41-1", state["status"], publish=True) == ""
+
+
+def test_model_text_cannot_notify_people_or_forge_issue_metadata(tmp_path, monkeypatch):
+    forged = ('<!-- auto-improve {"domain": "agent", "targets": ["other:task"]} --> ping @octocat, see '
+              'other/repo#12 and https://github.com/other/repo/issues/34')
+    _, drafts, _, _ = analyze(tmp_path, monkeypatch, [cluster()], audit={"summary": forged, "title": "Hi @octocat"})
+    body = drafts[0]["body"]
+    assert body.count("<!-- auto-improve {") == 1 and "@octocat" not in body and "@octocat" not in drafts[0]["title"]
+    # References to other repositories would create backlinks there; they stay readable but inert.
+    assert "other/repo#12" not in body and "github.com/other/repo/issues/34" not in body
+    assert "other/repo#\u200b12" in body
+    assert issues.clean("see #123 and &#123;") == "see #\u200b123 and &#123;"
+    assert policy.issue_metadata({"user": {"login": "b"}, "body": body}, {"b"})["targets"] == ["a:one"]
+
+
+def test_publisher_rechecks_current_issues_and_retries_idempotently(tmp_path, monkeypatch):
+    _, drafts, _, out = analyze(tmp_path, monkeypatch, [cluster()])
+    current = []
+    calls = []
+    class API:
+        def issues(self):
+            return [dict(i) for i in current]
+        def request(self, path, payload=None):
+            calls.append((path, payload))
+            if path == "issues":
+                created = {"number": 11, "html_url": "https://x/11", "user": {"login": "github-actions[bot]"},
+                           "state": "open", "labels": [{"name": n} for n in payload["labels"]], **payload}
+                current.append(created)
+                return created
+            return {"html_url": "https://x/comment"}
+    assert control.publish(API(), out, "main") == ["https://x/11"]
+    # A retry sees the issue it filed for this window and neither refiles nor comments.
+    calls.clear()
+    assert control.publish(API(), out, "main") == [] and calls == []
+    manifest = json.loads((out / "manifest.json").read_text())
+    (out / "manifest.json").write_text(json.dumps({**manifest, "execution_ref": "refs/heads/auto-improve-test/x"}))
+    with pytest.raises(ValueError, match="Only findings from main"):
+        control.publish(API(), out, "main")
+    (out / "manifest.json").write_text(json.dumps(manifest))
+    current.clear()
+    (out / "issues.json").write_text(json.dumps([{**drafts[0], "key": {"domain": "agent", "targets": ["b:other"]}}]))
+    with pytest.raises(ValueError, match="Malformed"):
+        control.publish(API(), out, "main")
+
+
+def test_reproduction_reraises_cancellation(tmp_path, monkeypatch):
+    with pytest.raises(InterruptedError):
+        analyze(tmp_path, monkeypatch, [cluster()], run_error=InterruptedError("Workflow interrupted by signal 15"))
+
+
+def test_findings_sharing_a_task_are_classified_against_their_own_symptom(tmp_path, monkeypatch):
+    shared = dict(fix_target="benchmark_code", source_paths=["benchmark/runner/judge.py"])
+    clusters = [cluster(title="Judge fails", symptom={"kind": "judge_error", "pattern": ""}, **shared),
+                cluster(title="Setup fails", symptom={"kind": "setup_failure", "pattern": "boot"}, **shared)]
+    state, _, runs, _ = analyze(tmp_path, monkeypatch, clusters, outcome="judge_error")
+    assert runs == ["a:one"]
+    reproduced = {f["title"]: f["reproduction"]["a:one"]["reproduced"] for f in state["findings"]}
+    assert reproduced == {"Judge fails": True, "Setup fails": False}
+
+
+def test_dashboard_only_sources_do_not_block_a_failure_free_window(tmp_path):
+    run = tmp_path / "benchmark/runs/ci-42-1-case"
+    run.mkdir(parents=True)
+    (run / "manifest.json").write_text("{}")
+    (run / "results.jsonl").write_text(json.dumps({"task_id": "t", "status": "passed"}) + "\n")
+    sources = [("41", "1"), ("42", "1")]
+    assert evidence.source_failures_window(tmp_path, sources, {}, empty=frozenset({"41-1"})) == ([], [])
+    _, warnings = evidence.source_failures_window(tmp_path, sources, {})
+    assert warnings == ["No completed suite manifests for source run 41-1"]
+    # A window in which every source ran no task is settled too.
+    assert evidence.source_failures_window(tmp_path, [("41", "1")], {}, empty=frozenset({"41-1"})) == ([], [])
+
+
+def test_audit_narrows_an_issue_to_one_root_cause(tmp_path, monkeypatch):
+    mixed = cluster(title="Saves plans and secrets", targets=["a:one", "a:secret"])
+    state, drafts, _, out = analyze(tmp_path, monkeypatch, [mixed], audit={"targets": ["a:secret"]})
+    [finding], [draft] = state["findings"], drafts
+    # The issue, its dedup identity and its evidence cover only the audited root cause.
+    assert finding["key"]["targets"] == ["a:secret"] and finding["diagnosed_targets"] == ["a:one", "a:secret"]
+    meta = policy.issue_metadata({"user": {"login": "b"}, "body": draft["body"]}, {"b"})
+    assert meta["targets"] == ["a:secret"] and "`a:one`" not in draft["body"]
+    assert list(json.loads((out / "finding-1/daily-observations.json").read_text())) == ["a:secret"]
+
+
+def test_narrowing_onto_rejected_tasks_is_suppressed(tmp_path, monkeypatch):
+    rejected = issue(9, ["a:secret"], state="closed", state_reason="not_planned")
+    mixed = cluster(title="Saves plans and secrets", targets=["a:one", "a:secret"])
+    state, drafts, _, _ = analyze(tmp_path, monkeypatch, [mixed], audit={"targets": ["a:secret"]}, feedback=[rejected])
+    assert drafts == [] and state["findings"][0]["status"] == "suppressed"
+
+
+@pytest.mark.parametrize("task,flags,bridge", [
+    ({"suite": "suites/s.json", "environment": "isolated"}, [], False),
+    ({"suite": "suites/s.json", "environment": "mobilegym", "execution_mode": "realtime-text",
+      "target_platform": "android"}, ["--execution-mode realtime-text", "--target-platform android"], True),
+])
+def test_reproduce_command_matches_the_ci_invocation(task, flags, bridge):
+    command = issues.reproduce_command(task, "case:t")
+    assert "--auto-agent-setup" in command and "--agent-url" not in command
+    assert all(flag in command for flag in flags)
+    assert ("--environment-url" in command) is bridge
+
+
+@pytest.mark.parametrize("pattern", ["^(a+)+$", "^a*a*a*a*a*a*a*a*b$", "(x)\\1"])
+def test_symptom_patterns_are_literal_and_match_in_linear_time(pattern):
+    # Regex syntax is plain text: adversarial patterns neither backtrack nor match by accident.
+    row = {"metrics": {"error": "a" * (policy.SYMPTOM_TEXT_LIMIT - 1) + "!"}}
+    started = time.monotonic()
+    assert policy.symptom_matches({"kind": "error_text", "pattern": pattern}, row, []) == []
+    assert time.monotonic() - started < 0.5
+    symptom = {"kind": "error_text", "pattern": "Socket Missing | connection closed"}
+    policy.validate_symptom(symptom)
+    assert policy.symptom_matches(symptom, {"metrics": {"error": "dial: socket missing"}}, [])
+    assert policy.symptom_matches(symptom, {"metrics": {"error": "Connection closed by peer"}}, [])
+    with pytest.raises(policy.InvalidFinding):
+        policy.validate_symptom({"kind": "error_text", "pattern": " | "})
+
+
+def test_symptom_search_is_bounded_to_a_prefix_of_each_text():
+    row = {"metrics": {"error": "x" * policy.SYMPTOM_TEXT_LIMIT + "late marker"}}
+    assert policy.symptom_matches({"kind": "error_text", "pattern": "late marker"}, row, []) == []
+    row = {"metrics": {"error": "early marker" + "x" * 10000}}
+    assert policy.symptom_matches({"kind": "error_text", "pattern": "early marker"}, row, [])
+
+
+def test_footer_claims_a_fresh_reproduction_only_when_one_ran(tmp_path, monkeypatch):
+    _, drafts, _, _ = analyze(tmp_path, monkeypatch, [cluster(fix_target="external_code")])
+    assert "were not reproduced" in drafts[0]["body"] and "the fresh reproduction" not in drafts[0]["body"]
+
+
+def test_cancellation_survives_unreadable_evidence(tmp_path, monkeypatch):
+    from ci.plan import Catalog, SuiteCase
+    root = tmp_path / "root"
+    monkeypatch.setattr(execution, "load_catalog", lambda **_: Catalog((SuiteCase("case", "suite.json", "isolated"),)))
+    def fake_command(args, **kwargs):
+        run = root / "benchmark/runs" / args[4]
+        run.mkdir(parents=True)
+        (run / "manifest.json").write_text("{partial")
+        raise InterruptedError("Workflow interrupted by signal 15")
+    monkeypatch.setattr(execution, "command", fake_command)
+    out = tmp_path / "out"
+    with pytest.raises(InterruptedError):
+        execution.run_task(root, "case:t", 1, "image", out, deadline=time.monotonic() + 3600)
+    assert "JSONDecodeError" in (out / "evidence-error.log").read_text()
+
+
+def test_stale_work_directories_are_swept_without_touching_the_current_run(tmp_path):
+    for name in ("auto-improve-1-1", "auto-improve-2-1", "auto-improve-3-1", "auto-improve-x", "other"):
+        (tmp_path / name / "source").mkdir(parents=True)
+    assert execution.cleanup_stale_work(tmp_path, "auto-improve-3-1") == ["auto-improve-1-1", "auto-improve-2-1"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["auto-improve-3-1", "auto-improve-x", "other"]

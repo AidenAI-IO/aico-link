@@ -698,6 +698,37 @@ globalThis.verifySemanticResyncReleasesExternalDrafts = async function() {
     ndjsonOwnedRequestIds.clear();
     resetHistoryWindow();
     renderHistory([]);
+
+    // A voice turn: the reply starts streaming before the provider has
+    // transcribed what the user said. The transcript must show at once, above
+    // the reply, and history must then replace it without a duplicate.
+    renderHistory([{type: 'assistant', request_id: 'context-user-0', content: 'Earlier answer'}]);
+    handleSemanticEvent({schema_version: 2, kind: 'text.delta', response_id: 'voice-response',
+        payload: {Text: 'It is sunny'}});
+    handleSemanticEvent({schema_version: 2, kind: 'transcript.segment_final', item_id: 'voice-item',
+        payload: {Text: 'What is the weather?', Role: 'user'}});
+    assert.deepEqual(Array.from(messagesDiv.children).map(node => node._message.content),
+        ['Earlier answer', 'What is the weather?', 'It is sunny'],
+        'a user transcript should appear above the reply that is already streaming');
+    handleSemanticEvent({schema_version: 2, kind: 'text.delta', response_id: 'voice-response',
+        payload: {Text: ' today.'}});
+    assert.deepEqual(Array.from(messagesDiv.children).map(node => node._message.content),
+        ['Earlier answer', 'What is the weather?', 'It is sunny today.'],
+        'the reply should keep streaming below the transcript');
+    handleSemanticEvent({schema_version: 2, kind: 'transcript.segment_final', item_id: 'voice-item-2',
+        payload: {Text: '   ', Role: 'user'}});
+    assert.equal(messagesDiv.children.length, 3, 'an empty transcript should render nothing');
+    streamingAssistantDrafts = {};
+    renderHistory([
+        {type: 'assistant', request_id: 'context-user-0', content: 'Earlier answer'},
+        {type: 'user', request_id: 'context-user-1', content: 'What is the weather?'},
+        {type: 'assistant', request_id: 'context-user-2', content: 'It is sunny today.'}
+    ]);
+    assert.deepEqual(Array.from(messagesDiv.children).map(node => node._message.content),
+        ['Earlier answer', 'What is the weather?', 'It is sunny today.'],
+        'history should replace the live transcript without duplicating it');
+    resetHistoryWindow();
+    renderHistory([]);
 };
 `
 ].join('\n');

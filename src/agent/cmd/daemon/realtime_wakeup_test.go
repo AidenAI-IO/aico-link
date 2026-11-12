@@ -66,6 +66,31 @@ func (f *fakeRealtimePlaybackAudio) StopPlayback(sessionID uint64) error {
 	return nil
 }
 
+// Muting the speaker drops audio the playback session still holds. The
+// position within the reply must survive, so a barge-in afterwards truncates
+// the provider's reply where playback had reached, not at the mute.
+func TestRealtimePlaybackDropQueuedKeepsReplyPosition(t *testing.T) {
+	audio := &fakeRealtimePlaybackAudio{}
+	format := agent.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16}
+	started := time.Unix(100, 0)
+	now := started
+	playback := realtimePlaybackState{now: func() time.Time { return now }}
+	if err := playback.appendItem(audio, format, "item-1", make([]byte, 48000)); err != nil {
+		t.Fatal(err)
+	}
+	now = started.Add(400 * time.Millisecond)
+	if err := playback.dropQueued(audio, format); err != nil {
+		t.Fatal(err)
+	}
+	if len(audio.stops) != 1 || audio.starts != 2 {
+		t.Fatalf("stops=%v starts=%d, want the queued session stopped and a new one opened", audio.stops, audio.starts)
+	}
+	now = started.Add(700 * time.Millisecond)
+	if got := playback.responseInterruption(format); got.ItemID != "item-1" || got.AudioEndMS != 700 {
+		t.Fatalf("interruption after a mute = %+v, want item-1 at 700 ms", got)
+	}
+}
+
 func TestRealtimePlaybackSplitsLargeAudioDelta(t *testing.T) {
 	audio := &fakeRealtimePlaybackAudio{}
 	playback := realtimePlaybackState{}

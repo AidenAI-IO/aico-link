@@ -10,11 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"aico-agent/internal/agent"
 	"aico-agent/internal/agent/realtimevoice"
+	streamcontract "aico-agent/internal/stream"
 )
 
 // Exercise the real daemon select loop, including its audio traffic and chat
@@ -137,6 +139,10 @@ func startBusyTestSessionWithBlockedCreate(t *testing.T, timeout time.Duration, 
 	return startBusyTestSessionConfigured(t, timeout, blockCreate, nil, 0, false, bridges...)
 }
 
+// busyTestSemanticSink, when set before a session starts, receives that
+// session's semantic events.
+var busyTestSemanticSink streamcontract.EventSink
+
 func startBusyTestSessionConfigured(t *testing.T, timeout time.Duration, blockCreate bool, interruptErr *error, ackTimeout time.Duration, explicitTools bool, bridges ...*realtimeChatBridge) (*busyTestSession, *realtimeChatBridge, <-chan error) {
 	t.Helper()
 	s := &busyTestSession{events: make(chan realtimevoice.Event, 32), created: make(chan struct{}, 32), closed: make(chan struct{}), toolResults: make(chan struct{}, 32)}
@@ -157,7 +163,10 @@ func startBusyTestSessionConfigured(t *testing.T, timeout time.Duration, blockCr
 	}
 	signals := make(chan os.Signal, 1)
 	done := make(chan error, 1)
-	go func() { done <- runRealtimeSessionWithIdleTimeout(cfg, signals, nil, nil, registry, timeout, bridge) }()
+	sink := busyTestSemanticSink
+	go func() {
+		done <- runRealtimeSessionWithRegistryAndSink(cfg, signals, nil, nil, registry, sink, timeout, nil, bridge)
+	}()
 	t.Cleanup(func() {
 		signals <- os.Interrupt
 		select {
@@ -828,4 +837,63 @@ func TestRealtimeBusyLateToolCancellationDoesNotCancelReusedCallID(t *testing.T)
 	}
 	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "r2", Status: "completed"}
 	requireBusyEvent(t, second, agent.RealtimeChatEventDone)
+}
+
+// A Web UI chat reply is shown from the request's own stream. Its semantic
+// events must carry the request ID so observers recognise the reply as that
+// request's instead of rendering it a second time under the response ID.
+func TestRealtimeChatResponseEventsCarryRequestID(t *testing.T) {
+	sink := &lockedSemanticSink{}
+	busyTestSemanticSink = sink
+	t.Cleanup(func() { busyTestSemanticSink = nil })
+	s, bridge, done := startBusyTestSession(t, time.Second)
+
+	events, err := bridge.Handle(context.Background(), agent.RealtimeChatRequest{RequestID: "web-chat-1", Message: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session exited before the chat response: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("chat response was not requested")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "resp-1"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptDelta, ResponseID: "resp-1", Role: "assistant", Text: "pong"}
+	requireBusyEvent(t, events, agent.RealtimeChatEventDelta)
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "resp-1", Status: "completed"}
+	requireBusyEvent(t, events, agent.RealtimeChatEventDone)
+
+	var replies int
+	for _, event := range sink.snapshot() {
+		if event.ResponseID != "resp-1" {
+			continue
+		}
+		replies++
+		if event.TurnID != "web-chat-1" {
+			t.Fatalf("%s turn_id = %q, want the chat request ID", event.Kind, event.TurnID)
+		}
+	}
+	if replies == 0 {
+		t.Fatal("no semantic events were published for the chat response")
+	}
+}
+
+type lockedSemanticSink struct {
+	mu     sync.Mutex
+	events []streamcontract.Event
+}
+
+func (s *lockedSemanticSink) Emit(_ context.Context, event streamcontract.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *lockedSemanticSink) snapshot() []streamcontract.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]streamcontract.Event(nil), s.events...)
 }

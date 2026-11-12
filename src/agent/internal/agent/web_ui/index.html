@@ -64,6 +64,14 @@
                 <button type="button" class="stop-run-btn" id="cancelSteerBtn" onclick="cancelPendingSteer()">Cancel</button>
             </div>
 
+              <section class="voice-stage hidden" id="voiceStage" aria-live="polite">
+                <div class="voice-orb" id="voiceOrb" data-activity="connecting" aria-hidden="true">
+                    <span class="voice-orb-cloud"></span>
+                    <span class="voice-orb-cloud voice-orb-cloud-alt"></span>
+                </div>
+                <div class="voice-status" id="voiceStatus">Connecting…</div>
+              </section>
+
               <form class="composer" onsubmit="event.preventDefault(); sendMessage();">
                 <div class="composer-shell" id="composerShell">
                     <input type="file" id="fileInput" class="hidden-input" multiple />
@@ -72,15 +80,32 @@
                         id="input"
                         class="composer-input"
                         rows="1"
-                        placeholder="Message Aico..."
+                        placeholder="Message Aico"
                     ></textarea>
                     <div class="composer-footer">
                         <div class="composer-toolbar">
-                            <button type="button" class="composer-btn" id="fileBtn" onclick="document.getElementById('fileInput').click()">Add file</button>
-                            <div class="composer-hint" id="composerHint" aria-live="polite">Enter to send, Shift+Enter for newline</div>
+                            <button type="button" class="composer-icon-btn" id="fileBtn" onclick="document.getElementById('fileInput').click()" title="Add file" aria-label="Add file">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                            </button>
+                            <div class="composer-hint" id="composerHint" aria-live="polite"></div>
                         </div>
                         <div class="composer-actions">
-                            <button type="submit" class="send-btn" id="sendBtn">Send</button>
+                            <button type="button" class="composer-icon-btn voice-toggle hidden" id="voiceMuteBtn" onclick="toggleRealtimeVoiceMute()" title="Mute microphone" aria-label="Mute microphone" aria-pressed="false">
+                                <svg class="voice-icon-on" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>
+                                <svg class="voice-icon-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 9.5V6a3 3 0 0 0-5.7-1.3M9 9v2a3 3 0 0 0 4.6 2.5M5.5 11a6.5 6.5 0 0 0 10.4 5.2M18.5 11c0 .9-.2 1.8-.5 2.6M12 17.5V21M4 4l16 16"/></svg>
+                            </button>
+                            <button type="button" class="composer-icon-btn voice-toggle hidden" id="voiceSpeakerBtn" onclick="toggleRealtimeVoiceSpeaker()" title="Mute speaker" aria-label="Mute speaker" aria-pressed="false">
+                                <svg class="voice-icon-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+                                <svg class="voice-icon-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+                            </button>
+                            <!-- One round button: send when there is text or an attachment,
+                                 start voice when the box is empty, end voice during a session. -->
+                            <button type="submit" class="composer-primary-btn" id="sendBtn" title="Send" aria-label="Send" data-mode="send">
+                                <svg class="primary-icon-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+                                <svg class="primary-icon-steer" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12M13 7l5 5-5 5"/></svg>
+                                <svg class="primary-icon-voice" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3"/></svg>
+                                <svg class="primary-icon-end" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -199,6 +224,7 @@
     <script defer src="/web-ui/scripts/attachments.js"></script>
     <script defer src="/web-ui/scripts/tool_messages.js"></script>
     <script defer src="/web-ui/scripts/resources.js"></script>
+    <script defer src="/web-ui/scripts/voice.js"></script>
     <script defer src="/web-ui/scripts/bootstrap.js"></script>
 </body>
 </html>

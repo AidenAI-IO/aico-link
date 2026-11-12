@@ -13,6 +13,7 @@ package lanaccess
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -217,6 +218,11 @@ func TrustListener(listener net.Listener) net.Listener { return trustedListener{
 // ConnContext is an http.Server ConnContext hook that records whether the
 // connection came from a TrustListener.
 func ConnContext(ctx context.Context, conn net.Conn) context.Context {
+	// An HTTPS server hands over its TLS wrapper; the trust marker is on the
+	// connection underneath.
+	if tlsConn, ok := conn.(*tls.Conn); ok {
+		conn = tlsConn.NetConn()
+	}
 	_, trusted := conn.(trustedConn)
 	return WithTrusted(ctx, trusted)
 }

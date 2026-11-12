@@ -50,6 +50,8 @@ func Run(args []string) int {
 	fs.StringVar(&options.LANAccessSync, "lan-access-sync", options.LANAccessSync, "helper that applies LAN access to SSH and the aico login (empty disables)")
 	fs.IntVar(&options.USBTerminalPort, "usb-terminal-port", options.USBTerminalPort, "serve the ttyd terminal on this port of the USB link only (0 disables)")
 	fs.StringVar(&options.TerminalTarget, "terminal-target", options.TerminalTarget, "loopback ttyd URL behind the USB terminal listener")
+	fs.IntVar(&options.HTTPSPort, "https-port", options.HTTPSPort, "also serve the portal over HTTPS on this port (0 disables)")
+	fs.StringVar(&options.TLSDir, "tls-dir", options.TLSDir, "local certificate authority directory shared with the Agent")
 	fs.StringVar(&options.OTAConfigPath, "ota-config", options.OTAConfigPath, "OTA configuration path for factory version information and identity provisioning after restore")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

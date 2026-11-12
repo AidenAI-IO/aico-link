@@ -590,9 +590,38 @@ function updateEmptyState() {
     emptyStateEl.classList.toggle('hidden', messagesDiv.children.length > 0);
 }
 
+function composerHasDraft() {
+    return inputEl.value.trim() !== '' || draftAttachments.length > 0;
+}
+
+// The composer's round primary button sends a draft, steers a running
+// request, starts realtime voice when the box is empty, or ends a running
+// voice session. Its mode follows the draft and the voice state.
+function composerPrimaryMode() {
+    // Typed text always goes to the conversation: steer a running request,
+    // otherwise send. With an empty box, a voice session's End stays
+    // reachable even while a request runs; Stop still cancels the request.
+    if (composerHasDraft()) return currentChatRequestId ? 'steer' : 'send';
+    if (voiceModeActive()) return 'end';
+    if (currentChatRequestId) return 'steer';
+    return voiceStatus.available ? 'voice' : 'send';
+}
+
+const composerPrimaryLabels = {send: 'Send', steer: 'Steer', voice: 'Start voice', end: 'End voice'};
+
+function renderComposerPrimary() {
+    const mode = composerPrimaryMode();
+    sendBtn.dataset.mode = mode;
+    sendBtn.title = composerPrimaryLabels[mode];
+    sendBtn.setAttribute('aria-label', composerPrimaryLabels[mode]);
+    const isLoading = loadingDiv.classList.contains('active');
+    sendBtn.disabled = mode === 'send'
+        ? fileUploadPending || !composerHasDraft() || (isLoading && !currentChatRequestId)
+        : mode === 'steer' ? fileUploadPending || pendingSteerSubmitting
+        : mode === 'voice' ? voiceStopping : false;
+}
+
 function setComposerState(isLoading) {
-    sendBtn.disabled = fileUploadPending || pendingSteerSubmitting || (isLoading && !currentChatRequestId);
-    sendBtn.textContent = currentChatRequestId ? 'Steer' : 'Send';
     const attachmentSlotsFull = draftAttachments.length >= maxDraftAttachments;
     const fileBtn = document.getElementById('fileBtn');
     if (fileBtn) {
@@ -608,6 +637,7 @@ function setComposerState(isLoading) {
         stopRunBtn.textContent = 'Stop';
     }
     loadingDiv.classList.toggle('active', isLoading);
+    renderComposerPrimary();
     setComposerBusy(isLoading);
     setActivityRunning(isLoading);
     renderPendingSteer();

@@ -11,7 +11,14 @@ const assistantTextReveal = createStreamingTextReveal({
     onIdle: () => resumeHistoryAfterTextReveal()
 });
 
-async function sendMessage() {
+async function sendMessage(options) {
+    // With an empty box the primary button starts or ends voice. Enter only
+    // sends, so a stray keypress never opens the microphone.
+    const mode = composerPrimaryMode();
+    if (mode === 'voice' || mode === 'end') {
+        if (options && options.fromKeyboard) return;
+        return mode === 'voice' ? startRealtimeVoice() : endRealtimeVoice();
+    }
     if (sendBtn.disabled) return;
     if (currentChatRequestId) {
         await submitSteerMessage();
@@ -717,6 +724,21 @@ function addMessage(msg, beforeRequestId) {
     if (next === projectedMessages && !beforeRequestId) return;
     projectedMessages = next;
     renderLiveMessage(msg, beforeRequestId);
+}
+
+// addLiveUserTranscript shows what the user said in a voice turn. The reply
+// to it may already be streaming, so the message goes above the live reply
+// drafts rather than at the end.
+function addLiveUserTranscript(msg) {
+    const drafts = new Set(Object.values(streamingAssistantDrafts).map(messageIdentity));
+    const index = projectedMessages.findIndex(item => drafts.has(messageIdentity(item)));
+    if (index < 0) {
+        addMessage(msg);
+        return;
+    }
+    projectedMessages = projectedMessages.slice(0, index).concat(msg, projectedMessages.slice(index));
+    renderedHistoryFingerprint = null;
+    reconcileConversation(projectedMessages, true);
 }
 
 function renderLiveMessage(msg, beforeRequestId) {

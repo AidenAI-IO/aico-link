@@ -145,6 +145,20 @@ These mock fixtures do not emulate `ble_service` or a live iOS Wake subscriber,
 so they do not cover live BLE Wake capability discovery or delivery. Platform
 and Phone Bridge availability filtering still use the scripted status.
 
+Headless isolated containers, which have no environment bridge, start
+`benchmark-mcu` before the daemon and point `AICO_MCU_SERVICE_SOCKET` at it. It
+emulates only the MCU firmware peer behind the real `mcu_service` code, so the
+`schedule` tool arms and cancels a real countdown and a due routine receives an RTC
+wakeup, as on a device. Battery reads return a fixed charge. LEDs are unsupported,
+and suspend and poweroff are refused. Bridged, MobileGym, and ADB environments do
+not start it. The entrypoint restarts the emulator if it exits; if it does not
+start, the daemon runs without an MCU service rather than failing every task.
+
+Because the socket is present, headless daemons take the MCU wakeup path instead of
+reporting "socket unavailable", and `schedule` arms a real countdown instead of
+returning a socket error. Results for schedule-related tasks are not comparable
+with daily runs from before this change.
+
 For iOS background without PiP, a reachable Dynamic Island return entry keeps the
 data tools visible. The Agent calls the requested `bridge_*` tool directly; the
 tool restores the Aico companion app internally before executing, so the Agent must not click the
@@ -739,5 +753,6 @@ runner APIs, but benchmark does not expose SkillOpt runs, suites, or reports.
 - [Architecture Design](./architecture.md)
 - [Realtime Collaboration Benchmark](./realtime-text-collaboration.md)
 - [Detailed Guide](./quickstart.md)
+- [Auto-Improve: Benchmark Issue Reports](./auto-improve.md)
 - [Environment Bridge Protocol](../../benchmark/environment_bridge.md)
 - [Full Manual](../../benchmark/manual.md)
