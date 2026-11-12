@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -212,10 +213,20 @@ func TestTapSequenceConfirmerAsksWithBothFrames(t *testing.T) {
 				t.Fatalf("result = %+v, want pass=%v", got, tc.wantPass)
 			}
 			server.mu.Lock()
-			assets, _ := server.requests[0]["assets"].(map[string]any)
+			request := server.requests[0]
 			server.mu.Unlock()
-			if len(assets) != 2 {
-				t.Fatalf("request carried %d images, want the baseline and the current frame", len(assets))
+			state, _ := request["state"].(map[string]any)
+			assets, _ := request["assets"].(map[string]any)
+			for key, frame := range map[string]lumaFrame{"before": keypad, "screen": dimmed} {
+				ref, _ := state[key].(string)
+				asset, _ := assets[ref].(map[string]any)
+				want, err := lumaFrameJPEG(frame, region)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if data, _ := asset["data_base64"].(string); data != base64.StdEncoding.EncodeToString(want) {
+					t.Fatalf("state %q does not reference its own frame", key)
+				}
 			}
 		})
 	}

@@ -854,8 +854,8 @@ before Cmd+A and Backspace clear its field. When the decision model is on, the
 runtime takes a screenshot after that step and asks whether it shows the
 expected state. Nothing mid-batch can fall back to the main model, so only a
 confident "yes" continues; "no" or an unsure answer stops the sequence with
-`step_expectation_unmet`, listing the steps that ran, and the main model takes
-over from a fresh screenshot. A failed request or screenshot, or a disabled
+`step_expectation_unmet`, listing the steps that ran. That result carries no
+screenshot, so the main model takes one before it continues. A failed request or screenshot, or a disabled
 decision model, leaves the sequence unchecked. `expect` on the last step has
 no effect.
 
