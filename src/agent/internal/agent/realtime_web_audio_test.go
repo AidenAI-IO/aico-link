@@ -58,7 +58,7 @@ func TestWebRealtimeVoiceSessionCarriesBrowserAudio(t *testing.T) {
 		t.Fatalf("status = %+v, want a connecting web session", status)
 	}
 
-	voice := s.ClaimRealtimeVoiceSession(Config{})
+	voice := s.ClaimRealtimeVoiceSession(Config{}, false)
 	if voice == nil || voice.Route() != RealtimeAudioRouteWeb {
 		t.Fatalf("claimed %+v, want the browser session", voice)
 	}
@@ -158,10 +158,53 @@ func TestReleasedWebRealtimeVoiceStartOpensNoSession(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	if voice := s.ClaimRealtimeVoiceSession(Config{}); voice != nil {
+	if voice := s.ClaimRealtimeVoiceSession(Config{}, false); voice != nil {
 		t.Fatalf("claimed a %s session for a withdrawn browser start", voice.Route())
 	}
 	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
 		t.Fatalf("status = %+v, want idle", status)
+	}
+	// A withdrawn browser start leaves nothing behind that would swallow a
+	// later device activation.
+	if voice := s.ClaimRealtimeVoiceSession(Config{}, true); voice == nil || voice.Route() != RealtimeAudioRouteDevice {
+		t.Fatalf("device activation after a withdrawn browser start claimed %+v, want a device session", voice)
+	}
+}
+
+// A browser endpoint that has closed but is not yet released must not make a
+// claim fall through to the device: the browser asked for its own audio.
+func TestClosedWebRealtimeVoiceStartDoesNotFallBackToDevice(t *testing.T) {
+	s := &Server{}
+	s.SetRealtimeVoiceActivation(func() {})
+	web := &webRealtimeAudio{mic: make(chan []byte, 1), done: make(chan struct{})}
+	if err := s.startWebRealtimeVoice(web); err != nil {
+		t.Fatal(err)
+	}
+	web.shutdown() // Disconnected; releaseWebRealtimeVoice has not run yet.
+	if voice := s.ClaimRealtimeVoiceSession(Config{}, false); voice != nil {
+		t.Fatalf("claimed a %s session for a closed browser endpoint", voice.Route())
+	}
+}
+
+// A browser session the user stopped must not carry over a provider
+// rotation into a new session that has no stop request.
+func TestStoppedWebRealtimeVoiceIsNotRequeued(t *testing.T) {
+	s := &Server{}
+	s.SetRealtimeVoiceActivation(func() {})
+	web := &webRealtimeAudio{mic: make(chan []byte, 1), done: make(chan struct{})}
+	if err := s.startWebRealtimeVoice(web); err != nil {
+		t.Fatal(err)
+	}
+	voice := s.ClaimRealtimeVoiceSession(Config{}, false)
+	if voice == nil {
+		t.Fatal("browser session was not claimed")
+	}
+	s.stopRealtimeVoice()
+	s.EndRealtimeVoiceSession(voice)
+	if s.RequeueRealtimeAudioIO(voice) {
+		t.Fatal("a stopped browser session was requeued for the rotated session")
+	}
+	if s.RealtimeVoicePending() {
+		t.Fatal("a stopped browser session is still waiting to start")
 	}
 }
