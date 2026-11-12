@@ -13,8 +13,6 @@ from runner.trace import tool_result_failed
 
 BASE_BRANCH = "main"
 TEST_BRANCH_PREFIX = "refs/heads/auto-improve-test/"
-# TEMPORARY (revert before merge): a push to the PR branch runs a live publication trial.
-LIVE_TRIAL_REF = "refs/heads/feat/auto-improve"
 # Findings that the runner can reproduce on current main. External code is not executed here.
 REPRODUCIBLE_DOMAINS = ("agent", "benchmark")
 DOMAINS = (*REPRODUCIBLE_DOMAINS, "external")
@@ -49,8 +47,6 @@ def execution_policy(event: str, ref: str, publish_requested: bool = False) -> d
         if ref != f"refs/heads/{BASE_BRANCH}":
             raise ValueError("Scheduled auto-improve runs only on main")
     elif event == "push":
-        if ref == LIVE_TRIAL_REF:
-            return {"publish": True}
         if not ref.startswith(TEST_BRANCH_PREFIX):
             raise ValueError("Push tests require an auto-improve-test/ branch")
     elif event == "workflow_dispatch":

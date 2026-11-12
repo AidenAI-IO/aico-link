@@ -8,8 +8,8 @@ on:
     - cron: '37 1 */2 * *'
   push:
     branches:
-      # TEMPORARY (revert before merge): live trial on the PR branch; pushes file issues.
-      - 'feat/auto-improve'
+      # Explicit pre-merge testing; renders issues into the artifact, never files them.
+      - 'auto-improve-test/**'
   workflow_dispatch:
     inputs:
       source_run:
@@ -36,10 +36,10 @@ jobs:
     if: >-
       startsWith(github.ref, 'refs/heads/') &&
       github.event_name != 'pull_request' && github.event_name != 'pull_request_target' &&
-      !(github.ref_name != 'main' && github.ref_name != 'feat/auto-improve' && !startsWith(github.ref, 'refs/heads/auto-improve-test/')) &&
+      !(github.ref_name != 'main' && !startsWith(github.ref, 'refs/heads/auto-improve-test/')) &&
       !(github.event_name != 'workflow_dispatch' &&
         !(github.event_name == 'schedule' && github.ref_name == 'main' && vars.AUTO_IMPROVE_ENABLED == 'true') &&
-        !(github.event_name == 'push' && (github.ref_name == 'feat/auto-improve' || startsWith(github.ref, 'refs/heads/auto-improve-test/'))))
+        !(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/auto-improve-test/')))
     runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
     timeout-minutes: 150
     env:
