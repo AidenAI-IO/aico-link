@@ -81,7 +81,7 @@ export function terminalUrl(location = window.location) {
 function terminalRow() {
   const node = row({
     label: msg('advanced.terminal', '终端'),
-    value: msg('advanced.terminal_hint', '设备命令行'),
+    description: msg('advanced.terminal_hint', '设备命令行'),
     chevron: true,
     action: 'open-terminal',
     onPress: () => {
@@ -117,14 +117,14 @@ export async function advancedPage(context) {
         rows: [
           row({
             label: msg('advanced.logs', '日志'),
-            value: msg('advanced.logs_hint', '管理日志记录和导出'),
+            description: msg('advanced.logs_hint', '管理日志记录和导出'),
             chevron: true,
             action: 'open-logs',
             onPress: () => context.navigate('/advanced/logs'),
           }),
           row({
             label: msg('advanced.manual_config', '手动编辑配置'),
-            value: msg('advanced.manual_config_hint', '编辑 Agent TOML 配置文件'),
+            description: msg('advanced.manual_config_hint', '编辑 Agent TOML 配置文件'),
             chevron: true,
             action: 'open-manual-config',
             onPress: () => context.navigate('/advanced/config'),

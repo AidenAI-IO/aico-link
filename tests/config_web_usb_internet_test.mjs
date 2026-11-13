@@ -6,7 +6,7 @@ import {test} from 'node:test';
 const context = vm.createContext({console});
 const source = await fs.readFile(new URL('../src/config_web/web/assets/js/app/pages/usb-internet.js', import.meta.url), 'utf8');
 const module = new vm.SourceTextModule(source, {context});
-const names = ['request', 'el', 'replace', 'group', 'row', 'switchControl', 'msg', 'resolve', 'toast'];
+const names = ['request', 'el', 'replace', 'group', 'row', 'switchControl', 'msg', 'resolve', 'text', 'toast'];
 await module.link(() => new vm.SyntheticModule(names, function() {
   for (const name of names) this.setExport(name, () => {});
 }, {context}));
