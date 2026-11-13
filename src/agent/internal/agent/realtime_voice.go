@@ -90,6 +90,12 @@ type RealtimeVoiceSession struct {
 	stopOnce    sync.Once
 }
 
+// NewRealtimeVoiceSession returns a conversation on audio that no server
+// publishes, for a loop that runs without the Web UI controller.
+func NewRealtimeVoiceSession(audio RealtimeAudioIO) *RealtimeVoiceSession {
+	return newRealtimeVoiceSession(audio)
+}
+
 func newRealtimeVoiceSession(audio RealtimeAudioIO) *RealtimeVoiceSession {
 	return &RealtimeVoiceSession{audio: audio, muteChanged: make(chan struct{}, 1), stop: make(chan struct{})}
 }
@@ -175,8 +181,8 @@ func (v *RealtimeVoiceSession) voice() bool {
 
 // RealtimeVoiceStatus is the public state of the realtime voice mode.
 type RealtimeVoiceStatus struct {
-	// Available is true while the agent runs in realtime input mode and can
-	// open a voice session.
+	// Available is true while the agent's voice loop (realtime, or Classic
+	// stt in continuous session mode) can open a voice session.
 	Available bool `json:"available"`
 	// State is idle, connecting or active.
 	State string             `json:"state"`
@@ -213,7 +219,7 @@ type realtimeVoiceController struct {
 }
 
 var (
-	errRealtimeVoiceUnavailable = errors.New("realtime voice is not enabled; set the input mode to realtime")
+	errRealtimeVoiceUnavailable = errors.New("voice is not available; set the input mode to realtime or stt")
 	errRealtimeVoiceBusy        = errors.New("a realtime voice session is already active")
 )
 
@@ -322,6 +328,23 @@ func (c *realtimeVoiceController) running() *RealtimeVoiceSession {
 	return c.active
 }
 
+// chatAudioEnabled reports whether a typed chat request may use audio: a
+// prompt tone and a spoken reply. A text message is text only; it is spoken
+// only while a voice conversation runs, where the reply is part of that
+// conversation and plays on its route (the device, or the browser that
+// started it).
+func (s *Server) chatAudioEnabled() bool {
+	return s.runningVoiceSession() != nil
+}
+
+// runningVoiceSession returns the running voice conversation, or nil.
+func (s *Server) runningVoiceSession() *RealtimeVoiceSession {
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.runningVoice()
+}
+
 // runningVoice is running without a text session. The caller holds c.mu.
 func (c *realtimeVoiceController) runningVoice() *RealtimeVoiceSession {
 	if active := c.running(); active != nil && active.voice() {
@@ -391,17 +414,26 @@ func (s *Server) setRealtimeVoiceMuted(microphone, speaker *bool) bool {
 	if active == nil {
 		return false
 	}
+	active.SetMuted(microphone, speaker)
+	return true
+}
+
+// SetMuted changes the microphone and/or speaker mute; a nil argument keeps
+// that side's state. The session loop is woken through MuteChanged.
+func (v *RealtimeVoiceSession) SetMuted(microphone, speaker *bool) {
+	if v == nil {
+		return
+	}
 	if microphone != nil {
-		active.muted.Store(*microphone)
+		v.muted.Store(*microphone)
 	}
 	if speaker != nil {
-		active.silenced.Store(*speaker)
+		v.silenced.Store(*speaker)
 	}
 	select {
-	case active.muteChanged <- struct{}{}:
+	case v.muteChanged <- struct{}{}:
 	default:
 	}
-	return true
 }
 
 // handleRealtimeVoice serves GET /api/realtime/voice.

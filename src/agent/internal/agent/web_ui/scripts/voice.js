@@ -1,10 +1,11 @@
-// Realtime voice mode.
+// Voice mode.
 //
-// The agent runs one realtime voice session at a time. A session started on
-// the board (wake word, MCU button) captures and plays audio on the device; a
-// session started here captures and plays audio in this browser over
-// /api/realtime/voice/ws. The page shows the same voice mode for both and
-// only owns the media of a session it started itself.
+// The agent runs one voice session at a time, in realtime or Classic (stt)
+// input mode alike. A session started on the board (wake word, MCU button)
+// captures and plays audio on the device; a session started here captures
+// and plays audio in this browser over /api/realtime/voice/ws. The page shows
+// the same voice mode for both and only owns the media of a session it
+// started itself.
 const voiceStageEl = document.getElementById('voiceStage');
 const voiceOrbEl = document.getElementById('voiceOrb');
 const voiceStatusEl = document.getElementById('voiceStatus');
