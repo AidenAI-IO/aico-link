@@ -16,6 +16,8 @@ import (
 )
 
 // MCP access tokens are the only credential /mcp accepts, from every client.
+// They are separate from session tokens: neither the device password nor a
+// clearing it affects them.
 // They work whether LAN access is on or off, do not expire, and are not
 // revoked by a password change: each one is named when it is created and
 // revoked on its own. They are accepted only on MCPPath, so a leaked token
@@ -26,18 +28,18 @@ const (
 
 	MCPPath = "/mcp"
 
-	MaxMCPTokens       = 20
 	MaxMCPTokenNameLen = 64
 
-	mcpTokenPrefix    = "aico_mcp_"
-	mcpTokenIDBytes   = 6
-	mcpTokenKeyBytes  = 32
-	mcpTokenFileLimit = 64 << 10
+	mcpTokenPrefix   = "aico_mcp_"
+	mcpTokenIDBytes  = 6
+	mcpTokenKeyBytes = 32
+	// The number of tokens is not limited. The read limit only guards
+	// against a corrupt file; it holds tens of thousands of tokens.
+	mcpTokenFileLimit = 8 << 20
 )
 
 var (
 	ErrMCPTokenName     = errors.New("token name must be 1 to 64 characters")
-	ErrMCPTokenLimit    = errors.New("too many MCP access tokens; revoke one first")
 	ErrMCPTokenNotFound = errors.New("MCP access token not found")
 )
 
@@ -78,9 +80,6 @@ func (s *State) CreateMCPToken(name string, now time.Time) (MCPToken, string, er
 	tokens, err := s.readMCPTokens()
 	if err != nil {
 		return MCPToken{}, "", err
-	}
-	if len(tokens) >= MaxMCPTokens {
-		return MCPToken{}, "", ErrMCPTokenLimit
 	}
 	idBytes := make([]byte, mcpTokenIDBytes)
 	key := make([]byte, mcpTokenKeyBytes)

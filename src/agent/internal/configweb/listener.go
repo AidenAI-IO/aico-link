@@ -18,7 +18,7 @@ func configHTTPServer(address string, handler http.Handler, usb bool) *http.Serv
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 65 * time.Second,
 		WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second,
 		ConnContext: func(ctx context.Context, _ net.Conn) context.Context {
-			return lanaccess.WithTrusted(context.WithValue(ctx, usbIngressContextKey{}, usb), usb)
+			return lanaccess.WithUSB(context.WithValue(ctx, usbIngressContextKey{}, usb), usb)
 		},
 	}
 }

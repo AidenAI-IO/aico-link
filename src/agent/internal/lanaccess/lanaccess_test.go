@@ -19,12 +19,12 @@ func newState(t *testing.T) *State {
 	return NewState(filepath.Join(root, "lan-access-enabled"), filepath.Join(root, "device-password"), filepath.Join(root, "lan-session-secret"))
 }
 
-func newRequest(remote, local string, trusted bool) *http.Request {
+func newRequest(remote, local string, usb bool) *http.Request {
 	r := httptest.NewRequest(http.MethodGet, "http://"+local+"/api/tools", nil)
 	r.RemoteAddr = remote
 	ctx := context.WithValue(r.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP(local), Port: 8080})
-	if trusted {
-		ctx = WithTrusted(ctx, true)
+	if usb {
+		ctx = WithUSB(ctx, true)
 	}
 	return r.WithContext(ctx)
 }
@@ -41,85 +41,138 @@ func guarded(state *State) http.Handler {
 	}))
 }
 
-func TestGuardRefusesLANUntilEnabled(t *testing.T) {
-	state := newState(t)
-	h := guarded(state)
-	lan := func() *http.Request { return newRequest("192.168.50.20:5000", "192.168.50.76", false) }
-	// A LAN host that routes to the USB address still arrives on the
-	// wildcard socket, so it is not trusted.
-	routedToUSB := func() *http.Request { return newRequest("192.168.50.20:5000", "192.168.42.1", false) }
-
-	for name, r := range map[string]*http.Request{
-		"usb":       newRequest("192.168.42.100:5000", "192.168.42.1", true),
-		"loopback":  newRequest("127.0.0.1:5000", "127.0.0.1", false),
-		"same host": newRequest("192.168.50.76:5000", "192.168.50.76", false),
+// The switch decides who is answered, the password decides who must sign
+// in, and the two are independent.
+func TestGuardAppliesSwitchAndPasswordIndependently(t *testing.T) {
+	clients := map[string]func() *http.Request{
+		"usb":      func() *http.Request { return newRequest("192.168.42.100:5000", "192.168.42.1", true) },
+		"lan":      func() *http.Request { return newRequest("192.168.50.20:5000", "192.168.50.76", false) },
+		"loopback": func() *http.Request { return newRequest("127.0.0.1:5000", "127.0.0.1", false) },
+		// A LAN host that routes to the USB address still arrives on the
+		// wildcard socket, so it is not a USB client.
+		"lan routed to usb": func() *http.Request { return newRequest("192.168.50.20:5000", "192.168.42.1", false) },
+	}
+	for _, tc := range []struct {
+		enabled, password bool
+		want              map[string]int
+	}{
+		{false, false, map[string]int{"usb": 204, "lan": 403, "loopback": 204, "lan routed to usb": 403}},
+		{true, false, map[string]int{"usb": 204, "lan": 204, "loopback": 204, "lan routed to usb": 204}},
+		{false, true, map[string]int{"usb": 401, "lan": 403, "loopback": 204, "lan routed to usb": 403}},
+		{true, true, map[string]int{"usb": 401, "lan": 401, "loopback": 204, "lan routed to usb": 401}},
 	} {
-		if code := serve(h, r); code != http.StatusNoContent {
-			t.Fatalf("%s request while off: %d", name, code)
+		state := newState(t)
+		if tc.password {
+			if err := state.SetPassword("luckfox"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := state.SetEnabled(tc.enabled); err != nil {
+			t.Fatal(err)
+		}
+		h := guarded(state)
+		for name, client := range clients {
+			if code := serve(h, client()); code != tc.want[name] {
+				t.Errorf("enabled=%v password=%v %s: %d, want %d", tc.enabled, tc.password, name, code, tc.want[name])
+			}
+		}
+		if !tc.password {
+			continue
+		}
+		token, _, err := state.IssueToken(time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, client := range clients {
+			r := client()
+			r.Header.Set("Authorization", "Bearer "+token)
+			want := 204
+			if tc.want[name] == 403 {
+				want = 403
+			}
+			if code := serve(h, r); code != want {
+				t.Errorf("enabled=%v %s with a session: %d, want %d", tc.enabled, name, code, want)
+			}
 		}
 	}
-	if code := serve(h, lan()); code != http.StatusForbidden {
-		t.Fatalf("LAN request while off: %d", code)
-	}
-	if code := serve(h, routedToUSB()); code != http.StatusForbidden {
-		t.Fatalf("LAN request routed to the USB address while off: %d", code)
-	}
+}
 
-	if err := state.SetPassword("correct horse"); err != nil {
-		t.Fatal(err)
-	}
-	if code := serve(h, lan()); code != http.StatusForbidden {
-		t.Fatalf("a password alone must not open LAN access: %d", code)
-	}
+func TestSwitchKeepsPasswordAndSessions(t *testing.T) {
+	state := newState(t)
 	if err := state.SetEnabled(true); err != nil {
-		t.Fatal(err)
+		t.Fatalf("LAN access must turn on without a password: %v", err)
 	}
-	if code := serve(h, lan()); code != http.StatusUnauthorized {
-		t.Fatalf("LAN request without a session while on: %d", code)
+	if err := state.SetPassword("luckfox"); err != nil {
+		t.Fatal(err)
 	}
 	token, _, err := state.IssueToken(time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	withToken := lan()
-	withToken.Header.Set("Authorization", "Bearer "+token)
-	if code := serve(h, withToken); code != http.StatusNoContent {
-		t.Fatalf("LAN request with a session while on: %d", code)
-	}
 	if err := state.SetEnabled(false); err != nil {
 		t.Fatal(err)
 	}
-	if code := serve(h, lan()); code != http.StatusForbidden {
-		t.Fatalf("LAN request after turning off: %d", code)
+	if err := state.SetEnabled(true); err != nil {
+		t.Fatal(err)
 	}
 	if !state.PasswordSet() {
-		t.Fatal("turning LAN access off must keep the password")
+		t.Fatal("the switch removed the password")
+	}
+	if _, err := state.VerifyToken(token, time.Now()); err != nil {
+		t.Fatalf("the switch signed clients out: %v", err)
 	}
 }
 
-func TestEnablingRequiresPassword(t *testing.T) {
+func TestClearPasswordKeepsSwitchAndMCPTokens(t *testing.T) {
 	state := newState(t)
-	if err := state.SetEnabled(true); !errors.Is(err, ErrPasswordRequired) {
-		t.Fatalf("enable without password: %v", err)
+	if err := state.SetPassword("luckfox"); err != nil {
+		t.Fatal(err)
 	}
-	if state.Enabled() {
-		t.Fatal("enabled without a password")
+	if err := state.SetEnabled(true); err != nil {
+		t.Fatal(err)
 	}
-	if err := state.SetEnabled(false); err != nil {
-		t.Fatalf("disabling an already-off switch: %v", err)
+	token, _, err := state.IssueToken(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, secret, err := state.CreateMCPToken("laptop", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ClearPassword(); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Enabled() || state.PasswordSet() {
+		t.Fatalf("after clearing: enabled=%v password=%v", state.Enabled(), state.PasswordSet())
+	}
+	if _, err := state.VerifyToken(token, time.Now()); err == nil {
+		t.Fatal("a session survived clearing the password")
+	}
+	if !state.VerifyMCPToken(secret) {
+		t.Fatal("clearing the password revoked an MCP access token")
+	}
+}
+
+func TestPasswordSetFailsClosedOnUnreadableFile(t *testing.T) {
+	state := newState(t)
+	if err := os.MkdirAll(state.PasswordPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !state.PasswordSet() {
+		t.Fatal("an unreadable password file must count as set")
 	}
 }
 
 func TestSetPasswordStoresRootOnlyBcryptHash(t *testing.T) {
 	state := newState(t)
-	if err := state.SetPassword("short"); !errors.Is(err, ErrPasswordTooShort) {
+	if err := state.SetPassword("12345"); !errors.Is(err, ErrPasswordTooShort) {
 		t.Fatalf("short password: %v", err)
 	}
 	if err := state.SetPassword(strings.Repeat("a", MaxPasswordLength+1)); !errors.Is(err, ErrPasswordTooLong) {
 		t.Fatalf("long password: %v", err)
 	}
-	if err := state.SetPassword("correct horse"); err != nil {
-		t.Fatal(err)
+	if err := state.SetPassword("123456"); err != nil {
+		t.Fatalf("six characters: %v", err)
 	}
 	info, err := os.Stat(state.PasswordPath)
 	if err != nil {
@@ -129,7 +182,7 @@ func TestSetPasswordStoresRootOnlyBcryptHash(t *testing.T) {
 		t.Fatalf("password file mode = %v", info.Mode().Perm())
 	}
 	data, _ := os.ReadFile(state.PasswordPath)
-	if !strings.HasPrefix(string(data), "$2") || strings.Contains(string(data), "correct horse") {
+	if !strings.HasPrefix(string(data), "$2") || strings.Contains(string(data), "123456") {
 		t.Fatalf("password file is not a bcrypt hash: %q", data)
 	}
 }
@@ -144,20 +197,20 @@ func TestEnabledFailsClosedOnNonRegularMarker(t *testing.T) {
 	}
 }
 
-func TestTrustListenerMarksConnections(t *testing.T) {
+func TestUSBListenerMarksConnections(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	trusted := TrustListener(listener)
-	defer trusted.Close()
+	usb := USBListener(listener)
+	defer usb.Close()
 	go func() {
 		conn, err := net.Dial("tcp", listener.Addr().String())
 		if err == nil {
 			conn.Close()
 		}
 	}()
-	conn, err := trusted.Accept()
+	conn, err := usb.Accept()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,25 +218,22 @@ func TestTrustListenerMarksConnections(t *testing.T) {
 	ctx := ConnContext(context.Background(), conn)
 	r := httptest.NewRequest(http.MethodGet, "http://board/", nil).WithContext(ctx)
 	r.RemoteAddr = "192.168.50.20:5000"
-	if !IsTrusted(r) {
-		t.Fatal("connection from a TrustListener is not trusted")
+	if !IsUSB(r) {
+		t.Fatal("connection from a USBListener is not marked as USB")
 	}
 }
 
-// An HTTPS server hands ConnContext its TLS wrapper. A USB listener's trust
+// An HTTPS server hands ConnContext its TLS wrapper. A USB listener's marker
 // must be seen through it, and an ordinary TLS listener must not gain it.
-func TestConnContextSeesTrustThroughTLS(t *testing.T) {
+func TestConnContextSeesUSBThroughTLS(t *testing.T) {
 	for _, usb := range []bool{true, false} {
-		var trusted bool
+		var seen bool
 		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Loopback requests count as trusted on their own. Give the
-			// request a LAN address so only the listener's marker can make
-			// it trusted.
 			r.RemoteAddr = "192.168.50.10:50000"
-			trusted = IsTrusted(r)
+			seen = IsUSB(r)
 		}))
 		if usb {
-			srv.Listener = TrustListener(srv.Listener)
+			srv.Listener = USBListener(srv.Listener)
 		}
 		srv.Config.ConnContext = ConnContext
 		srv.StartTLS()
@@ -194,8 +244,8 @@ func TestConnContextSeesTrustThroughTLS(t *testing.T) {
 		}
 		resp.Body.Close()
 		srv.Close()
-		if trusted != usb {
-			t.Fatalf("TLS request on a listener with usb=%t: trusted=%t", usb, trusted)
+		if seen != usb {
+			t.Fatalf("TLS request on a listener with usb=%t: IsUSB=%t", usb, seen)
 		}
 	}
 }

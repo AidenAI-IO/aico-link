@@ -62,13 +62,14 @@ The full-archive workflow is exposed through these routes:
 | `POST /api/restore/jobs/{id}/apply` | Apply the validated restore transaction. |
 
 The full workflow requires a maintenance session and same-origin
-authorization. The session is available over the USB link, and on the LAN to a
-client signed in with the device password while LAN access is on (see
-[LAN Sign-In](../03-services/device-management-api.md#lan-sign-in)). Other
-clients receive `403 usb_required`. A restore can replace the Wi-Fi
-configuration and the LAN access state, so a restore started over the LAN can
-end the connection that started it; recover over USB if the board does not
-come back on the LAN. Restore uploads are bounded chunks (up to 4 MiB), and the
+authorization. The session is available to any client the guard admits: over
+the USB link, and on the LAN while LAN access is on, signed in or paired while
+a device password is set (see
+[Sign-In and Pairing](../03-services/device-management-api.md#sign-in-and-pairing)).
+Other clients receive `403 usb_required`. A restore can replace the Wi-Fi
+configuration, the LAN access state, and the device password, so a restore
+started over the LAN can end the connection that started it; recover over USB
+if the board does not come back on the LAN. Restore uploads are bounded chunks (up to 4 MiB), and the
 server reports the negotiated chunk size when the restore job is created.
 Clients must use the returned job state and error code rather than assuming
 that an accepted job has completed.

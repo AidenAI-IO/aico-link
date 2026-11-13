@@ -1,14 +1,14 @@
 #!/bin/sh
-# Apply the LAN access state, set in the Agent settings over USB, to SSH and
-# the aico login account.
+# Apply the LAN access switch and the device password, set in the Agent
+# settings, to SSH and the aico login account.
 #
 # - The device password becomes the aico password, so the web terminal and
-#   SSH use it. Without one the account is left as the image ships it.
+#   SSH use it. Without one (never set, or cleared) the account is locked:
+#   no password logs in to a shell, not even the image's factory one, until
+#   the owner sets a device password.
 # - sshd accepts LAN sources only while LAN access is on AND the device
 #   password is applied to the account. Otherwise it refuses every source
-#   outside the USB link and the board itself (the HTTP services enforce the
-#   same switch), so a failed password update never exposes the image's
-#   default password to the LAN.
+#   outside the USB link and the board itself.
 #
 # /run is volatile and /etc/shadow is reset by OTA, so this runs on every boot
 # before sshd, and again from Config Web whenever the state changes.
@@ -80,7 +80,14 @@ fi
 password_applied=no
 case "${hash}" in
     '')
-        echo "no device password; ${ACCOUNT} login unchanged"
+        # "*" matches no password. OTA resets /etc/shadow to the image's
+        # factory password, so lock on every run, not only after a clear.
+        if "${USERMOD}" -p '*' "${ACCOUNT}"; then
+            echo "no device password; ${ACCOUNT} password login locked"
+        else
+            echo "failed to lock the password login of ${ACCOUNT}" >&2
+            status=3
+        fi
         ;;
     '$2a$'*|'$2b$'*|'$2y$'*)
         if "${USERMOD}" -p "${hash}" "${ACCOUNT}"; then
@@ -92,7 +99,9 @@ case "${hash}" in
         fi
         ;;
     *)
-        echo "unrecognised device password hash in ${PASSWORD_FILE}" >&2
+        # Do not leave whatever the image ships (OTA resets /etc/shadow).
+        echo "unrecognised device password hash in ${PASSWORD_FILE}; locking ${ACCOUNT}" >&2
+        "${USERMOD}" -p '*' "${ACCOUNT}" || true
         status=3
         ;;
 esac
@@ -100,6 +109,8 @@ esac
 if [ -f "${ENABLED_FILE}" ] && [ "${password_applied}" = yes ]; then
     write_rule open
     echo "LAN access on: SSH open to the local network"
+elif [ -f "${ENABLED_FILE}" ] && [ -z "${hash}" ]; then
+    echo "LAN access on without a device password: SSH kept to the USB link"
 elif [ -f "${ENABLED_FILE}" ]; then
     echo "LAN access on but the device password is not applied: SSH kept to the USB link" >&2
     status=3

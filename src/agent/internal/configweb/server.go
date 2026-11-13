@@ -138,7 +138,7 @@ func NewServer(options Options) (*Server, error) {
 	}
 	s.lanAccess = lanaccess.NewState(options.LANAccessPath, options.DevicePasswordPath, options.SessionSecretPath)
 	if options.USBTerminalPort > 0 {
-		terminal, err := newUSBTerminalServer(options)
+		terminal, err := newUSBTerminalServer(options, s.lanAccess)
 		if err != nil {
 			return nil, err
 		}

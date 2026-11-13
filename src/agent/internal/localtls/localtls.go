@@ -324,7 +324,7 @@ func (a *Authority) ServeAuthority(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !lanaccess.IsTrusted(r) {
+	if !lanaccess.IsUSB(r) && !lanaccess.IsLocal(r) {
 		http.Error(w, "The certificate authority is available only over the USB connection.", http.StatusForbidden)
 		return
 	}

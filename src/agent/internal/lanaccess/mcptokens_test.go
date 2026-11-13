@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -107,13 +108,8 @@ func TestMCPTokenValidation(t *testing.T) {
 			t.Fatalf("name %q: %v", name, err)
 		}
 	}
-	for i := 0; i < MaxMCPTokens; i++ {
-		if _, _, err := state.CreateMCPToken("t", time.Now()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, _, err := state.CreateMCPToken("t", time.Now()); !errors.Is(err, ErrMCPTokenLimit) {
-		t.Fatalf("over the limit: %v", err)
+	if err := os.MkdirAll(filepath.Dir(state.MCPTokensPath), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(state.MCPTokensPath, []byte("{broken"), 0o600); err != nil {
 		t.Fatal(err)
@@ -130,7 +126,7 @@ func TestMCPNeedsATokenFromEveryClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := guarded(state)
-	trustedMCP := func(remote, local string, usb bool, bearer string) *http.Request {
+	usbMCP := func(remote, local string, usb bool, bearer string) *http.Request {
 		r := newRequest(remote, local, usb)
 		r.Method = http.MethodPost
 		r.URL.Path = MCPPath
@@ -140,21 +136,21 @@ func TestMCPNeedsATokenFromEveryClient(t *testing.T) {
 		return r
 	}
 	for name, r := range map[string]*http.Request{
-		"USB":      trustedMCP("192.168.42.100:5000", "192.168.42.1", true, ""),
-		"loopback": trustedMCP("127.0.0.1:5000", "127.0.0.1", false, ""),
+		"USB":      usbMCP("192.168.42.100:5000", "192.168.42.1", true, ""),
+		"loopback": usbMCP("127.0.0.1:5000", "127.0.0.1", false, ""),
 	} {
 		if code := serve(h, r); code != http.StatusUnauthorized {
 			t.Fatalf("%s /mcp without a token: %d", name, code)
 		}
 	}
 	// LAN access stays off throughout: MCP does not need it on either link.
-	if code := serve(h, trustedMCP("192.168.42.100:5000", "192.168.42.1", true, secret)); code != http.StatusNoContent {
+	if code := serve(h, usbMCP("192.168.42.100:5000", "192.168.42.1", true, secret)); code != http.StatusNoContent {
 		t.Fatalf("USB /mcp with a token: %d", code)
 	}
 	if code := serve(h, mcpRequest(MCPPath, secret)); code != http.StatusNoContent {
 		t.Fatalf("LAN /mcp with a token while LAN access is off: %d", code)
 	}
-	// Other USB routes stay trusted without credentials.
+	// Without a device password, other USB routes need no credentials.
 	other := newRequest("192.168.42.100:5000", "192.168.42.1", true)
 	if code := serve(h, other); code != http.StatusNoContent {
 		t.Fatalf("USB request to another route: %d", code)

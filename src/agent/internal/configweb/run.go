@@ -48,7 +48,7 @@ func Run(args []string) int {
 	fs.StringVar(&options.LANAccessPath, "lan-access-file", options.LANAccessPath, "LAN access marker shared with the Agent")
 	fs.StringVar(&options.DevicePasswordPath, "device-password-file", options.DevicePasswordPath, "device password hash path")
 	fs.StringVar(&options.SessionSecretPath, "lan-session-secret-file", options.SessionSecretPath, "key that signs LAN login sessions; shared with the Agent")
-	fs.BoolVar(&options.LANGuard, "lan-guard", options.LANGuard, "refuse requests that do not arrive over USB or from the board while LAN access is off")
+	fs.BoolVar(&options.LANGuard, "lan-guard", options.LANGuard, "apply the LAN access switch and the device password to every request")
 	fs.StringVar(&options.LANAccessSync, "lan-access-sync", options.LANAccessSync, "helper that applies LAN access to SSH and the aico login (empty disables)")
 	fs.IntVar(&options.USBTerminalPort, "usb-terminal-port", options.USBTerminalPort, "serve the ttyd terminal on this port of the USB link only (0 disables)")
 	fs.StringVar(&options.TerminalTarget, "terminal-target", options.TerminalTarget, "loopback ttyd URL behind the USB terminal listener")

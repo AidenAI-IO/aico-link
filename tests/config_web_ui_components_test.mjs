@@ -671,7 +671,7 @@ process.stdout.write('config web UI component tests passed\n');
   const respond = body => ({ok: true, status: 200, text: async () => JSON.stringify(body)});
   globalThis.fetch = async url => {
     if (url === '/api/security/mcp-tokens') {
-      return respond({ok: true, max_tokens: 20, tokens: [{id: 'a1', name: 'MacBook', created_at: '2026-11-10T08:00:00Z'}]});
+      return respond({ok: true, tokens: [{id: 'a1', name: 'MacBook', created_at: '2026-11-10T08:00:00Z'}]});
     }
     return respond({});
   };
@@ -699,6 +699,41 @@ process.stdout.write('config web UI component tests passed\n');
     walkOff(off);
     assert.ok(offActions.includes('toggle-mcp-enabled'));
     assert.ok(!offActions.includes('create-mcp-token'), 'tokens are hidden while MCP is off');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+/* -------------------------------------------------------- LAN access page --- */
+
+{
+  const {lanAccessPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/lan-access.js')).href);
+  const realFetch = globalThis.fetch;
+  const respond = body => ({ok: true, status: 200, text: async () => JSON.stringify(body)});
+  const actionsOf = async status => {
+    globalThis.fetch = async url => respond(url === '/api/security/lan-access' ? {ok: true, min_length: 6, ...status} : {});
+    const page = await lanAccessPage({header() {}, navigate() {}});
+    const actions = [];
+    const walk = node => {
+      if (node.getAttribute && node.getAttribute('data-action')) actions.push(node.getAttribute('data-action'));
+      (node.childNodes || []).forEach(walk);
+    };
+    walk(page);
+    return actions;
+  };
+  try {
+    // Every connection may change the settings and clear the password; only
+    // a signed-in LAN client can sign out.
+    for (const via_usb of [true, false]) {
+      const actions = await actionsOf({enabled: false, password_set: true, via_usb});
+      for (const action of ['toggle-lan-access', 'open-lan-password', 'lan-clear-password']) {
+        assert.ok(actions.includes(action), `the LAN access page shows ${action} (via_usb=${via_usb})`);
+      }
+      assert.equal(actions.includes('lan-sign-out'), !via_usb, `sign-out only on the LAN (via_usb=${via_usb})`);
+    }
+    const unset = await actionsOf({enabled: true, password_set: false, via_usb: false});
+    assert.ok(!unset.includes('lan-sign-out') && !unset.includes('lan-clear-password'),
+      'without a password there is nothing to clear or sign out of');
   } finally {
     globalThis.fetch = realFetch;
   }
