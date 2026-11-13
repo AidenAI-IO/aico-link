@@ -40,7 +40,7 @@ func (s *Server) runUserFilesScript(stdoutSink string) error {
 	}
 	defer os.Remove(tempReportPath)
 
-	script := "cd " + shellQuote(s.userFilesToolsDir) + " && ./view_agent_files.sh " + shellQuote(tempReportPath)
+	script := "cd " + shellQuote(s.userFilesToolsDir) + " && ./view_agent_files.sh " + shellQuote(tempReportPath) + " " + shellQuote(reportDir)
 	if stdoutSink != "" {
 		script += " > " + shellQuote(stdoutSink) + " 2>&1"
 	} else {

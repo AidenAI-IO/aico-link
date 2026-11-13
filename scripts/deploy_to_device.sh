@@ -23,37 +23,37 @@ fi
 
 # Create target directory on device
 echo "Creating target directory..."
-ssh root@"$DEVICE_IP" "mkdir -p /userdata/agent_tools"
+ssh root@"$DEVICE_IP" "mkdir -p /usr/share/aico/agent-tools"
 
 # Copy files
 echo "Copying files..."
 scp "$SCRIPT_DIR/generate_agent_files_report.py" \
-    root@"$DEVICE_IP":/userdata/agent_tools/
+    root@"$DEVICE_IP":/usr/share/aico/agent-tools/
 
 scp "$SCRIPT_DIR/agent_files_template.html" \
-    root@"$DEVICE_IP":/userdata/agent_tools/
+    root@"$DEVICE_IP":/usr/share/aico/agent-tools/
 
 scp "$SCRIPT_DIR/view_agent_files.sh" \
-    root@"$DEVICE_IP":/userdata/agent_tools/
+    root@"$DEVICE_IP":/usr/share/aico/agent-tools/
 
 # Make script executable
 echo "Setting permissions..."
-ssh root@"$DEVICE_IP" "chmod +x /userdata/agent_tools/*.sh /userdata/agent_tools/*.py"
+ssh root@"$DEVICE_IP" "chmod +x /usr/share/aico/agent-tools/*.sh /usr/share/aico/agent-tools/*.py"
 
 # Generate initial report
 echo "Generating initial report..."
-ssh root@"$DEVICE_IP" "cd /userdata/agent_tools && ./view_agent_files.sh"
+ssh root@"$DEVICE_IP" "cd /usr/share/aico/agent-tools && ./view_agent_files.sh"
 
 echo ""
 echo "✓ Deployment complete!"
 echo ""
-echo "Files deployed to: /userdata/agent_tools/"
+echo "Files deployed to: /usr/share/aico/agent-tools/"
 echo "Report generated at: /userdata/agent/files_report.html"
 echo ""
 echo "Access the report at:"
-echo "  http://$DEVICE_IP:8080/agent/files_report.html"
+echo "  http://$DEVICE_IP:8080/user_files"
 echo ""
 echo "Or SSH to device and run:"
 echo "  ssh root@$DEVICE_IP"
-echo "  cd /userdata/agent_tools"
+echo "  cd /usr/share/aico/agent-tools"
 echo "  ./view_agent_files.sh"

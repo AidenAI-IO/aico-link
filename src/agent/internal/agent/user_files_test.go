@@ -42,6 +42,44 @@ func TestHandleUserFiles_GeneratesIfMissing(t *testing.T) {
 	}
 }
 
+func TestHandleUserFiles_GeneratesConfiguredData(t *testing.T) {
+	tools := t.TempDir()
+	for _, name := range []string{"view_agent_files.sh", "generate_agent_files_report.py", "agent_files_template.html"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "scripts", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mode := os.FileMode(0o644)
+		if name == "view_agent_files.sh" {
+			mode = 0o755
+		}
+		if err := os.WriteFile(filepath.Join(tools, name), data, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := filepath.Join(t.TempDir(), "agent's data")
+	for _, kind := range []string{"memory", "skills", "skill-state"} {
+		root := filepath.Join(dir, kind)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "sample.md"), []byte("configured-"+kind+"-content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Server{userFilesReportPath: filepath.Join(dir, "files_report.html"), userFilesToolsDir: tools}
+	rec := httptest.NewRecorder()
+	s.handleUserFiles(rec, httptest.NewRequest(http.MethodGet, "/user_files", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%q", rec.Code, rec.Body.String())
+	}
+	for _, kind := range []string{"memory", "skills", "skill-state"} {
+		if !strings.Contains(rec.Body.String(), "configured-"+kind+"-content") {
+			t.Errorf("report is missing %s from the configured data directory", kind)
+		}
+	}
+}
+
 func TestHandleUserFiles_RefreshQueryRegeneratesReport(t *testing.T) {
 	tools := t.TempDir()
 	rpt := filepath.Join(t.TempDir(), "report.html")
