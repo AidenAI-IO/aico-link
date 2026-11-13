@@ -34,11 +34,20 @@ func (s *Server) lanAccessStatus(r *http.Request) map[string]any {
 }
 
 // securityManager reports whether r may change the security settings and
-// manage MCP access tokens: a client the guard admitted (with a session, or
-// because no device password is set), or a USB client on a board without the
-// guard.
+// manage MCP access tokens: a USB client, or, while a device password is set,
+// a client the guard admitted with a session.
+//
+// While no device password is set, being admitted proves nothing about
+// ownership: with LAN access on, every LAN client is admitted. These settings
+// decide who owns the board (the first password becomes the aico login, and
+// MCP tokens outlive any later password), so until a password exists only the
+// cable holder may change them.
 func (s *Server) securityManager(r *http.Request) bool {
-	return s.lanAccessRequestFromUSB(r) || lanaccess.IsAdmitted(r)
+	usb := s.lanAccessRequestFromUSB(r) || lanaccess.IsUSB(r)
+	if s.lanAccess.PasswordSet() {
+		return usb || lanaccess.IsAdmitted(r)
+	}
+	return usb
 }
 
 // handleLANAccessStatus reports the switch and whether a password exists. It

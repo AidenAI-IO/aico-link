@@ -265,6 +265,21 @@ func TestLANGuardGatesConfigWeb(t *testing.T) {
 	if response := guardedCall(server, http.MethodGet, api, "", "", false, nil); response.Code != http.StatusOK {
 		t.Fatalf("LAN request after clearing: %d", response.Code)
 	}
+	// Admitted without a password is not ownership: a LAN client cannot claim
+	// the board by setting the first password, flip the switch, or mint MCP
+	// tokens that would outlive a later password.
+	for _, call := range []struct{ method, path, body string }{
+		{http.MethodPut, api, `{"password":"intruder"}`},
+		{http.MethodPut, api, `{"enabled":false}`},
+		{http.MethodPost, "/api/security/mcp-tokens", `{"name":"x"}`},
+	} {
+		if response := guardedCall(server, call.method, call.path, call.body, "", false, nil); response.Code != http.StatusForbidden {
+			t.Fatalf("LAN %s %s without a password: %d", call.method, call.path, response.Code)
+		}
+	}
+	if server.lanAccess.PasswordSet() || !server.lanAccess.Enabled() {
+		t.Fatal("a LAN client changed ownership settings without a password")
+	}
 }
 
 // lanaccessContext reproduces what the listeners' ConnContext records.

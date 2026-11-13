@@ -341,8 +341,10 @@ board by its IP address; a hostname such as an mDNS `.local` name is refused.
 {"ok": true, "enabled": false, "password_set": false, "via_usb": true, "min_length": 6}
 ```
 
-`PUT /api/security/lan-access` is accepted from any admitted client (`403`
-from a board without the guard unless over USB) and only from the same origin.
+`PUT /api/security/lan-access` is accepted from any admitted client while a
+device password is set, and only over USB while none is (`403` otherwise), so a
+LAN client cannot claim the board by setting the first password. It is also
+accepted only from the same origin.
 The body contains `enabled`, `password`, or both; the two are independent:
 
 ```jsonc
@@ -497,7 +499,8 @@ revoke any you no longer use.
 a computer plugged straight into Aico Link and processes on the board, and
 accepts nothing else: not a session token, not the USB link alone. It does not
 depend on LAN access, so a computer on the same Wi-Fi can use MCP while LAN
-access stays off. Creating a token, which needs an admitted client, is what
+access stays off. Creating a token, which needs an admitted client (a USB one
+while no device password is set), is what
 opens MCP. An MCP access token:
 
 - reaches only `POST /mcp` on port 8080. It is refused everywhere else,
@@ -508,8 +511,9 @@ opens MCP. An MCP access token:
   Turn MCP off (`mcp_enabled`) to stop every client at once.
 
 Create and revoke tokens in Settings > Advanced > MCP, or with these
-endpoints. They are accepted from any admitted client (signed in or paired
-while a device password is set); a token never manages tokens.
+endpoints. They are accepted from any admitted client (signed in or paired)
+while a device password is set, and only over USB while none is, because a
+token outlives a password set later; a token never manages tokens.
 Writes must come from the same origin.
 
 | Method | Path | Description |
