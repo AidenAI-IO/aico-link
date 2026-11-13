@@ -1008,7 +1008,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewRecallMemoryTool(nil),
-			"Recall saved long-term user preferences, rules, facts, procedures, or profile information.",
+			agent.NewRecallMemoryTool(nil).Description(),
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewSaveMemoryTool(nil),

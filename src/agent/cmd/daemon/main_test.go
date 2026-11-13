@@ -284,6 +284,9 @@ func TestRealtimeDelegatedToolSchemasMatchRuntimeTools(t *testing.T) {
 			if !bytes.Equal(definition.Parameters, want) {
 				t.Fatalf("realtime schema for %s = %s, want %s", tool.Name(), definition.Parameters, want)
 			}
+			if tool.Name() == realtimeRecallTool && definition.Description != tool.Description() {
+				t.Fatal("realtime recall must preserve the shared memory-source guidance")
+			}
 		})
 	}
 }
@@ -301,20 +304,12 @@ func TestRealtimeSessionConfigUsesDedicatedDefaultInstructions(t *testing.T) {
 }
 
 func TestRealtimeSessionConfigIncludesConfiguredResponseLanguage(t *testing.T) {
-	for _, tc := range []struct {
-		locale, language string
-	}{
-		{locale: "zh-CN", language: "Simplified Chinese"},
-		{locale: "en-US", language: "English"},
-	} {
-		t.Run(tc.locale, func(t *testing.T) {
-			cfg := agent.Config{Locale: tc.locale, Prompt: "speak naturally"}
+	for _, locale := range []string{"zh-CN", "en-US"} {
+		t.Run(locale, func(t *testing.T) {
+			cfg := agent.Config{Locale: locale, Prompt: "speak naturally"}
 			got := realtimeProviderSessionConfig(cfg, nil)
-			if !strings.Contains(got.Instructions, "The configured response locale is "+tc.locale+".") {
-				t.Fatalf("realtime instructions missing configured locale: %q", got.Instructions)
-			}
-			if !strings.Contains(got.Instructions, "Always respond in "+tc.language) {
-				t.Fatalf("realtime instructions missing fixed response language: %q", got.Instructions)
+			if !strings.Contains(got.Instructions, agent.ResponseLanguageGuidance(locale)) {
+				t.Fatalf("realtime instructions missing shared response-language guidance for %s: %q", locale, got.Instructions)
 			}
 		})
 	}

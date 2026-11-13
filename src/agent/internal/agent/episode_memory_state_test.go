@@ -225,7 +225,7 @@ func defaultEpisodeMemoryRetentionAudit(messages []llms.MessageContent) string {
 					if candidate.Type == episodeMemoryTypeFailure {
 						review.IncrementalKnowledge = candidate.Guidance
 						for _, event := range episode.Events {
-							if event.Type == "tool_result" || event.Type == "steer" {
+							if (event.Type == "tool_result" || event.Type == "steer") && (strings.TrimSpace(event.Observation) != "" || strings.TrimSpace(event.ScreenshotRef) != "" || strings.TrimSpace(event.Content) != "" || event.IsError || event.ToolError != nil) {
 								review.KnowledgeEvidenceRefs = append(review.KnowledgeEvidenceRefs, event.EventID)
 							}
 						}
