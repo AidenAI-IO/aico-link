@@ -215,16 +215,18 @@ Judge uses only the pre/post screenshots plus trace/final response. It does not
 consume every intermediate screenshot.
 
 CI requires every planned task to have a result row and the manifest totals to
-match those rows. A `judge_error` or a failed visual precondition
-(`preconditions_passed=false`) also fails the workflow: complete artifacts do
-not make unavailable scoring or an invalid starting state a valid measurement.
-Artifacts and publication still
-run so the unscored attempts can be inspected and rejudged without repeating device
-actions. Task-level `failed`, `skipped`, and `timeout` remain visible in
-`summary.md` and `report.html` without automatically failing the workflow;
-inspect eligibility and coverage before interpreting the score. A missing or
-invalid manifest, missing result rows, inconsistent totals, or a killed runner
-also fails the workflow because no complete report exists.
+match those rows. Task-level `failed`, `skipped`, `timeout`, and `judge_error`
+remain visible in `summary.md` and `report.html` without automatically failing
+the workflow when all result artifacts are complete. A successful workflow means
+the benchmark produced complete artifacts, not that every task passed or every
+attempt was scored. Judge errors remain unscored evaluation errors; inspect
+eligibility and coverage before interpreting the score. Recorded attempts can
+be inspected and rejudged without repeating device actions.
+
+A failed visual precondition (`preconditions_passed=false`) still fails the
+workflow because the starting state was invalid. A missing or invalid manifest,
+missing result rows or reports, inconsistent totals, or an unexpected runner
+exit also fails the workflow.
 
 When artifact upload succeeds, the Actions job summary links the report bundle.
 To expose the same self-contained, interactive `report.html` directly from CI, configure
