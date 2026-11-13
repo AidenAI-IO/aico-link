@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"aico-agent/internal/logging"
@@ -19,11 +20,16 @@ type realtimeActivations struct {
 	// running is set while a voice conversation runs. A wake word or button
 	// press then belongs to that conversation and is dropped.
 	running atomic.Bool
+	// textMu orders Wakeup against SetTextSession, so a wake word that
+	// arrives as a text session starts is seen by one side or the other:
+	// either Wakeup finds the session and stops it, or SetTextSession finds
+	// the recorded device activation and stops it.
+	textMu sync.Mutex
 	// stopText, while a text session runs, ends it. A wake word or button
 	// press then ends the text session and opens the device instead.
-	stopText atomic.Pointer[func()]
-	// stage, when set by tests, runs at each step of settle so a test can
-	// interleave an activation at a precise point.
+	stopText func()
+	// stage, when set by tests, runs at each step of settle and Wakeup so a
+	// test can interleave an activation at a precise point.
 	stage func(string)
 }
 
@@ -44,17 +50,21 @@ func (a *realtimeActivations) Device() {
 // session it records a device activation and ends the text session, so the
 // loop reopens the conversation with the board microphone and speaker.
 func (a *realtimeActivations) Wakeup() {
-	if stop := a.stopText.Load(); stop != nil {
-		logging.Infof("agent", "wakeup", "Wakeup during a text session: switching to device voice")
-		a.Device()
-		(*stop)()
-		return
-	}
-	if a.running.Load() {
+	a.textMu.Lock()
+	stop := a.stopText
+	a.at("wakeup-checked")
+	if stop == nil && a.running.Load() {
+		a.textMu.Unlock()
 		logging.Infof("agent", "wakeup", "Wakeup ignored: a realtime session is already running")
 		return
 	}
-	a.Device()
+	a.device.Store(true)
+	a.textMu.Unlock()
+	signalWakeupEvent(a.events)
+	if stop != nil {
+		logging.Infof("agent", "wakeup", "Wakeup during a text session: switching to device voice")
+		stop()
+	}
 }
 
 // SetRunning marks whether a voice session is running.
@@ -66,12 +76,11 @@ func (a *realtimeActivations) SetRunning(running bool) {
 // clears it with nil. A device activation recorded since the loop claimed the
 // session ends it at once, as Wakeup would have.
 func (a *realtimeActivations) SetTextSession(stop func()) {
-	if stop == nil {
-		a.stopText.Store(nil)
-		return
-	}
-	a.stopText.Store(&stop)
-	if a.device.Load() {
+	a.textMu.Lock()
+	a.stopText = stop
+	pending := stop != nil && a.device.Load()
+	a.textMu.Unlock()
+	if pending {
 		stop()
 	}
 }

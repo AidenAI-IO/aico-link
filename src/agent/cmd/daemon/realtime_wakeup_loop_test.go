@@ -39,8 +39,8 @@ type loopHarness struct {
 	script []func() error
 	// current is the session the running script step belongs to.
 	current *agent.RealtimeVoiceSession
-	done   chan struct{}
-	signal chan os.Signal
+	done    chan struct{}
+	signal  chan os.Signal
 	// wakeCallback is the loop's MCU/GPIO wakeup callback.
 	wakeCallback atomic.Pointer[func()]
 }

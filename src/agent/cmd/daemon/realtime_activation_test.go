@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // A device activation that arrives at any point while a finished session is
 // settled must survive: it stays recorded and wakes the loop again.
@@ -103,5 +106,36 @@ func TestRealtimeActivationsWakeupEndsTextSession(t *testing.T) {
 	a.SetTextSession(func() { stopped++ })
 	if stopped != 2 {
 		t.Fatal("a device activation recorded before the text session started did not end it")
+	}
+}
+
+// A wake word that lands while the loop is publishing a text session must
+// still end it: Wakeup and SetTextSession see each other, so voice does not
+// wait for the text session to end on its own.
+func TestRealtimeActivationsWakeupRacingTextSessionStart(t *testing.T) {
+	a := newRealtimeActivations()
+	stopped := make(chan struct{}, 2)
+	published := make(chan struct{})
+	a.stage = func(at string) {
+		if at != "wakeup-checked" {
+			return
+		}
+		// Wakeup has found no text session. Publish one now, and give it
+		// the chance to finish before Wakeup records the device.
+		go func() {
+			a.SetTextSession(func() { stopped <- struct{}{} })
+			close(published)
+		}()
+		select {
+		case <-published:
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	a.Wakeup()
+	<-published
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("a wakeup racing the text session start left the text session running")
 	}
 }
