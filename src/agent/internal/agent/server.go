@@ -2752,11 +2752,14 @@ func (s *Server) speakFinalTextForRequest(ctx context.Context, requestID string,
 
 func (s *Server) playPromptSoundAsync(kind promptSoundKind, label string) {
 	s.logger.Info("Playing prompt sound: %v, %s", kind, label)
-	if s.currentTTSPlaybackBackend() == nil {
+	// Select the route once: a conversation that ends before the goroutine
+	// runs must not move the tone to the board speaker.
+	backend := s.currentTTSPlaybackBackend()
+	if backend == nil {
 		return
 	}
 	go func() {
-		if err := playPromptSound(context.Background(), s.currentTTSPlaybackBackend(), kind, false); err != nil && s.logger != nil {
+		if err := playPromptSound(context.Background(), backend, kind, false); err != nil && s.logger != nil {
 			s.logger.Error("%s prompt sound failed: %v", label, err)
 		}
 	}()
