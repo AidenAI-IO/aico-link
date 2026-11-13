@@ -39,8 +39,9 @@ const (
 )
 
 var (
-	ErrMCPTokenName     = errors.New("token name must be 1 to 64 characters")
-	ErrMCPTokenNotFound = errors.New("MCP access token not found")
+	ErrMCPTokenName      = errors.New("token name must be 1 to 64 characters")
+	ErrMCPTokenNotFound  = errors.New("MCP access token not found")
+	ErrMCPTokenStoreFull = errors.New("the MCP access token store is full; revoke unused tokens")
 )
 
 // MCPToken describes a stored token. The secret is never stored; only its
@@ -188,6 +189,11 @@ func (s *State) writeMCPTokens(tokens []MCPToken) error {
 	data, err := json.MarshalIndent(mcpTokenFile{Tokens: tokens}, "", "  ")
 	if err != nil {
 		return err
+	}
+	// Never write a file the reader would refuse: that would lock out every
+	// token. The limit holds tens of thousands of tokens.
+	if len(data)+1 > mcpTokenFileLimit {
+		return ErrMCPTokenStoreFull
 	}
 	return writeFileAtomic(s.MCPTokensPath, append(data, '\n'))
 }

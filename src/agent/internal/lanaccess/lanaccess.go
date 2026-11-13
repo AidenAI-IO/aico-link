@@ -67,6 +67,44 @@ type State struct {
 
 	secretMu sync.Mutex
 	mcpMu    sync.Mutex
+
+	// limiter counts wrong device passwords per client address, for sign-in
+	// and for the current-password checks of password changes alike.
+	limiterOnce sync.Once
+	limiter     *loginLimiter
+}
+
+func (s *State) passwordLimiter() *loginLimiter {
+	s.limiterOnce.Do(func() { s.limiter = newLoginLimiter() })
+	return s.limiter
+}
+
+// ErrTooManyAttempts is returned by VerifyCurrentPassword while the client is
+// locked out after repeated wrong passwords.
+type ErrTooManyAttempts struct{ RetryAfter time.Duration }
+
+func (e ErrTooManyAttempts) Error() string { return "too many wrong passwords; try again later" }
+
+// VerifyCurrentPassword checks a current password for a change that needs it,
+// with the same per-client lockout as sign-in, so a stolen session cannot
+// guess the password to replace or clear it. With no password set it accepts
+// anything.
+func (s *State) VerifyCurrentPassword(r *http.Request, password string) (bool, error) {
+	if !s.PasswordSet() {
+		return true, nil
+	}
+	limiter := s.passwordLimiter()
+	client := clientKey(r)
+	now := time.Now()
+	if wait := limiter.retryAfter(client, now); wait > 0 {
+		return false, ErrTooManyAttempts{RetryAfter: wait}
+	}
+	if !s.CheckPassword(password) {
+		limiter.fail(client, now)
+		return false, nil
+	}
+	limiter.succeed(client)
+	return true, nil
 }
 
 // NewState uses the default path for each empty argument. MCP access tokens
@@ -305,7 +343,7 @@ const disabledPage = `<!doctype html><html><head><meta charset="utf-8"><meta nam
 //     session token when one is. Guard serves the login and pairing
 //     endpoints itself.
 func Guard(state *State, next http.Handler) http.Handler {
-	auth := &authHandler{state: state, limiter: newLoginLimiter(), now: time.Now}
+	auth := &authHandler{state: state, limiter: state.passwordLimiter(), now: time.Now}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if reason := CrossSiteReason(r); reason != "" {
 			rejectCrossSite(w, reason)

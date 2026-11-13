@@ -123,6 +123,25 @@ func TestClearPasswordNeedsCurrentPasswordAndKeepsSwitch(t *testing.T) {
 	}
 }
 
+// Wrong current passwords count against the same lockout as sign-in, so a
+// session cannot be used to guess the password.
+func TestCurrentPasswordGuessesAreThrottled(t *testing.T) {
+	server, _ := newLANAccessServer(t)
+	if code, _ := callLANAccess(t, server, http.MethodPut, `{"password":"luckfox"}`, true); code != http.StatusOK {
+		t.Fatalf("setup: %d", code)
+	}
+	code := 0
+	for i := 0; i < 10 && code != http.StatusTooManyRequests; i++ {
+		code, _ = callClearPassword(t, server, `{"current_password":"wrong"}`, true)
+	}
+	if code != http.StatusTooManyRequests {
+		t.Fatalf("repeated wrong current passwords were never throttled: %d", code)
+	}
+	if code, _ := callClearPassword(t, server, `{"current_password":"luckfox"}`, true); code != http.StatusTooManyRequests || !server.lanAccess.PasswordSet() {
+		t.Fatalf("the right password must also wait out the lockout: %d", code)
+	}
+}
+
 func callClearPassword(t *testing.T, server *Server, body string, usb bool) (int, map[string]any) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/security/password", bytes.NewBufferString(body))

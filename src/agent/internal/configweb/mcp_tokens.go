@@ -53,7 +53,7 @@ func (s *Server) handleMCPTokenCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	token, secret, err := s.lanAccess.CreateMCPToken(request.Name, time.Now())
 	switch {
-	case errors.Is(err, lanaccess.ErrMCPTokenName):
+	case errors.Is(err, lanaccess.ErrMCPTokenName), errors.Is(err, lanaccess.ErrMCPTokenStoreFull):
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	case err != nil:

@@ -354,7 +354,8 @@ The body contains `enabled`, `password`, or both; the two are independent:
 
 Replacing an existing password needs `current_password` from every client, the
 app included (`403 current_password_invalid` otherwise), so a stolen session
-cannot lock the owner out. Setting or replacing the password signs every client
+cannot lock the owner out. Wrong current passwords count against the same
+per-address lockout as sign-in (`429 too_many_attempts` with `Retry-After`). Setting or replacing the password signs every client
 out, the app included; the app pairs again over USB.
 
 `DELETE /api/security/password` clears the device password, as if none had

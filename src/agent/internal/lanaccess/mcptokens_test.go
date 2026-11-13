@@ -167,3 +167,23 @@ func TestMCPRefusesSessionTokens(t *testing.T) {
 		t.Fatalf("/mcp with a session token: %d", code)
 	}
 }
+
+// A store that would grow past what the reader accepts is refused instead of
+// written, so existing tokens keep working.
+func TestMCPTokenStoreRefusesOversizedWrite(t *testing.T) {
+	state := newState(t)
+	_, secret, err := state.CreateMCPToken("keep", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	huge := make([]MCPToken, mcpTokenFileLimit/64)
+	for i := range huge {
+		huge[i] = MCPToken{ID: "id", Name: strings.Repeat("n", 64)}
+	}
+	if err := state.writeMCPTokens(huge); !errors.Is(err, ErrMCPTokenStoreFull) {
+		t.Fatalf("oversized write: %v", err)
+	}
+	if !state.VerifyMCPToken(secret) {
+		t.Fatal("a refused write broke the stored tokens")
+	}
+}

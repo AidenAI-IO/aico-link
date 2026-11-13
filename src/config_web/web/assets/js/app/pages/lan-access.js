@@ -53,9 +53,13 @@ function clearPassword(body) {
 }
 
 function currentPasswordError(error) {
-  return error && error.error === 'current_password_invalid'
-    ? new Error(resolve(msg('lan.password_current_invalid', '当前密码不正确')))
-    : error;
+  if (error && error.error === 'current_password_invalid') {
+    return new Error(resolve(msg('lan.password_current_invalid', '当前密码不正确')));
+  }
+  if (error && error.error === 'too_many_attempts') {
+    return new Error(resolve(msg('lan.password_too_many', '尝试次数过多，请稍后再试')));
+  }
+  return error;
 }
 
 /**
@@ -159,7 +163,7 @@ export function openPasswordSheet({minLength, askCurrent, submitLabel, onSubmit,
 
   submit.addEventListener('click', async () => {
     const value = password.value;
-    if (!current.value) {
+    if (current && !current.value) {
       setError(msg('lan.password_current_required', '请输入当前密码'));
       current.focus();
       return;

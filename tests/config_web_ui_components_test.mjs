@@ -124,6 +124,8 @@ class Element {
     this._listeners.set(type, handlers);
   }
 
+  focus() {}
+
   /** Test helper: run the listeners registered for a type. */
   fire(type, event = {}) {
     const payload = {type, target: this, preventDefault() {}, stopPropagation() {}, ...event};
@@ -734,6 +736,27 @@ process.stdout.write('config web UI component tests passed\n');
       }
       assert.equal(actions.includes('lan-sign-out'), !via_usb, `sign-out only on the LAN (via_usb=${via_usb})`);
     }
+    // Setting the first password: no current-password field, and submit works.
+    const {openPasswordSheet} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/lan-access.js')).href);
+    const submitted = [];
+    const view = openPasswordSheet({minLength: 6, askCurrent: false, submitLabel: 'Set', onSubmit: async (...args) => { submitted.push(args); }});
+    const find = (node, action) => {
+      if (node.getAttribute && node.getAttribute('data-action') === action) return node;
+      for (const child of node.childNodes || []) {
+        const found = find(child, action);
+        if (found) return found;
+      }
+      return null;
+    };
+    const root = document.body;
+    assert.equal(find(root, 'lan-password-current'), null, 'no current-password field for the first password');
+    find(root, 'lan-password').value = 'luckfox';
+    find(root, 'lan-password-confirm').value = 'luckfox';
+    find(root, 'lan-password-submit').fire('click');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepEqual(submitted, [['luckfox', '']], 'the first password is submitted without a current one');
+    view.close();
+
     const unset = await actionsOf(devicePasswordPage, {enabled: true, password_set: false, via_usb: false});
     assert.ok(!unset.includes('lan-sign-out') && !unset.includes('lan-clear-password'),
       'without a password there is nothing to clear or sign out of');

@@ -76,8 +76,7 @@ func (s *Server) handleLANAccessUpdate(w http.ResponseWriter, r *http.Request) {
 
 	s.lanAccessMu.Lock()
 	defer s.lanAccessMu.Unlock()
-	if request.Password != "" && !s.passwordOwner(request.CurrentPassword) {
-		writeCurrentPasswordInvalid(w)
+	if request.Password != "" && !s.passwordOwner(w, r, request.CurrentPassword) {
 		return
 	}
 	if request.Password != "" {
@@ -124,8 +123,7 @@ func (s *Server) handleClearPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	s.lanAccessMu.Lock()
 	defer s.lanAccessMu.Unlock()
-	if !s.passwordOwner(request.CurrentPassword) {
-		writeCurrentPasswordInvalid(w)
+	if !s.passwordOwner(w, r, request.CurrentPassword) {
 		return
 	}
 	if err := s.lanAccess.ClearPassword(); err != nil {
@@ -138,15 +136,24 @@ func (s *Server) handleClearPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // passwordOwner reports whether the current password allows replacing or
-// clearing the device password. Every client needs it, the app included, so
-// a stolen session cannot lock the owner out or remove the password. With no
-// password set there is nothing to protect.
-func (s *Server) passwordOwner(current string) bool {
-	return !s.lanAccess.PasswordSet() || s.lanAccess.CheckPassword(current)
-}
-
-func writeCurrentPasswordInvalid(w http.ResponseWriter) {
-	writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "current_password_invalid"})
+// clearing the device password, and writes the refusal when it does not.
+// Every client needs it, the app included, so a stolen session cannot lock
+// the owner out or remove the password; wrong guesses share sign-in's
+// per-client lockout. With no password set there is nothing to protect.
+func (s *Server) passwordOwner(w http.ResponseWriter, r *http.Request, current string) bool {
+	ok, err := s.lanAccess.VerifyCurrentPassword(r, current)
+	var limited lanaccess.ErrTooManyAttempts
+	switch {
+	case errors.As(err, &limited):
+		seconds := max(int(limited.RetryAfter.Round(time.Second)/time.Second), 1)
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"ok": false, "error": "too_many_attempts", "retry_after": seconds})
+		return false
+	case !ok:
+		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "current_password_invalid"})
+		return false
+	}
+	return true
 }
 
 // writeLANAccessResult applies the stored state to SSH and the login account
