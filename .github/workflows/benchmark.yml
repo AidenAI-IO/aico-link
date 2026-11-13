@@ -300,11 +300,15 @@ jobs:
           adb start-server
 
           adb_shell() {
-            adb -s "$ANDROID_SERIAL" shell "$@" | tr -d '\r'
+            timeout 15 adb -s "$ANDROID_SERIAL" shell "$@" | tr -d '\r'
+          }
+
+          remove_window_xml() {
+            timeout 15 adb -s "$ANDROID_SERIAL" shell rm -f /sdcard/aico-window.xml >/dev/null 2>&1 || true
           }
 
           wait_until_booted() {
-            timeout 300 adb -s "$ANDROID_SERIAL" wait-for-device
+            timeout 300 adb -s "$ANDROID_SERIAL" wait-for-device || return 1
             local _
             for _ in $(seq 1 100); do
               if [[ "$(adb_shell getprop sys.boot_completed 2>/dev/null || true)" == "1" ]]; then
@@ -313,7 +317,7 @@ jobs:
               sleep 3
             done
             echo "$ANDROID_SERIAL did not finish booting" >&2
-            adb devices >&2
+            timeout 15 adb devices >&2 || true
             return 1
           }
 
@@ -321,9 +325,10 @@ jobs:
             local pid xml
             pid="$(adb_shell pidof com.android.systemui 2>/dev/null || true)"
             [[ -n "$pid" ]] || return 1
+            remove_window_xml
             timeout 30 adb -s "$ANDROID_SERIAL" shell uiautomator dump /sdcard/aico-window.xml >/dev/null || return 1
             xml="$(adb_shell cat /sdcard/aico-window.xml 2>/dev/null || true)"
-            adb -s "$ANDROID_SERIAL" shell rm -f /sdcard/aico-window.xml >/dev/null 2>&1 || true
+            remove_window_xml
             [[ "$xml" == *"<hierarchy"* ]]
           }
 
@@ -354,8 +359,7 @@ jobs:
             systemctl --user cat android-emulator.service >/dev/null 2>&1
           }
 
-          wait_until_booted
-          if ! wait_for_ui || memory_too_high; then
+          if ! wait_until_booted || ! wait_for_ui || memory_too_high; then
             if ! can_restart_emulator; then
               echo "Android UI is not usable and android-emulator.service is not installed" >&2
               exit 1
