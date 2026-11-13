@@ -341,12 +341,20 @@ function handleSemanticEvent(event) {
         case 'response.terminal':
         case 'run.terminal':
         case 'session.closed':
+            // A request streamed over NDJSON owns its draft until its own
+            // stream ends. SSE and NDJSON are separate connections, so this
+            // event can overtake the request's last deltas; releasing the
+            // draft here would let those deltas start a new one.
             if (requestId) {
+                if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
                 delete streamingAssistantDrafts[requestId];
                 assistantDraftBlockedByTool.delete(requestId);
             } else {
-                streamingAssistantDrafts = {};
-                assistantDraftBlockedByTool.clear();
+                Object.keys(streamingAssistantDrafts).forEach(function(key) {
+                    if (key === currentChatRequestId || ndjsonOwnedRequestIds.has(key)) return;
+                    delete streamingAssistantDrafts[key];
+                    assistantDraftBlockedByTool.delete(key);
+                });
             }
             refreshHistoryFromContext();
             return;
