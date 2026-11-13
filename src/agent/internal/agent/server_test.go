@@ -4772,9 +4772,12 @@ func TestHandleBenchmarkSeedNotificationWritesDurableFixture(t *testing.T) {
 	}
 }
 
-func TestHandleBenchmarkProcessNotificationMemoryIsolatesInvalidProposal(t *testing.T) {
+func TestHandleBenchmarkProcessNotificationMemoryRejectsInvalidProposalAndAllowsRetry(t *testing.T) {
+	invalid := `{"results":[{"context_id":"1","proposal":{"actions":[{"action":"add","scope":"temporary","type":"not-a-memory-type","content":"Package arrives tomorrow"}]}}]}`
 	server, _ := newBenchmarkSeedMemoryServerWithModel(t, &scriptedModel{responses: []*llms.ContentResponse{
-		contentResponse(`{"results":[{"context_id":"1","proposal":{"actions":[{"action":"add","scope":"temporary","type":"not-a-memory-type","content":"Package arrives tomorrow"}]}}]}`),
+		contentResponse(invalid),
+		contentResponse(invalid),
+		contentResponse(`{"results":[{"context_id":"1","proposal":{"actions":[{"action":"ignore"}]}}]}`),
 	}})
 	seedBody := `{"events":[{"source":"android","source_id":"delivery-invalid","source_event_id":"delivery-invalid-event","device_id":"benchmark-device","notification_uid":110,"event":"added","app_identifier":"com.delivery","title":"Package update","message":"Package arrives tomorrow","received_at":"2026-08-21T00:01:00Z"}]}`
 	seedReq := httptest.NewRequest(http.MethodPost, "/api/benchmark/seed_notification", bytes.NewBufferString(seedBody))
@@ -4790,8 +4793,17 @@ func TestHandleBenchmarkProcessNotificationMemoryIsolatesInvalidProposal(t *test
 	processRec := httptest.NewRecorder()
 	server.handleBenchmarkProcessNotificationMemory(processRec, processReq)
 
+	if processRec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("process status=%d body=%s, want 422 for rejected proposal", processRec.Code, processRec.Body.String())
+	}
+
+	// A rejected proposal leaves the notification pending for a later explicit decision.
+	retryReq := httptest.NewRequest(http.MethodPost, "/api/benchmark/notification-memory/process", bytes.NewBufferString(`{}`))
+	retryReq.Header.Set("Authorization", "Bearer test-benchmark-token")
+	processRec = httptest.NewRecorder()
+	server.handleBenchmarkProcessNotificationMemory(processRec, retryReq)
 	if processRec.Code != http.StatusOK {
-		t.Fatalf("process status=%d body=%s, want 200", processRec.Code, processRec.Body.String())
+		t.Fatalf("retry status=%d body=%s, want 200", processRec.Code, processRec.Body.String())
 	}
 	var response benchmarkProcessNotificationMemoryResponse
 	if err := json.NewDecoder(processRec.Body).Decode(&response); err != nil {

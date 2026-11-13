@@ -202,6 +202,12 @@ func defaultEpisodeMemoryRetentionAudit(messages []llms.MessageContent) string {
 			if err := json.Unmarshal([]byte(strings.TrimSpace(textPart.Text[index+len(marker):])), &candidates); err != nil {
 				return ""
 			}
+			var episode struct {
+				Events []episodeMemoryEventPayload `json:"events"`
+			}
+			if start := strings.Index(textPart.Text, "Episode:\n"); start >= 0 && start < index {
+				_ = json.Unmarshal([]byte(strings.TrimSpace(textPart.Text[start+len("Episode:\n"):index])), &episode)
+			}
 			reviews := episodeMemoryRetentionAudit{Reviews: make([]episodeMemoryRetentionReview, 0, len(candidates))}
 			for _, candidate := range candidates {
 				review := episodeMemoryRetentionReview{
@@ -216,6 +222,14 @@ func defaultEpisodeMemoryRetentionAudit(messages []llms.MessageContent) string {
 				if candidate.Retention == "" || candidate.Retention == episodeMemoryRetentionDurable {
 					review.Decision = episodeMemoryRetentionDecisionRetain
 					review.Retention = episodeMemoryRetentionDurable
+					if candidate.Type == episodeMemoryTypeFailure {
+						review.IncrementalKnowledge = candidate.Guidance
+						for _, event := range episode.Events {
+							if (event.Type == "tool_result" || event.Type == "steer") && (strings.TrimSpace(event.Observation) != "" || strings.TrimSpace(event.ScreenshotRef) != "" || strings.TrimSpace(event.Content) != "" || event.IsError || event.ToolError != nil) {
+								review.KnowledgeEvidenceRefs = append(review.KnowledgeEvidenceRefs, event.EventID)
+							}
+						}
+					}
 					review.Rewrite = &episodeMemoryRetentionRewrite{
 						Situation: candidate.Situation, Guidance: candidate.Guidance, ExpectedEffect: candidate.ExpectedEffect,
 						Scope: cloneStringMap(candidate.Scope), Tags: append([]string(nil), candidate.Tags...), EvidenceRefs: append([]string(nil), candidate.EvidenceRefs...),

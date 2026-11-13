@@ -871,7 +871,7 @@ func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Run
 	if prompt := strings.TrimSpace(cfg.Prompt); prompt != "" {
 		instructionParts = append(instructionParts, prompt)
 	}
-	instructionParts = append(instructionParts, agent.ResponseLanguageGuidance(cfg.LocaleOrDefault()))
+	instructionParts = append(instructionParts, agent.EvidenceUseGuidance(), agent.ResponseLanguageGuidance(cfg.LocaleOrDefault()))
 	instructions := strings.TrimSpace(strings.Join(instructionParts, "\n\n"))
 	enableEmotion := cfg.VoiceModel.EnableSpeechEmotion
 	if enableEmotion == nil {
@@ -1036,11 +1036,11 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewRecallMemoryTool(nil),
-			"Recall saved long-term user preferences, rules, facts, procedures, or profile information.",
+			agent.NewRecallMemoryTool(nil).Description(),
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewSaveMemoryTool(nil),
-			"Save a long-term memory for future recall. Do NOT call it for one-off or time-bound plans, appointments, reminders, passing states, chat, or a secret (password, PIN, card number) the user merely mentions; just reply, without claiming you remembered anything. Call it when the user asks you to remember or save something, and for stable preferences, rules, or procedures you observe. A secret is kept only if the user explicitly asked to keep it. Do not tell the user you remembered it until this tool returns status=saved or status=ignored for a duplicate. Use profile for durable user facts such as name, location, or timezone; preference or rule for future defaults and must/must-not behavior; procedure for how-to steps; fact for stable info worth recalling later.",
+			agent.NewSaveMemoryTool(nil).Description(),
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewForgetMemoryTool(nil),
@@ -1048,7 +1048,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewRecallSessionChunksTool(nil),
-			"Recall compressed history from earlier in this conversation and from prior conversations. Only the most recent turns stay in your visible context; older turns are compressed and invisible until recalled. Call this whenever the user refers to something discussed earlier that you cannot see, including when they claim something was or was not said. Pass known chunk ids as chunk_ids, topic keywords as tags, or empty tags for the most recent history. For saved preferences, rules, or facts, use recall_memory instead.",
+			agent.NewRecallSessionChunksTool(nil).Description(),
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewAudioVolumeTool(""),

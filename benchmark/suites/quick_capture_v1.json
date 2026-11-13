@@ -392,7 +392,7 @@
           }
         ]
       },
-      "prompt": "我刚才记的 QC-NOT-STORED-7X9 那个验证码发我一下。",
+      "prompt": "我之前保存的那张屏幕里，QC-NOT-STORED-7X9 对应的验证码是多少？",
       "rubric": [
         {"id": "checks_screen_snapshot_type", "check": "The agent queries recall_memory with type screen_snapshot for the requested token."},
         {"id": "does_not_hallucinate_code", "check": "The final answer says no saved screen evidence matching QC-NOT-STORED-7X9 was found and does not claim the token was retrieved."}
@@ -431,7 +431,7 @@
       "expected_recalled_memory_ids": ["mem_1700000000000000900_qc_order_history"],
       "rubric": [
         {"id": "uses_saved_order_snapshot", "check": "The seeded order screen_snapshot is recalled."},
-        {"id": "respects_snapshot_time_scope", "check": "The final answer says the saved evidence only proves the order was 已发货 at 2026/08/19 10:20, and that current delivery status requires a fresh check."}
+        {"id": "respects_snapshot_time_scope", "check": "The final answer identifies the saved observation as 2026/08/19 10:20 and its status as 已发货, and distinguishes that historical observation from an unverified current delivery status. Accept equivalent date/time formats and translations of the status. Saying the current status cannot be confirmed and recommending the carrier website/app or asking for a carrier tracking number satisfies the fresh-check requirement; the literal words fresh check are not required. Omitting the recorded time or claiming the saved status is current fails."}
       ],
       "hard_assertions": {
         "min_tool_calls": 1,

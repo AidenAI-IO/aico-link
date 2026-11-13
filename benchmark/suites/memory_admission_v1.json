@@ -1,6 +1,7 @@
 {
   "name": "memory_admission_v1",
   "suite_category": "Memory & Cognition",
+  "version": "1.1",
   "description": "Memory admission and application benchmark. Natural user messages, mixed languages, leave the decision to save to the Agent; tasks are scored on what was persisted and whether saved memory is applied later. Covers durable information, one-off or casual content, secrets with and without an explicit request, and recall among temporary notification memories.",
   "global_reset": {},
   "tasks": [
@@ -131,6 +132,39 @@
           }
         ]
       }
+    },
+    {
+      "id": "skip_quoted_personal_background",
+      "category": "memory",
+      "description_for_judge": "A first-person statement inside text supplied for translation is not the user's profile. Translate it without persisting the quoted occupation.",
+      "prompt": "Translate this sentence into English: ‘我是建筑师，主要设计学校。’",
+      "rubric": [
+        {"id": "answers_translation", "check": "The response translates the supplied sentence without treating the quoted occupation as the user's own background or claiming it was saved."}
+      ],
+      "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 4, "must_complete_within_sec": 90, "response_required": true},
+      "memory_assertions": {"query": {"limit": 100}, "expected_count": 0}
+    },
+    {
+      "id": "skip_temporary_work_assignment",
+      "category": "memory",
+      "description_for_judge": "A short temporary work assignment must not be promoted to a lasting occupation or personal profile.",
+      "prompt": "I'm covering reception for a colleague this afternoon; it isn't my usual role.",
+      "rubric": [
+        {"id": "does_not_claim_saved", "check": "The response does not claim to have saved receptionist as the user's lasting role."}
+      ],
+      "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 4, "must_complete_within_sec": 90, "response_required": true},
+      "memory_assertions": {"query": {"limit": 100}, "expected_count": 0}
+    },
+    {
+      "id": "skip_declined_stable_background",
+      "category": "memory",
+      "description_for_judge": "An explicit refusal to store overrides the usefulness and durability of a personal background fact.",
+      "prompt": "我是做嵌入式开发的，但这条个人信息不要保存。",
+      "rubric": [
+        {"id": "respects_refusal", "check": "The response does not claim to have saved the user's occupation."}
+      ],
+      "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 4, "must_complete_within_sec": 90, "response_required": true},
+      "memory_assertions": {"query": {"limit": 100}, "expected_count": 0}
     },
     {
       "id": "skip_one_off_appointment",

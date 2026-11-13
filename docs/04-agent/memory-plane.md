@@ -11,7 +11,7 @@ This document describes the current filesystem-backed memory architecture used b
 The memory plane separates four kinds of persisted state:
 
 - session memory keeps the active conversation and compressed history;
-- long-term memory keeps information explicitly saved for the user;
+- long-term memory keeps explicitly saved information and useful lasting user information admitted during conversation;
 - device memory keeps reusable device, application, navigation, procedure, calibration, failure, and fact knowledge;
 - task episodes keep immutable execution evidence for audit and background consolidation.
 
@@ -32,7 +32,7 @@ depend on understanding the language the user spoke.
 | Information | Rule |
 | --- | --- |
 | An explicit request to remember, or a forward-looking preference, form of address, or rule | Save |
-| Stable personal facts such as home city, role, or employee ID | May be saved |
+| Clearly stated stable personal facts about the user | May be saved without an explicit remember request when lasting and useful for future assistance; do not infer from quotations, third-person statements, or temporary assignments |
 | A request to act or remind at a later time | Handed to the `schedule` tool; see [Schedules and Routines](schedules-and-routines.md). Not saved as memory |
 | Near-term plans the user mentions without asking for a reminder | Not saved to Long-Term Memory. The conversation keeps them, and context compaction preserves them; see [Near-Term Plans](#near-term-plans) |
 | Time-bound facts from notifications, such as bills and deliveries | Temporary Memory with an expiry; Notification Memory only |
@@ -390,8 +390,25 @@ Extraction, omission review, and retention audit share this policy through
 `episodeMemoryBuiltInGuidanceRule`. Omission review also receives the complete
 proposal schema and type rules, once. Procedure guidance and candidate evidence
 must describe the same supported path; a shorter path needs its own evidence.
-These semantic decisions remain model judgments, not guarantees supplied by the
-structural evidence validator.
+For a retained Failure candidate, the retention audit must state
+`incremental_knowledge` beyond built-in advice and identify
+`knowledge_evidence_refs` establishing it. Code rejects missing knowledge or
+references that are not observations in the Episode, and keeps those references
+in the retained evidence. A suggested recovery is not proof that it works;
+an observed device-specific constraint can still justify a guard without a
+successful recovery. These semantic decisions remain model judgments, not
+guarantees supplied by the structural evidence validator.
+
+Selection diagnostics log candidate counts at assessment, omission review,
+compaction, retention audit, and candidate validation. The audit also counts
+retained Failure reviews rejected for missing or invalid incremental evidence.
+These stages distinguish no proposed knowledge, audit rejection, and structural
+rejection without logging candidate text, private evidence, or model-written
+reasons. Outcome classification and memory admission are independent: a definite
+failure can yield no memory when it adds only general knowledge. The assessment
+payload includes the recorded Episode status, so interruption remains visible even
+when there is no separate termination event. The status describes how execution
+ended; direct evidence is still needed to decide whether the goal was completed.
 
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
 
@@ -496,6 +513,39 @@ idle retry delay to avoid a hot loop.
 Notification persistence does not start a 30-second timer. A Notification
 Processor run first consumes the BLE ring and then checks its durable pending
 cursor; when there is no pending work it returns without polling again.
+
+The Processor validates the entire proposed batch before applying any actions.
+Malformed JSON, invalid action shapes, stale targets, and invalid metadata receive
+at most one correction request with a refreshed related-memory catalog. If the
+correction still fails, the batch returns a proposal error and its memory cursor
+stays pending for the Worker's delayed retry; a rejected proposal is not treated
+as an intentional `ignore`. No actions from a validation-rejected batch are
+applied. Store/application failures are not transactional across records and
+still use the existing explicit intents and revision checks on retry.
+For `update` and `reinforce`, omitted `type` inherits the validated target's type;
+`add` must specify a type. Explicitly invalid types are rejected.
+
+## Evidence Use in Conversation
+
+Ordinary and realtime conversations share `EvidenceUseGuidance`. Retrieval is
+required when an answer needs historical facts or saved knowledge missing from
+the visible context. Reasoning from sufficient facts supplied in the request does
+not require a lookup merely because those facts mention the past. Requests to
+verify past events or retrieve or apply saved knowledge still require the
+appropriate lookup. A search with no matches does not invalidate supplied facts.
+
+Claims must respect the source, subject, and time scope of their evidence. A
+request explicitly restricted to saved screens requires matching `screen_snapshot`
+evidence; missing evidence is reported rather than replaced by session history.
+For requests without a source restriction, the Agent may combine relevant sources
+while distinguishing them. Historical status answers include the recorded
+observation date and time at the source's precision and do not claim to establish
+current status. External queries require a source and an identifier supported by
+that source; identifiers from different systems are not assumed interchangeable.
+
+The Agent preserves source values, including Unicode symbols, punctuation and
+case, when asked to copy them. Response-language preferences apply to explanatory
+prose rather than quoted source values.
 
 ## Compatibility
 

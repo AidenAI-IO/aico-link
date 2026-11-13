@@ -80,12 +80,10 @@ func TestRolePromptRequiresRecallBeforeDenyingSavedMemory(t *testing.T) {
 	}
 }
 
-func TestRolePromptRequiresRecallForNaturalLanguagePriorDeviceExperience(t *testing.T) {
+func TestRolePromptIncludesSharedEvidenceGuidance(t *testing.T) {
 	profile := testPromptProfile(AgentConfig{})
-	for _, want := range []string{"## Device memory evidence", "must call recall_device_memory", "previously learned behavior", "prior device experience", "earlier workaround", "not a substitute for the saved evidence", "answer appears obvious", "not an unnecessary tool call"} {
-		if !strings.Contains(profile.SystemPrompt, want) {
-			t.Fatalf("system prompt missing natural-language device recall guidance %q:\n%s", want, profile.SystemPrompt)
-		}
+	if strings.Count(profile.SystemPrompt, EvidenceUseGuidance()) != 1 {
+		t.Fatal("ordinary profile must include the shared evidence-use guidance once")
 	}
 }
 

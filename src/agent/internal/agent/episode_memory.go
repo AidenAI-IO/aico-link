@@ -152,7 +152,10 @@ type episodeMemoryRetentionReview struct {
 	Retention       episodeMemoryRetention         `json:"retention"`
 	Reason          string                         `json:"reason"`
 	SensitiveValues []string                       `json:"sensitive_values"`
-	Rewrite         *episodeMemoryRetentionRewrite `json:"rewrite,omitempty"`
+	// Failure lessons must add observed knowledge beyond the tool's own advice.
+	IncrementalKnowledge  string                         `json:"incremental_knowledge,omitempty"`
+	KnowledgeEvidenceRefs []string                       `json:"knowledge_evidence_refs,omitempty"`
+	Rewrite               *episodeMemoryRetentionRewrite `json:"rewrite,omitempty"`
 }
 
 type episodeMemoryRetentionRewrite struct {
@@ -170,9 +173,10 @@ type episodeMemoryRetentionAudit struct {
 }
 
 type episodeMemoryRetentionAuditStats struct {
-	RetainDecisions int
-	Rewrites        int
-	MatchingKeys    int
+	RetainDecisions        int
+	Rewrites               int
+	MatchingKeys           int
+	InvalidFailureEvidence int
 }
 
 func cloneEpisodeMemoryProposal(proposal episodeMemoryProposal) episodeMemoryProposal {
@@ -867,15 +871,18 @@ func validateEpisodeMemoryProposal(episode TaskEpisode, proposal episodeMemoryPr
 }
 
 func (p *episodeMemoryProcessor) postProcessEpisodeMemoryProposal(ctx context.Context, episode TaskEpisode, proposal episodeMemoryProposal, existing []DeviceMemoryItem, attempt int) (episodeMemoryProposal, error) {
+	firstPassCount := len(proposal.Candidates)
 	proposal, err := normalizeEpisodeMemoryAssessment(episode, proposal, existing)
 	if err != nil {
 		return episodeMemoryProposal{}, err
 	}
+	p.logEpisodeMemorySelection("assessment", firstPassCount, len(proposal.Candidates))
 	if shouldReviewEpisodeMemoryProposal(episode, proposal) {
 		reviewed, reviewErr := p.reviewEpisodeMemoryOmission(ctx, episode, proposal, existing, attempt)
 		if reviewErr != nil {
 			return episodeMemoryProposal{}, safeEpisodeMemoryError(fmt.Errorf("%w: %w", errEpisodeMemoryOmissionReview, reviewErr))
 		}
+		p.logEpisodeMemorySelection("omission_review", len(proposal.Candidates), len(reviewed.Candidates))
 		proposal, err = normalizeEpisodeMemoryAssessment(episode, reviewed, existing)
 		if err != nil {
 			return episodeMemoryProposal{}, err
@@ -884,7 +891,9 @@ func (p *episodeMemoryProcessor) postProcessEpisodeMemoryProposal(ctx context.Co
 	if !episodeMemoryProposalNeedsRetentionAudit(proposal) {
 		return proposal, nil
 	}
+	beforeCompaction := len(proposal.Candidates)
 	proposal.Candidates = compactEpisodeMemoryCandidates(proposal.Candidates)
+	p.logEpisodeMemorySelection("compaction", beforeCompaction, len(proposal.Candidates))
 	if len(proposal.Candidates) == 0 {
 		return proposal, nil
 	}
@@ -900,7 +909,9 @@ func (p *episodeMemoryProcessor) postProcessEpisodeMemoryProposal(ctx context.Co
 		return episodeMemoryProposal{}, safeErr
 	}
 	originalCount := len(proposal.Candidates)
+	invalidFailureEvidence := validateFailureRetentionEvidence(episode, proposal.Candidates, &audit)
 	stats := summarizeEpisodeMemoryRetentionAudit(proposal.Candidates, audit)
+	stats.InvalidFailureEvidence = invalidFailureEvidence
 	proposal.Candidates = retainedEpisodeMemoryCandidates(proposal.Candidates, audit)
 	p.logEpisodeMemoryRetentionAudit("completed", originalCount, len(audit.Reviews), len(proposal.Candidates), stats)
 	return proposal, nil
@@ -993,6 +1004,15 @@ func (p *episodeMemoryProcessor) generateEpisodeMemoryRetentionAudit(ctx context
 	return audit, nil
 }
 
+// Stages and counts are safe diagnostics; candidate text and model-written
+// reasons may contain private Episode values and must not be logged.
+func (p *episodeMemoryProcessor) logEpisodeMemorySelection(stage string, inputCount, outputCount int) {
+	if p == nil || p.plane == nil || p.plane.logger == nil {
+		return
+	}
+	p.plane.logger.Info("[episode-memory] selection stage=%s input_candidates=%d output_candidates=%d", stage, inputCount, outputCount)
+}
+
 func (p *episodeMemoryProcessor) logEpisodeMemoryRetentionAudit(status string, candidateCount, reviewCount, retainedCount int, auditStats ...episodeMemoryRetentionAuditStats) {
 	if p == nil || p.plane == nil || p.plane.logger == nil {
 		return
@@ -1001,7 +1021,7 @@ func (p *episodeMemoryProcessor) logEpisodeMemoryRetentionAudit(status string, c
 	if len(auditStats) > 0 {
 		stats = auditStats[0]
 	}
-	p.plane.logger.Info("[episode-memory] retention audit %s: candidates=%d reviews=%d retain_decisions=%d rewrites=%d matching_keys=%d retained=%d", status, candidateCount, reviewCount, stats.RetainDecisions, stats.Rewrites, stats.MatchingKeys, retainedCount)
+	p.plane.logger.Info("[episode-memory] retention audit %s: candidates=%d reviews=%d retain_decisions=%d rewrites=%d matching_keys=%d invalid_failure_evidence=%d retained=%d", status, candidateCount, reviewCount, stats.RetainDecisions, stats.Rewrites, stats.MatchingKeys, stats.InvalidFailureEvidence, retainedCount)
 }
 
 func summarizeEpisodeMemoryRetentionAudit(candidates []episodeMemoryCandidate, audit episodeMemoryRetentionAudit) episodeMemoryRetentionAuditStats {
@@ -1110,6 +1130,47 @@ func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit ep
 	return retained
 }
 
+// The model judges what knowledge is incremental; code requires it to identify
+// that knowledge and cite observations, not merely a proposed action or app name.
+// A failure does not need a successful recovery to establish a useful constraint.
+func validateFailureRetentionEvidence(episode TaskEpisode, candidates []episodeMemoryCandidate, audit *episodeMemoryRetentionAudit) int {
+	rejected := 0
+	failures := make(map[string]bool)
+	for _, candidate := range candidates {
+		if strings.EqualFold(strings.TrimSpace(string(candidate.Type)), string(episodeMemoryTypeFailure)) {
+			failures[strings.TrimSpace(candidate.LessonKey)] = true
+		}
+	}
+	observations := make(map[string]bool)
+	for _, event := range episode.Events {
+		hasObservation := strings.TrimSpace(event.Observation) != "" || strings.TrimSpace(event.ScreenshotRef) != ""
+		if hasObservation || ((event.Type == "tool_result" || event.Type == "steer") && (strings.TrimSpace(event.Content) != "" || event.IsError || event.ToolError != nil)) {
+			observations[event.EventID] = true
+		}
+	}
+	for i := range audit.Reviews {
+		review := &audit.Reviews[i]
+		if !failures[strings.TrimSpace(review.LessonKey)] || !strings.EqualFold(strings.TrimSpace(string(review.Decision)), string(episodeMemoryRetentionDecisionRetain)) {
+			continue
+		}
+		refs := uniqueNonEmpty(review.KnowledgeEvidenceRefs)
+		valid := strings.TrimSpace(review.IncrementalKnowledge) != "" && len(refs) > 0 && review.Rewrite != nil
+		for _, ref := range refs {
+			if !observations[ref] {
+				valid = false
+			}
+		}
+		if !valid {
+			rejected++
+			review.Decision = episodeMemoryRetentionDecisionDiscard
+			continue
+		}
+		// Keep the audit's supporting observations in the persisted provenance.
+		review.Rewrite.EvidenceRefs = uniqueNonEmpty(append(review.Rewrite.EvidenceRefs, refs...))
+	}
+	return rejected
+}
+
 func mergeEpisodeMemoryReviewScope(base, rewrite map[string]string) map[string]string {
 	merged := normalizeEpisodeMemoryScope(rewrite)
 	for key, value := range normalizeEpisodeMemoryScope(base) {
@@ -1158,6 +1219,8 @@ Return exactly one JSON object matching this schema:
     "decision": "retain | discard",
     "retention": "durable | transient | sensitive",
     "reason": "why the candidate is or is not safe and useful across future Episodes",
+    "incremental_knowledge": "for a retained failure: the observed device/app-specific constraint beyond generic retry advice; empty when none",
+    "knowledge_evidence_refs": ["for a retained failure: actual observation event ids establishing that incremental knowledge, not tool-call ids"],
     "sensitive_values": ["exact Episode-bound values that must not be persisted; empty when none"],
     "rewrite": {
       "situation": "generalized applicability condition",
@@ -1171,7 +1234,7 @@ Return exactly one JSON object matching this schema:
   }]
 }
 
-Review each proposed candidate independently. Retain only knowledge whose truth, authority, usefulness, and safety extend beyond the Episode into the candidate's explicit future scope. Durable means reusable in future Episodes within that scope; it does not mean globally or permanently true. Set retention="durable" only when the retained rewrite is safe for Device Memory. Set retention="transient" for Episode/session/runtime-bound observations and retention="sensitive" for secrets, credentials, one-time values, or information that should not be persisted; those classifications must use decision="discard". Never retain an exact one-time verification token/code, password, credential, secret, or other session-bound value merely because the Episode succeeded. For every review, list exact Episode-bound secret or credential values found in the candidate or evidence in sensitive_values. Do not list ordinary lesson facts or applicability boundaries there: app names, device ids, page names, account/profile identifiers, build/version values, workflow labels, and generalized conditions belong in the rewrite scope or content and are not secrets by themselves. If a reusable workflow remains, decision may be retain only after rewrite removes or generalizes every sensitive_values entry; otherwise discard it. A retained rewrite that still contains any listed sensitive value is invalid. ` + episodeMemoryBuiltInGuidanceRule + ` Discard a candidate that carries no such device-, app-, or page-specific knowledge. Preserve evidenced app, device, page, account, build, and version scope boundaries. Do not add lessons, reassess the Episode outcome, or invent evidence. When uncertain, discard.
+Review each proposed candidate independently. Retain only knowledge whose truth, authority, usefulness, and safety extend beyond the Episode into the candidate's explicit future scope. Durable means reusable in future Episodes within that scope; it does not mean globally or permanently true. Set retention="durable" only when the retained rewrite is safe for Device Memory. Set retention="transient" for Episode/session/runtime-bound observations and retention="sensitive" for secrets, credentials, one-time values, or information that should not be persisted; those classifications must use decision="discard". Never retain an exact one-time verification token/code, password, credential, secret, or other session-bound value merely because the Episode succeeded. For every review, list exact Episode-bound secret or credential values found in the candidate or evidence in sensitive_values. Do not list ordinary lesson facts or applicability boundaries there: app names, device ids, page names, account/profile identifiers, build/version values, workflow labels, and generalized conditions belong in the rewrite scope or content and are not secrets by themselves. If a reusable workflow remains, decision may be retain only after rewrite removes or generalizes every sensitive_values entry; otherwise discard it. A retained rewrite that still contains any listed sensitive value is invalid. ` + episodeMemoryBuiltInGuidanceRule + ` Discard a candidate that carries no such device-, app-, or page-specific knowledge. For a failure candidate, explicitly state the incremental_knowledge and cite knowledge_evidence_refs establishing it. A generic error's suggestion is advice, not proof of its proposed cause or recovery; adding the current app name does not establish app-specific knowledge. Do not claim a suggested workaround works without an observed successful retry, but an observed device-specific constraint can justify a guard even without successful recovery. Preserve evidenced app, device, page, account, build, and version scope boundaries. Do not add lessons, reassess the Episode outcome, or invent evidence. When uncertain, discard.
 
 Preserve the candidate's supported procedure, step_refs, and applicability when rewriting. evidence_refs may include failed alternatives that explain a guard; step_refs select only the executable path. Check that the selected path includes necessary transitions and verification, and does not include a failed alternative. Discard an unsupported selection; do not shorten the path to make it appear valid.` + finalProof + `
 
@@ -1349,6 +1412,7 @@ func episodeMemoryPayload(episode TaskEpisode) map[string]interface{} {
 	}
 	return map[string]interface{}{
 		"episode_id":   episode.ID,
+		"status":       episode.Status,
 		"user_goal":    episode.UserGoal,
 		"device_scope": episode.DeviceScope,
 		"recorded_outcome": map[string]interface{}{
@@ -1366,6 +1430,9 @@ func episodeMemoryPayload(episode TaskEpisode) map[string]interface{} {
 
 func (p *episodeMemoryProcessor) applyProposal(ctx context.Context, episode TaskEpisode, proposal episodeMemoryProposal) error {
 	seenLessonKeys := map[string]bool{}
+	defer func() {
+		p.logEpisodeMemorySelection("candidate_validation", len(proposal.Candidates), len(seenLessonKeys))
+	}()
 	for _, raw := range proposal.Candidates {
 		candidate, ok := validateEpisodeMemoryCandidate(episode, proposal.EpisodeAssessment, raw, seenLessonKeys)
 		if !ok {
@@ -2183,7 +2250,7 @@ const episodeMemoryProposalInstructions = `For each Episode, return a proposal o
 Return at most 3 independent candidates; an empty candidates array is correct when nothing is worth retaining. Every candidate must declare a retention class and a confidence greater than 0 and at most 1 that reflects the semantic certainty of that specific conclusion from its evidence. Confidence is conclusion-specific; do not infer it from the memory type. Use durable only for reusable knowledge that remains safe and useful within the evidenced future scope. Use transient for Episode/session/runtime-bound observations and sensitive for secrets or values that must not be persisted. One-time verification codes, passwords, credentials, tokens, and other session-only values must never be durable; generalize a reusable workflow without the value. Only durable candidates are eligible for Device Memory and every non-empty proposal is independently audited before persistence. Every durable candidate must be reusable in future similar tasks, change future behavior or decisions, have explicit scope, add new knowledge or evidence, and be safer to recall than to omit. Do not retain greetings, task-specific prose, temporary values, OTPs, transient page contents, or information already explicitly saved through a Memory-management tool.
 Device Memory holds what the Agent cannot know without this device: routes, coordinates, page layouts, workarounds, stop conditions, and stable facts specific to this device, app, or page. ` + episodeMemoryBuiltInGuidanceRule + ` Do not emit a candidate for anything that is not such knowledge. When direct evidence verifies such device-, app-, or page-specific knowledge and it satisfies the type rules, you must emit at least one candidate. Do not return an empty candidates array merely because the Episode achieved its goal.
 
-Assess goal_result independently from the recorded success flag. achieved and not_achieved require direct result, final-state, screenshot, or user-correction evidence. Use unknown when final proof is missing and say what is missing. User steer is correction evidence, not an admission gate. Do not rely on verifier_decision or ObservedState; they are not part of this pipeline.
+Assess goal_result independently from the recorded success flag. achieved and not_achieved require direct result, final-state, screenshot, or user-correction evidence. Explicit termination before the goal was completed establishes not_achieved even without an actionable lesson. Use unknown when the evidence does not determine completion and say what is missing. Assessing an outcome does not require retaining a memory. User steer is correction evidence, not an admission gate. Do not rely on verifier_decision or ObservedState; they are not part of this pipeline.
 
 Type rules:
 - procedure: reusable multi-step goal path. Supply step_refs as the ordered tool_result event ids for the entire demonstrated executable path, including necessary transitions and the final verification step, such as reopening to confirm a change persisted; that verification is an executable step, not only supporting evidence. Each selected result must have a paired tool call and be included in evidence_refs. Supporting evidence_refs can also cite failed alternatives or constraints; these are not executable steps. Only step_refs supply stored steps. Match the claimed scope to that evidenced path. A shorter path requires its own supporting evidence. Exclude unrelated actions and failed alternatives from executable steps; preserve relevant failure conditions as guards. If goal_result is not_achieved, only emit an independently proven partial procedure and set scope.partial="true".

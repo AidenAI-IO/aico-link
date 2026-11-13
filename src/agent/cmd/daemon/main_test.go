@@ -284,6 +284,12 @@ func TestRealtimeDelegatedToolSchemasMatchRuntimeTools(t *testing.T) {
 			if !bytes.Equal(definition.Parameters, want) {
 				t.Fatalf("realtime schema for %s = %s, want %s", tool.Name(), definition.Parameters, want)
 			}
+			switch tool.Name() {
+			case realtimeRecallTool, realtimeSaveMemoryTool, realtimeRecallChunksTool:
+				if definition.Description != tool.Description() {
+					t.Fatalf("realtime %s must preserve its canonical description", tool.Name())
+				}
+			}
 		})
 	}
 }
@@ -298,23 +304,18 @@ func TestRealtimeSessionConfigUsesDedicatedDefaultInstructions(t *testing.T) {
 	if strings.Contains(got.Instructions, cfg.Instruction) {
 		t.Fatal("realtime session reused the legacy agent instruction")
 	}
+	if !strings.Contains(got.Instructions, agent.EvidenceUseGuidance()) {
+		t.Fatal("realtime session omitted shared evidence-use guidance")
+	}
 }
 
 func TestRealtimeSessionConfigIncludesConfiguredResponseLanguage(t *testing.T) {
-	for _, tc := range []struct {
-		locale, language string
-	}{
-		{locale: "zh-CN", language: "Simplified Chinese"},
-		{locale: "en-US", language: "English"},
-	} {
-		t.Run(tc.locale, func(t *testing.T) {
-			cfg := agent.Config{Locale: tc.locale, Prompt: "speak naturally"}
+	for _, locale := range []string{"zh-CN", "en-US"} {
+		t.Run(locale, func(t *testing.T) {
+			cfg := agent.Config{Locale: locale, Prompt: "speak naturally"}
 			got := realtimeProviderSessionConfig(cfg, nil)
-			if !strings.Contains(got.Instructions, "The configured response locale is "+tc.locale+".") {
-				t.Fatalf("realtime instructions missing configured locale: %q", got.Instructions)
-			}
-			if !strings.Contains(got.Instructions, "Always respond in "+tc.language) {
-				t.Fatalf("realtime instructions missing fixed response language: %q", got.Instructions)
+			if !strings.Contains(got.Instructions, agent.ResponseLanguageGuidance(locale)) {
+				t.Fatalf("realtime instructions missing shared response-language guidance for %s: %q", locale, got.Instructions)
 			}
 		})
 	}
@@ -534,7 +535,6 @@ func TestRealtimeInstructionsGateOutcomeClaimsUntilEvidence(t *testing.T) {
 		updateGate  = "do not treat the update itself as completion of the device work"
 		updateRule  = "If this tool returns an error, tell the user you could not update the work"
 		updateOwn   = "Do not use it to add an unrelated request; create a separate task for that"
-		saveRule    = "Do not tell the user you remembered it until this tool returns"
 		forgetRule  = "Do not tell the user it was forgotten until this tool returns successfully"
 		volumeRule  = "do not tell the user it changed until this tool returns"
 	)
@@ -578,7 +578,6 @@ func TestRealtimeInstructionsGateOutcomeClaimsUntilEvidence(t *testing.T) {
 		{realtimeUpdateTaskTool, updateGate},
 		{realtimeUpdateTaskTool, updateRule},
 		{realtimeUpdateTaskTool, updateOwn},
-		{realtimeSaveMemoryTool, saveRule},
 		{realtimeForgetMemoryTool, forgetRule},
 		{realtimeAudioVolumeTool, volumeRule},
 	} {
