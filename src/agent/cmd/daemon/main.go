@@ -42,6 +42,11 @@ const (
 )
 
 var voiceTurnCancelWaitTimeout = 2 * time.Second
+
+// maxCapturedFallbackSamples bounds the raw audio a listen keeps for the case
+// where VAD never closes an utterance: 6 s at 16 kHz.
+const maxCapturedFallbackSamples = 16000 * 6
+
 var wakeupDebounceNow = time.Now
 
 func main() {
@@ -350,6 +355,10 @@ type audioDialogRunner interface {
 	// VoiceRoute is the audio route of the attached conversation, or ""
 	// without one.
 	VoiceRoute() agent.RealtimeAudioRoute
+	// VoiceMuteChanged receives after the attached conversation's mute
+	// changes; VoiceSpeakerMuted reports its speaker state.
+	VoiceMuteChanged() <-chan struct{}
+	VoiceSpeakerMuted() bool
 	ReportVoiceActivity(kind streamcontract.EventKind)
 }
 
@@ -1038,6 +1047,7 @@ func runVoiceTurnWithInputContext(cfg agent.Config, dialog audioDialogRunner, ru
 	thinkBargeInArmedAt := time.Now().Add(1200 * time.Millisecond)
 	ttsWasActive := dialog.TTSOutputActive()
 	stopRequested := dialog.VoiceStopRequested()
+	muteChanged := dialog.VoiceMuteChanged()
 	dialog.ReportVoiceActivity(streamcontract.EventTurnCommitted)
 	// A discontinuity returns the orb to idle. response.terminal would also
 	// clear every streaming draft in the Web UI, including the reply to a
@@ -1056,6 +1066,13 @@ thinking:
 			cancel()
 			_ = waitForTurnCancellation(dialog, resultCh)
 			return voiceTurnResult{ended: true}
+		case <-muteChanged:
+			// Later speech plays as silence; stop what is already queued.
+			// The turn itself keeps running.
+			if dialog.VoiceSpeakerMuted() {
+				logging.Infof("agent", "session", "speaker muted, dropping queued reply audio")
+				dialog.InterruptOutput()
+			}
 		case <-events:
 			if interruptOnWakeup {
 				logging.Infof("agent", "interrupt", "MCU wakeup during active turn, immediately canceling")
@@ -1165,6 +1182,16 @@ speaking:
 			cancelSpeak()
 			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, waitForSpeakCancel(speakCh))
 			return voiceTurnResult{ended: true}
+		case <-muteChanged:
+			if dialog.VoiceSpeakerMuted() {
+				// The reply was not heard; report it undelivered and move on
+				// to listening, as after a finished reply.
+				logging.Infof("agent", "session", "speaker muted, dropping queued reply audio")
+				dialog.InterruptOutput()
+				cancelSpeak()
+				runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, waitForSpeakCancel(speakCh))
+				break speaking
+			}
 		case <-events:
 			if interruptOnWakeup {
 				logging.Infof("agent", "interrupt", "wakeup received during speaking, stopping playback")
@@ -1526,9 +1553,8 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 					logging.Infof("agent", "listen", "Flushing %d samples after VAD timeout", len(utterance))
 					return utterance, false
 				}
-				const maxTimeoutSamples = 16000 * 6 // 6s @ 16kHz
-				if len(captured) > maxTimeoutSamples {
-					captured = captured[len(captured)-maxTimeoutSamples:]
+				if len(captured) > maxCapturedFallbackSamples {
+					captured = captured[len(captured)-maxCapturedFallbackSamples:]
 				}
 				logging.Infof("agent", "listen", "Returning %d buffered samples after VAD timeout", len(captured))
 				return captured, false
@@ -1550,6 +1576,11 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 			return nil, true
 		case <-events:
 			return endListenOnWakeup(dialog, vadPending, captured, speechDetected)
+		case <-stopRequested:
+			// End arrived while the read was waiting; this chunk must not
+			// complete an utterance and start a turn.
+			logging.Infof("agent", "listen", "voice session ended from the Web UI")
+			return nil, false
 		default:
 		}
 
@@ -1570,6 +1601,12 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 		agent.AppendPCM16Samples(chunk.PCM, &vadPending, &hasPendingByte, &pendingByte)
 		if len(vadPending) > pendingStart {
 			captured = append(captured, vadPending[pendingStart:]...)
+			// Without a listen timeout (a browser session) a quiet session
+			// would grow this fallback buffer without limit. Only the newest
+			// window is ever used, so keep just that.
+			if len(captured) > 2*maxCapturedFallbackSamples {
+				captured = append(captured[:0], captured[len(captured)-maxCapturedFallbackSamples:]...)
+			}
 		}
 
 		consumed := 0

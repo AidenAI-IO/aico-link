@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -146,5 +147,42 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 			t.Fatalf("timed out waiting for %s", what)
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// Muting the speaker while a Classic reply plays stops the queued reply and
+// goes back to listening; it does not end the conversation.
+func TestClassicSpeakerMuteStopsQueuedReply(t *testing.T) {
+	voice := agent.NewRealtimeVoiceSession(fakeRouteAudio(agent.RealtimeAudioRouteWeb))
+	speaking := make(chan struct{})
+	var interrupted atomic.Int32
+	dialog := &fakeAudioDialog{
+		frameSamples:    2,
+		interruptOutput: func() { interrupted.Add(1) },
+	}
+	dialog.speak = func(ctx context.Context) error {
+		close(speaking)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	dialog.SetVoiceSession(voice)
+	done := make(chan voiceTurnResult, 1)
+	go func() {
+		done <- runVoiceTurnWithInputContext(agent.Config{}, dialog, nil, agent.TurnInput{InputText: "voice"}, nil,
+			make(chan os.Signal, 1), make(chan voiceEvent, 1), agent.VoiceTurnContext{}, true)
+	}()
+	<-speaking
+	muted := true
+	voice.SetMuted(nil, &muted)
+	select {
+	case result := <-done:
+		if result.ended || result.exit || result.interrupted {
+			t.Fatalf("result = %+v, want the conversation to continue", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("speaker mute did not stop the queued reply")
+	}
+	if interrupted.Load() == 0 {
+		t.Fatal("speaker mute did not interrupt playback")
 	}
 }

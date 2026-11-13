@@ -1269,6 +1269,18 @@ func (d *fakeAudioDialog) VoiceRoute() agent.RealtimeAudioRoute {
 	return d.voice.Route()
 }
 
+func (d *fakeAudioDialog) VoiceMuteChanged() <-chan struct{} {
+	d.opsMu.Lock()
+	defer d.opsMu.Unlock()
+	return d.voice.MuteChanged()
+}
+
+func (d *fakeAudioDialog) VoiceSpeakerMuted() bool {
+	d.opsMu.Lock()
+	defer d.opsMu.Unlock()
+	return d.voice.SpeakerMuted()
+}
+
 func (d *fakeAudioDialog) ReportVoiceActivity(streamcontract.EventKind) {}
 
 func (d *fakeAudioDialog) CanSpeakFinalText() bool {

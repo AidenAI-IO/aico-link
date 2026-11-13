@@ -960,6 +960,18 @@ func (d *AudioDialog) VoiceStopRequested() <-chan struct{} {
 	return d.voiceSession().StopRequested()
 }
 
+// VoiceMuteChanged receives after the attached conversation's microphone or
+// speaker mute changes. It is nil without a conversation.
+func (d *AudioDialog) VoiceMuteChanged() <-chan struct{} {
+	return d.voiceSession().MuteChanged()
+}
+
+// VoiceSpeakerMuted reports whether the attached conversation's speaker is
+// muted.
+func (d *AudioDialog) VoiceSpeakerMuted() bool {
+	return d.voiceSession().SpeakerMuted()
+}
+
 // VoiceRoute reports the audio route of the attached conversation, or ""
 // without one.
 func (d *AudioDialog) VoiceRoute() RealtimeAudioRoute {

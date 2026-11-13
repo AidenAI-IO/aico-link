@@ -48,6 +48,12 @@ func (p *recordedPlayback) WritePlayChunk(_ uint64, data []byte, _ bool) error {
 }
 func (p *recordedPlayback) StopPlayback(uint64) error { return nil }
 
+func (p *recordedPlayback) snapshot() [][]byte {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([][]byte(nil), p.writes...)
+}
+
 type scriptedWebAudio struct {
 	recording *scriptedRecording
 	playback  *recordedPlayback
@@ -88,13 +94,22 @@ func TestClassicDialogUsesBrowserConversationAudio(t *testing.T) {
 		t.Fatalf("muted chunk = %+v, %v; want silence", chunk, err)
 	}
 
-	playback := dialog.currentTTSPlaybackBackend()
+	// The recording cue plays asynchronously through the same backend, so
+	// check the playback route by identity and the mute on its own backend.
+	playback, ok := dialog.currentTTSPlaybackBackend().(voiceSessionPlayback)
+	if !ok || playback.AudioServiceBackend != web.playback || playback.voice != voice {
+		t.Fatalf("playback = %#v, want the browser's backend for this conversation", dialog.currentTTSPlaybackBackend())
+	}
+	muted := &recordedPlayback{}
 	voice.silenced.Store(true)
-	if err := playback.WritePlayChunk(1, []byte{9, 9}, false); err != nil {
+	if err := (voiceSessionPlayback{AudioServiceBackend: muted, voice: voice}).WritePlayChunk(1, []byte{9, 9}, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(devicePlayback.writes) != 0 || len(web.playback.writes) != 1 || string(web.playback.writes[0]) != string([]byte{0, 0}) {
-		t.Fatalf("playback: device=%v browser=%v; want silence in the browser only", devicePlayback.writes, web.playback.writes)
+	if got := muted.snapshot(); len(got) != 1 || string(got[0]) != string([]byte{0, 0}) {
+		t.Fatalf("muted writes = %v, want silence", got)
+	}
+	if got := devicePlayback.snapshot(); len(got) != 0 {
+		t.Fatalf("device playback writes = %v, want none during a browser conversation", got)
 	}
 
 	voice.RequestStop()

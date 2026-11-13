@@ -409,17 +409,26 @@ func (s *Server) setRealtimeVoiceMuted(microphone, speaker *bool) bool {
 	if active == nil {
 		return false
 	}
+	active.SetMuted(microphone, speaker)
+	return true
+}
+
+// SetMuted changes the microphone and/or speaker mute; a nil argument keeps
+// that side's state. The session loop is woken through MuteChanged.
+func (v *RealtimeVoiceSession) SetMuted(microphone, speaker *bool) {
+	if v == nil {
+		return
+	}
 	if microphone != nil {
-		active.muted.Store(*microphone)
+		v.muted.Store(*microphone)
 	}
 	if speaker != nil {
-		active.silenced.Store(*speaker)
+		v.silenced.Store(*speaker)
 	}
 	select {
-	case active.muteChanged <- struct{}{}:
+	case v.muteChanged <- struct{}{}:
 	default:
 	}
-	return true
 }
 
 // handleRealtimeVoice serves GET /api/realtime/voice.
