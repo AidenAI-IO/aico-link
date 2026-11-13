@@ -149,20 +149,30 @@ for every endpoint; only the audio path differs.
 
 | Route | Started by | Microphone and speaker |
 | --- | --- | --- |
-| `device` | Wake word, MCU wakeup, task update, or a `/api/chat` message | Board audio through `audio_service` (or the local host backend) |
+| `device` | Wake word, MCU wakeup, or task update | Board audio through `audio_service` (or the local host backend) |
 | `web` | The voice button in the Web UI | The browser that pressed it, over `/api/realtime/voice/ws` |
+| `text` | A `/api/chat` message while no conversation is running | None; the provider is asked for text replies |
 
-The Web UI shows the same voice mode for both routes: an orb above the
-composer, microphone and speaker mute buttons, and an end button. Text typed
-in the composer during the session is injected into the live session as
-before. Only the tab that started a `web` session captures and plays audio;
-other tabs, and every tab during a `device` session, only display it.
+The Web UI shows the same voice mode for the `device` and `web` routes: an orb
+above the composer, microphone and speaker mute buttons, and an end button.
+Text typed in the composer during the session is injected into the live
+session as before. Only the tab that started a `web` session captures and
+plays audio; other tabs, and every tab during a `device` session, only display
+it.
 
-One conversation runs at a time. A wake word or button press during a
-conversation is ignored, so it cannot open the board microphone when a `web`
-conversation ends. When the provider caps a session's lifetime, the daemon
-reconnects and the conversation continues on the same route with its mute
-state.
+A `text` session is not voice mode. It opens no microphone or speaker, the
+Web UI does not show the orb, and `GET /api/realtime/voice` reports `idle`.
+Its replies stream back to the chat request as text. Background task results
+that finish during the session are delivered as text in it; spoken voice
+notifications stay pending for a voice session or the standalone speech path.
+
+One conversation runs at a time. A wake word or button press during a `device`
+or `web` conversation is ignored, so it cannot open the board microphone when a
+`web` conversation ends. A wake word, button press, or Web UI voice start
+during a `text` session ends that session and opens the requested voice route
+instead; the conversation history carries over. When the provider caps a
+session's lifetime, the daemon reconnects and the conversation continues on the
+same route with its mute state.
 
 The Web UI uses these endpoints:
 
@@ -172,8 +182,8 @@ The Web UI uses these endpoints:
   serving, used to reopen a plain HTTP page where the microphone is allowed).
   A conversation that was asked to stop reports `idle` at once, while the
   daemon is still closing it.
-- `POST /api/realtime/voice/stop` ends the session on either route and returns
-  the daemon to standby.
+- `POST /api/realtime/voice/stop` ends a `device` or `web` session and returns
+  the daemon to standby. It does not end a `text` session.
 - `POST /api/realtime/voice/mute` takes `{"muted": bool}`,
   `{"speaker_muted": bool}`, or both. A muted microphone sends silence, so the
   provider keeps receiving a continuous stream and its turn detection sees
@@ -187,7 +197,8 @@ The Web UI uses these endpoints:
   `capture_stop` ends microphone capture, `playback_stop` drops queued speech
   after a barge-in, and `ended` carries the reason the session ended. Closing
   the socket ends the session. The endpoint rejects a start while another
-  session is connecting or active.
+  voice session is connecting or active; a running `text` session is ended
+  so the voice session can start.
 
 The daemon never waits on the browser: reply audio is queued and written to
 the socket in the background. A browser that falls about 40 seconds of speech
