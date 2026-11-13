@@ -67,10 +67,13 @@ End button, with audio on the device.
 - While a browser session runs, the spoken reply to a message typed in the
   composer also plays in that browser.
 
-Typed `/api/chat` messages never open the microphone in Classic mode: they
-run as ordinary Agent requests and, when TTS is configured, are spoken
-through the device speaker (or the browser, during a browser session). Only
-a wake word, a button press, or the Web UI voice button opens a session.
+Typed `/api/chat` messages are text only in Classic mode: they never open
+the microphone, and outside a voice session they play no prompt tone and no
+spoken reply (including tool-call speech and the spoken replacement for a
+failed turn). During a voice session a typed message joins the conversation,
+so its reply is spoken on that session's route: the device speaker, or the
+browser that started it. Only a wake word, a button press, or the Web UI
+voice button opens a session.
 The legacy single-turn mode (`voice_followup_enabled = false`) does not offer
 the Web UI voice button.
 

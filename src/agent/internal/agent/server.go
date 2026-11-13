@@ -1651,7 +1651,7 @@ func (s *Server) handleChatRunEvent(ctx context.Context, event RunEvent, episode
 	if toolSpeechStreamed && s.logger != nil {
 		s.logger.Info("Tool content TTS already streamed: tool=%s", event.ToolName)
 	}
-	if text := s.toolCallSpeechText(event); text != "" && !toolSpeechStreamed {
+	if text := s.toolCallSpeechText(event); text != "" && !toolSpeechStreamed && s.chatAudioEnabled() {
 		speechCtx, output, cleanup := s.latestSpeech.begin(ctx)
 		go func() {
 			defer cleanup()
@@ -1694,7 +1694,9 @@ func (s *Server) handleChatAsync(
 	s.pendingResults[requestID] = pending
 	s.pendingResultsMu.Unlock()
 
-	s.playPromptSoundAsync(promptSoundAgentSend, "agent send")
+	if s.chatAudioEnabled() {
+		s.playPromptSoundAsync(promptSoundAgentSend, "agent send")
+	}
 
 	run, ok := s.beginChatRun(req, turnInput, userMsg)
 	if !ok {
@@ -1755,7 +1757,7 @@ func (s *Server) handleChatAsync(
 		ttsManager := s.currentTTSManager()
 		cfg := s.runtime.ConfigSnapshot()
 
-		if cfg.VoiceStreamingTTSEnabledOrDefault() && s.currentTTSPlaybackBackend() != nil {
+		if s.chatAudioEnabled() && cfg.VoiceStreamingTTSEnabledOrDefault() && s.currentTTSPlaybackBackend() != nil {
 			if ttsManager != nil {
 				stream, err := beginManagedTTSBlockStream(run.ctx, ttsManager, s.currentTTSPlaybackBackend(), cfg, &s.latestSpeech)
 				if err != nil {
@@ -1835,7 +1837,7 @@ func (s *Server) handleChatAsync(
 					s.logger.Error("Agent run failed: request_id=%s error=%v", requestID, err)
 				}
 			}
-			if !canceled && !result.SpeechStreamed && s.canSpeakFinalText() {
+			if !canceled && !result.SpeechStreamed && s.chatAudioEnabled() && s.canSpeakFinalText() {
 				prepared := s.runtime.PrepareSpokenText(run.ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
 				s.speakFinalTextIfCurrent(run.ctx, requestID, prepared, speechGeneration.current())
 			}
@@ -1855,7 +1857,7 @@ func (s *Server) handleChatAsync(
 		// Keep request-scoped final TTS inside the async run goroutine so Stop can
 		// still see the active run/output and interrupt it reliably.
 		speechText := result.SpokenTextForConfig(s.runtime.ConfigSnapshot())
-		if s.canSpeakFinalText() && speechText != "" && !result.SpeechStreamed {
+		if s.chatAudioEnabled() && s.canSpeakFinalText() && speechText != "" && !result.SpeechStreamed {
 			prepared := s.runtime.PrepareSpokenText(run.ctx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
 			s.speakFinalTextIfCurrent(run.ctx, requestID, prepared, speechGeneration.current())
 		}
@@ -2080,7 +2082,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		s.logger.Info("Chat request: %s attachments=%d stream=ndjson", inputText, len(turnInput.Attachments))
 	}
 
-	s.playPromptSoundAsync(promptSoundAgentSend, "agent send")
+	if s.chatAudioEnabled() {
+		s.playPromptSoundAsync(promptSoundAgentSend, "agent send")
+	}
 
 	// A request_id marks a resumable run. Keep it alive if the streaming
 	// HTTP client disconnects; only /api/chat/cancel should stop it.
@@ -2126,7 +2130,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	streamWriters := []io.Writer{
 		newChatAssistantStreamWriter(stream, episodeID, req.RequestID),
 	}
-	if cfg.VoiceStreamingTTSEnabledOrDefault() && s.currentTTSPlaybackBackend() != nil {
+	if s.chatAudioEnabled() && cfg.VoiceStreamingTTSEnabledOrDefault() && s.currentTTSPlaybackBackend() != nil {
 		s.logger.Info("Starting TTS stream")
 		if ttsManager != nil {
 			streamSession, err := beginManagedTTSBlockStream(ctx, ttsManager, s.currentTTSPlaybackBackend(), cfg, &s.latestSpeech)
@@ -2200,7 +2204,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		if s.logger != nil {
 			s.logger.Error("Agent run failed: %v", err)
 		}
-		if !result.SpeechStreamed && s.canSpeakFinalText() {
+		if !result.SpeechStreamed && s.chatAudioEnabled() && s.canSpeakFinalText() {
 			prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
 			s.speakFinalTextIfCurrent(ctx, req.RequestID, prepared, speechGeneration.current())
 		}
@@ -2214,7 +2218,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	speechText := result.SpokenTextForConfig(s.runtime.ConfigSnapshot())
-	if s.canSpeakFinalText() && speechText != "" && !result.SpeechStreamed {
+	if s.chatAudioEnabled() && s.canSpeakFinalText() && speechText != "" && !result.SpeechStreamed {
 		prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
 		// Let request-scoped final TTS outlive the streaming handler while
 		// /api/chat/cancel can still interrupt it via the active run/output.

@@ -328,6 +328,18 @@ func (c *realtimeVoiceController) running() *RealtimeVoiceSession {
 	return c.active
 }
 
+// chatAudioEnabled reports whether a typed chat request may use audio: a
+// prompt tone and a spoken reply. A text message is text only; it is spoken
+// only while a voice conversation runs, where the reply is part of that
+// conversation and plays on its route (the device, or the browser that
+// started it).
+func (s *Server) chatAudioEnabled() bool {
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.runningVoice() != nil
+}
+
 // runningWebVoice returns the running conversation when a browser carries
 // its audio, or nil.
 func (s *Server) runningWebVoice() *RealtimeVoiceSession {
