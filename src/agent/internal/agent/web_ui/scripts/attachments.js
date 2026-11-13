@@ -76,15 +76,17 @@ function imageMIMETypeFromDataURL(dataUrl) {
     return mimeType.indexOf('image/') === 0 ? mimeType : 'image/png';
 }
 
-function setComposerHint(text, isError) {
+// setComposerHint shows a short notice under the input. It clears itself
+// after a moment unless sticky is set.
+function setComposerHint(text, isError, sticky) {
     if (!composerHintEl) return;
     if (composerHintTimer) {
         clearTimeout(composerHintTimer);
         composerHintTimer = null;
     }
-    composerHintEl.textContent = text || defaultComposerHint;
+    composerHintEl.textContent = text || '';
     composerHintEl.classList.toggle('error', !!isError);
-    if (text) {
+    if (text && !sticky) {
         composerHintTimer = setTimeout(resetComposerHint, 2800);
     }
 }
@@ -95,7 +97,7 @@ function resetComposerHint() {
         clearTimeout(composerHintTimer);
         composerHintTimer = null;
     }
-    composerHintEl.textContent = defaultComposerHint;
+    composerHintEl.textContent = '';
     composerHintEl.classList.remove('error');
 }
 
@@ -184,6 +186,17 @@ function renderMessageAttachments(attachments) {
             const image = document.createElement('img');
             image.alt = attachment.name || 'Image attachment';
             image.src = attachmentDataURL(attachment);
+            image.className = 'zoomable';
+            image.tabIndex = 0;
+            image.setAttribute('role', 'button');
+            image.setAttribute('aria-label', 'View ' + (attachment.name || 'image') + ' full size');
+            const zoom = () => openImageViewer([{src: image.src, caption: attachment.name || 'Image'}], 0);
+            image.addEventListener('click', zoom);
+            image.addEventListener('keydown', function(event) {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                zoom();
+            });
             card.appendChild(image);
         } else if (attachment.kind === 'audio') {
             const audio = document.createElement('audio');
@@ -386,11 +399,7 @@ async function addAttachmentFiles(files, source) {
 }
 
 function showSharedFileLoginHint() {
-    setComposerHint('Sign in to upload files, then select the file again. ', true);
-    if (composerHintTimer) {
-        clearTimeout(composerHintTimer);
-        composerHintTimer = null;
-    }
+    setComposerHint('Sign in to upload files, then select the file again. ', true, true);
     if (!composerHintEl) return;
     const link = document.createElement('a');
     // Keep this page and its draft intact while the shared host cookie is set.

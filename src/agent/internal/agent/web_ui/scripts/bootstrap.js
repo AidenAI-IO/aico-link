@@ -5,14 +5,18 @@ setInterval(function() {
     if (!document.hidden) loadHistory();
 }, 2000);
 conversationEl.addEventListener('scroll', loadOlderHistoryNearTop, {passive: true});
+// A floating thumbnail preview would detach from its row while scrolling.
+conversationEl.addEventListener('scroll', hideThumbPreview, {passive: true});
 refreshCurrentLiveActivity();
 setInterval(refreshCurrentLiveActivity, 2000);
 loadToolCatalog();
 autoResizeInput();
 connectSSE();
 startResourcePolling();
+startRealtimeVoiceStatusPolling();
 
 inputEl.addEventListener('input', autoResizeInput);
+inputEl.addEventListener('input', renderComposerPrimary);
 document.getElementById('fileInput').addEventListener('change', handleFileSelection);
 inputEl.addEventListener('paste', handleComposerPaste);
 stateModalCloseEl.addEventListener('click', closeStateDetails);
@@ -23,7 +27,7 @@ toolSelectEl.addEventListener('change', syncSelectedTool);
 inputEl.addEventListener('keydown', function(event) {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
-        sendMessage();
+        sendMessage({fromKeyboard: true});
     }
 });
 

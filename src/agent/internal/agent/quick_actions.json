@@ -271,7 +271,7 @@
         "ios": {
           "status": "active",
           "steps": [
-            { "tool": "keyboard_tap", "input": { "keys": ["meta", "space"] }, "delay_ms_after": 600 },
+            { "tool": "keyboard_tap", "input": { "keys": ["meta", "space"] }, "delay_ms_after": 600, "expect": "The iOS Spotlight Search page is open: a search field and suggestions over a blurred background, instead of the Home Screen, the app switcher, or an app" },
             { "tool": "keyboard_tap", "input": { "keys": ["meta", "a"] }, "delay_ms_after": 60 },
             { "tool": "keyboard_tap", "input": { "keys": ["backspace"] }, "delay_ms_after": 60 },
             { "tool": "keyboard_tap", "input": { "keys": ["meta", "a"] }, "delay_ms_after": 60 },
@@ -282,7 +282,7 @@
             {
               "status": "active",
               "steps": [
-                { "tool": "touch_gesture", "input": { "type": "swipe", "start": { "x": 500, "y": 250 }, "end": { "x": 500, "y": 750 }, "speed": 2500 }, "delay_ms_after": 600 },
+                { "tool": "touch_gesture", "input": { "type": "swipe", "start": { "x": 500, "y": 250 }, "end": { "x": 500, "y": 750 }, "speed": 2500 }, "delay_ms_after": 600, "expect": "The iOS Spotlight Search page is open: a search field and suggestions over a blurred background, instead of the Home Screen, the app switcher, or an app" },
                 { "tool": "keyboard_tap", "input": { "keys": ["meta", "a"] }, "delay_ms_after": 60 },
                 { "tool": "keyboard_tap", "input": { "keys": ["backspace"] }, "delay_ms_after": 60 },
                 { "tool": "keyboard_tap", "input": { "keys": ["meta", "a"] }, "delay_ms_after": 60 },
@@ -303,7 +303,7 @@
         "mac": {
           "status": "active",
           "steps": [
-            { "tool": "keyboard_tap", "input": { "keys": ["meta", "space"] }, "delay_ms_after": 600 },
+            { "tool": "keyboard_tap", "input": { "keys": ["meta", "space"] }, "delay_ms_after": 600, "expect": "The macOS Spotlight search bar is open in front of the desktop or the current app" },
             { "tool": "keyboard_tap", "input": { "keys": ["meta", "a"] }, "delay_ms_after": 60 },
             { "tool": "keyboard_tap", "input": { "keys": ["backspace"] }, "delay_ms_after": 60 },
             { "tool": "keyboard_tap", "input": { "keys": ["meta", "a"] }, "delay_ms_after": 60 },

@@ -226,8 +226,14 @@ function semanticEpisodeID(event, payload) {
         semanticField(payload, 'response_id', 'ResponseID', 'item_id', 'ItemID', 'session_id', 'SessionID');
 }
 
+// occurred_at is the provider's time and is often unset; Go encodes an unset
+// time as year 1 rather than omitting it, so fall back past it.
 function semanticTimestamp(event) {
-    return semanticField(event, 'occurred_at', 'received_at') || new Date().toISOString();
+    for (const name of ['occurred_at', 'received_at']) {
+        const value = semanticField(event, name);
+        if (value && Date.parse(value) > 0) return value;
+    }
+    return new Date().toISOString();
 }
 
 function semanticText(payload) {
@@ -254,6 +260,8 @@ function handleSemanticEvent(event) {
         return;
     }
 
+    // voice.js is absent from the unit tests that load this file.
+    if (typeof handleRealtimeVoiceEvent === 'function') handleRealtimeVoiceEvent(event);
     const payload = event.payload || {};
     const requestId = semanticRequestID(event, payload);
     const episodeId = semanticEpisodeID(event, payload);
@@ -295,6 +303,17 @@ function handleSemanticEvent(event) {
             });
             refreshHistoryFromContext();
             return;
+        case 'transcript.segment_final': {
+            // The reply usually starts streaming before the provider has
+            // transcribed what the user said, and history refreshes wait for
+            // a live reply to finish. Show the user's words now, above that
+            // reply, instead of after it; the refresh at the end of the
+            // response replaces this with the stored message.
+            const text = semanticText(payload).trim();
+            if (text) addLiveUserTranscript({type: 'user', content: text, source: 'voice', timestamp});
+            refreshHistoryFromContext();
+            return;
+        }
         case 'state.updated':
             // State is persisted before the model starts, but history refreshes
             // are paused during a run to protect live assistant drafts. Render
@@ -347,6 +366,7 @@ function semanticEventNeedsHistoryRefresh(kind) {
         kind === 'tool.failed' ||
         kind === 'task.updated' ||
         kind === 'stream.error' ||
+        kind === 'message.appended' ||
         kind === 'session.closed';
 }
 

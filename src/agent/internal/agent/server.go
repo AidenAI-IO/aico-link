@@ -40,6 +40,7 @@ import (
 	_ "aico-agent/internal/agent/tts/adapters/volcengine"
 	"aico-agent/internal/ble"
 	"aico-agent/internal/lanaccess"
+	"aico-agent/internal/localtls"
 	"aico-agent/internal/mcu"
 	streamcontract "aico-agent/internal/stream"
 )
@@ -61,6 +62,10 @@ type Server struct {
 	httpMu                  sync.Mutex
 	httpServer              *http.Server
 	shareServer             *http.Server
+	httpsServer             *http.Server
+	httpsAddr               string
+	httpsAuthority          *localtls.Authority
+	httpsServing            atomic.Bool
 	httpListener            net.Listener
 	usbListeners            []net.Listener
 	usbListenStops          []chan struct{}
@@ -116,6 +121,7 @@ type Server struct {
 	storageMonitor          *StorageMonitor
 	realtimeChatMu          sync.RWMutex
 	realtimeChatHandler     RealtimeChatHandler
+	realtimeVoice           realtimeVoiceController
 }
 
 // RealtimeEventSink returns the semantic v2 sink used by the HTTP observer
@@ -185,6 +191,9 @@ func normalizePublicMessage(message Message) (Message, bool) {
 		message.Type = runEventToolCall
 	case "tool_result":
 		message.Type = "tool_result"
+	case messageTypeProactive:
+		message.Type = messageTypeProactive
+		message.Role = ""
 	default:
 		return Message{}, false
 	}
@@ -566,10 +575,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chat/steer", s.handleChatSteer)
 	mux.HandleFunc("/api/chat/steer/cancel", s.handleChatSteerCancel)
 	mux.HandleFunc("/api/chat/result", s.handleChatResult)
+	if s.httpsAuthority != nil {
+		mux.HandleFunc(localtls.AuthorityPath, s.httpsAuthority.ServeAuthority)
+	}
+	mux.HandleFunc("/api/realtime/voice", s.handleRealtimeVoice)
+	mux.HandleFunc("/api/realtime/voice/stop", s.handleRealtimeVoiceStop)
+	mux.HandleFunc("/api/realtime/voice/mute", s.handleRealtimeVoiceMute)
+	mux.HandleFunc("/api/realtime/voice/ws", s.handleRealtimeVoiceSocket)
 	mux.HandleFunc("/api/live-activity/status", s.handleLiveActivityStatus)
 	mux.HandleFunc("/api/live-activity/current", s.handleLiveActivityCurrent)
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/history", s.handleHistory)
+	mux.HandleFunc("/api/proactive", s.handleProactive)
 	mux.HandleFunc("/api/context", s.handleContext)
 	mux.HandleFunc("/api/context/attachment", s.handleContextAttachment)
 	mux.HandleFunc("/api/episodes/", s.handleEpisodes)
@@ -788,9 +805,10 @@ func (s *Server) Start() error {
 
 	errCh := make(chan error, 1)
 	defer s.Close()
-	s.startUSBListener(srv)
+	s.startUSBListener(srv, false)
+	s.startHTTPS(handler)
 	if shareServer != nil {
-		s.startUSBListener(shareServer)
+		s.startUSBListener(shareServer, false)
 		go func() {
 			err := shareServer.Serve(shareListener)
 			if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) && s.logger != nil {
@@ -834,6 +852,7 @@ func (s *Server) Close() {
 		s.httpMu.Lock()
 		srv := s.httpServer
 		shareServer := s.shareServer
+		httpsServer := s.httpsServer
 		listener := s.httpListener
 		usbListeners := s.usbListeners
 		for _, stop := range s.usbListenStops {
@@ -850,6 +869,9 @@ func (s *Server) Close() {
 
 		if shareServer != nil {
 			_ = shareServer.Close()
+		}
+		if httpsServer != nil {
+			_ = httpsServer.Close()
 		}
 		s.cancelAllActiveRuns()
 		s.interruptAllActiveOutputs()
@@ -3953,6 +3975,9 @@ func webMessageFromContextMessage(item messages.Message, contextRole string) (Me
 		message.Type = "user"
 	case messages.MessageRoleAssistant:
 		message.Type = "assistant"
+		if item.Proactive {
+			message.Type = messageTypeProactive
+		}
 	case messages.MessageRoleToolCall:
 		message.Type = "tool_call"
 		if len(item.ToolCalls) > 0 {
@@ -3964,6 +3989,7 @@ func webMessageFromContextMessage(item messages.Message, contextRole string) (Me
 		if len(item.ToolResults) > 0 {
 			message.ToolName = item.ToolResults[0].Name
 			message.Content = item.ToolResults[0].Content
+			message.IsError = item.ToolResults[0].Meta != nil && item.ToolResults[0].Meta.IsError
 		}
 	case messages.MessageRoleNotice:
 		message.Type = "notice"

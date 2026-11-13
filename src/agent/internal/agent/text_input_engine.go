@@ -871,7 +871,12 @@ func (e *textInputEngine) clearField(ctx context.Context, platform string) error
 }
 
 func (e *textInputEngine) captureScreenshot(ctx context.Context) (screenshotResult, error) {
-	out, err := e.hw.screenshot.Call(ctx, "{}")
+	return captureScreenshotResult(ctx, e.hw.screenshot)
+}
+
+// captureScreenshotResult calls a screenshot tool and decodes its result.
+func captureScreenshotResult(ctx context.Context, tool langtools.Tool) (screenshotResult, error) {
+	out, err := tool.Call(ctx, "{}")
 	if err != nil {
 		return screenshotResult{}, err
 	}

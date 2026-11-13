@@ -207,13 +207,15 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	keyboardTap := &KeyboardTapTool{mnkProvider: mnkProvider}
 	keyboardText := &KeyboardTextTool{dev: kbDev, adb: adbInput, keyboardLayout: hidCfg.KeyboardLayoutOrDefault(), iosKeyboardIsolation: iosKeyboardIsolation}
 	keyboardText.textProvider, _ = mnkProvider.(mnk.TextProvider)
+	decider := &decisionAdvisor{}
 	touchGesture := &TouchGestureTool{
-		mnkProvider:  mnkProvider,
-		screen:       screen,
-		touchscreen:  hidCfg.PointerTouchscreen(),
-		captureFrame: newFrameCapturer(provider),
+		mnkProvider:    mnkProvider,
+		screen:         screen,
+		touchscreen:    hidCfg.PointerTouchscreen(),
+		captureFrame:   newFrameCapturer(provider),
+		confirmTargets: newTapSequenceConfirmer(decider),
 	}
-	quickAction := &QuickActionTool{keyboard: keyboardTap, touch: touchGesture, iosKeyboardIsolation: iosKeyboardIsolation}
+	quickAction := &QuickActionTool{keyboard: keyboardTap, touch: touchGesture, iosKeyboardIsolation: iosKeyboardIsolation, decider: decider, screenshot: screenshot}
 	quickAction.systemActions, _ = mnkProvider.(mnk.SystemActionProvider)
 	textInputHW := &textInputHardwareDeps{
 		pointerMode:  hidCfg.PointerModeOrDefault(),
@@ -262,6 +264,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		mnkProvider:                  mnkProvider,
 		phoneBridgeRestorer:          NewPhoneBridgeRestorer(nil, pointer),
 		textInputHW:                  textInputHW,
+		decider:                      decider,
 		iosKeyboardIsolation:         iosKeyboardIsolation,
 		iosKeyboardIsolationOptional: toolOptions.disableIOSKeyboardIsolation,
 		skillInstallClient:           newSkillInstallHTTPClient(proxyCfg),

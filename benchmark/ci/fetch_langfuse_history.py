@@ -229,6 +229,10 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
         for key, value in scores.items()
         if key.startswith("failures.class.")
     }
+    # Older publishers omitted failure categories with zero occurrences. Keep
+    # those runs usable when new reporting fields are introduced.
+    for kind in ("environment", "evaluation"):
+        failure_classes.setdefault(kind, 0.0)
     record = {
         **{key: metadata.get(key) for key in COMPARISON_FIELDS},
         "run_id": run_id,
@@ -284,11 +288,10 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
     if any(record["failure_classes"].get(kind, 0) > 0
            for kind in ("environment", "evaluation")):
         missing.append("evaluation_coverage")
-    required_failure_counts = ("environment", "evaluation")
-    missing_failure_counts = [kind for kind in required_failure_counts
-                              if (value := _number(scores.get(f"failures.class.{kind}"))) is None
+    invalid_failure_counts = [kind for kind in ("environment", "evaluation")
+                              if (value := _number(failure_classes[kind])) is None
                               or value < 0 or not value.is_integer()]
-    if missing_failure_counts:
+    if invalid_failure_counts:
         missing.append("failure_class_counts")
     record["missing_metrics"] = missing
     if missing or not record["eligible_tasks"]:

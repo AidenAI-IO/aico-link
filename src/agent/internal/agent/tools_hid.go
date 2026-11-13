@@ -298,6 +298,9 @@ type TouchGestureTool struct {
 	deviceTypeFn       func() string
 	// captureFrame backs the tap_sequence screen-change check; nil disables it.
 	captureFrame frameCapturer
+	// confirmTargets lets the decision model overrule a target change the
+	// pixel check saw; nil leaves the pixel check alone.
+	confirmTargets tapSequenceConfirmer
 }
 
 func (t *TouchGestureTool) Name() string { return "touch_gesture" }
@@ -402,7 +405,7 @@ func (t *TouchGestureTool) Call(ctx context.Context, input string) (string, erro
 		if err != nil {
 			return toolErrorResultf(ctx, CodeToolExecutionFailed, "tap_sequence screen check unavailable, so no tap was sent: %v. Retry, or send the taps individually.", err), nil
 		}
-		adapter.WithTapSequenceGuard(newTapSequenceGuard(t.captureFrame, t.screen, baseline, points))
+		adapter.WithTapSequenceGuard(newTapSequenceGuard(t.captureFrame, t.screen, baseline, points, t.confirmTargets))
 	}
 	output, err := adapter.Call(ctx, input)
 	return mapMNKAdapterResult(ctx, output, err)

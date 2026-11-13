@@ -5,20 +5,66 @@ log() {
     echo "aico-wifi-prepare: $*" >&2
 }
 
+# Only SCH v1 routes WL_EN to GPIO3_C5 (package pin 3), through R169
+# to module pin 12. WIFI_VCC_PWREN remains under the companion MCU.
 model=$(tr -d '\000' < /proc/device-tree/model 2>/dev/null || true)
 [ "$model" = "Aico Link SCH v1" ] || exit 0
-
-# The MCU owns module power. The kernel handles retained SDIO enumeration;
-# preparing the driver must preserve the module and the existing host/card.
-host=ff9a0000.mmc
-if [ ! -e /sys/firmware/devicetree/base/mmc@ff9a0000/aico,aic8800d80-retained-sdio ]; then
-    log "result=failed reason=retained-sdio-not-configured host=$host"
-    exit 1
+if [ -e /sys/class/net/wlan0 ]; then
+    log "result=skip reason=wlan0-present"
+    exit 0
 fi
-if [ ! -e "/sys/bus/platform/drivers/dwmmc_rockchip/$host" ]; then
+# A reset must not invalidate handles held by a running AIC/BT driver.
+# A normal boot reaches this helper before any AIC module is loaded.
+for module in aic8800_bsp aic8800_fdrv aic8800_btlpm; do
+    if [ -d "/sys/module/$module" ]; then
+        log "result=failed reason=driver-already-loaded module=$module"
+        exit 1
+    fi
+done
+
+# This controller is SCH v1 Wi-Fi only, not the eMMC/root filesystem.
+host=ff9a0000.mmc
+driver=/sys/bus/platform/drivers/dwmmc_rockchip
+gpio=/sys/class/gpio/gpio117
+if [ ! -e "$driver/$host" ]; then
     log "result=failed reason=sdio-host-unbound host=$host"
     exit 1
 fi
+if [ ! -d "$gpio" ]; then
+    echo 117 > /sys/class/gpio/export
+fi
+
+# Leave WL_EN high and restore the host if any intermediate operation fails.
+# Keep the GPIO exported/high for the rest of the boot.
+detached=0
+# Called indirectly by the EXIT trap.
+# shellcheck disable=SC2317
+cleanup() {
+    status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ]; then
+        echo high > "$gpio/direction" || true
+        if [ "$detached" -eq 1 ]; then
+            echo "$host" > "$driver/bind" || true
+        fi
+        log "result=failed status=$status"
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+# The MCU keeps the module powered across RV1106 restarts, so the module may
+# still run the previous boot's firmware. Pulse WL_EN to return it to ROM.
+log "action=reset host=$host gpio=117 low_ms=1000 settle_ms=2000"
+echo "$host" > "$driver/unbind"
+detached=1
+echo low > "$gpio/direction"
+sleep 1
+echo 1 > "$gpio/value"
+sleep 2
+echo "$host" > "$driver/bind"
+detached=0
 
 matches() {
     [ -r "$1/vendor" ] && [ -r "$1/device" ] &&
@@ -26,8 +72,9 @@ matches() {
         [ "$(cat "$1/device")" = "$2" ]
 }
 
-# Require function 1 and function 2 on the same card, not a pair collected
-# from unrelated cards. Driver insertion is synchronous after enumeration.
+# non-removable hosts scan only once; WL_EN alone does not trigger a rescan.
+# Wait for both AIC8800D80 SDIO functions, on the same card, before loading
+# the BSP/firmware.
 attempt=0
 while [ "$attempt" -lt 50 ]; do
     for card in /sys/bus/platform/devices/"$host"/mmc_host/mmc*/*; do
