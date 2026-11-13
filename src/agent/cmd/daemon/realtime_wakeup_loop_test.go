@@ -37,6 +37,8 @@ type loopHarness struct {
 	// the next session. A session without a step ends normally.
 	mu     sync.Mutex
 	script []func() error
+	// current is the session the running script step belongs to.
+	current *agent.RealtimeVoiceSession
 	done   chan struct{}
 	signal chan os.Signal
 	// wakeCallback is the loop's MCU/GPIO wakeup callback.
@@ -77,9 +79,17 @@ func newLoopHarness(t *testing.T, tasks *agenttask.Manager) *loopHarness {
 	t.Cleanup(h.http.Close)
 
 	oldRunner := realtimeSessionRunner
-	realtimeSessionRunner = func(_ agent.Config, _ chan os.Signal, _ *agent.Runtime, _ *agenttask.Manager, _ streamcontract.EventSink, voice *agent.RealtimeVoiceSession, _ ...*realtimeChatBridge) error {
+	realtimeSessionRunner = func(_ agent.Config, _ chan os.Signal, _ *agent.Runtime, _ *agenttask.Manager, _ streamcontract.EventSink, voice *agent.RealtimeVoiceSession, bridges ...*realtimeChatBridge) error {
+		if voice.Route() == agent.RealtimeAudioRouteText {
+			// Answer the chat request that opened the session, so it does
+			// not wake the loop again once the session ends.
+			command := <-bridges[0].commands
+			sendRealtimeChatEvent(command, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDone, Response: "ok"})
+			close(command.events)
+		}
 		h.sessions <- loopSessionRecord{route: voice.Route(), voice: voice}
 		h.mu.Lock()
+		h.current = voice
 		var step func() error
 		if len(h.script) > 0 {
 			step, h.script = h.script[0], h.script[1:]
@@ -311,6 +321,56 @@ func TestWakeupLoopWithdrawnBrowserStartKeepsTaskUpdate(t *testing.T) {
 	if got := h.nextSession("the queued task update").route; got != agent.RealtimeAudioRouteDevice {
 		t.Fatalf("task update opened a %s session, want device", got)
 	}
+}
+
+// A typed chat message on its own opens a text session: no microphone or
+// speaker, and no voice mode in the Web UI. A wake word, button press or
+// browser voice start during it ends the text session and opens voice.
+func TestWakeupLoopChatOpensTextSessionUntilVoiceIsRequested(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		voice func(*loopHarness) (cleanup func())
+		route agent.RealtimeAudioRoute
+	}{
+		{"wake word", func(h *loopHarness) func() { h.wake(); return func() {} }, agent.RealtimeAudioRouteDevice},
+		{"browser start", func(h *loopHarness) func() { return h.startBrowser() }, agent.RealtimeAudioRouteWeb},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newLoopHarness(t, nil)
+			textStopped := make(chan struct{})
+			h.then(func() error {
+				// The text session runs until voice is requested.
+				<-h.currentSession().StopRequested()
+				close(textStopped)
+				return nil
+			})
+			h.post("/api/chat", `{"message":"hello"}`)
+
+			text := h.nextSession("the chat request")
+			if text.route != agent.RealtimeAudioRouteText {
+				t.Fatalf("chat request opened a %s session, want text", text.route)
+			}
+			if status := h.status(); status.State != "idle" {
+				t.Fatalf("status during a text session = %+v, want idle", status)
+			}
+			defer tc.voice(h)()
+			select {
+			case <-textStopped:
+			case <-time.After(2 * time.Second):
+				t.Fatal("a voice request did not end the text session")
+			}
+			if got := h.nextSession("the voice request").route; got != tc.route {
+				t.Fatalf("voice request opened a %s session, want %s", got, tc.route)
+			}
+		})
+	}
+}
+
+// currentSession returns the session the running script step belongs to.
+func (h *loopHarness) currentSession() *agent.RealtimeVoiceSession {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.current
 }
 
 // idleWakeupWatcher stands in for the MCU and GPIO wakeup sources.

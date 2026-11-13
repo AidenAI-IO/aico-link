@@ -15,7 +15,7 @@ func TestRealtimeActivationsKeepDeviceWakeDuringSettle(t *testing.T) {
 					a.Device()
 				}
 			}
-			a.Settle(false, func() bool { return false })
+			a.Settle(true, false, func() bool { return false })
 			select {
 			case <-a.events:
 			default:
@@ -33,7 +33,7 @@ func TestRealtimeActivationsKeepDeviceWakeDuringSettle(t *testing.T) {
 func TestRealtimeActivationsClearServedDeviceWake(t *testing.T) {
 	a := newRealtimeActivations()
 	a.Device()
-	a.Settle(false, func() bool { return false })
+	a.Settle(true, false, func() bool { return false })
 	select {
 	case <-a.events:
 		t.Fatal("a served activation woke the loop again")
@@ -76,5 +76,32 @@ func TestRealtimeActivationsIgnoreWakeupWhileRunning(t *testing.T) {
 	<-a.events
 	if !a.TakeDevice() {
 		t.Fatal("a wakeup in standby did not claim the device")
+	}
+}
+
+// A wake word during a text session ends it and is kept for the next
+// session, which then opens the device; a text session serves no device
+// activation.
+func TestRealtimeActivationsWakeupEndsTextSession(t *testing.T) {
+	a := newRealtimeActivations()
+	stopped := 0
+	a.SetTextSession(func() { stopped++ })
+	a.Wakeup()
+	if stopped != 1 {
+		t.Fatalf("text session stopped %d times, want 1", stopped)
+	}
+	a.SetTextSession(nil)
+	a.Settle(false, false, func() bool { return false })
+	<-a.events
+	if !a.TakeDevice() {
+		t.Fatal("a wakeup during a text session did not claim the device")
+	}
+
+	// One recorded while the loop was claiming the text session ends it as
+	// soon as it is published.
+	a.DeferDevice()
+	a.SetTextSession(func() { stopped++ })
+	if stopped != 2 {
+		t.Fatal("a device activation recorded before the text session started did not end it")
 	}
 }

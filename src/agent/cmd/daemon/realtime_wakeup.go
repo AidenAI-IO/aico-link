@@ -503,7 +503,9 @@ func runRealtimeWakeupMode(cfg agent.Config, sigChan chan os.Signal, newWatcher 
 func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, server *agent.Server, runtime *agent.Runtime, tasks *agenttask.Manager, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
 	activations := newRealtimeActivations()
 	events := activations.events
-	bridge := newRealtimeChatBridge(activations.Device)
+	// A typed chat request wakes the loop without claiming the device: on its
+	// own it opens a text session with no microphone or speaker.
+	bridge := newRealtimeChatBridge(activations.Wake)
 	voiceNotificationTicker := time.NewTicker(realtimeNotificationPoll)
 	defer voiceNotificationTicker.Stop()
 	var notificationFallbackCancel context.CancelFunc
@@ -636,6 +638,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			voice = nil
 		}
 		activations.SetRunning(false)
+		activations.SetTextSession(nil)
 	}
 	defer endVoice("")
 	for {
@@ -712,20 +715,26 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			}
 			realtimeBeforeClaim()
 			if voice == nil {
-				// A browser waiting to start brings its own audio; the device
-				// opens only for a device activation or a queued chat request.
-				deviceRequested := activations.TakeDevice() || chatBridgeHasPending(bridge)
+				// A browser waiting to start brings its own audio. Otherwise
+				// the device opens only for a device activation; a typed chat
+				// request on its own opens a text session.
+				requested := realtimeRequestedRoute(activations.TakeDevice(), chatBridgeHasPending(bridge))
 				if server != nil && !cfg.Benchmark.RealtimeText {
-					voice = server.ClaimRealtimeVoiceSession(cfg, deviceRequested)
+					voice = server.ClaimRealtimeVoiceSession(cfg, requested)
 					if voice == nil {
 						// The only wakeup came from a browser start that was
-						// since withdrawn. Opening the device would start a
-						// session nobody asked for.
-						logging.Infof("agent", "realtime", "Browser voice start was withdrawn before it began; staying in standby")
+						// since withdrawn, or from a chat request that was
+						// canceled. Opening the device would start a session
+						// nobody asked for.
+						logging.Infof("agent", "realtime", "Activation was withdrawn before the session began; staying in standby")
 						continue
 					}
 				}
-				activations.SetRunning(true)
+				if voice.Route() == agent.RealtimeAudioRouteText {
+					activations.SetTextSession(voice.RequestStop)
+				} else {
+					activations.SetRunning(true)
+				}
 			}
 			// The session is about to consume every terminal update available
 			// now. Record that watermark only once a session opens: a wakeup
@@ -774,7 +783,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			// arrives meanwhile, and wakes the loop again to reconnect a
 			// rotated session, to answer an API request that arrived during
 			// teardown, or to start a browser voice session queued meanwhile.
-			activations.Settle(failureAnnouncementDone != nil, func() bool {
+			activations.Settle(route != agent.RealtimeAudioRouteText, failureAnnouncementDone != nil, func() bool {
 				return rotated || chatBridgeHasPending(bridge) || (server != nil && server.RealtimeVoicePending())
 			})
 			if !rotated {
@@ -784,6 +793,21 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 				logging.Infof("agent", "ready", "Waiting for realtime activation...")
 			}
 		}
+	}
+}
+
+// realtimeRequestedRoute names the route a session opens for when no browser
+// voice start is waiting: the device for a wake word, button press or task
+// update, a text session for a typed chat request alone, and nothing
+// otherwise.
+func realtimeRequestedRoute(device, chatPending bool) agent.RealtimeAudioRoute {
+	switch {
+	case device:
+		return agent.RealtimeAudioRouteDevice
+	case chatPending:
+		return agent.RealtimeAudioRouteText
+	default:
+		return ""
 	}
 }
 
@@ -812,10 +836,13 @@ func realtimeProviderType(cfg agent.Config) string {
 }
 
 func realtimeProviderSessionConfig(cfg agent.Config, runtime *agent.Runtime) realtimevoice.SessionConfig {
-	return realtimeProviderSessionConfigWithTools(cfg, runtime, nil)
+	return realtimeProviderSessionConfigWithTools(cfg, runtime, nil, cfg.Benchmark.RealtimeText)
 }
 
-func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Runtime, runtimeTools []langtools.Tool) realtimevoice.SessionConfig {
+// realtimeProviderSessionConfigWithTools builds the provider session
+// configuration. textOnly asks for text replies, for a session that has no
+// speaker to play speech on.
+func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Runtime, runtimeTools []langtools.Tool, textOnly bool) realtimevoice.SessionConfig {
 	usesBackendAgent := cfg.UseBackendAgentEffective()
 	voice := cfg.VoiceModel.Voice
 	inputFormat := cfg.VoiceModel.InputAudioFormat
@@ -855,9 +882,10 @@ func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Run
 		InputAudioFormat: inputFormat, OutputAudioFormat: outputFormat, MaxHistoryTurns: realtimeContextReplayTurns,
 		TurnDetection: turnType, TurnDetectionThresh: turnThreshold, TurnDetectionSilenceMs: turnSilenceMs,
 		EnableSpeechEmotion: enableEmotion, ThinkingLevel: cfg.VoiceModel.ThinkingLevel,
-		// realtime-text benchmarks score coordination, not speech; text replies
-		// avoid audio generation cost where the provider supports it.
-		TextOutputOnly: cfg.Benchmark.RealtimeText,
+		// realtime-text benchmarks score coordination, not speech, and a text
+		// session has no speaker; text replies avoid audio generation cost
+		// where the provider supports it.
+		TextOutputOnly: textOnly,
 		Tools:          realtimeVoiceToolDefinitionsWithTools(cfg, runtime, runtimeTools)}
 }
 
@@ -1513,7 +1541,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	if !cfg.UseBackendAgentEffective() && runtime != nil {
 		runtimeTools = runtime.AvailableTools()
 	}
-	sessionConfig := realtimeProviderSessionConfigWithTools(cfg, runtime, runtimeTools)
+	// A text session, started by a typed chat request alone, opens no
+	// microphone or speaker and asks the provider for text replies.
+	textOnly := cfg.Benchmark.RealtimeText || voice.Route() == agent.RealtimeAudioRouteText
+	sessionConfig := realtimeProviderSessionConfigWithTools(cfg, runtime, runtimeTools, textOnly)
 	if runtime != nil {
 		if err := runtime.PrepareUserContext(sessionConfig.Instructions); err != nil {
 			return err
@@ -1578,6 +1609,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			return markRealtimeProviderFailure(fmt.Errorf("restore realtime user context: %w", err))
 		}
 	}
+	if textOnly && !supportsText {
+		// Checked before the chat bridge opens, so the waiting request is
+		// failed with this reason.
+		return fmt.Errorf("realtime provider %s does not support text injection", providerName)
+	}
 	logging.Infof("agent", "realtime", "Session ready: id=%s input_rate=%d output_rate=%d provider_input_rate=%d provider_output_rate=%d text_input=%t", info.ID, info.InputSampleRate, info.OutputSampleRate, info.ProviderInputAudioFormat.SampleRate, info.ProviderOutputAudioFormat.SampleRate, supportsText)
 	if chatBridge != nil {
 		chatBridge.activate()
@@ -1596,7 +1632,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		if !supportsText || !canSendToolResult {
 			return fmt.Errorf("realtime provider %s lacks text or tool-result support", providerName)
 		}
-		playbackAudio.backend = &benchmarkSilentPlayback{}
+		playbackAudio.backend = &silentRealtimePlayback{}
+	} else if textOnly {
+		playbackAudio.backend = &silentRealtimePlayback{}
 	} else {
 		audioIO := voice.Audio()
 		if audioIO == nil {
@@ -1637,7 +1675,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	if err := playback.open(playbackAudio, outputFormat); err != nil {
 		return fmt.Errorf("open realtime playback: %w", err)
 	}
-	logging.Infof("agent", "realtime", "Speaker opened: session_id=%d", playback.session.SessionID)
+	if !textOnly {
+		logging.Infof("agent", "realtime", "Speaker opened: session_id=%d", playback.session.SessionID)
+	}
 	defer func() { _ = playback.stop(playbackAudio) }()
 	playbackKeepAlive := time.NewTicker(realtimePlaybackKeepAlive)
 	defer playbackKeepAlive.Stop()
@@ -1916,7 +1956,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		return nil
 	}
 	tryInjectVoiceNotification := func() error {
-		if cfg.Benchmark.RealtimeText {
+		if textOnly {
+			// Nobody would hear it; it stays pending for a voice session or
+			// the standalone speech path in standby.
 			return nil
 		}
 		if !currentAdmission().canInjectVoiceNotification() {
@@ -2016,7 +2058,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		case <-sigChan:
 			return errRealtimeShutdown
 		case <-voice.StopRequested():
-			logging.Infof("agent", "realtime", "Conversation ended from the Web UI or by its browser leaving, returning to standby")
+			logging.Infof("agent", "realtime", "Conversation stop requested (Web UI, browser leaving, or a voice start replacing a text session), returning to standby")
 			return nil
 		case <-voice.MuteChanged():
 			if !voice.SpeakerMuted() {
@@ -3520,14 +3562,16 @@ type realtimePlaybackAudioAdapter struct {
 	backend tts.AudioServiceBackend
 }
 
-type benchmarkSilentPlayback struct{ next uint64 }
+// silentRealtimePlayback discards reply audio, for sessions without a
+// speaker: realtime-text benchmarks and text sessions.
+type silentRealtimePlayback struct{ next uint64 }
 
-func (p *benchmarkSilentPlayback) StartPlayback(tts.AudioFormat) (uint64, error) {
+func (p *silentRealtimePlayback) StartPlayback(tts.AudioFormat) (uint64, error) {
 	p.next++
 	return p.next, nil
 }
-func (*benchmarkSilentPlayback) WritePlayChunk(uint64, []byte, bool) error { return nil }
-func (*benchmarkSilentPlayback) StopPlayback(uint64) error                 { return nil }
+func (*silentRealtimePlayback) WritePlayChunk(uint64, []byte, bool) error { return nil }
+func (*silentRealtimePlayback) StopPlayback(uint64) error                 { return nil }
 
 type realtimePlaybackDrainWaiter interface {
 	WaitForPlaybackDrain(context.Context) error
@@ -3565,7 +3609,7 @@ func (a realtimePlaybackAudioAdapter) StopPlayback(sessionID uint64) error {
 }
 
 func (a realtimePlaybackAudioAdapter) WaitForPlaybackDrain(ctx context.Context) error {
-	if _, silent := a.backend.(*benchmarkSilentPlayback); silent {
+	if _, silent := a.backend.(*silentRealtimePlayback); silent {
 		return nil
 	}
 	if waiter, ok := a.backend.(realtimePlaybackDrainWaiter); ok {
