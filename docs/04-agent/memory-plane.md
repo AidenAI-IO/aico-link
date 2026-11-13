@@ -32,7 +32,7 @@ depend on understanding the language the user spoke.
 | Information | Rule |
 | --- | --- |
 | An explicit request to remember, or a forward-looking preference, form of address, or rule | Save |
-| Stable personal facts such as home city, role, or employee ID | May be saved |
+| Clearly stated stable personal facts about the user, such as home city or lasting role/background | Save without requiring an explicit remember request; do not infer from quotations, third-person statements, or temporary assignments |
 | A request to act or remind at a later time | Handed to the `schedule` tool; see [Schedules and Routines](schedules-and-routines.md). Not saved as memory |
 | Near-term plans the user mentions without asking for a reminder | Not saved to Long-Term Memory. The conversation keeps them, and context compaction preserves them; see [Near-Term Plans](#near-term-plans) |
 | Time-bound facts from notifications, such as bills and deliveries | Temporary Memory with an expiry; Notification Memory only |
@@ -390,8 +390,14 @@ Extraction, omission review, and retention audit share this policy through
 `episodeMemoryBuiltInGuidanceRule`. Omission review also receives the complete
 proposal schema and type rules, once. Procedure guidance and candidate evidence
 must describe the same supported path; a shorter path needs its own evidence.
-These semantic decisions remain model judgments, not guarantees supplied by the
-structural evidence validator.
+For a retained Failure candidate, the retention audit must state
+`incremental_knowledge` beyond built-in advice and identify
+`knowledge_evidence_refs` establishing it. Code rejects missing knowledge or
+references that are not observations in the Episode, and keeps those references
+in the retained evidence. A suggested recovery is not proof that it works;
+an observed device-specific constraint can still justify a guard without a
+successful recovery. These semantic decisions remain model judgments, not
+guarantees supplied by the structural evidence validator.
 
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
 
@@ -496,6 +502,23 @@ idle retry delay to avoid a hot loop.
 Notification persistence does not start a 30-second timer. A Notification
 Processor run first consumes the BLE ring and then checks its durable pending
 cursor; when there is no pending work it returns without polling again.
+
+The Processor validates the entire proposed batch before applying any actions.
+Malformed JSON, invalid action shapes, stale targets, and invalid metadata receive
+at most one correction request with a refreshed related-memory catalog. If the
+correction still fails, the batch returns a proposal error and its memory cursor
+stays pending for the Worker's delayed retry; a rejected proposal is not treated
+as an intentional `ignore`. No actions from a validation-rejected batch are
+applied. Store/application failures are not transactional across records and
+still use the existing explicit intents and revision checks on retry.
+For `update` and `reinforce`, omitted `type` inherits the validated target's type;
+`add` must specify a type. Explicitly invalid types are rejected.
+
+When answering from saved screen observations, the Agent preserves exact source
+values when asked to copy them, including Unicode symbols, punctuation and case.
+Response-language preferences apply to surrounding explanation, not quoted source
+values. A historical status includes its recorded observation time when available
+and is not evidence of the current status without a fresh check.
 
 ## Compatibility
 

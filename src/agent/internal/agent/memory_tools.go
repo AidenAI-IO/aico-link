@@ -297,7 +297,7 @@ func (t *SaveMemoryTool) Description() string {
 	return strings.Join([]string{
 		"Save long-term memory for future recall.",
 		"Do NOT call it for one-off or time-bound plans, appointments, reminders, passing states, chat, or a secret (password, PIN, card number) the user merely mentions; just reply, without claiming you remembered anything. Example: \"I have a dentist visit tomorrow\" is not saved.",
-		"Call it when the user asks to remember/save, and for observed stable preferences, rules, or procedures.",
+		"Call it when the user asks to remember/save, and for the user's own clearly stated stable personal facts, preferences, rules, or procedures, even without an explicit request to remember. A lasting occupation or work background belongs in profile; a temporary assignment, quotation, or fact about someone else does not.",
 		"Do not tell the user something was remembered or saved until this tool returns status=saved or status=ignored as a duplicate.",
 		"Use profile for durable user facts (name, nickname, location, timezone, home city, role, background); preference/rule for future defaults and must/must-not behavior such as a default city; fact for stable info that should be recalled but not surfaced in the synthesized user profile.",
 		"A secret is kept only if the user explicitly asked to keep it: set sensitive and put in user_request only their words asking to remember it, never the sentence stating the secret; otherwise it is refused and you must say it was not remembered.",

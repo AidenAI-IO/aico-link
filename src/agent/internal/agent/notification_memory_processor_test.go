@@ -302,7 +302,7 @@ func TestNotificationMemoryProcessorPreservesReinforceAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	model := &episodeMemoryScriptedModel{responses: []string{`{"actions":[{"action":"reinforce","scope":"temporary","memory_id":"tmp_delivery","memory_revision":1,"type":"fact","content":"Text that must not replace the conclusion"}]}`}}
+	model := &episodeMemoryScriptedModel{responses: []string{`{"actions":[{"action":"reinforce","scope":"temporary","memory_id":"tmp_delivery","memory_revision":1,"content":"Text that must not replace the conclusion"}]}`}}
 	processor := NewNotificationMemoryProcessor(ctxStore, root, nil, model)
 	if _, err := processor.ProcessBatch(context.Background(), nil); err != nil {
 		t.Fatal(err)
@@ -564,20 +564,38 @@ func TestNotificationMemoryProcessorUsesTenRecordBatches(t *testing.T) {
 	}
 }
 
-func TestNotificationMemoryProcessorSkipsInvalidSingleProposalAndAdvancesCursor(t *testing.T) {
-	root := t.TempDir()
-	ctxStore, err := NewNotificationContext(root, func(context.Context, string, string, int) (ble.EventPage, error) {
-		return ble.EventPage{Generation: "g", Events: []ble.NotificationEvent{{ID: "1", Source: "android", SourceID: "n1", NotificationUID: 1, SourceEventID: "evt-1", AppIdentifier: "com.mail", Title: "会议", Message: "明天开会", Event: "added", ReceivedAt: "2026-08-21T00:00:00Z"}}}, nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	processor := NewNotificationMemoryProcessor(ctxStore, root, nil, &episodeMemoryScriptedModel{responses: []string{`{"actions":[{"action":"not-a-real-action","scope":"temporary"}]}`}})
-	if _, err := processor.ProcessBatch(context.Background(), nil); err != nil {
-		t.Fatalf("ProcessBatch() error=%v, want invalid record isolation", err)
-	}
-	if got := ctxStore.State().MemoryCursor; got != "1" {
-		t.Fatalf("MemoryCursor=%q, want invalid record consumed", got)
+func TestNotificationMemoryProcessorRejectsInvalidProposalWithoutAdvancingCursor(t *testing.T) {
+	for _, tt := range []struct{ name, response string }{
+		{"unknown action", `{"actions":[{"action":"not-a-real-action","scope":"temporary"}]}`},
+		{"missing actions", `{}`},
+		{"expired metadata", `{"actions":[{"action":"add","scope":"temporary","type":"fact","content":"Meeting tomorrow","expires_at":"2000-01-01T00:00:00Z"}]}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			ctxStore, err := NewNotificationContext(root, func(context.Context, string, string, int) (ble.EventPage, error) {
+				return ble.EventPage{Generation: "g", Events: []ble.NotificationEvent{{ID: "1", Source: "android", SourceID: "n1", NotificationUID: 1, SourceEventID: "evt-1", AppIdentifier: "com.mail", Title: "会议", Message: "明天开会", Event: "added", ReceivedAt: "2026-08-21T00:00:00Z"}}}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			model := &episodeMemoryScriptedModel{responses: []string{tt.response, tt.response}}
+			processor := NewNotificationMemoryProcessor(ctxStore, root, nil, model)
+			result, err := processor.ProcessBatch(context.Background(), nil)
+			var proposalErr *notificationProposalError
+			if !errors.As(err, &proposalErr) || !result.HasPending || model.callCount() != notificationJSONMaxAttempts {
+				t.Fatalf("ProcessBatch() result=%#v error=%v calls=%d, want bounded rejection with pending work", result, err, model.callCount())
+			}
+			if got := ctxStore.State().MemoryCursor; got != "" {
+				t.Fatalf("MemoryCursor=%q, want rejected record retained", got)
+			}
+			model.appendResponses(`{"actions":[{"action":"ignore"}]}`)
+			if _, err := processor.ProcessBatch(context.Background(), nil); err != nil {
+				t.Fatalf("retry with an explicit decision: %v", err)
+			}
+			if got := ctxStore.State().MemoryCursor; got != "1" {
+				t.Fatalf("MemoryCursor=%q after valid retry, want 1", got)
+			}
+		})
 	}
 }
 
@@ -592,9 +610,8 @@ func TestNotificationMemoryProcessorRejectsBatchProtocolErrorWithoutAdvancingCur
 	if err != nil {
 		t.Fatal(err)
 	}
-	processor := NewNotificationMemoryProcessor(ctxStore, root, nil, &episodeMemoryScriptedModel{responses: []string{
-		`{"results":[{"context_id":"unknown","proposal":{"actions":[{"action":"ignore"}]}}]}`,
-	}})
+	invalid := `{"results":[{"context_id":"unknown","proposal":{"actions":[{"action":"ignore"}]}}]}`
+	processor := NewNotificationMemoryProcessor(ctxStore, root, nil, &episodeMemoryScriptedModel{responses: []string{invalid, invalid}})
 	_, err = processor.ProcessBatch(context.Background(), nil)
 	var proposalErr *notificationProposalError
 	if !errors.As(err, &proposalErr) || !strings.Contains(err.Error(), "unknown context_id") {
@@ -643,7 +660,7 @@ func TestNotificationMemoryProcessorRetriesMalformedJSONAndAdvancesCursor(t *tes
 			model.mu.Lock()
 			retryMessages := append([]llms.MessageContent(nil), model.calls[1]...)
 			model.mu.Unlock()
-			if !episodeMemoryMessagesContain(retryMessages, "previous response was invalid JSON") {
+			if !episodeMemoryMessagesContain(retryMessages, "invalid JSON") {
 				t.Fatal("correction retry did not explain the JSON failure")
 			}
 		})
@@ -743,7 +760,7 @@ func TestNotificationMemoryProcessorRetainsDurablePendingAfterConsumeFailureWith
 	}
 }
 
-func TestNotificationMemoryProcessorAppliesValidRecordsAroundInvalidSibling(t *testing.T) {
+func TestNotificationMemoryProcessorCorrectsBatchBeforeApplyingValidSibling(t *testing.T) {
 	root := t.TempDir()
 	ctxStore, err := NewNotificationContext(root, func(context.Context, string, string, int) (ble.EventPage, error) {
 		return ble.EventPage{Generation: "g", Events: []ble.NotificationEvent{
@@ -759,10 +776,16 @@ func TestNotificationMemoryProcessorAppliesValidRecordsAroundInvalidSibling(t *t
     {"context_id":"1","proposal":{"actions":[{"action":"add","scope":"temporary","type":"fact","content":"明天十点开会"}]}},
     {"context_id":"2","proposal":{"actions":[{"action":"invalid","scope":"temporary"}]}}
   ]
-}`}}
+}`, `{"results":[
+    {"context_id":"1","proposal":{"actions":[{"action":"add","scope":"temporary","type":"fact","content":"明天十点开会"}]}},
+    {"context_id":"2","proposal":{"actions":[{"action":"ignore"}]}}
+  ]}`}}
 	processor := NewNotificationMemoryProcessor(ctxStore, root, nil, model)
 	if _, err := processor.ProcessBatch(context.Background(), nil); err != nil {
-		t.Fatalf("ProcessBatch() error=%v, want invalid record isolation", err)
+		t.Fatalf("ProcessBatch() error=%v, want corrected batch applied", err)
+	}
+	if model.callCount() != 2 {
+		t.Fatalf("model calls=%d, want one correction retry", model.callCount())
 	}
 	if got := ctxStore.State().MemoryCursor; got != "2" {
 		t.Fatalf("MemoryCursor=%q, want batch committed", got)
@@ -771,8 +794,8 @@ func TestNotificationMemoryProcessorAppliesValidRecordsAroundInvalidSibling(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(memories) != 1 || memories[0].Content != "明天十点开会" {
-		t.Fatalf("valid sibling was not applied: %#v", memories)
+	if len(memories) != 1 || memories[0].Content != "明天十点开会" || memories[0].Revision != 1 {
+		t.Fatalf("valid sibling was not applied exactly once: %#v", memories)
 	}
 }
 
@@ -822,7 +845,7 @@ func TestNotificationMemoryProcessorKeepsLatestActionForRepeatedBatchTarget(t *t
 	}
 }
 
-func TestNotificationMemoryProcessorCoalescesBeforeValidatingStaleEarlierAction(t *testing.T) {
+func TestNotificationMemoryProcessorCorrectsStaleEarlierActionBeforeApplyingBatch(t *testing.T) {
 	root := t.TempDir()
 	temporary := NewLongTermMemoryStore(filepath.Join(root, "temporary"))
 	if _, err := temporary.AddMemory(context.Background(), MemoryItem{
@@ -845,7 +868,10 @@ func TestNotificationMemoryProcessorCoalescesBeforeValidatingStaleEarlierAction(
     {"context_id":"1","proposal":{"actions":[{"action":"update","scope":"temporary","memory_id":"tmp_shared","memory_revision":99,"type":"fact","content":"旧修改"}]}},
     {"context_id":"2","proposal":{"actions":[{"action":"UPDATE","scope":" TEMPORARY ","memory_id":"tmp_shared","memory_revision":1,"type":"fact","content":"新修改"}]}}
   ]
-}`}}
+}`, `{"results":[
+    {"context_id":"1","proposal":{"actions":[{"action":"ignore"}]}},
+    {"context_id":"2","proposal":{"actions":[{"action":"update","scope":"temporary","memory_id":"tmp_shared","memory_revision":1,"content":"新修改"}]}}
+  ]}`}}
 	processor := NewNotificationMemoryProcessor(ctxStore, root, nil, model)
 	if _, err := processor.ProcessBatch(context.Background(), nil); err != nil {
 		t.Fatalf("ProcessBatch() error=%v", err)
@@ -856,7 +882,7 @@ func TestNotificationMemoryProcessorCoalescesBeforeValidatingStaleEarlierAction(
 	}
 }
 
-func TestNotificationMemoryProcessorSkipsInvalidRecordAndProcessesValidBatchResults(t *testing.T) {
+func TestNotificationMemoryProcessorRejectsBatchWithoutPartialWrites(t *testing.T) {
 	root := t.TempDir()
 	temporary := NewLongTermMemoryStore(filepath.Join(root, "temporary"))
 	if _, err := temporary.AddMemory(context.Background(), MemoryItem{
@@ -883,16 +909,17 @@ func TestNotificationMemoryProcessorSkipsInvalidRecordAndProcessesValidBatchResu
     {"context_id":"2","proposal":{"actions":[{"action":"update","scope":"temporary","memory_id":"tmp_shared","memory_revision":1,"type":"fact","content":"新修改"}]}}
   ]
 }`}}
+	model.appendResponses(model.responses[0])
 	processor := NewNotificationMemoryProcessor(ctxStore, root, nil, model)
-	if _, err := processor.ProcessBatch(context.Background(), nil); err != nil {
-		t.Fatalf("ProcessBatch() error=%v, want invalid record isolation", err)
+	if _, err := processor.ProcessBatch(context.Background(), nil); err == nil {
+		t.Fatal("invalid batch unexpectedly succeeded")
 	}
-	if got := ctxStore.State().MemoryCursor; got != "2" {
-		t.Fatalf("MemoryCursor=%q, want valid batch results committed", got)
+	if got := ctxStore.State().MemoryCursor; got != "" {
+		t.Fatalf("MemoryCursor=%q, want rejected batch pending", got)
 	}
 	memories, err := temporary.Search(context.Background(), MemoryQuery{Limit: 10})
-	if err != nil || len(memories) != 1 || memories[0].Content != "新修改" || memories[0].Revision != 2 {
-		t.Fatalf("memories=%#v err=%v, want valid record applied", memories, err)
+	if err != nil || len(memories) != 1 || memories[0].Content != "原始内容" || memories[0].Revision != 1 {
+		t.Fatalf("memories=%#v err=%v, rejected batch caused a partial write", memories, err)
 	}
 }
 
@@ -909,7 +936,7 @@ func TestNotificationMemoryProcessorUpdatesWithRevisionAndCanPromote(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	responses := []string{`{"actions":[{"action":"update","scope":"temporary","memory_id":"tmp_existing","memory_revision":1,"type":"fact","title":"包裹","content":"包裹改为明天送达","confidence":0.82,"expires_at":"2099-01-01T00:00:00Z"}]}`}
+	responses := []string{`{"actions":[{"action":"update","scope":"temporary","memory_id":"tmp_existing","memory_revision":1,"title":"包裹","content":"包裹改为明天送达","confidence":0.82,"expires_at":"2099-01-01T00:00:00Z"}]}`}
 	processor := NewNotificationMemoryProcessor(ctxStore, root, longTerm, &episodeMemoryScriptedModel{responses: responses})
 	if _, err := processor.ProcessBatch(context.Background(), nil); err != nil {
 		t.Fatal(err)
@@ -1041,10 +1068,13 @@ func TestNotificationBatchCoalescesValidatedTargets(t *testing.T) {
 	}
 
 	t.Run("inferred and explicit scopes share a target", func(t *testing.T) {
-		batch := processor.validateNotificationBatch(context.Background(), []validatedNotificationResult{
+		batch, err := processor.validateNotificationBatch(context.Background(), []validatedNotificationResult{
 			result("earlier", notificationMemoryAction{Action: "remove", Scope: "temporary", MemoryID: ref.ID, MemoryRevision: 1}),
 			result("latest", notificationMemoryAction{Action: "Remove", MemoryID: ref.ID, MemoryRevision: 1}),
 		})
+		if err != nil {
+			t.Fatal(err)
+		}
 		if len(batch) != 2 || len(batch[0].proposal.Actions) != 0 {
 			t.Fatalf("earlier action on the same memory kept: %#v", batch)
 		}
@@ -1053,13 +1083,13 @@ func TestNotificationBatchCoalescesValidatedTargets(t *testing.T) {
 		}
 	})
 
-	t.Run("an invalid later action does not displace a valid earlier one", func(t *testing.T) {
-		batch := processor.validateNotificationBatch(context.Background(), []validatedNotificationResult{
+	t.Run("an invalid later action rejects the batch before writes", func(t *testing.T) {
+		batch, err := processor.validateNotificationBatch(context.Background(), []validatedNotificationResult{
 			result("earlier", notificationMemoryAction{Action: "remove", Scope: "temporary", MemoryID: ref.ID, MemoryRevision: 1}),
 			result("stale", notificationMemoryAction{Action: "remove", MemoryID: ref.ID, MemoryRevision: 7}),
 		})
-		if len(batch) != 1 || batch[0].record.ContextID != "earlier" || len(batch[0].proposal.Actions) != 1 {
-			t.Fatalf("valid earlier action was dropped: %#v", batch)
+		if err == nil || len(batch) != 0 {
+			t.Fatalf("batch=%#v err=%v, want rejected batch without partial application", batch, err)
 		}
 	})
 }

@@ -152,7 +152,10 @@ type episodeMemoryRetentionReview struct {
 	Retention       episodeMemoryRetention         `json:"retention"`
 	Reason          string                         `json:"reason"`
 	SensitiveValues []string                       `json:"sensitive_values"`
-	Rewrite         *episodeMemoryRetentionRewrite `json:"rewrite,omitempty"`
+	// Failure lessons must add observed knowledge beyond the tool's own advice.
+	IncrementalKnowledge  string                         `json:"incremental_knowledge,omitempty"`
+	KnowledgeEvidenceRefs []string                       `json:"knowledge_evidence_refs,omitempty"`
+	Rewrite               *episodeMemoryRetentionRewrite `json:"rewrite,omitempty"`
 }
 
 type episodeMemoryRetentionRewrite struct {
@@ -900,6 +903,7 @@ func (p *episodeMemoryProcessor) postProcessEpisodeMemoryProposal(ctx context.Co
 		return episodeMemoryProposal{}, safeErr
 	}
 	originalCount := len(proposal.Candidates)
+	validateFailureRetentionEvidence(episode, proposal.Candidates, &audit)
 	stats := summarizeEpisodeMemoryRetentionAudit(proposal.Candidates, audit)
 	proposal.Candidates = retainedEpisodeMemoryCandidates(proposal.Candidates, audit)
 	p.logEpisodeMemoryRetentionAudit("completed", originalCount, len(audit.Reviews), len(proposal.Candidates), stats)
@@ -1110,6 +1114,44 @@ func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit ep
 	return retained
 }
 
+// The model judges what knowledge is incremental; code requires it to identify
+// that knowledge and cite observations, not merely a proposed action or app name.
+// A failure does not need a successful recovery to establish a useful constraint.
+func validateFailureRetentionEvidence(episode TaskEpisode, candidates []episodeMemoryCandidate, audit *episodeMemoryRetentionAudit) {
+	failures := make(map[string]bool)
+	for _, candidate := range candidates {
+		if strings.EqualFold(strings.TrimSpace(string(candidate.Type)), string(episodeMemoryTypeFailure)) {
+			failures[strings.TrimSpace(candidate.LessonKey)] = true
+		}
+	}
+	observations := make(map[string]bool)
+	for _, event := range episode.Events {
+		hasObservation := strings.TrimSpace(event.Observation) != "" || strings.TrimSpace(event.ScreenshotRef) != ""
+		if hasObservation || ((event.Type == "tool_result" || event.Type == "steer") && (strings.TrimSpace(event.Content) != "" || event.IsError || event.ToolError != nil)) {
+			observations[event.EventID] = true
+		}
+	}
+	for i := range audit.Reviews {
+		review := &audit.Reviews[i]
+		if !failures[strings.TrimSpace(review.LessonKey)] {
+			continue
+		}
+		refs := uniqueNonEmpty(review.KnowledgeEvidenceRefs)
+		valid := strings.TrimSpace(review.IncrementalKnowledge) != "" && len(refs) > 0 && review.Rewrite != nil
+		for _, ref := range refs {
+			if !observations[ref] {
+				valid = false
+			}
+		}
+		if !valid {
+			review.Decision = episodeMemoryRetentionDecisionDiscard
+			continue
+		}
+		// Keep the audit's supporting observations in the persisted provenance.
+		review.Rewrite.EvidenceRefs = uniqueNonEmpty(append(review.Rewrite.EvidenceRefs, refs...))
+	}
+}
+
 func mergeEpisodeMemoryReviewScope(base, rewrite map[string]string) map[string]string {
 	merged := normalizeEpisodeMemoryScope(rewrite)
 	for key, value := range normalizeEpisodeMemoryScope(base) {
@@ -1158,6 +1200,8 @@ Return exactly one JSON object matching this schema:
     "decision": "retain | discard",
     "retention": "durable | transient | sensitive",
     "reason": "why the candidate is or is not safe and useful across future Episodes",
+    "incremental_knowledge": "for a retained failure: the observed device/app-specific constraint beyond generic retry advice; empty when none",
+    "knowledge_evidence_refs": ["for a retained failure: actual observation event ids establishing that incremental knowledge, not tool-call ids"],
     "sensitive_values": ["exact Episode-bound values that must not be persisted; empty when none"],
     "rewrite": {
       "situation": "generalized applicability condition",
@@ -1171,7 +1215,7 @@ Return exactly one JSON object matching this schema:
   }]
 }
 
-Review each proposed candidate independently. Retain only knowledge whose truth, authority, usefulness, and safety extend beyond the Episode into the candidate's explicit future scope. Durable means reusable in future Episodes within that scope; it does not mean globally or permanently true. Set retention="durable" only when the retained rewrite is safe for Device Memory. Set retention="transient" for Episode/session/runtime-bound observations and retention="sensitive" for secrets, credentials, one-time values, or information that should not be persisted; those classifications must use decision="discard". Never retain an exact one-time verification token/code, password, credential, secret, or other session-bound value merely because the Episode succeeded. For every review, list exact Episode-bound secret or credential values found in the candidate or evidence in sensitive_values. Do not list ordinary lesson facts or applicability boundaries there: app names, device ids, page names, account/profile identifiers, build/version values, workflow labels, and generalized conditions belong in the rewrite scope or content and are not secrets by themselves. If a reusable workflow remains, decision may be retain only after rewrite removes or generalizes every sensitive_values entry; otherwise discard it. A retained rewrite that still contains any listed sensitive value is invalid. ` + episodeMemoryBuiltInGuidanceRule + ` Discard a candidate that carries no such device-, app-, or page-specific knowledge. Preserve evidenced app, device, page, account, build, and version scope boundaries. Do not add lessons, reassess the Episode outcome, or invent evidence. When uncertain, discard.
+Review each proposed candidate independently. Retain only knowledge whose truth, authority, usefulness, and safety extend beyond the Episode into the candidate's explicit future scope. Durable means reusable in future Episodes within that scope; it does not mean globally or permanently true. Set retention="durable" only when the retained rewrite is safe for Device Memory. Set retention="transient" for Episode/session/runtime-bound observations and retention="sensitive" for secrets, credentials, one-time values, or information that should not be persisted; those classifications must use decision="discard". Never retain an exact one-time verification token/code, password, credential, secret, or other session-bound value merely because the Episode succeeded. For every review, list exact Episode-bound secret or credential values found in the candidate or evidence in sensitive_values. Do not list ordinary lesson facts or applicability boundaries there: app names, device ids, page names, account/profile identifiers, build/version values, workflow labels, and generalized conditions belong in the rewrite scope or content and are not secrets by themselves. If a reusable workflow remains, decision may be retain only after rewrite removes or generalizes every sensitive_values entry; otherwise discard it. A retained rewrite that still contains any listed sensitive value is invalid. ` + episodeMemoryBuiltInGuidanceRule + ` Discard a candidate that carries no such device-, app-, or page-specific knowledge. For a failure candidate, explicitly state the incremental_knowledge and cite knowledge_evidence_refs establishing it. A generic error's suggestion is advice, not proof of its proposed cause or recovery; adding the current app name does not establish app-specific knowledge. Do not claim a suggested workaround works without an observed successful retry, but an observed device-specific constraint can justify a guard even without successful recovery. Preserve evidenced app, device, page, account, build, and version scope boundaries. Do not add lessons, reassess the Episode outcome, or invent evidence. When uncertain, discard.
 
 Preserve the candidate's supported procedure, step_refs, and applicability when rewriting. evidence_refs may include failed alternatives that explain a guard; step_refs select only the executable path. Check that the selected path includes necessary transitions and verification, and does not include a failed alternative. Discard an unsupported selection; do not shorten the path to make it appear valid.` + finalProof + `
 

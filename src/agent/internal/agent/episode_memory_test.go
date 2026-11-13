@@ -1937,13 +1937,54 @@ func TestProcessEpisodeMemoryNowDrainsScheduledRetry(t *testing.T) {
 	}
 }
 
-func TestEpisodeMemoryRetentionAuditDiscardsBuiltInToolGuidance(t *testing.T) {
-	prompt := buildEpisodeMemoryRetentionAuditPrompt(`{"episode_id":"ep_1"}`, "", []episodeMemoryCandidate{{LessonKey: "retry_enter_text"}})
-	// A failed enter_text already returns "Inspect the latest screen and correct
-	// or clear the existing field text before retrying enter_text."; a memory
-	// that repeats it adds nothing the Agent does not already receive.
-	if !strings.Contains(prompt, episodeMemoryBuiltInGuidanceRule) {
-		t.Fatalf("retention audit does not discard built-in tool guidance:\n%s", prompt)
+func TestEpisodeMemoryFailureRetentionRequiresIncrementalObservation(t *testing.T) {
+	for _, tt := range []struct {
+		name, knowledge string
+		refs            []string
+		want            int
+	}{
+		{"generic retry advice", "", nil, 0},
+		{"invented observation", "The editor rejects locked fields", []string{"missing"}, 0},
+		{"action is not an observation", "The editor rejects locked fields", []string{"call"}, 0},
+		{"observed constraint without recovery", "The editor rejects edits while the document is locked", []string{"error"}, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
+			episode := TaskEpisode{
+				ID: "ep_constraint", UserGoal: "Edit a document", DeviceScope: map[string]string{"app_name": "Editor"},
+				Events: []TaskEpisodeEvent{
+					{EventID: "call", Type: runEventToolCall, ToolName: "enter_text"},
+					{EventID: "error", Type: "tool_result", ToolName: "enter_text", IsError: true, Observation: "The document is locked; editing was rejected."},
+				},
+			}
+			candidate := episodeMemoryCandidate{
+				LessonKey: "locked_editor", Type: episodeMemoryTypeFailure, Action: episodeMemoryActionCreate,
+				Retention: episodeMemoryRetentionDurable, Situation: "Editing a locked document", Guidance: "Unlock the document before editing",
+				ExpectedEffect: "Avoid rejected edits", Scope: map[string]string{"app_name": "Editor"}, EvidenceRefs: []string{"error"},
+			}
+			audit, _ := json.Marshal(episodeMemoryRetentionAudit{Reviews: []episodeMemoryRetentionReview{{
+				LessonKey: candidate.LessonKey, Decision: episodeMemoryRetentionDecisionRetain, Retention: episodeMemoryRetentionDurable,
+				Reason: "A reusable constraint", IncrementalKnowledge: tt.knowledge, KnowledgeEvidenceRefs: tt.refs,
+				Rewrite: &episodeMemoryRetentionRewrite{Situation: candidate.Situation, Guidance: candidate.Guidance,
+					ExpectedEffect: candidate.ExpectedEffect, Scope: candidate.Scope, EvidenceRefs: candidate.EvidenceRefs},
+			}}})
+			processor := newEpisodeMemoryProcessor(plane, &episodeMemoryScriptedModel{auditResponses: []string{string(audit)}})
+			proposal, err := processor.postProcessEpisodeMemoryProposal(ctx, episode, episodeMemoryProposal{
+				EpisodeAssessment: episodeMemoryAssessment{GoalResult: episodeGoalNotAchieved, Reason: "Edit rejected", EvidenceRefs: []string{"error"}},
+				Candidates:        []episodeMemoryCandidate{candidate},
+			}, nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := processor.applyProposal(ctx, episode, proposal); err != nil {
+				t.Fatal(err)
+			}
+			hits, err := plane.device.Search(ctx, DeviceMemoryQuery{Types: []string{"failure"}, Limit: 10})
+			if err != nil || len(hits) != tt.want {
+				t.Fatalf("persisted memories=%#v error=%v, want %d", hits, err, tt.want)
+			}
+		})
 	}
 }
 

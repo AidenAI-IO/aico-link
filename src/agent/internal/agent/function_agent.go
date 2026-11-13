@@ -160,7 +160,7 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (strin
 		toolContent = actionOutput
 	}
 	caption := fmt.Sprintf("This image is the screenshot observation returned by the %s tool. Use it when answering the original request.", step.Action.Tool)
-	if summary := screenshotObservationStatusSummary(step.Action.Tool, result); summary != "" {
+	if summary := screenshotObservationStatusSummary(step.Action.Tool, result, a.usesPixelCoordinates()); summary != "" {
 		caption += " " + summary
 	}
 	if grounding := screenshotGroundingCaption(result.Grounding); grounding != "" {
@@ -175,13 +175,29 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (strin
 	}}
 }
 
-func screenshotObservationStatusSummary(toolName string, result postActionScreenshotResult) string {
+// The wrapped touch tool is the source of truth for the model's coordinate
+// protocol, including screenshots returned by other tools in the same run.
+func (a *FunctionAgent) usesPixelCoordinates() bool {
+	for _, tool := range a.Tools {
+		if _, ok := tool.(*visualCoordinateTool); ok && tool.Name() == "touch_gesture" {
+			return true
+		}
+	}
+	return false
+}
+
+func screenshotObservationStatusSummary(toolName string, result postActionScreenshotResult, pixels bool) string {
 	var notes []string
 	// The image is already cropped to the phone screen, whether the crop came
 	// from the companion app's reported screen or from black-border detection,
 	// so its size is the frame every touch coordinate refers to.
 	if result.Width > 0 && result.Height > 0 {
-		notes = append(notes, fmt.Sprintf("Screenshot size: %dx%d px. Touch coordinates refer to this image.", result.Width, result.Height))
+		notes = append(notes, fmt.Sprintf("Screenshot size: %dx%d px.", result.Width, result.Height))
+		if pixels {
+			notes = append(notes, "Touch coordinates use pixels in this image; pass measured points unchanged.")
+		} else {
+			notes = append(notes, "Touch coordinates use normalized 0-1000 units, not image pixels. Convert measured points with x=pixel_x/max(width-1,1)*1000 and y=pixel_y/max(height-1,1)*1000.")
+		}
 	}
 	if strings.EqualFold(strings.TrimSpace(toolName), "wait_for_stable_screen") {
 		if result.FramesDiffered != nil {
