@@ -50,11 +50,11 @@ directly. Two front ends forward to it:
 
 - Config Web serves `http://192.168.42.1:3000/webtty/` on a socket bound to
   `usb0` (`--usb-terminal-port=3000`), so only USB clients can use it. The
-  config web page's `Terminal` link opens this address over USB.
+  config web page's `Terminal` link opens this address over USB. While a device
+  password is set, a browser without a session is paired silently first.
 - The Agent proxies `/webtty/` on port 8080. LAN clients reach it only while
-  LAN access is on and after signing in with the device password (see
-  [LAN Sign-In](./device-management-api.md#lan-sign-in)); USB clients always
-  can.
+  LAN access is on, and sign in first while a device password is set (see
+  [Sign-In and Pairing](./device-management-api.md#sign-in-and-pairing)).
 
 The Docker sandbox runs ttyd itself and proxies `/webtty/` on its published
 Agent Web port.
@@ -62,8 +62,8 @@ Agent Web port.
 The ttyd daemon runs as the unprivileged `aico` user. Its default login helper
 prompts for a local account name, then uses `su --login` to authenticate that
 account's password. The `aico` password is the device password set in the
-Agent settings, once one has been set. SSH follows the same LAN access switch
-as the web services. This avoids a Debian `login`/PTY interaction that leaves
+Agent settings; until one is set the account is locked and nobody can log in.
+SSH opens to the LAN only while LAN access is on and a device password is set. This avoids a Debian `login`/PTY interaction that leaves
 ttyd waiting for input without displaying a prompt. A custom `TTYD_COMMAND`
 still runs as `aico`.
 

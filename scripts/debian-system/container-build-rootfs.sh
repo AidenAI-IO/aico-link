@@ -187,11 +187,10 @@ EOF
     chroot "${ROOTFS_DIR}" getent passwd aico >/dev/null \
         || chroot "${ROOTFS_DIR}" useradd --uid 1000 --gid aico --create-home \
             --shell /bin/bash --groups sudo,audio,video,dialout,plugdev,netdev aico
-    # A fixed SHA-512 crypt hash keeps the factory rootfs reproducible. Root
+    # The aico password login stays locked until the owner sets a device
+    # password in the Agent settings (aico-lan-access-sync applies it). Root
     # remains key-only even though ordinary-user password SSH is enabled.
-    chroot "${ROOTFS_DIR}" usermod -p \
-        '$6$aico$.IiSAzc6XNkYvV3CRDyP031IcVvRKR7F4Y8cItMftzo06ke.hz399b9z/3B442avhFdXyC29l8tdHUHroBOsM.' \
-        aico
+    chroot "${ROOTFS_DIR}" usermod -p '*' aico
 
     # Keep the root account enabled for public-key SSH while making password
     # verification impossible. sshd separately prohibits root passwords.

@@ -307,7 +307,7 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 		t.Fatalf("LAN request bypassed guard: %d", response.Code)
 	}
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request.WithContext(lanaccess.WithTrusted(request.Context(), true)))
+	handler.ServeHTTP(response, request.WithContext(lanaccess.WithUSB(request.Context(), true)))
 	if response.Code != http.StatusOK || response.Body.String() != "report" {
 		t.Fatalf("USB request rejected: %d %s", response.Code, response.Body.String())
 	}

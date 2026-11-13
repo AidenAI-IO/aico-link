@@ -65,7 +65,7 @@ type Options struct {
 	BluetoothStateScript      string
 	OTAConfigPath             string
 
-	// LAN access: LANGuard refuses non-USB requests while the switch is off.
+	// LAN access: LANGuard applies the LAN access switch and the device password.
 	// The switch and device password are shared with the Agent; LANAccessSync
 	// applies them to SSH and the aico login; USBTerminalPort fronts the
 	// loopback-bound ttyd on the USB link only (0 disables it).

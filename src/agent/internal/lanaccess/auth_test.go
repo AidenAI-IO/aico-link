@@ -144,7 +144,7 @@ func TestLoginRejectsCrossOriginAndOpenRedirect(t *testing.T) {
 	}
 }
 
-func TestPasswordChangeAndSwitchOffSignOut(t *testing.T) {
+func TestPasswordChangeSignsOut(t *testing.T) {
 	state := enabledState(t)
 	token, _, err := state.IssueToken(time.Now())
 	if err != nil {
@@ -159,16 +159,96 @@ func TestPasswordChangeAndSwitchOffSignOut(t *testing.T) {
 	if _, err := state.VerifyToken(token, time.Now()); err == nil {
 		t.Fatal("token survived a password change")
 	}
+}
 
-	token, _, _ = state.IssueToken(time.Now())
-	if err := state.SetEnabled(false); err != nil {
+func usbRequest(method, target string) *http.Request {
+	r := newRequest("192.168.42.100:5000", "192.168.42.1", true)
+	r.Method = method
+	r.URL, _ = url.Parse(target)
+	r.RequestURI = target
+	r.Host = "192.168.42.1"
+	return r
+}
+
+// The app pairs over USB without the password and then uses the token over
+// USB and the LAN alike. Pairing never works from the LAN.
+func TestUSBPairingIssuesTokenUsableOnLAN(t *testing.T) {
+	state := enabledState(t)
+	h := guarded(state)
+
+	if w := record(h, usbRequest(http.MethodGet, "/api/tools")); w.Code != http.StatusUnauthorized {
+		t.Fatalf("USB request without a session while a password is set: %d", w.Code)
+	}
+	lanPair := lanRequest(http.MethodPost, PairAPI, "")
+	if w := record(h, lanPair); w.Code != http.StatusForbidden {
+		t.Fatalf("pairing from the LAN: %d", w.Code)
+	}
+	crossOrigin := usbRequest(http.MethodPost, PairAPI)
+	crossOrigin.Header.Set("Origin", "http://192.168.42.1:8080")
+	if w := record(h, crossOrigin); w.Code != http.StatusForbidden {
+		t.Fatalf("pairing from another origin: %d", w.Code)
+	}
+
+	w := record(h, usbRequest(http.MethodPost, PairAPI))
+	var body struct {
+		Token string `json:"token"`
+	}
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &body) != nil || body.Token == "" {
+		t.Fatalf("pair: %d %s", w.Code, w.Body.String())
+	}
+	for name, r := range map[string]*http.Request{
+		"usb": usbRequest(http.MethodGet, "/api/tools"),
+		"lan": lanRequest(http.MethodGet, "/api/tools", ""),
+	} {
+		r.Header.Set("Authorization", "Bearer "+body.Token)
+		if w := record(h, r); w.Code != http.StatusNoContent {
+			t.Fatalf("paired token over %s: %d", name, w.Code)
+		}
+	}
+
+	// A password change signs the app out; it pairs again over USB.
+	if err := state.SetPassword("another"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := state.VerifyToken(body.Token, time.Now()); err == nil {
+		t.Fatal("paired token survived a password change")
+	}
+}
+
+// A USB browser sent to /login is paired instead of asked for the password,
+// and continues through a same-site page rather than a redirect.
+func TestUSBBrowserIsPairedAtLogin(t *testing.T) {
+	state := enabledState(t)
+	h := guarded(state)
+	w := record(h, usbRequest(http.MethodGet, LoginPath+"?next=%2Fwebtty%2F"))
+	cookies := w.Result().Cookies()
+	if w.Code != http.StatusOK || len(cookies) != 1 || cookies[0].Name != SessionCookie ||
+		!strings.Contains(w.Body.String(), `url=/webtty/`) {
+		t.Fatalf("USB login page: %d %+v %s", w.Code, cookies, w.Body.String())
+	}
+	if _, err := state.VerifyToken(cookies[0].Value, time.Now()); err != nil {
+		t.Fatalf("paired cookie: %v", err)
+	}
+	if w := record(h, lanRequest(http.MethodGet, LoginPath, "")); w.Code != http.StatusOK || len(w.Result().Cookies()) != 0 {
+		t.Fatalf("LAN login page must ask for the password: %d", w.Code)
+	}
+}
+
+func TestNoPasswordAdmitsWithoutSignIn(t *testing.T) {
+	state := newState(t)
 	if err := state.SetEnabled(true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := state.VerifyToken(token, time.Now()); err == nil {
-		t.Fatal("token survived turning LAN access off")
+	h := guarded(state)
+	if w := record(h, lanRequest(http.MethodGet, "/login?next=%2Fx", "")); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/x" {
+		t.Fatalf("login page without a password: %d %q", w.Code, w.Header().Get("Location"))
+	}
+	if w := record(h, jsonLogin("anything")); w.Code != http.StatusUnauthorized {
+		t.Fatalf("password login without a password: %d", w.Code)
+	}
+	w := record(h, lanRequest(http.MethodGet, SessionAPI, ""))
+	if !strings.Contains(w.Body.String(), `"authenticated":true`) || !strings.Contains(w.Body.String(), `"password_set":false`) {
+		t.Fatalf("session without a password: %s", w.Body.String())
 	}
 }
 
@@ -245,17 +325,18 @@ func TestLoginLockoutAfterRepeatedFailures(t *testing.T) {
 	}
 }
 
-func TestAuthEndpointsWhileOffAndOverUSB(t *testing.T) {
+func TestAuthEndpointsWhileOff(t *testing.T) {
 	state := newState(t)
+	if err := state.SetPassword("correct horse"); err != nil {
+		t.Fatal(err)
+	}
 	h := guarded(state)
 	if w := record(h, jsonLogin("correct horse")); w.Code != http.StatusForbidden {
-		t.Fatalf("login while LAN access is off: %d", w.Code)
+		t.Fatalf("LAN login while LAN access is off: %d", w.Code)
 	}
-	usb := newRequest("192.168.42.100:5000", "192.168.42.1", true)
-	usb.URL, _ = url.Parse(SessionAPI)
-	w := record(h, usb)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"authenticated":true`) {
-		t.Fatalf("USB session status: %d %s", w.Code, w.Body.String())
+	w := record(h, usbRequest(http.MethodGet, SessionAPI))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"authenticated":false`) || !strings.Contains(w.Body.String(), `"via_usb":true`) {
+		t.Fatalf("USB session status without a session: %d %s", w.Code, w.Body.String())
 	}
 }
 
@@ -351,62 +432,5 @@ func TestPasswordUnchangedWhenSessionsCannotBeRevoked(t *testing.T) {
 	}
 	if _, err := state.VerifyToken(token, time.Now()); err != nil {
 		t.Fatalf("a refused change must leave existing sessions alone: %v", err)
-	}
-}
-
-// A token that outlived a failed revocation while LAN access was off must not
-// work once LAN access is turned back on.
-func TestReEnablingRevokesSessionsThatSurvivedSwitchOff(t *testing.T) {
-	state := enabledState(t)
-	token, _, err := state.IssueToken(time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Switch off without revoking, as if revocation had failed.
-	if err := os.Remove(state.EnabledPath); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := state.VerifyToken(token, time.Now()); err != nil {
-		t.Fatalf("setup: token should still verify: %v", err)
-	}
-	if err := state.SetEnabled(true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := state.VerifyToken(token, time.Now()); err == nil {
-		t.Fatal("a session from before the switch-off works again after re-enabling")
-	}
-}
-
-// If sessions cannot be revoked, LAN access must stay off.
-func TestReEnablingStaysOffWhenSessionsCannotBeRevoked(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions")
-	}
-	state := enabledState(t)
-	if err := os.Remove(state.EnabledPath); err != nil {
-		t.Fatal(err)
-	}
-	keyDir := filepath.Join(t.TempDir(), "keys")
-	if err := os.MkdirAll(keyDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(state.SecretPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.SecretPath = filepath.Join(keyDir, "secret")
-	if err := os.WriteFile(state.SecretPath, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(keyDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(keyDir, 0o700) })
-
-	if err := state.SetEnabled(true); err == nil {
-		t.Fatal("LAN access turned on although sessions could not be revoked")
-	}
-	if state.Enabled() {
-		t.Fatal("LAN access is on after a failed revocation")
 	}
 }

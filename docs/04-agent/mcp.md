@@ -50,8 +50,9 @@ for the API.
 | Docker or host runs without `-lan-guard` | Nothing |
 
 Without a valid token `/mcp` returns `401` with `"error": "mcp_token_required"`.
-Other Agent routes keep their own rules: USB and on-board clients need no
-credentials, LAN clients sign in with the device password.
+Other Agent routes keep their own rules: on-board clients need no
+credentials, and while a device password is set other clients sign in (LAN) or
+pair (USB).
 
 Claude Code:
 

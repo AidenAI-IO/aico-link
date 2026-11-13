@@ -22,10 +22,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// LAN clients sign in with the device password and receive a session token.
+// While a device password is set, clients need a session token. A LAN client
+// signs in with the password; a USB client pairs without it, since only the
+// owner holds the cable (the app does this silently and then sends the token
+// as a bearer over USB and Wi-Fi alike). Both get the same kind of token.
 // Tokens are stateless: an HMAC over the expiry and issue time, keyed by a
 // secret on userdata, so the Agent and Config Web verify the same token
-// without sharing memory. Changing the password or turning LAN access off
+// without sharing memory. Setting, changing, or clearing the password
 // replaces the secret, which signs every client out.
 const (
 	DefaultSecretPath = "/userdata/system/lan-session-secret"
@@ -39,6 +42,7 @@ const (
 
 	LoginPath  = "/login"
 	LoginAPI   = "/api/auth/login"
+	PairAPI    = "/api/auth/pair"
 	LogoutAPI  = "/api/auth/logout"
 	SessionAPI = "/api/auth/session"
 
@@ -327,13 +331,26 @@ func (a *authHandler) serveLogin(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == LoginPath:
 		next := safeNext(r.URL.Query().Get("next"))
-		if IsTrusted(r) || sessionValid(a.state, w, r, a.now()) {
+		if !a.state.PasswordSet() || IsLocal(r) || sessionValid(a.state, w, r, a.now()) {
 			http.Redirect(w, r, next, http.StatusSeeOther)
+			return
+		}
+		if IsUSB(r) {
+			// A browser on the USB link, such as the app's WebView or the
+			// computer at the other end of the cable, pairs instead of
+			// asking for the password.
+			if a.issueSession(w) {
+				writePairedPage(w, next)
+				return
+			}
+			writeLoginPage(w, http.StatusInternalServerError, next, "badRequest")
 			return
 		}
 		writeLoginPage(w, http.StatusOK, next, "")
 	case r.Method == http.MethodPost && r.URL.Path == LoginAPI:
 		a.login(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == PairAPI:
+		a.pair(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == LogoutAPI:
 		if !sameOriginRequest(r) {
 			writeAuthJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "cross_origin_rejected"})
@@ -342,14 +359,15 @@ func (a *authHandler) serveLogin(w http.ResponseWriter, r *http.Request) {
 		clearSessionCookie(w)
 		writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true})
 	case r.Method == http.MethodGet && r.URL.Path == SessionAPI:
-		trusted := IsTrusted(r)
+		passwordSet := a.state.PasswordSet()
 		writeAuthJSON(w, http.StatusOK, map[string]any{
 			"ok":            true,
-			"via_usb":       trusted,
-			"authenticated": trusted || sessionValid(a.state, w, r, a.now()),
+			"via_usb":       IsUSB(r),
+			"password_set":  passwordSet,
+			"authenticated": !passwordSet || IsLocal(r) || sessionValid(a.state, w, r, a.now()),
 		})
 	default:
-		w.Header().Set("Allow", map[string]string{LoginPath: "GET", LoginAPI: "POST", LogoutAPI: "POST", SessionAPI: "GET"}[r.URL.Path])
+		w.Header().Set("Allow", map[string]string{LoginPath: "GET", LoginAPI: "POST", PairAPI: "POST", LogoutAPI: "POST", SessionAPI: "GET"}[r.URL.Path])
 		writeAuthJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method_not_allowed"})
 	}
 }
@@ -417,8 +435,71 @@ func (a *authHandler) login(w http.ResponseWriter, r *http.Request) {
 	writeAuthJSON(w, http.StatusOK, map[string]any{"ok": true, "token": token, "expires_at": expires.Format(time.RFC3339)})
 }
 
+// pair issues a session to a USB client without the password: holding the
+// cable proves ownership. The app calls it silently, stores the token, and
+// sends it as a bearer from then on, over USB and Wi-Fi alike. It pairs
+// again whenever the token stops working (the password changed or was
+// cleared, or the token expired) while it is on USB. A browser page on the
+// connected computer cannot pair on behalf of another site: Guard refuses
+// cross-site requests, and the Origin must be this host.
+func (a *authHandler) pair(w http.ResponseWriter, r *http.Request) {
+	if !IsUSB(r) {
+		writeAuthJSON(w, http.StatusForbidden, map[string]any{
+			"ok":      false,
+			"error":   "usb_required",
+			"message": "Pairing works only over the USB connection. On the LAN, sign in with the device password at " + LoginPath + ".",
+		})
+		return
+	}
+	if !sameOriginRequest(r) {
+		writeAuthJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "cross_origin_rejected"})
+		return
+	}
+	token, expires, err := a.state.IssueToken(a.now())
+	if err != nil {
+		writeAuthJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "session_unavailable"})
+		return
+	}
+	setSessionCookie(w, token, expires)
+	writeAuthJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"token":        token,
+		"expires_at":   expires.Format(time.RFC3339),
+		"password_set": a.state.PasswordSet(),
+	})
+}
+
+// writePairedPage continues to next from a page on this host rather than
+// with a redirect. A browser keeps treating a redirect chain that another
+// site started (a link to the board followed from a chat page) as
+// cross-site, so it would withhold the SameSite=Strict cookie just set and
+// land back on /login in a loop. A refresh from this page is a same-site
+// navigation and carries the cookie.
+func writePairedPage(w http.ResponseWriter, next string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+	w.WriteHeader(http.StatusOK)
+	_ = pairedPage.Execute(w, next)
+}
+
+var pairedPage = template.Must(template.New("paired").Parse(`<!doctype html><html><head><meta charset="utf-8">` +
+	`<meta http-equiv="refresh" content="0;url={{.}}"><title>Aico Link</title></head>` +
+	`<body><a href="{{.}}">Continue</a></body></html>`))
+
+// issueSession sets a fresh session cookie.
+func (a *authHandler) issueSession(w http.ResponseWriter) bool {
+	token, expires, err := a.state.IssueToken(a.now())
+	if err != nil {
+		return false
+	}
+	setSessionCookie(w, token, expires)
+	return true
+}
+
 func isAuthPath(path string) bool {
-	return path == LoginPath || path == LoginAPI || path == LogoutAPI || path == SessionAPI
+	return path == LoginPath || path == LoginAPI || path == PairAPI || path == LogoutAPI || path == SessionAPI
 }
 
 // rejectUnauthenticated sends browsers to the login page and API clients a 401.
@@ -432,7 +513,7 @@ func rejectUnauthenticated(w http.ResponseWriter, r *http.Request) {
 	writeAuthJSON(w, http.StatusUnauthorized, map[string]any{
 		"ok":      false,
 		"error":   "login_required",
-		"message": "Sign in with the device password at " + LoginPath + ".",
+		"message": "Sign in with the device password at " + LoginPath + ", or pair over USB at " + PairAPI + ".",
 	})
 }
 

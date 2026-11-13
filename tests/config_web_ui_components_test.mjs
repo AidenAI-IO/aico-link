@@ -124,6 +124,8 @@ class Element {
     this._listeners.set(type, handlers);
   }
 
+  focus() {}
+
   /** Test helper: run the listeners registered for a type. */
   fire(type, event = {}) {
     const payload = {type, target: this, preventDefault() {}, stopPropagation() {}, ...event};
@@ -671,7 +673,7 @@ process.stdout.write('config web UI component tests passed\n');
   const respond = body => ({ok: true, status: 200, text: async () => JSON.stringify(body)});
   globalThis.fetch = async url => {
     if (url === '/api/security/mcp-tokens') {
-      return respond({ok: true, max_tokens: 20, tokens: [{id: 'a1', name: 'MacBook', created_at: '2026-11-10T08:00:00Z'}]});
+      return respond({ok: true, tokens: [{id: 'a1', name: 'MacBook', created_at: '2026-11-10T08:00:00Z'}]});
     }
     return respond({});
   };
@@ -704,6 +706,65 @@ process.stdout.write('config web UI component tests passed\n');
   }
 }
 
+/* ------------------------------------- LAN access and device password pages --- */
+
+{
+  const {devicePasswordPage, lanAccessPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/lan-access.js')).href);
+  const realFetch = globalThis.fetch;
+  const respond = body => ({ok: true, status: 200, text: async () => JSON.stringify(body)});
+  const actionsOf = async (pageFn, status) => {
+    globalThis.fetch = async url => respond(url === '/api/security/lan-access' ? {ok: true, min_length: 6, ...status} : {});
+    const page = await pageFn({header() {}, navigate() {}});
+    const actions = [];
+    const walk = node => {
+      if (node.getAttribute && node.getAttribute('data-action')) actions.push(node.getAttribute('data-action'));
+      (node.childNodes || []).forEach(walk);
+    };
+    walk(page);
+    return actions;
+  };
+  try {
+    // The switch and the password live on separate pages.
+    const lan = await actionsOf(lanAccessPage, {enabled: true, password_set: true, via_usb: false});
+    assert.ok(lan.includes('toggle-lan-access'), 'the LAN page shows its switch');
+    assert.ok(!lan.some(action => action.includes('password') || action === 'lan-sign-out'), 'the LAN page has no password controls');
+    for (const via_usb of [true, false]) {
+      const actions = await actionsOf(devicePasswordPage, {enabled: false, password_set: true, via_usb});
+      assert.ok(!actions.includes('toggle-lan-access'), 'the password page has no LAN switch');
+      for (const action of ['open-lan-password', 'lan-clear-password']) {
+        assert.ok(actions.includes(action), `the password page shows ${action} (via_usb=${via_usb})`);
+      }
+      assert.equal(actions.includes('lan-sign-out'), !via_usb, `sign-out only on the LAN (via_usb=${via_usb})`);
+    }
+    // Setting the first password: no current-password field, and submit works.
+    const {openPasswordSheet} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/lan-access.js')).href);
+    const submitted = [];
+    const view = openPasswordSheet({minLength: 6, askCurrent: false, submitLabel: 'Set', onSubmit: async (...args) => { submitted.push(args); }});
+    const find = (node, action) => {
+      if (node.getAttribute && node.getAttribute('data-action') === action) return node;
+      for (const child of node.childNodes || []) {
+        const found = find(child, action);
+        if (found) return found;
+      }
+      return null;
+    };
+    const root = document.body;
+    assert.equal(find(root, 'lan-password-current'), null, 'no current-password field for the first password');
+    find(root, 'lan-password').value = 'luckfox';
+    find(root, 'lan-password-confirm').value = 'luckfox';
+    find(root, 'lan-password-submit').fire('click');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepEqual(submitted, [['luckfox', '']], 'the first password is submitted without a current one');
+    view.close();
+
+    const unset = await actionsOf(devicePasswordPage, {enabled: true, password_set: false, via_usb: false});
+    assert.ok(!unset.includes('lan-sign-out') && !unset.includes('lan-clear-password'),
+      'without a password there is nothing to clear or sign out of');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 /* ----------------------------------------------- Advanced → MCP entry --- */
 
 {
@@ -724,7 +785,7 @@ process.stdout.write('config web UI component tests passed\n');
       (node.childNodes || []).forEach(collect);
     };
     collect(cards[0]);
-    assert.deepEqual(actions.filter(a => a === 'open-lan-access' || a === 'open-mcp'), ['open-lan-access', 'open-mcp']);
+    assert.deepEqual(actions.filter(a => ['open-lan-access', 'open-device-password', 'open-mcp'].includes(a)), ['open-lan-access', 'open-device-password', 'open-mcp']);
   } finally {
     globalThis.fetch = realFetch;
   }

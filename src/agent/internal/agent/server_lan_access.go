@@ -9,14 +9,15 @@ import (
 	"aico-agent/internal/lanaccess"
 )
 
-// USBIngress names the USB link whose connections bypass the LAN guard.
+// USBIngress names the USB link, whose clients reach the services whether or
+// not LAN access is on.
 type USBIngress struct {
 	Interface string // e.g. usb0
 	Address   string // the board's address on that link, e.g. 192.168.42.1
 }
 
-// EnableLANGuard refuses requests from outside the USB link and the board
-// while LAN access is off. Call before Start.
+// EnableLANGuard applies the LAN access switch and the device password to
+// every request (see lanaccess.Guard). Call before Start.
 func (s *Server) EnableLANGuard(state *lanaccess.State, usb USBIngress) {
 	s.lanAccess = state
 	s.usbIngress = USBIngress{Interface: strings.TrimSpace(usb.Interface), Address: strings.TrimSpace(usb.Address)}
@@ -37,8 +38,8 @@ func (s *Server) listenShare(addr string) (net.Listener, error) {
 }
 
 // startUSBListener serves srv on a socket bound to the USB interface. Only
-// its connections are trusted; until it is bound, USB clients reach the main
-// listener and are treated like any other LAN client. useTLS is explicit
+// its connections count as USB; until it is bound, USB clients reach the
+// main listener and are treated like any other LAN client. useTLS is explicit
 // because net/http fills in srv.TLSConfig on a plain server when it starts
 // serving, so the field cannot tell the two apart.
 func (s *Server) startUSBListener(srv *http.Server, useTLS bool) {
@@ -76,11 +77,11 @@ func (s *Server) startUSBListener(srv *http.Server, useTLS bool) {
 		if s.logger != nil {
 			s.logger.Info("USB listener ready on %s (%s)", address, s.usbIngress.Interface)
 		}
-		trusted := lanaccess.TrustListener(listener)
+		usb := lanaccess.USBListener(listener)
 		if useTLS {
-			err = srv.ServeTLS(trusted, "", "")
+			err = srv.ServeTLS(usb, "", "")
 		} else {
-			err = srv.Serve(trusted)
+			err = srv.Serve(usb)
 		}
 		if err != nil &&
 			!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) && s.logger != nil {

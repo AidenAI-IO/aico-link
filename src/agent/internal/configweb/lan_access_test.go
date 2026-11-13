@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -55,54 +56,102 @@ func TestLANAccessStatusDefaultsOff(t *testing.T) {
 	}
 }
 
-func TestLANAccessCanOnlyChangeOverUSB(t *testing.T) {
+// With a guard, only admitted requests reach the handler; without one, the
+// handler itself admits USB requests only.
+func TestLANAccessChangesNeedAnAdmittedClient(t *testing.T) {
 	server, marker := newLANAccessServer(t)
 	code, _ := callLANAccess(t, server, http.MethodPut, `{"enabled":true,"password":"correct horse"}`, false)
 	if code != http.StatusForbidden {
-		t.Fatalf("non-USB update: %d", code)
+		t.Fatalf("non-USB update without the guard: %d", code)
 	}
 	if server.lanAccess.Enabled() || server.lanAccess.PasswordSet() {
-		t.Fatal("state changed from a non-USB request")
+		t.Fatal("state changed from a refused request")
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("login sync ran for a refused request")
 	}
+	if code, _ := callClearPassword(t, server, `{}`, false); code != http.StatusForbidden {
+		t.Fatalf("non-USB clear without the guard: %d", code)
+	}
 }
 
-func TestLANAccessEnableFlow(t *testing.T) {
+func TestLANAccessSwitchAndPasswordAreIndependent(t *testing.T) {
 	server, marker := newLANAccessServer(t)
 
-	code, _ := callLANAccess(t, server, http.MethodPut, `{"enabled":true}`, true)
-	if code != http.StatusBadRequest || server.lanAccess.Enabled() {
-		t.Fatalf("enable without password: %d enabled=%v", code, server.lanAccess.Enabled())
+	code, body := callLANAccess(t, server, http.MethodPut, `{"enabled":true}`, true)
+	if code != http.StatusOK || body["enabled"] != true || body["password_set"] != false {
+		t.Fatalf("enable without a password: %d %v", code, body)
 	}
-	code, _ = callLANAccess(t, server, http.MethodPut, `{"enabled":true,"password":"short"}`, true)
-	if code != http.StatusBadRequest || server.lanAccess.Enabled() || server.lanAccess.PasswordSet() {
-		t.Fatalf("short password: %d", code)
+	code, _ = callLANAccess(t, server, http.MethodPut, `{"password":"12345"}`, true)
+	if code != http.StatusBadRequest || server.lanAccess.PasswordSet() {
+		t.Fatalf("five-character password: %d", code)
 	}
-
-	code, body := callLANAccess(t, server, http.MethodPut, `{"enabled":true,"password":"correct horse"}`, true)
+	code, body = callLANAccess(t, server, http.MethodPut, `{"password":"luckfox"}`, true)
 	if code != http.StatusOK || body["enabled"] != true || body["password_set"] != true || body["system_synced"] != true {
-		t.Fatalf("enable with password: %d %v", code, body)
+		t.Fatalf("set password: %d %v", code, body)
 	}
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatal("login sync helper did not run")
-	}
-
 	code, body = callLANAccess(t, server, http.MethodPut, `{"enabled":false}`, true)
 	if code != http.StatusOK || body["enabled"] != false || body["password_set"] != true {
 		t.Fatalf("disable: %d %v", code, body)
-	}
-	// The kept password lets the switch come back on without asking again.
-	code, body = callLANAccess(t, server, http.MethodPut, `{"enabled":true}`, true)
-	if code != http.StatusOK || body["enabled"] != true {
-		t.Fatalf("re-enable: %d %v", code, body)
 	}
 	// Every change is applied to SSH, not only password changes.
 	runs, _ := os.ReadFile(marker)
 	if got := bytes.Count(runs, []byte("run")); got != 3 {
 		t.Fatalf("system sync ran %d times; want once per change", got)
 	}
+}
+
+// Clearing the password needs the current one from every client, USB
+// included, and leaves LAN access alone.
+func TestClearPasswordNeedsCurrentPasswordAndKeepsSwitch(t *testing.T) {
+	server, marker := newLANAccessServer(t)
+	if code, _ := callLANAccess(t, server, http.MethodPut, `{"enabled":true,"password":"luckfox"}`, true); code != http.StatusOK {
+		t.Fatalf("setup: %d", code)
+	}
+	_ = os.Remove(marker)
+	for _, body := range []string{`{}`, `{"current_password":"wrong"}`} {
+		if code, _ := callClearPassword(t, server, body, true); code != http.StatusForbidden || !server.lanAccess.PasswordSet() {
+			t.Fatalf("clear with %s: %d", body, code)
+		}
+	}
+	code, body := callClearPassword(t, server, `{"current_password":"luckfox"}`, true)
+	if code != http.StatusOK || body["enabled"] != true || body["password_set"] != false || body["system_synced"] != true {
+		t.Fatalf("clear: %d %v", code, body)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("clearing was not applied to SSH and the login account")
+	}
+}
+
+// Wrong current passwords count against the same lockout as sign-in, so a
+// session cannot be used to guess the password.
+func TestCurrentPasswordGuessesAreThrottled(t *testing.T) {
+	server, _ := newLANAccessServer(t)
+	if code, _ := callLANAccess(t, server, http.MethodPut, `{"password":"luckfox"}`, true); code != http.StatusOK {
+		t.Fatalf("setup: %d", code)
+	}
+	code := 0
+	for i := 0; i < 10 && code != http.StatusTooManyRequests; i++ {
+		code, _ = callClearPassword(t, server, `{"current_password":"wrong"}`, true)
+	}
+	if code != http.StatusTooManyRequests {
+		t.Fatalf("repeated wrong current passwords were never throttled: %d", code)
+	}
+	if code, _ := callClearPassword(t, server, `{"current_password":"luckfox"}`, true); code != http.StatusTooManyRequests || !server.lanAccess.PasswordSet() {
+		t.Fatalf("the right password must also wait out the lockout: %d", code)
+	}
+}
+
+func callClearPassword(t *testing.T, server *Server, body string, usb bool) (int, map[string]any) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/security/password", bytes.NewBufferString(body))
+	req.RemoteAddr = "127.0.0.2:1234"
+	req = req.WithContext(context.WithValue(req.Context(), usbIngressContextKey{}, usb))
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, req)
+	decoded := map[string]any{}
+	_ = json.Unmarshal(response.Body.Bytes(), &decoded)
+	return response.Code, decoded
 }
 
 func TestLANAccessReportsLoginSyncFailure(t *testing.T) {
@@ -114,10 +163,13 @@ func TestLANAccessReportsLoginSyncFailure(t *testing.T) {
 	}
 }
 
-func TestLANGuardGatesConfigWebOnLAN(t *testing.T) {
+func newGuardedServer(t *testing.T) *Server {
+	t.Helper()
 	options := testOptions(t)
 	root := t.TempDir()
 	options.LANGuard = true
+	options.USBAddress = "192.168.42.1"
+	options.USBSubnet = "192.168.42.0/24"
 	options.LANAccessPath = filepath.Join(root, "lan-access-enabled")
 	options.DevicePasswordPath = filepath.Join(root, "device-password")
 	options.SessionSecretPath = filepath.Join(root, "lan-session-secret")
@@ -126,53 +178,107 @@ func TestLANGuardGatesConfigWebOnLAN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	get := func(usb bool, accept string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "http://192.168.50.76/api/security/lan-access", nil)
-		req.RemoteAddr = "192.168.50.20:5000"
-		if accept != "" {
-			req.Header.Set("Accept", accept)
-		}
-		response := httptest.NewRecorder()
-		server.http.Handler.ServeHTTP(response, req.WithContext(lanaccessContext(req, usb)))
-		return response
+	return server
+}
+
+func guardedCall(server *Server, method, path, body, bearer string, usb bool, headers map[string]string) *httptest.ResponseRecorder {
+	host, remote := "192.168.50.76", "192.168.50.20:5000"
+	if usb {
+		host, remote = "192.168.42.1", "192.168.42.100:5000"
 	}
-	if response := get(false, ""); response.Code != http.StatusForbidden {
+	req := httptest.NewRequest(method, "http://"+host+path, bytes.NewBufferString(body))
+	req.RemoteAddr = remote
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	ctx := context.WithValue(lanaccessContext(req, usb), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP(host), Port: 80})
+	response := httptest.NewRecorder()
+	server.http.Handler.ServeHTTP(response, req.WithContext(ctx))
+	return response
+}
+
+func TestLANGuardGatesConfigWeb(t *testing.T) {
+	server := newGuardedServer(t)
+	const api = "/api/security/lan-access"
+	if response := guardedCall(server, http.MethodGet, api, "", "", false, nil); response.Code != http.StatusForbidden {
 		t.Fatalf("LAN request while off: %d", response.Code)
 	}
-	if response := get(false, "text/html"); response.Code != http.StatusForbidden || !bytes.Contains(response.Body.Bytes(), []byte("<html")) {
+	if response := guardedCall(server, http.MethodGet, api, "", "", false, map[string]string{"Accept": "text/html"}); response.Code != http.StatusForbidden || !bytes.Contains(response.Body.Bytes(), []byte("<html")) {
 		t.Fatalf("browser request while off: %d %q", response.Code, response.Body.String())
 	}
-	if response := get(true, ""); response.Code != http.StatusOK {
-		t.Fatalf("USB request while off: %d", response.Code)
+	// No password: USB clients need no credentials and can set one.
+	if response := guardedCall(server, http.MethodPut, api, `{"password":"luckfox","enabled":true}`, "", true, nil); response.Code != http.StatusOK {
+		t.Fatalf("USB update without a password: %d %s", response.Code, response.Body.String())
 	}
-	if err := server.lanAccess.SetPassword("correct horse"); err != nil {
-		t.Fatal(err)
+	// With a password, USB clients need a session too; the app pairs.
+	if response := guardedCall(server, http.MethodGet, api, "", "", true, nil); response.Code != http.StatusUnauthorized {
+		t.Fatalf("USB request without a session: %d", response.Code)
 	}
-	if err := server.lanAccess.SetEnabled(true); err != nil {
-		t.Fatal(err)
+	if response := guardedCall(server, http.MethodGet, api, "", "", false, nil); response.Code != http.StatusUnauthorized {
+		t.Fatalf("LAN request without a session: %d", response.Code)
 	}
-	if response := get(false, ""); response.Code != http.StatusUnauthorized {
-		t.Fatalf("LAN request while on without a session: %d", response.Code)
+	tokenFrom := func(response *httptest.ResponseRecorder) string {
+		var body struct {
+			Token string `json:"token"`
+		}
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &body) != nil || body.Token == "" {
+			t.Fatalf("no token: %d %s", response.Code, response.Body.String())
+		}
+		return body.Token
 	}
+	paired := tokenFrom(guardedCall(server, http.MethodPost, "/api/auth/pair", "", "", true, nil))
+	signedIn := tokenFrom(guardedCall(server, http.MethodPost, "/api/auth/login", `{"password":"luckfox"}`, "", false, nil))
 
-	login := httptest.NewRequest(http.MethodPost, "http://192.168.50.76/api/auth/login", bytes.NewBufferString(`{"password":"correct horse"}`))
-	login.RemoteAddr = "192.168.50.20:5000"
-	login.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	server.http.Handler.ServeHTTP(response, login.WithContext(lanaccessContext(login, false)))
-	var body struct {
-		Token string `json:"token"`
+	// The paired app reaches the settings over the LAN as well.
+	if response := guardedCall(server, http.MethodGet, api, "", paired, false, nil); response.Code != http.StatusOK {
+		t.Fatalf("paired token over the LAN: %d", response.Code)
 	}
-	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &body) != nil || body.Token == "" {
-		t.Fatalf("LAN login: %d %s", response.Code, response.Body.String())
+	// Replacing the password needs the current one, from the paired app too.
+	for name, bearer := range map[string]string{"LAN": signedIn, "USB": paired} {
+		if response := guardedCall(server, http.MethodPut, api, `{"password":"another"}`, bearer, name == "USB", nil); response.Code != http.StatusForbidden {
+			t.Fatalf("%s password change without the current password: %d", name, response.Code)
+		}
 	}
-	req := httptest.NewRequest(http.MethodGet, "http://192.168.50.76/api/security/lan-access", nil)
-	req.RemoteAddr = "192.168.50.20:5000"
-	req.Header.Set("Authorization", "Bearer "+body.Token)
-	response = httptest.NewRecorder()
-	server.http.Handler.ServeHTTP(response, req.WithContext(lanaccessContext(req, false)))
-	if response.Code != http.StatusOK {
-		t.Fatalf("LAN request with a session: %d", response.Code)
+	if !server.lanAccess.CheckPassword("luckfox") {
+		t.Fatal("password changed without the current one")
+	}
+	if response := guardedCall(server, http.MethodPut, api, `{"password":"another","current_password":"luckfox"}`, signedIn, false, nil); response.Code != http.StatusOK {
+		t.Fatalf("LAN password change with the current password: %d %s", response.Code, response.Body.String())
+	}
+	// That signed everyone out, the app included; it pairs again.
+	if response := guardedCall(server, http.MethodGet, api, "", paired, true, nil); response.Code != http.StatusUnauthorized {
+		t.Fatalf("paired token after a password change: %d", response.Code)
+	}
+	paired = tokenFrom(guardedCall(server, http.MethodPost, "/api/auth/pair", "", "", true, nil))
+	if response := guardedCall(server, http.MethodDelete, "/api/security/password", `{"current_password":"another"}`, paired, true, nil); response.Code != http.StatusOK {
+		t.Fatalf("clear from the paired app: %d %s", response.Code, response.Body.String())
+	}
+	if server.lanAccess.PasswordSet() || !server.lanAccess.Enabled() {
+		t.Fatal("clearing must remove the password and keep LAN access on")
+	}
+	if response := guardedCall(server, http.MethodGet, api, "", "", false, nil); response.Code != http.StatusOK {
+		t.Fatalf("LAN request after clearing: %d", response.Code)
+	}
+	// Admitted without a password is not ownership: a LAN client cannot claim
+	// the board by setting the first password, flip the switch, or mint MCP
+	// tokens that would outlive a later password.
+	for _, call := range []struct{ method, path, body string }{
+		{http.MethodPut, api, `{"password":"intruder"}`},
+		{http.MethodPut, api, `{"enabled":false}`},
+		{http.MethodPost, "/api/security/mcp-tokens", `{"name":"x"}`},
+	} {
+		if response := guardedCall(server, call.method, call.path, call.body, "", false, nil); response.Code != http.StatusForbidden {
+			t.Fatalf("LAN %s %s without a password: %d", call.method, call.path, response.Code)
+		}
+	}
+	if server.lanAccess.PasswordSet() || !server.lanAccess.Enabled() {
+		t.Fatal("a LAN client changed ownership settings without a password")
 	}
 }
 

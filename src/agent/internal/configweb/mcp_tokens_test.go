@@ -53,7 +53,7 @@ func TestMCPTokensLifecycleOverUSB(t *testing.T) {
 	}
 }
 
-func TestMCPTokensRefuseUnauthenticatedLANClients(t *testing.T) {
+func TestMCPTokensRefuseUnadmittedClients(t *testing.T) {
 	server, _ := newLANAccessServer(t)
 	const api = "/api/security/mcp-tokens"
 	for _, call := range []struct{ method, path, body string }{

@@ -69,6 +69,7 @@ const (
 	apiRestoreApply
 	apiLANAccessGet
 	apiLANAccessPut
+	apiPasswordClear
 	apiMCPTokensGet
 	apiMCPTokensCreate
 	apiMCPTokenRevoke
@@ -136,6 +137,7 @@ var apiRoutes = []apiRoute{
 	{apiRestoreJobs, routeVariant{http.MethodPost, apiPrefix + "/restore/jobs"}},
 	{apiLANAccessGet, routeVariant{http.MethodGet, apiPrefix + "/security/lan-access"}},
 	{apiLANAccessPut, routeVariant{http.MethodPut, apiPrefix + "/security/lan-access"}},
+	{apiPasswordClear, routeVariant{http.MethodDelete, apiPrefix + "/security/password"}},
 	{apiMCPTokensGet, routeVariant{http.MethodGet, apiPrefix + "/security/mcp-tokens"}},
 	{apiMCPTokensCreate, routeVariant{http.MethodPost, apiPrefix + "/security/mcp-tokens"}},
 }
@@ -354,6 +356,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleLANAccessStatus(w, r)
 	case apiLANAccessPut:
 		s.handleLANAccessUpdate(w, r)
+	case apiPasswordClear:
+		s.handleClearPassword(w, r)
 	case apiMCPTokensGet:
 		s.handleMCPTokensList(w, r)
 	case apiMCPTokensCreate:
@@ -371,7 +375,7 @@ func endpointConflictsWithMaintenance(endpoint apiEndpoint) bool {
 		apiWiFiRegionUpdate,
 		apiSystemEnvironmentPut, apiSystemEnvironmentApply, apiOTAUpdate,
 		apiDeviceReboot, apiAgentRestart, apiUSBReenumerate, apiLLMLogImport,
-		apiLANAccessPut, apiUSBInternetPut:
+		apiLANAccessPut, apiPasswordClear, apiUSBInternetPut:
 		return true
 	default:
 		return false

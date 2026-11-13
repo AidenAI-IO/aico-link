@@ -20,9 +20,9 @@ The Agent serves `POST /api/files`, `GET /api/files`, `DELETE /api/files`, and
 `/share/` on its existing
 HTTP port (8080). The device service also sets `AICO_SHARE_ADDR=0.0.0.0:8000` to
 start a listener exposing only these file routes. Both listeners follow the
-device's LAN access switch: requests from the USB link and the board are
-allowed, while other networks require LAN access to be enabled and a valid
-device-password session. For example:
+device's LAN access switch and device password: other networks require LAN
+access to be enabled, and while a device password is set every client except
+the board itself needs a session. For example:
 
 ```text
 Agent path: /share/report.pdf
@@ -143,23 +143,23 @@ downloading it then fails with `404`. Deletion uses the same access rules as
 uploads (see below).
 
 Both ports use the same `lanaccess.Guard` as the Agent. LAN clients sign in at
-`/login` or `POST /api/auth/login`; browsers send the `aico_session` cookie and
-native clients send `Authorization: Bearer <token>`. The cookie applies to the
-same host across ports 80, 8080, and 8000. Download URLs contain no credentials
-and do not grant access by themselves. Changing the device password or disabling
-LAN access revokes existing sessions. USB transfers do not require a session.
+`/login` or `POST /api/auth/login`; USB clients pair at `POST /api/auth/pair`.
+Browsers send the `aico_session` cookie and native clients send
+`Authorization: Bearer <token>`. The cookie applies to the same host across
+ports 80, 8080, and 8000. Download URLs contain no credentials and do not grant
+access by themselves. Changing or clearing the device password revokes
+existing sessions. Without a device password no session is needed.
 
 When a Web upload receives `401 login_required`, the composer offers a login
 link in a new tab, preserving the draft. Sign in and select the file again to
 retry. Directory links and browser downloads use the guard's normal login
-redirect. `403 lan_access_disabled` means LAN access must first be enabled over
-USB; signing in cannot override that switch.
+redirect. `403 lan_access_disabled` means LAN access must first be enabled;
+signing in cannot override that switch.
 
-The App requests the device password when a file operation requires login and
-shares an in-memory, board-origin-scoped token between uploads, listings, and
-native downloads. Downloads check the session before opening a save picker;
-the native request sends the token explicitly and refuses redirects. Passwords
-are not persisted. Restarting the App may require another LAN sign-in.
+The App pairs over USB and sends its token on uploads, listings, and native
+downloads, over USB and Wi-Fi alike. Downloads check the session before opening
+a save picker; the native request sends the token explicitly and refuses
+redirects. When the token stops working, the App pairs again over USB.
 
 Web transfers stay on the current origin, and cross-origin browser uploads are
 rejected. All authenticated device sessions can access all explicitly shared
