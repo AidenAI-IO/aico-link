@@ -14,8 +14,9 @@ not change USB HID, DHCP, or the board address `192.168.42.1`.
 Open **Config Web → Advanced Settings → USB Internet** over the USB connection.
 The switch is **off by default**, including when its settings file is absent.
 The same switch controls Mac and Android. It is saved immediately and survives
-reboots. Turning it on displays "Waiting for host Internet sharing" until a
-host registers a session.
+reboots. Turning it on displays "Waiting for Internet sharing" below the title
+until a host registers a session. Platform instructions appear below the switch
+row and wrap to fit phone screens.
 
 - **Mac:** run `scripts/usb-internet-macos.sh start` from this firmware checkout.
   The helper runs in the background and follows the board switch. It never
