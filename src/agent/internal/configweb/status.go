@@ -80,6 +80,9 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) queryAgentStatus() map[string]any {
+	if s.options.LocalAgent {
+		return s.localAgentStatus()
+	}
 	status := map[string]any{
 		"state": "unknown", "watchdog_running": false, "watchdog_pid": 0,
 		"process_running": false, "pid": 0, "addr": ":8080",
@@ -194,6 +197,10 @@ func parseAgentAddr(addr string) (string, int) {
 
 func (s *Server) handleAgentStatus(w http.ResponseWriter, _ *http.Request) {
 	status := s.queryAgentStatus()
+	if s.options.LocalAgent {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "agent_status": status})
+		return
+	}
 	deviceType := s.deviceType()
 	usb := map[string]any{
 		"keyboard": pathExists("/dev/hidg0"),

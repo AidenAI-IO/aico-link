@@ -12,6 +12,48 @@ Implementations in this repository:
   Android emulator or physical device through adb; fixed concurrency `1`.
 - Desktop bridge (`benchmark/desktop/`): drives the host macOS, Linux, or
   Windows desktop through `pyautogui`; fixed concurrency `1`.
+- [iPhone Mirroring bridge](iphone_mirroring/README.md): captures and controls
+  Apple's iPhone Mirroring window on macOS; fixed concurrency `1`, platform `ios`.
+- [Direct iOS device bridge](ios_device/README.md): controls a USB-connected
+  iPhone through pymobiledevice3 and signed WDA/XCTest, including permission
+  dialogs; fixed concurrency `1`, platform `ios`.
+
+## Optional Native Text Insertion
+
+`GET /api/providers/mnk` may return
+`{"capabilities":{"insert_text":true}}` when the backend can insert committed
+Unicode through its native text backend. Missing capability, HTTP 404, 405, or 501 retains
+the Agent's existing Phone Bridge/HID/IME flow. Other discovery failures stop
+the operation before changing the field.
+
+For a supporting bridge, the Agent uses `POST /api/providers/mnk` with
+`{"operation":"insert_text","insert_text":{"text":"中文ABC🔋","replace":false}}`.
+The usual `benchmark-task-id` routing and `{"success":true}` response apply.
+`replace:true` selects the entire focused field before insertion; the default
+inserts at the current caret/selection. This is distinct from the existing
+ASCII keystroke primitive `keyboard_text`. Text must be valid Unicode with
+1–4096 UTF-16 units, without controls other than newline/tab.
+
+The Agent keeps `enter_text` local, focuses its target and verifies the result
+through screenshots. Once native insertion has started, failures do not trigger
+an automatic replay or IME fallback because delivery can be partial.
+
+## Optional Native System Navigation
+
+The pymobiledevice3 iOS bridge additionally advertises
+`{"capabilities":{"system_actions":["home"]}}`. Its target-specific Agent
+quick-action config binds Home (including Spotlight's first step) to
+`system_action` with `{"action":"home"}`. The Agent discovers support before
+sending `{"operation":"system_action","system_action":{"action":"home"}}`
+to `POST /api/providers/mnk`, using the usual task lease and success response.
+
+The iOS bridge invokes WDA's native `/wda/pressButton` command with `name: home`
+because synthetic bottom-edge swipes may be consumed as app scrolling. This
+also dismisses Spotlight, unlike simply activating SpringBoard. Missing support or a
+discovery error stops this explicit binding; failed input is never replayed as
+a swipe. Existing Mirroring, Android, and HID quick-action configs keep their
+current mappings. The system navigation binding is internal to `quick_action`,
+not an additional public Agent tool.
 
 ## Required Endpoints
 

@@ -18,6 +18,8 @@ func Run(args []string) int {
 	options := DefaultOptions()
 	fs := flag.NewFlagSet("config-web", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	fs.BoolVar(&options.LocalAgent, "local-agent", false, "serve only host Agent settings on loopback")
+	fs.StringVar(&options.AgentHTTPBaseURL, "agent-url", options.AgentHTTPBaseURL, "running Agent HTTP URL")
 	fs.StringVar(&options.BindAddress, "bind", options.BindAddress, "HTTP bind address")
 	fs.IntVar(&options.Port, "port", options.Port, "HTTP port")
 	fs.StringVar(&options.AgentConfigPath, "config", options.AgentConfigPath, "agent TOML path")
@@ -62,6 +64,27 @@ func Run(args []string) int {
 	if fs.NArg() != 0 {
 		fmt.Fprintf(os.Stderr, "unexpected arguments: %v\n", fs.Args())
 		return 1
+	}
+
+	if options.LocalAgent {
+		bindSet, portSet := false, false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "bind" {
+				bindSet = true
+			}
+			if f.Name == "port" {
+				portSet = true
+			}
+		})
+		if !bindSet {
+			options.BindAddress = "127.0.0.1"
+		}
+		if !portSet {
+			options.Port = 8000
+		}
+		if options.AgentHTTPBaseURL == "" {
+			options.AgentHTTPBaseURL = "http://127.0.0.1:8080"
+		}
 	}
 
 	server, err := NewServer(options)

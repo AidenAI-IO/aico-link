@@ -371,3 +371,23 @@
   flex-direction: column;
   min-height: 0;
 }
+
+/* The host portal keeps application state visible on every settings page. */
+.local-application {
+  padding: var(--space-sm) var(--layout-page-margin);
+  color: var(--color-ink-secondary);
+  font-size: var(--font-caption);
+  border-bottom: 1px solid var(--color-separator);
+}
+
+@media (min-width: 900px) {
+  .local-shortcuts { display: none; }
+}
+
+.local-agent-link {
+  display: block;
+  padding: var(--space-lg);
+  text-align: center;
+  color: var(--color-accent);
+  text-decoration: none;
+}

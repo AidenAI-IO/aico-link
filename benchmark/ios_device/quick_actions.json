@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "actions": {
+    "home": {
+      "label": "Home", "aliases": ["home_screen", "go_home"], "category": "navigation",
+      "platforms": {"ios": {"status": "active", "tool": "system_action", "input": {
+        "action": "home"
+      }}}
+    },
+    "app_switch": {
+      "label": "App Switcher", "category": "navigation",
+      "platforms": {"ios": {"status": "active", "tool": "touch_gesture", "input": {"actions": [
+        {"action": "touch_down", "point": {"x": 500, "y": 1000}},
+        {"action": "move_to", "point": {"x": 500, "y": 500}, "duration_ms": 350},
+        {"action": "wait", "ms": 250}, {"action": "touch_up"}
+      ]}}}
+    },
+    "spotlight_search": {
+      "label": "Global Search", "aliases": ["spotlight", "global_search"], "category": "navigation",
+      "platforms": {"ios": {"status": "active", "steps": [
+        {"tool": "system_action", "input": {"action": "home"}, "delay_ms_after": 600},
+        {"tool": "touch_gesture", "input": {"type": "swipe", "start": {"x": 500, "y": 250}, "end": {"x": 500, "y": 750}, "duration_ms": 350}, "delay_ms_after": 600}
+      ], "note": "Open Spotlight; the Agent search/launch flow clears its query through native field replacement."}}
+    }
+  }
+}

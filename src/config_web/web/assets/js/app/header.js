@@ -43,7 +43,7 @@ export function createHeader(options = {}) {
         class: 'app__brand-link',
         attrs: {href: 'https://aico.link', target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Aico Link — aico.link'},
       }, [aicoLinkLogo({width: 116})]),
-      text({key: 'ui.app_title', fallback: '配置'}, 'app__brand-title'),
+      text(options.localAgent ? msg('local.title', '本机 Agent') : {key: 'ui.app_title', fallback: '配置'}, 'app__brand-title'),
     ]),
     nav,
   ]);
