@@ -90,6 +90,12 @@ type RealtimeVoiceSession struct {
 	stopOnce    sync.Once
 }
 
+// NewRealtimeVoiceSession returns a conversation on audio that no server
+// publishes, for a loop that runs without the Web UI controller.
+func NewRealtimeVoiceSession(audio RealtimeAudioIO) *RealtimeVoiceSession {
+	return newRealtimeVoiceSession(audio)
+}
+
 func newRealtimeVoiceSession(audio RealtimeAudioIO) *RealtimeVoiceSession {
 	return &RealtimeVoiceSession{audio: audio, muteChanged: make(chan struct{}, 1), stop: make(chan struct{})}
 }
@@ -175,8 +181,8 @@ func (v *RealtimeVoiceSession) voice() bool {
 
 // RealtimeVoiceStatus is the public state of the realtime voice mode.
 type RealtimeVoiceStatus struct {
-	// Available is true while the agent runs in realtime input mode and can
-	// open a voice session.
+	// Available is true while the agent's voice loop (realtime, or Classic
+	// stt in continuous session mode) can open a voice session.
 	Available bool `json:"available"`
 	// State is idle, connecting or active.
 	State string             `json:"state"`
@@ -213,7 +219,7 @@ type realtimeVoiceController struct {
 }
 
 var (
-	errRealtimeVoiceUnavailable = errors.New("realtime voice is not enabled; set the input mode to realtime")
+	errRealtimeVoiceUnavailable = errors.New("voice is not available; set the input mode to realtime or stt")
 	errRealtimeVoiceBusy        = errors.New("a realtime voice session is already active")
 )
 
@@ -320,6 +326,18 @@ func (c *realtimeVoiceController) running() *RealtimeVoiceSession {
 		return nil
 	}
 	return c.active
+}
+
+// runningWebVoice returns the running conversation when a browser carries
+// its audio, or nil.
+func (s *Server) runningWebVoice() *RealtimeVoiceSession {
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if active := c.runningVoice(); active != nil && active.Route() == RealtimeAudioRouteWeb {
+		return active
+	}
+	return nil
 }
 
 // runningVoice is running without a text session. The caller holds c.mu.

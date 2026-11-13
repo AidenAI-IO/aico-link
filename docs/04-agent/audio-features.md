@@ -45,6 +45,35 @@ Runs the Classic continuous voice session alongside the HTTP server and Web UI
 5. TTS synthesizes the reply while the mic stays open for barge-in;
 6. Session ends on listen timeout, max turns, an idle listen-button press, a successful `wait_for_wakeup` after goodbye/standby intent, or process stop. A spoken farewell without that tool call does not end the session.
 
+#### Web UI voice mode
+
+The Agent Web UI offers the same voice button in Classic mode as in realtime
+mode (see [Audio routes and the Web UI voice mode](realtime-voice.md#audio-routes-and-the-web-ui-voice-mode)).
+Pressing it opens a Classic session that captures and plays audio in that
+browser over `/api/realtime/voice/ws`, using HTTPS as described in
+[HTTPS for browser audio](realtime-voice.md#https-for-browser-audio). The
+STT, VAD, Agent, and TTS pipeline is unchanged; only the audio endpoint
+differs. A session the board started shows the same orb, mute toggles, and
+End button, with audio on the device.
+
+- A browser session ignores the listen timeouts and `voice_max_turns`; it
+  lasts until End, until the browser disconnects, or until a configuration
+  reload. `wait_for_wakeup` still ends it.
+- A wake word or button press during a browser session is ignored, so it
+  cannot cut the reply short or open the board microphone.
+- Muting the microphone feeds silence to VAD and STT; muting the speaker
+  plays silence in place of replies, prompt tones included. Both apply on
+  either route.
+- While a browser session runs, the spoken reply to a message typed in the
+  composer also plays in that browser.
+
+Typed `/api/chat` messages never open the microphone in Classic mode: they
+run as ordinary Agent requests and, when TTS is configured, are spoken
+through the device speaker (or the browser, during a browser session). Only
+a wake word, a button press, or the Web UI voice button opens a session.
+The legacy single-turn mode (`voice_followup_enabled = false`) does not offer
+the Web UI voice button.
+
 Before final non-streaming TTS, the runtime passes the spoken reply through the shared [Voice Notification manager](voice-notifications.md). A successful turn may receive one short persistent tail. A final LLM failure may use a fixed replacement. These changes affect spoken text only, not assistant history or UI response text.
 
 ### `input_mode = "realtime"`

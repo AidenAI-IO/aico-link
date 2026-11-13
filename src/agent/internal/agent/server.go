@@ -2533,6 +2533,11 @@ func (s *Server) currentTTSPlaybackBackend() tts.AudioServiceBackend {
 	if s == nil {
 		return nil
 	}
+	// While a browser carries the voice conversation, replies to typed
+	// messages are spoken there too, as in the conversation itself.
+	if voice := s.runningWebVoice(); voice != nil {
+		return voiceSessionPlayback{AudioServiceBackend: voice.Audio().Playback(), voice: voice}
+	}
 	s.configDepsMu.RLock()
 	defer s.configDepsMu.RUnlock()
 	if s.ttsPlaybackBackend != nil {

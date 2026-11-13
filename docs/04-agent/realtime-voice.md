@@ -174,10 +174,15 @@ instead; the conversation history carries over. When the provider caps a
 session's lifetime, the daemon reconnects and the conversation continues on the
 same route with its mute state.
 
+Classic (`input_mode = "stt"`) sessions use the same Web UI voice mode and
+endpoints, with the `device` and `web` routes only; see
+[Web UI voice mode](audio-features.md#web-ui-voice-mode) for how a Classic
+session behaves on each route.
+
 The Web UI uses these endpoints:
 
-- `GET /api/realtime/voice` returns `available` (realtime input mode is
-  active), `state` (`idle`, `connecting`, or `active`), `route`, `muted`,
+- `GET /api/realtime/voice` returns `available` (the realtime or Classic
+  continuous voice loop is running), `state` (`idle`, `connecting`, or `active`), `route`, `muted`,
   `speaker_muted`, and `https_port` (the Agent's HTTPS port while it is
   serving, used to reopen a plain HTTP page where the microphone is allowed).
   A conversation that was asked to stop reports `idle` at once, while the
