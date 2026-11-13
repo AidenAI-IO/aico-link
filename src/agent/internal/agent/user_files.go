@@ -28,7 +28,11 @@ type userFilesReportGeneration struct {
 // Used by both ensureUserFilesReport (synchronous) and handleUserFilesRegenerate
 // (async) so a hung script can never leak a long-lived child.
 func (s *Server) runUserFilesScript(stdoutSink string) error {
-	reportDir := filepath.Dir(s.userFilesReportPath)
+	reportPath, err := filepath.Abs(s.userFilesReportPath)
+	if err != nil {
+		return fmt.Errorf("resolve user_files report path: %w", err)
+	}
+	reportDir := filepath.Dir(reportPath)
 	tempReport, err := os.CreateTemp(reportDir, ".files_report-*.html")
 	if err != nil {
 		return fmt.Errorf("create temporary user_files report: %w", err)
@@ -73,7 +77,7 @@ func (s *Server) runUserFilesScript(stdoutSink string) error {
 	if err := os.Chmod(tempReportPath, 0o644); err != nil {
 		return fmt.Errorf("set user_files report permissions: %w", err)
 	}
-	if err := os.Rename(tempReportPath, s.userFilesReportPath); err != nil {
+	if err := os.Rename(tempReportPath, reportPath); err != nil {
 		return fmt.Errorf("publish user_files report: %w", err)
 	}
 	return nil

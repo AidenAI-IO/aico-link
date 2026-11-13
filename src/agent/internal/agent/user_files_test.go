@@ -57,26 +57,36 @@ func TestHandleUserFiles_GeneratesConfiguredData(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	dir := filepath.Join(t.TempDir(), "agent's data")
-	for _, kind := range []string{"memory", "skills", "skill-state"} {
-		root := filepath.Join(dir, kind)
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "sample.md"), []byte("configured-"+kind+"-content"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s := &Server{userFilesReportPath: filepath.Join(dir, "files_report.html"), userFilesToolsDir: tools}
-	rec := httptest.NewRecorder()
-	s.handleUserFiles(rec, httptest.NewRequest(http.MethodGet, "/user_files", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code=%d body=%q", rec.Code, rec.Body.String())
-	}
-	for _, kind := range []string{"memory", "skills", "skill-state"} {
-		if !strings.Contains(rec.Body.String(), "configured-"+kind+"-content") {
-			t.Errorf("report is missing %s from the configured data directory", kind)
-		}
+	for _, pathType := range []string{"absolute", "relative"} {
+		t.Run(pathType, func(t *testing.T) {
+			base := t.TempDir()
+			dir := filepath.Join(base, "agent's data")
+			for _, kind := range []string{"memory", "skills", "skill-state"} {
+				root := filepath.Join(dir, kind)
+				if err := os.MkdirAll(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, "sample.md"), []byte("configured-"+kind+"-content"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reportPath := filepath.Join(dir, "files_report.html")
+			if pathType == "relative" {
+				t.Chdir(base)
+				reportPath = filepath.Join("agent's data", "files_report.html")
+			}
+			s := &Server{userFilesReportPath: reportPath, userFilesToolsDir: tools}
+			rec := httptest.NewRecorder()
+			s.handleUserFiles(rec, httptest.NewRequest(http.MethodGet, "/user_files", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code=%d body=%q", rec.Code, rec.Body.String())
+			}
+			for _, kind := range []string{"memory", "skills", "skill-state"} {
+				if !strings.Contains(rec.Body.String(), "configured-"+kind+"-content") {
+					t.Errorf("report is missing %s from the configured data directory", kind)
+				}
+			}
+		})
 	}
 }
 
