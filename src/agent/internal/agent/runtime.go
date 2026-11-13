@@ -1494,16 +1494,25 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 				Message: &message,
 			}
 		}
+		// The decision model reads the utterance while the screenshot is
+		// captured, so it only adds latency when it is the slower of the two.
+		// A turn with the user's own image takes no screenshot but still gets
+		// the memory recall from the same request.
+		turn := r.startTurnDecision(message.Content)
 		// A user turn carries a fresh screenshot, grounded when UI Grounding
-		// is on, unless the user attached an image of their own.
+		// is on, unless the user attached an image of their own or the
+		// decision model is sure the screen is not needed.
 		var attachment *messages.Attachment
 		var grounding *screenshotGrounding
 		if !messageHasImageAttachment(message) {
-			attachment, grounding = r.captureStateScreenshot()
+			attachment, grounding = r.captureStateScreenshot(func() bool {
+				return !turn().SkipScreenshot
+			})
 		}
+		recalled := recalledMemoriesText(turn().Recalled)
 		entries := r.stateManager.GetAllStates()
 		// If neither runtime state nor a screenshot is available, just skip.
-		if len(entries) == 0 && attachment == nil {
+		if len(entries) == 0 && attachment == nil && recalled == "" {
 			return contextmanager.AppendMessageHookResult{
 				Message: &message,
 			}
@@ -1523,6 +1532,7 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 		if caption := screenshotGroundingCaption(grounding); caption != "" {
 			formated.WriteString(caption + "\n")
 		}
+		formated.WriteString(recalled)
 		if formated.Len() == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
 				Message: &message,
@@ -1585,7 +1595,10 @@ func (r *Runtime) uiGroundingEnabled() bool {
 
 // captureStateScreenshot captures the screenshot attached to a user turn and,
 // when UI Grounding is on, its grounding result for the state message text.
-func (r *Runtime) captureStateScreenshot() (*messages.Attachment, *screenshotGrounding) {
+//
+// keep, when set, is asked after the capture and before the screenshot is
+// stored; returning false discards it.
+func (r *Runtime) captureStateScreenshot(keep func() bool) (*messages.Attachment, *screenshotGrounding) {
 	tools := r.toolSnapshot()
 	if r == nil || tools == nil || r.contextManager == nil {
 		return nil, nil
@@ -1616,6 +1629,9 @@ func (r *Runtime) captureStateScreenshot() (*messages.Attachment, *screenshotGro
 		if r.logger != nil {
 			r.logger.Debug("[state] screenshot output is not a valid visual observation")
 		}
+		return nil, nil
+	}
+	if keep != nil && !keep() {
 		return nil, nil
 	}
 	attachment, err := r.contextManager.StoreAttachment(observation.MIMEType, observation.ImageBytes)

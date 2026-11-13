@@ -874,6 +874,27 @@ Every decision writes one Agent log line under the `decision` component:
 where `dm` is the decision model's answer; `llm` and `agree` are filled in
 when the main model's answer was also used.
 
+Each user turn also asks the decision model once, from the utterance text
+and the exchange before it (the previous request, the tools it used and the
+reply), while the turn's screenshot is being captured (`turn_screenshot`):
+does responding need the phone screen? The previous exchange lets a follow-up
+such as "now press equals" after opening an app read as needing the screen. Only a confident "no", such as small
+talk, arithmetic or the weather, drops the screenshot from the turn; the main
+model can still call `screenshot`. The request is bounded at 4 seconds, and an
+unsure answer, a failed request or a disabled decision model keeps the
+screenshot.
+
+The same request also decides which saved memories bear on the request
+(`memory_recall`). Profile, preference and rule memories already reach the main
+model through the system prompt's user profile, so only fact and procedure
+memories are offered: up to 20 of the highest-priority ones, of which up to 5
+confidently relevant ones are added to the turn's state message. Sensitive
+memories and memories written from notifications are never offered this way,
+because a notification's text is controlled by third parties; `recall_memory`
+still finds them, and any memory not recalled automatically, by topic. An unsure answer or a failed
+request recalls nothing. The memory texts offered are sent to the decision
+model provider.
+
 The TypeSafe API is region-restricted (HTTP 451 outside supported regions);
 the Agent reaches both providers through the same proxy environment it uses for
 other model providers.
