@@ -57,7 +57,7 @@ func (t *RecallSessionChunksTool) Description() string {
 		"Call this tool whenever the user references or asks about prior conversation content that is not present in your visible context — including denials such as 'we never discussed X'. The visible context is only the recent hot window; older turns are compressed into archived chunks invisible until recalled.",
 		"The tool searches all sessions in a single call. If no results match, retry once with broader topic terms or no filters before concluding the history is unavailable.",
 		"Prefer chunk_ids when known; otherwise pass tags (topic keywords from the user's question) and use empty tags [] for recent history.",
-		"For remembered preferences, rules, procedures, or facts, use recall_memory instead.",
+		"For remembered preferences, rules, procedures, facts, or deliberately saved screens, use recall_memory instead. This is not a fallback for a missing screen_snapshot when the user explicitly asks for evidence from a saved screen. A classification question already supplying the relevant facts does not require a history search.",
 	}, " ")
 }
 
@@ -101,7 +101,7 @@ func (t *RecallMemoryTool) Description() string {
 		"Recall temporary and long-term memories by tags, entities, or types. Leave arrays empty to match all.",
 		"Temporary memories are short-lived notification-derived conclusions and are returned with memory_scope=temporary; long-term memories are returned with memory_scope=long_term.",
 		"Use for remembered preferences, rules, procedures, facts, profile info, or screen content the user saved earlier with the device button.",
-		"Screen content the user saved belongs here even when they phrase it as something recent (\"the tracking number I just saved\"); use types [\"screen_snapshot\"] for those. Only use recall_session_chunks for what was actually said in conversation.",
+		"Screen content the user saved belongs here even when they phrase it as something recent (\"the tracking number I just saved\"); use types [\"screen_snapshot\"] for those. Only use recall_session_chunks for what was actually said in conversation. When the user explicitly asks for a value from a saved screen and no matching screen_snapshot is found, report the missing screen evidence rather than substituting conversation history or device lessons. When reporting a historical status, retain its full recorded observation date and time and distinguish it from the current status.",
 		"Notification-derived temporary memories are included automatically. Use this tool for remembered notification conclusions; when the exact original notification record is required, use shell to read `/userdata/agent/memory/notifications/events/*.jsonl` without modifying it.",
 		"Sensitive memories (secrets the user asked to keep) are returned only when tags or entities name their topic, never by a browse with empty arrays.",
 		"Returns matching memories with id, revision, type, title, content, summary.",

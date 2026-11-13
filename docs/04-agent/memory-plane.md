@@ -517,8 +517,19 @@ For `update` and `reinforce`, omitted `type` inherits the validated target's typ
 When answering from saved screen observations, the Agent preserves exact source
 values when asked to copy them, including Unicode symbols, punctuation and case.
 Response-language preferences apply to surrounding explanation, not quoted source
-values. A historical status includes its recorded observation time when available
-and is not evidence of the current status without a fresh check.
+values. A historical status includes its full recorded observation date and time,
+at the source's precision, and is not evidence of the current status without a
+fresh check. Live lookups require an appropriate source and identifier; an order
+ID must not be assumed to be a carrier tracking number.
+
+When the user explicitly asks for a value from a saved screen, only matching
+`screen_snapshot` evidence establishes that value. A missing screen match is
+reported as missing, not replaced by conversation history or device lessons.
+Session recall remains appropriate for what was actually said in conversation,
+with the source clearly distinguished. Outcome-classification questions that
+already supply the relevant facts do not require a history lookup: explicit
+abandonment before completion establishes `not achieved`; `unknown` is reserved
+for insufficient completion evidence, not an empty history search.
 
 ## Compatibility
 
