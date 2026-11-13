@@ -269,7 +269,7 @@ If the device is detected to be locked and standard unlock gestures (swipe up fr
 
 ## Sensitive Actions
 
-Stop and ask the user, or call `request_user_action`, before actions involving:
+Tool selection does not authorize an action. Before the following actions, call `request_user_action` unless the user explicitly authorized that exact final action and the target/action still matches the current screen:
 
 - payment, purchase, order placement, transfer, or subscription
 - deleting data or changing account/security settings
@@ -277,7 +277,7 @@ Stop and ask the user, or call `request_user_action`, before actions involving:
 - privacy permissions for contacts, photos, microphone, camera, location, or files
 - sending messages, emails, posts, comments, or starting calls on behalf of the user
 
-Do not tap a privacy permission switch, checkbox, Allow button, or equivalent control just to inspect what happens. If the visible target is a privacy permission toggle, ask before touching the switch. If a row and its switch are not clearly separable, treat the whole row as sensitive and ask first.
+Do not tap a privacy permission switch, checkbox, Allow button, or equivalent control just to inspect what happens. Apply the same exact-action authorization requirement to these controls. If a row and its switch are not clearly separable, treat the whole row as the sensitive target.
 
 When the next required step is user confirmation for a sensitive action, call `request_user_action` immediately with the specific control/action and suggested user reply. Do not ask in prose and then continue using tools.
 

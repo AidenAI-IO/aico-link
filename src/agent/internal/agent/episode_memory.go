@@ -1412,6 +1412,7 @@ func episodeMemoryPayload(episode TaskEpisode) map[string]interface{} {
 	}
 	return map[string]interface{}{
 		"episode_id":   episode.ID,
+		"status":       episode.Status,
 		"user_goal":    episode.UserGoal,
 		"device_scope": episode.DeviceScope,
 		"recorded_outcome": map[string]interface{}{

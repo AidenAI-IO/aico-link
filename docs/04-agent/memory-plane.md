@@ -405,7 +405,10 @@ retained Failure reviews rejected for missing or invalid incremental evidence.
 These stages distinguish no proposed knowledge, audit rejection, and structural
 rejection without logging candidate text, private evidence, or model-written
 reasons. Outcome classification and memory admission are independent: a definite
-failure can yield no memory when it adds only general knowledge.
+failure can yield no memory when it adds only general knowledge. The assessment
+payload includes the recorded Episode status, so interruption remains visible even
+when there is no separate termination event. The status describes how execution
+ended; direct evidence is still needed to decide whether the goal was completed.
 
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
 

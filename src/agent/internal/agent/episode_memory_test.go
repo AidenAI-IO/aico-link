@@ -1385,7 +1385,7 @@ func TestEpisodeMemoryProcessorProcessesInterruptedEpisodeWithDeviceEvidence(t *
 	ctx := context.Background()
 	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
 	model := &episodeMemoryScriptedModel{responses: []string{`{
-  "episode_assessment":{"goal_result":"unknown","reason":"The task was interrupted after a device action, before final proof.","evidence_refs":[]},
+  "episode_assessment":{"goal_result":"not_achieved","reason":"The task was interrupted before the requested configuration was completed.","evidence_refs":[]},
   "candidates":[]
 }`}}
 	processor := newEpisodeMemoryProcessor(plane, model)
@@ -1395,7 +1395,7 @@ func TestEpisodeMemoryProcessorProcessesInterruptedEpisodeWithDeviceEvidence(t *
 	}
 	for _, episode := range []TaskEpisode{
 		{
-			ID: "ep_interrupted_after_action", Status: "interrupted", StartedAt: "2026-08-14T10:10:00Z", EndedAt: "2026-08-14T10:10:01Z", UserGoal: "打开设置",
+			ID: "ep_interrupted_after_action", Status: "interrupted", StartedAt: "2026-08-14T10:10:00Z", EndedAt: "2026-08-14T10:10:01Z", UserGoal: "Configure the notification preference.",
 			Events: []TaskEpisodeEvent{
 				{EventID: "ep_interrupted_call", Type: runEventToolCall, ToolName: "launch_app", ToolInput: `{"app":"Settings"}`},
 				{EventID: "ep_interrupted_result", Type: "tool_result", ToolName: "launch_app", Content: "Settings opened"},
@@ -1415,6 +1415,30 @@ func TestEpisodeMemoryProcessorProcessesInterruptedEpisodeWithDeviceEvidence(t *
 	}
 	if got := model.callCount(); got != 1 {
 		t.Fatalf("model calls = %d, want only interrupted Episode with effective device evidence", got)
+	}
+	// The recorder stores termination on the Episode, without a termination event.
+	// Inspect the actual model request so dropping status during serialization is caught.
+	_, payloadJSON, found := strings.Cut(model.firstCallText(), "Episode:\n")
+	if !found {
+		t.Fatal("assessment request is missing its Episode payload")
+	}
+	var payload struct {
+		Status string                      `json:"status"`
+		Events []episodeMemoryEventPayload `json:"events"`
+	}
+	if err := json.NewDecoder(strings.NewReader(payloadJSON)).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != "interrupted" || len(payload.Events) != 2 {
+		t.Fatalf("assessment lost termination status or added a synthetic event: %#v", payload)
+	}
+	state, err := processor.state.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment := state.Episodes[episodeMemoryStateKey("ep_interrupted_after_action", episodeMemoryExtractorVersion)].Assessment
+	if assessment == nil || assessment.GoalResult != episodeGoalNotAchieved {
+		t.Fatalf("interrupted assessment=%#v, want not_achieved", assessment)
 	}
 }
 

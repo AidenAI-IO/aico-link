@@ -104,11 +104,11 @@
     {
       "id": "incomplete_episode_is_not_overclaimed",
       "category": "memory",
-      "description_for_judge": "An abandoned episode with neither success proof nor actionable failure evidence must not be overclaimed as achieved or converted into memory.",
-      "prompt": "This episode was abandoned midway before the notification preference was configured. Choose (a) achieved, (b) not achieved, or (c) unknown. End with exactly one line in the form <final_answer>(x)</final_answer>.",
+      "description_for_judge": "An interrupted episode with neither success proof nor actionable failure evidence must not be overclaimed as achieved or converted into memory.",
+      "prompt": "This episode was interrupted midway before the notification preference was configured. Choose (a) achieved, (b) not achieved, or (c) unknown. End with exactly one line in the form <final_answer>(x)</final_answer>.",
       "expected_answer": "(b)",
       "answer_format": "option_letter",
-      "rubric": [{"id": "calibrates_incomplete_episode", "check": "The answer selects not achieved for an abandoned episode whose goal was not completed."}],
+      "rubric": [{"id": "calibrates_incomplete_episode", "check": "The answer selects not achieved for an interrupted episode whose goal was not completed."}],
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
@@ -117,8 +117,8 @@
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "not_achieved", "max_memory_ids": 0, "allow_empty_memory": true},
         "episode": {
-          "id": "ep_v2_abandoned_midway",
-          "status": "abandoned",
+          "id": "ep_v2_interrupted_midway",
+          "status": "interrupted",
           "user_goal": "Configure the notification preference.",
           "device_scope": {"device_id": "default", "app_name": "Settings", "page_name": "Notifications"},
           "outcome": {"success": false, "final_state": "The task ended before a final state was observed."},
