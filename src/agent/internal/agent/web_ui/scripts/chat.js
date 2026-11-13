@@ -96,6 +96,11 @@ async function sendMessage(options) {
         });
     } finally {
         if (!completed) assistantTextReveal.flush();
+        // SSE terminal events leave this request's draft to its stream. Once
+        // the stream is over, a draft still held (an error or interruption
+        // before done) must not block later history refreshes.
+        delete streamingAssistantDrafts[currentChatRequestId];
+        assistantDraftBlockedByTool.delete(currentChatRequestId);
         currentChatRequestId = '';
         currentChatAbortController = null;
         currentChatCancelRequested = false;
@@ -421,6 +426,7 @@ function handleChatStreamEvent(event) {
         return false;
     }
     if (event.type === 'done') {
+        finalizeStreamDraft(event);
         return true;
     }
     if (event.type === 'error') {
@@ -547,6 +553,18 @@ function finalizeAssistantMessage(msg) {
         removeRenderedMessageNode(messageKey);
     }
     renderLiveMessage(msg);
+}
+
+// A stream that ends without its own assistant message (realtime chat sends
+// only deltas) still owns a live draft. Settle it with the run's response so
+// the draft shows the whole reply and no longer holds back history refreshes.
+function finalizeStreamDraft(event) {
+    const key = assistantStreamKey(event);
+    const draft = key && streamingAssistantDrafts[key];
+    if (!draft) return;
+    finalizeAssistantMessage(Object.assign({}, draft, {
+        content: event.response || draft.content || ''
+    }));
 }
 
 function assistantStreamKey(value) {
