@@ -138,12 +138,12 @@ def cleanup_stale_work(root: Path, current: str) -> list[str]:
 
 
 def judge_error_only(run: Path) -> bool:
-    """A one-task run that exited 1 and passes run_case's completeness checks except its judge call.
-
-    Uses the same exit-code convention as run_cases: with the effective exit code 1, a complete
-    run whose only defect is one judge error yields exactly one reason.
-    """
-    return _incomplete_run_reasons(1, run / "manifest.json") == ["judge_errors=1"]
+    """Accept a complete one-task judge error from a checkout using the older CI exit policy."""
+    manifest = run / "manifest.json"
+    if _incomplete_run_reasons(1, manifest):
+        return False
+    totals = json.loads(manifest.read_text(encoding="utf-8"))["totals"]
+    return int(totals["tasks"]) == 1 and int(totals.get("judge_error", 0)) == 1
 
 
 def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadline: float, rejudge: bool = True) -> dict:
@@ -174,7 +174,7 @@ def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadli
                      str(max(1, deadline - time.monotonic() - 30))], cwd=root / "benchmark",
                     log=out / "runner.log", timeout=max(1, deadline - time.monotonic()), env=env)
         except CommandFailed as exc:
-            # run_case exits 1 for a judge error; a complete judge-error result is data.
+            # Older checkouts exit 1 for a judge error; a complete judge-error result is data.
             # Any other exit, such as 143 on cancellation, or an incomplete run still fails.
             if exc.returncode != 1 or not judge_error_only(root / "benchmark/runs" / run_id):
                 raise

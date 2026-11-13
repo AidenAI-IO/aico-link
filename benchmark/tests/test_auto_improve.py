@@ -322,6 +322,7 @@ def write_run(run, status, *, report=True):
     (1, "judge_error", True, True),
     (1, "judge_error", False, False),
     (143, "judge_error", True, False),
+    (1, "timeout", True, False),
     (1, "failed", True, False),
 ])
 def test_only_a_complete_judge_error_run_survives_a_failed_runner_exit(tmp_path, monkeypatch, exit_code, status,
