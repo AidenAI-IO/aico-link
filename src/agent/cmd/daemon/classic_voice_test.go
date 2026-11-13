@@ -87,13 +87,13 @@ func TestClassicBrowserVoiceStartRunsUntilEnded(t *testing.T) {
 
 	browser := agent.NewRealtimeVoiceSession(fakeRouteAudio(agent.RealtimeAudioRouteWeb))
 	voice.startBrowser(browser)
-	waitFor(t, "the browser conversation to open", func() bool { return dialog.VoiceRoute() == agent.RealtimeAudioRouteWeb })
+	waitFor(t, "the browser conversation to open", func() bool { return browserVoice(dialog) })
 
 	// Well past the 5 ms listen timeouts, a browser conversation is still open
 	// and a wake word neither ends it nor opens the board.
 	watcher.callback()
 	time.Sleep(50 * time.Millisecond)
-	if dialog.VoiceRoute() != agent.RealtimeAudioRouteWeb {
+	if !browserVoice(dialog) {
 		t.Fatal("the browser conversation closed before the user ended it")
 	}
 
@@ -106,7 +106,7 @@ func TestClassicBrowserVoiceStartRunsUntilEnded(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("End did not close the browser conversation")
 	}
-	if dialog.VoiceRoute() != "" {
+	if dialog.VoiceSession() != nil {
 		t.Fatal("the dialog still serves the ended conversation")
 	}
 	time.Sleep(20 * time.Millisecond)
@@ -130,8 +130,7 @@ func TestClassicBrowserVoiceStartRunsUntilEnded(t *testing.T) {
 func TestClassicWithdrawnBrowserStartOpensNothing(t *testing.T) {
 	dialog := &fakeAudioDialog{frameSamples: 2}
 	voice := &fakeClassicVoice{ended: make(chan *agent.RealtimeVoiceSession, 1)}
-	var browserActive atomic.Bool
-	if exit := runClassicConversation(agent.Config{}, dialog, nil, voice, make(chan os.Signal, 1), make(chan voiceEvent, 1), "", &browserActive, nil); exit {
+	if exit := runClassicConversation(agent.Config{}, dialog, nil, voice, make(chan os.Signal, 1), make(chan voiceEvent, 1), "", nil); exit {
 		t.Fatal("runClassicConversation returned exit=true")
 	}
 	if dialog.starts != 0 || len(voice.claims) != 0 {

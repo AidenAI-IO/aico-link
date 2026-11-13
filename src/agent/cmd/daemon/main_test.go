@@ -1254,31 +1254,10 @@ func (d *fakeAudioDialog) SetVoiceSession(voice *agent.RealtimeVoiceSession) {
 	d.opsMu.Unlock()
 }
 
-func (d *fakeAudioDialog) VoiceStopRequested() <-chan struct{} {
+func (d *fakeAudioDialog) VoiceSession() *agent.RealtimeVoiceSession {
 	d.opsMu.Lock()
 	defer d.opsMu.Unlock()
-	return d.voice.StopRequested()
-}
-
-func (d *fakeAudioDialog) VoiceRoute() agent.RealtimeAudioRoute {
-	d.opsMu.Lock()
-	defer d.opsMu.Unlock()
-	if d.voice == nil {
-		return ""
-	}
-	return d.voice.Route()
-}
-
-func (d *fakeAudioDialog) VoiceMuteChanged() <-chan struct{} {
-	d.opsMu.Lock()
-	defer d.opsMu.Unlock()
-	return d.voice.MuteChanged()
-}
-
-func (d *fakeAudioDialog) VoiceSpeakerMuted() bool {
-	d.opsMu.Lock()
-	defer d.opsMu.Unlock()
-	return d.voice.SpeakerMuted()
+	return d.voice
 }
 
 func (d *fakeAudioDialog) ReportVoiceActivity(streamcontract.EventKind) {}

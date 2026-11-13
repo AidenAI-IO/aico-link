@@ -334,22 +334,15 @@ func (c *realtimeVoiceController) running() *RealtimeVoiceSession {
 // conversation and plays on its route (the device, or the browser that
 // started it).
 func (s *Server) chatAudioEnabled() bool {
-	c := &s.realtimeVoice
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.runningVoice() != nil
+	return s.runningVoiceSession() != nil
 }
 
-// runningWebVoice returns the running conversation when a browser carries
-// its audio, or nil.
-func (s *Server) runningWebVoice() *RealtimeVoiceSession {
+// runningVoiceSession returns the running voice conversation, or nil.
+func (s *Server) runningVoiceSession() *RealtimeVoiceSession {
 	c := &s.realtimeVoice
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if active := c.runningVoice(); active != nil && active.Route() == RealtimeAudioRouteWeb {
-		return active
-	}
-	return nil
+	return c.runningVoice()
 }
 
 // runningVoice is running without a text session. The caller holds c.mu.

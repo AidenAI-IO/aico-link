@@ -954,31 +954,10 @@ func (d *AudioDialog) ReportVoiceActivity(kind stream.EventKind) {
 	_ = d.activitySink.Emit(context.Background(), event)
 }
 
-// VoiceStopRequested is closed when the attached conversation is asked to
-// end. It is nil without a conversation.
-func (d *AudioDialog) VoiceStopRequested() <-chan struct{} {
-	return d.voiceSession().StopRequested()
-}
-
-// VoiceMuteChanged receives after the attached conversation's microphone or
-// speaker mute changes. It is nil without a conversation.
-func (d *AudioDialog) VoiceMuteChanged() <-chan struct{} {
-	return d.voiceSession().MuteChanged()
-}
-
-// VoiceSpeakerMuted reports whether the attached conversation's speaker is
-// muted.
-func (d *AudioDialog) VoiceSpeakerMuted() bool {
-	return d.voiceSession().SpeakerMuted()
-}
-
-// VoiceRoute reports the audio route of the attached conversation, or ""
-// without one.
-func (d *AudioDialog) VoiceRoute() RealtimeAudioRoute {
-	if voice := d.voiceSession(); voice != nil {
-		return voice.Route()
-	}
-	return ""
+// VoiceSession returns the attached conversation, or nil outside one. Its
+// methods are safe to call on nil.
+func (d *AudioDialog) VoiceSession() *RealtimeVoiceSession {
+	return d.voiceSession()
 }
 
 func (d *AudioDialog) voiceSession() *RealtimeVoiceSession {
@@ -1805,18 +1784,7 @@ func (d *AudioDialog) currentTTSPlaybackBackend() tts.AudioServiceBackend {
 	if d == nil {
 		return nil
 	}
-	voice := d.voiceSession()
-	if voice == nil {
-		return d.devicePlaybackBackend()
-	}
-	if voice.Route() == RealtimeAudioRouteWeb {
-		return voiceSessionPlayback{AudioServiceBackend: voice.Audio().Playback(), voice: voice}
-	}
-	device := d.devicePlaybackBackend()
-	if device == nil {
-		return nil
-	}
-	return voiceSessionPlayback{AudioServiceBackend: device, voice: voice}
+	return voicePlayback(d.voiceSession(), d.devicePlaybackBackend())
 }
 
 func (d *AudioDialog) devicePlaybackBackend() tts.AudioServiceBackend {
