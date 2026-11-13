@@ -22,6 +22,7 @@ import (
 	"aico-agent/internal/agent/realtimevoice"
 	"aico-agent/internal/agenttask"
 	"aico-agent/internal/logging"
+	streamcontract "aico-agent/internal/stream"
 
 	langtools "github.com/tmc/langchaingo/tools"
 )
@@ -1022,6 +1023,7 @@ type fakeAudioDialog struct {
 	// the first ResetVAD after Speak returns, so post-STT drain and TTS barge-in
 	// monitoring cannot consume follow-up audio early.
 	speakCompleted bool
+	voice          *agent.RealtimeVoiceSession
 }
 
 func taggedReply(text string) string {
@@ -1245,6 +1247,20 @@ func (d *fakeAudioDialog) InterruptOutput() {
 		d.interruptOutput()
 	}
 }
+
+func (d *fakeAudioDialog) SetVoiceSession(voice *agent.RealtimeVoiceSession) {
+	d.opsMu.Lock()
+	d.voice = voice
+	d.opsMu.Unlock()
+}
+
+func (d *fakeAudioDialog) VoiceSession() *agent.RealtimeVoiceSession {
+	d.opsMu.Lock()
+	defer d.opsMu.Unlock()
+	return d.voice
+}
+
+func (d *fakeAudioDialog) ReportVoiceActivity(streamcontract.EventKind) {}
 
 func (d *fakeAudioDialog) CanSpeakFinalText() bool {
 	return !d.speechUnavailable

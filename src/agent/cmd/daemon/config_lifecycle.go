@@ -253,6 +253,7 @@ func (c *inputLifecycle) buildDialog(cfg agent.Config) (*agent.AudioDialog, erro
 		return nil, err
 	}
 	dialog.SetMessagePublisher(c.server.BroadcastMessage)
+	dialog.SetVoiceActivitySink(c.server.RealtimeEventSink())
 	dialog.SetStorageManager(c.runtime.Storage())
 	dialog.SetStorageMonitor(c.runtime.StorageMonitor())
 	return dialog, nil
@@ -277,7 +278,11 @@ func (c *inputLifecycle) startVoice(cfg agent.Config, dialog *agent.AudioDialog)
 		}
 		switch cfg.InputModeOrDefault() {
 		case "stt":
-			runWakeupMode(cfg, dialog, c.runtime, shutdown, c.newVoiceWatcher, stop)
+			var voice classicVoiceControl
+			if c.server != nil {
+				voice = c.server
+			}
+			runWakeupModeWithVoice(cfg, dialog, c.runtime, voice, shutdown, c.newVoiceWatcher, stop)
 		case "realtime":
 			tasks := newRealtimeAgentTaskManager(cfg, c.runtime)
 			if tasks != nil {
