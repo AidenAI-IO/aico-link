@@ -592,9 +592,16 @@ host. Set `BENCHMARK_ANDROID_SERIAL` to its adb serial, for example
 `adb` is not already on the runner's `PATH`, the workflow uses
 `<sdk>/platform-tools/adb`, where `<sdk>` is the optional
 `BENCHMARK_ANDROID_SDK_DIR` variable and defaults to `~/android-sdk`. Before any
-ADB case starts, the workflow waits up to ten minutes for the device and
-`sys.boot_completed`; a device that never finishes booting fails the job
-early.
+ADB case starts, the workflow waits for the device to finish booting and then
+checks that `com.android.systemui` is running and
+`uiautomator dump` returns a hierarchy. `sys.boot_completed` alone is not
+enough: SystemUI can stay dead after a GPU hang while the device still reports
+a finished boot. On the self-hosted runner, a failed UI check or an
+`android-emulator.service` cgroup above 16 GiB restarts that service once and
+runs the same checks again. The guest RAM limit is 4 GiB; a fresh service is
+about 8 GiB because SwiftShader sits on top of that. The rest of a long-lived
+process is the host RenderThread leak. A device that still has no usable UI fails
+the job before cases start.
 
 When any selected case enables Aico App, CI reads the current release
 filename from the unversioned distribution URL and compares its `versionCode`
