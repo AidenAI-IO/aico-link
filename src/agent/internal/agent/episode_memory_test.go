@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1983,6 +1984,41 @@ func TestEpisodeMemoryFailureRetentionRequiresIncrementalObservation(t *testing.
 			hits, err := plane.device.Search(ctx, DeviceMemoryQuery{Types: []string{"failure"}, Limit: 10})
 			if err != nil || len(hits) != tt.want {
 				t.Fatalf("persisted memories=%#v error=%v, want %d", hits, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestFailureEvidenceDiagnosticsCountOnlyOverturnedRetention(t *testing.T) {
+	candidate := episodeMemoryCandidate{LessonKey: "constraint", Type: episodeMemoryTypeFailure}
+	episode := TaskEpisode{Events: []TaskEpisodeEvent{{EventID: "observed", Type: "tool_result", Observation: "Observed constraint"}}}
+	for _, tt := range []struct {
+		name     string
+		decision episodeMemoryRetentionDecision
+		refs     []string
+		want     int
+	}{
+		{"audit discard is not structural rejection", episodeMemoryRetentionDecisionDiscard, nil, 0},
+		{"unsupported retain is structural rejection", episodeMemoryRetentionDecisionRetain, []string{"invented"}, 1},
+		{"supported retain remains retained", episodeMemoryRetentionDecisionRetain, []string{"observed"}, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			audit := episodeMemoryRetentionAudit{Reviews: []episodeMemoryRetentionReview{{
+				LessonKey: candidate.LessonKey, Decision: tt.decision, IncrementalKnowledge: "Scoped constraint",
+				KnowledgeEvidenceRefs: tt.refs, Rewrite: &episodeMemoryRetentionRewrite{},
+			}}}
+			if got := validateFailureRetentionEvidence(episode, []episodeMemoryCandidate{candidate}, &audit); got != tt.want {
+				t.Fatalf("structural rejections=%d, want %d", got, tt.want)
+			}
+			wantDecision := tt.decision
+			if tt.want > 0 {
+				wantDecision = episodeMemoryRetentionDecisionDiscard
+			}
+			if audit.Reviews[0].Decision != wantDecision {
+				t.Fatalf("decision=%s, want %s", audit.Reviews[0].Decision, wantDecision)
+			}
+			if wantDecision == episodeMemoryRetentionDecisionRetain && !slices.Contains(audit.Reviews[0].Rewrite.EvidenceRefs, "observed") {
+				t.Fatal("retained evidence lost its supporting observation")
 			}
 		})
 	}

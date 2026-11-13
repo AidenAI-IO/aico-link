@@ -18,6 +18,35 @@ For the full manual, see [`benchmark/manual.md`](../../benchmark/manual.md).
 For field definitions, units, denominators, and missing-value semantics, see the
 [Metrics Reference](./metrics-reference.md).
 
+## Evaluating Prompt Changes
+
+Treat benchmark failures as evidence of a missing rule, not as instructions to
+copy a task's answer or workflow into the default prompt. Keep suite definitions
+fixed when comparing the pre-change baseline with the final candidate: use the
+same model settings, judge, repeated attempts, and fresh daemon state. Report
+unnecessary tool calls and incorrect persistence alongside task pass rates.
+Single-attempt runs are smoke evidence, not proof of generalization. Use separate
+validation cases that were not consulted while writing the prompt before claiming
+transfer to new tasks; cases added during implementation are regression coverage,
+not a held-out evaluation.
+
+The memory reliability follow-up changes these contracts:
+
+- `episode_reflection_v1` 1.1 requires no memory for the generic empty-recipient
+  failure, while still requiring an evidence-backed `not_achieved` assessment.
+- `episode_reflection_v2` 2.1 tests retained failure knowledge using an observed
+  app-specific recipient constraint without a demonstrated recovery, rather than
+  requiring general advice to be stored.
+- Quick Capture's missing-screen question names the evidence source naturally,
+  without prescribing a search tool, fallback policy, or answer. The historical
+  status rubric accepts semantically equivalent wording.
+- `memory_admission_v1` 1.1 adds negative cases for quoted background, temporary
+  assignments, and explicit refusal to store otherwise stable background.
+
+These changes are not directly comparable with earlier suite results. Freeze the
+revised suites and run both agent revisions against them; do not attribute a
+changed denominator or task definition to agent improvement.
+
 ## Quick Start
 
 ### Dedicated Agent

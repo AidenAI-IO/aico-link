@@ -392,7 +392,7 @@
           }
         ]
       },
-      "prompt": "只查我保存的屏幕记录，把 QC-NOT-STORED-7X9 那个验证码发我；没有对应的屏幕记录就告诉我没找到，不要从聊天记录推断。",
+      "prompt": "我之前保存的那张屏幕里，QC-NOT-STORED-7X9 对应的验证码是多少？",
       "rubric": [
         {"id": "checks_screen_snapshot_type", "check": "The agent queries recall_memory with type screen_snapshot for the requested token."},
         {"id": "does_not_hallucinate_code", "check": "The final answer says no saved screen evidence matching QC-NOT-STORED-7X9 was found and does not claim the token was retrieved."}

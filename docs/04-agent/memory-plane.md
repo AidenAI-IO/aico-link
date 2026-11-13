@@ -11,7 +11,7 @@ This document describes the current filesystem-backed memory architecture used b
 The memory plane separates four kinds of persisted state:
 
 - session memory keeps the active conversation and compressed history;
-- long-term memory keeps information explicitly saved for the user;
+- long-term memory keeps explicitly saved information and useful lasting user information admitted during conversation;
 - device memory keeps reusable device, application, navigation, procedure, calibration, failure, and fact knowledge;
 - task episodes keep immutable execution evidence for audit and background consolidation.
 
@@ -32,7 +32,7 @@ depend on understanding the language the user spoke.
 | Information | Rule |
 | --- | --- |
 | An explicit request to remember, or a forward-looking preference, form of address, or rule | Save |
-| Clearly stated stable personal facts about the user, such as home city or lasting role/background | Save without requiring an explicit remember request; do not infer from quotations, third-person statements, or temporary assignments |
+| Clearly stated stable personal facts about the user | May be saved without an explicit remember request when lasting and useful for future assistance; do not infer from quotations, third-person statements, or temporary assignments |
 | A request to act or remind at a later time | Handed to the `schedule` tool; see [Schedules and Routines](schedules-and-routines.md). Not saved as memory |
 | Near-term plans the user mentions without asking for a reminder | Not saved to Long-Term Memory. The conversation keeps them, and context compaction preserves them; see [Near-Term Plans](#near-term-plans) |
 | Time-bound facts from notifications, such as bills and deliveries | Temporary Memory with an expiry; Notification Memory only |
@@ -399,6 +399,14 @@ an observed device-specific constraint can still justify a guard without a
 successful recovery. These semantic decisions remain model judgments, not
 guarantees supplied by the structural evidence validator.
 
+Selection diagnostics log candidate counts at assessment, omission review,
+compaction, retention audit, and candidate validation. The audit also counts
+retained Failure reviews rejected for missing or invalid incremental evidence.
+These stages distinguish no proposed knowledge, audit rejection, and structural
+rejection without logging candidate text, private evidence, or model-written
+reasons. Outcome classification and memory admission are independent: a definite
+failure can yield no memory when it adds only general knowledge.
+
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
 
 A Procedure selects its executable path with `step_refs`: ordered tool-result
@@ -514,22 +522,27 @@ still use the existing explicit intents and revision checks on retry.
 For `update` and `reinforce`, omitted `type` inherits the validated target's type;
 `add` must specify a type. Explicitly invalid types are rejected.
 
-When answering from saved screen observations, the Agent preserves exact source
-values when asked to copy them, including Unicode symbols, punctuation and case.
-Response-language preferences apply to surrounding explanation, not quoted source
-values. A historical status includes its full recorded observation date and time,
-at the source's precision, and is not evidence of the current status without a
-fresh check. Live lookups require an appropriate source and identifier; an order
-ID must not be assumed to be a carrier tracking number.
+## Evidence Use in Conversation
 
-When the user explicitly asks for a value from a saved screen, only matching
-`screen_snapshot` evidence establishes that value. A missing screen match is
-reported as missing, not replaced by conversation history or device lessons.
-Session recall remains appropriate for what was actually said in conversation,
-with the source clearly distinguished. Outcome-classification questions that
-already supply the relevant facts do not require a history lookup: explicit
-abandonment before completion establishes `not achieved`; `unknown` is reserved
-for insufficient completion evidence, not an empty history search.
+Ordinary and realtime conversations share `EvidenceUseGuidance`. Retrieval is
+required when an answer needs historical facts or saved knowledge missing from
+the visible context. Reasoning from sufficient facts supplied in the request does
+not require a lookup merely because those facts mention the past. Requests to
+verify past events or retrieve or apply saved knowledge still require the
+appropriate lookup. A search with no matches does not invalidate supplied facts.
+
+Claims must respect the source, subject, and time scope of their evidence. A
+request explicitly restricted to saved screens requires matching `screen_snapshot`
+evidence; missing evidence is reported rather than replaced by session history.
+For requests without a source restriction, the Agent may combine relevant sources
+while distinguishing them. Historical status answers include the recorded
+observation date and time at the source's precision and do not claim to establish
+current status. External queries require a source and an identifier supported by
+that source; identifiers from different systems are not assumed interchangeable.
+
+The Agent preserves source values, including Unicode symbols, punctuation and
+case, when asked to copy them. Response-language preferences apply to explanatory
+prose rather than quoted source values.
 
 ## Compatibility
 
