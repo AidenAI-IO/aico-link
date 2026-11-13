@@ -1,0 +1,60 @@
+name: Android emulator diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    if: ${{ startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+    runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
+    timeout-minutes: 8
+    steps:
+      # No checkout: other work may own the persistent runner workspace.
+      - name: Inspect emulator without changing device state
+        env:
+          ANDROID_SERIAL: ${{ vars.BENCHMARK_ANDROID_SERIAL }}
+          ANDROID_SDK_DIR: ${{ vars.BENCHMARK_ANDROID_SDK_DIR || '~/android-sdk' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          sdk_dir="${ANDROID_SDK_DIR/#\~/$HOME}"
+          export PATH="$sdk_dir/platform-tools:$PATH"
+          evidence="$RUNNER_TEMP/adb-diagnostics-$GITHUB_RUN_ID"
+          mkdir -p "$evidence"
+          echo "ADB_DIAGNOSTICS_DIR=$evidence" >> "$GITHUB_ENV"
+          capture() {
+            local name="$1"
+            shift
+            timeout 15 "$@" > "$evidence/$name.txt" 2>&1
+            local result=$?
+            echo "$name exit=$result"
+            cat "$evidence/$name.txt"
+          }
+          capture host date -u
+          capture devices adb devices -l
+          capture state adb -s "$ANDROID_SERIAL" get-state
+          capture boot adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed
+          capture power adb -s "$ANDROID_SERIAL" shell dumpsys -t 8 power
+          capture display adb -s "$ANDROID_SERIAL" shell dumpsys -t 8 display
+          capture input adb -s "$ANDROID_SERIAL" shell dumpsys -t 8 input
+          capture window-policy adb -s "$ANDROID_SERIAL" shell dumpsys -t 8 window policy
+          capture activity adb -s "$ANDROID_SERIAL" shell dumpsys -t 8 activity top
+          capture emulator-name adb -s "$ANDROID_SERIAL" emu avd name
+          capture emulator-processes ps -C qemu-system-x86_64 -C emulator -o pid,ppid,etime,pcpu,pmem,args
+          capture memory free -m
+          capture disk df -h "$RUNNER_TEMP"
+          capture pressure sh -c 'cat /proc/pressure/cpu /proc/pressure/memory /proc/pressure/io'
+          timeout 15 adb -s "$ANDROID_SERIAL" exec-out screencap -p > "$evidence/screen.png" 2> "$evidence/screen-error.txt"
+          echo "screenshot exit=$?"
+          # No wake, unlock, input injection, ADB restart, or emulator mutation.
+          exit 0
+      - name: Upload diagnostic evidence
+        if: ${{ always() && env.ADB_DIAGNOSTICS_DIR != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: adb-diagnostics-${{ github.run_id }}
+          path: ${{ env.ADB_DIAGNOSTICS_DIR }}
+          retention-days: 7
