@@ -63,7 +63,7 @@ http://192.168.42.1
 
 The web interface allows:
 - Opening the browser terminal exposed by ttyd at `http://192.168.42.1:3000/webtty/`
-- Turning LAN access on or off, and setting or clearing the device password, under Advanced → LAN access (see [LAN Access](./device-management-api.md#lan-access))
+- Turning LAN access on or off under Advanced → LAN access, and setting, changing or clearing the device password under Advanced → Device password; the two are independent (see [LAN Access](./device-management-api.md#lan-access))
 - Switching the device language between Simplified Chinese (`zh-CN`) and English (`en-US`); this also controls user-facing Agent responses and `<tts>` content
 - Switching among registered model provider types such as OpenAI, Anthropic, OpenRouter, Kimi, Volcengine, and Ollama; Google Gemini models are available through compatible providers such as OpenRouter
 - Configuring API keys and model names

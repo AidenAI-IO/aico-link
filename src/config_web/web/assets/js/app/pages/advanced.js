@@ -138,6 +138,13 @@ export async function advancedPage(context) {
             onPress: () => context.navigate('/advanced/lan'),
           }),
           row({
+            label: msg('lan.password', '设备密码'),
+            value: lanAccess == null ? null : (lanAccess.password_set ? msg('lan.password_set', '已设置') : msg('lan.password_unset', '未设置')),
+            chevron: true,
+            action: 'open-device-password',
+            onPress: () => context.navigate('/advanced/password'),
+          }),
+          row({
             label: msg('advanced.mcp_enabled', 'MCP'),
             value: snapshot?.config?.agent?.mcp_enabled === false ? msg('lan.off', '已关闭') : msg('lan.on', '已开启'),
             chevron: true,

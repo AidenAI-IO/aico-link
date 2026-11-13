@@ -704,15 +704,15 @@ process.stdout.write('config web UI component tests passed\n');
   }
 }
 
-/* -------------------------------------------------------- LAN access page --- */
+/* ------------------------------------- LAN access and device password pages --- */
 
 {
-  const {lanAccessPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/lan-access.js')).href);
+  const {devicePasswordPage, lanAccessPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/lan-access.js')).href);
   const realFetch = globalThis.fetch;
   const respond = body => ({ok: true, status: 200, text: async () => JSON.stringify(body)});
-  const actionsOf = async status => {
+  const actionsOf = async (pageFn, status) => {
     globalThis.fetch = async url => respond(url === '/api/security/lan-access' ? {ok: true, min_length: 6, ...status} : {});
-    const page = await lanAccessPage({header() {}, navigate() {}});
+    const page = await pageFn({header() {}, navigate() {}});
     const actions = [];
     const walk = node => {
       if (node.getAttribute && node.getAttribute('data-action')) actions.push(node.getAttribute('data-action'));
@@ -722,16 +722,19 @@ process.stdout.write('config web UI component tests passed\n');
     return actions;
   };
   try {
-    // Every connection may change the settings and clear the password; only
-    // a signed-in LAN client can sign out.
+    // The switch and the password live on separate pages.
+    const lan = await actionsOf(lanAccessPage, {enabled: true, password_set: true, via_usb: false});
+    assert.ok(lan.includes('toggle-lan-access'), 'the LAN page shows its switch');
+    assert.ok(!lan.some(action => action.includes('password') || action === 'lan-sign-out'), 'the LAN page has no password controls');
     for (const via_usb of [true, false]) {
-      const actions = await actionsOf({enabled: false, password_set: true, via_usb});
-      for (const action of ['toggle-lan-access', 'open-lan-password', 'lan-clear-password']) {
-        assert.ok(actions.includes(action), `the LAN access page shows ${action} (via_usb=${via_usb})`);
+      const actions = await actionsOf(devicePasswordPage, {enabled: false, password_set: true, via_usb});
+      assert.ok(!actions.includes('toggle-lan-access'), 'the password page has no LAN switch');
+      for (const action of ['open-lan-password', 'lan-clear-password']) {
+        assert.ok(actions.includes(action), `the password page shows ${action} (via_usb=${via_usb})`);
       }
       assert.equal(actions.includes('lan-sign-out'), !via_usb, `sign-out only on the LAN (via_usb=${via_usb})`);
     }
-    const unset = await actionsOf({enabled: true, password_set: false, via_usb: false});
+    const unset = await actionsOf(devicePasswordPage, {enabled: true, password_set: false, via_usb: false});
     assert.ok(!unset.includes('lan-sign-out') && !unset.includes('lan-clear-password'),
       'without a password there is nothing to clear or sign out of');
   } finally {
@@ -759,7 +762,7 @@ process.stdout.write('config web UI component tests passed\n');
       (node.childNodes || []).forEach(collect);
     };
     collect(cards[0]);
-    assert.deepEqual(actions.filter(a => a === 'open-lan-access' || a === 'open-mcp'), ['open-lan-access', 'open-mcp']);
+    assert.deepEqual(actions.filter(a => ['open-lan-access', 'open-device-password', 'open-mcp'].includes(a)), ['open-lan-access', 'open-device-password', 'open-mcp']);
   } finally {
     globalThis.fetch = realFetch;
   }
