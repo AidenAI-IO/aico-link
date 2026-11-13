@@ -353,8 +353,14 @@ function handleSemanticEvent(event) {
                 Object.keys(streamingAssistantDrafts).forEach(function(key) {
                     if (key === currentChatRequestId || ndjsonOwnedRequestIds.has(key)) return;
                     delete streamingAssistantDrafts[key];
-                    assistantDraftBlockedByTool.delete(key);
                 });
+                // A tool call retires its draft but keeps the request blocked,
+                // so markers are released on their own, not only with drafts.
+                for (const key of assistantDraftBlockedByTool) {
+                    if (key !== currentChatRequestId && !ndjsonOwnedRequestIds.has(key)) {
+                        assistantDraftBlockedByTool.delete(key);
+                    }
+                }
             }
             refreshHistoryFromContext();
             return;

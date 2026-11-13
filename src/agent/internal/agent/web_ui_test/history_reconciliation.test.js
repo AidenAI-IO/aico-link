@@ -629,7 +629,10 @@ currentChatRequestId = 'terminal-race';
 rememberNDJSONOwnedRequest(currentChatRequestId);
 handleChatStreamEvent({type: 'assistant_delta', request_id: 'terminal-race', delta: 'Checking the weather'});
 handleSemanticEvent({schema_version: 2, kind: 'response.terminal', turn_id: 'terminal-race'});
+assistantDraftBlockedByTool.add('sse-tool-run');
 handleSemanticEvent({schema_version: 2, kind: 'response.terminal'});
+assert.equal(assistantDraftBlockedByTool.has('sse-tool-run'), false,
+    'a terminal without a request ID should release tool blocks of SSE-only runs');
 handleChatStreamEvent({type: 'assistant_delta', request_id: 'terminal-race', delta: '.'});
 handleChatStreamEvent({type: 'done', request_id: 'terminal-race', response: 'Checking the weather.'});
 assert.deepEqual(Array.from(messagesDiv.children).map(node => node._message.content), ['Checking the weather.'],
