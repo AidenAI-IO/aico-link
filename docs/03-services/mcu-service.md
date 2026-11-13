@@ -119,6 +119,10 @@ SEQ. This API is replayable within retained history, not durable/exactly-once.
 
 ### Agent voice activation
 
+The ASR source is independent of the recognizer chip. The
+[GX8002D replacement](../03-hardware/gx8002-wakeup.md) preserves the MCU PA0
+pulse contract and this event interface through a companion `aico-asr` adapter.
+
 In STT (single-turn and follow-up) and realtime modes, the Agent consumes this
 stream directly over the local UDS. `wakeup` events with `source: "asr"` and
 `source_code: 6`, or `source: "touch_key"` and `source_code: 3`, replace the former
