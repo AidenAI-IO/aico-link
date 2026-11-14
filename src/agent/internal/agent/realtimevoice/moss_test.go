@@ -544,18 +544,16 @@ func TestMossOpenAttachesClientDelegationForTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	if !session.Info().Capabilities.ExplicitToolContinuation {
-		t.Fatal("expected ExplicitToolContinuation with tools")
-	}
-	if _, ok := session.(ResponseContinuer); !ok {
-		t.Fatal("expected ResponseContinuer for tool continuation")
+	if session.Info().Capabilities.ExplicitToolContinuation {
+		t.Fatal("Moss continues tool runs itself; the daemon must not request continuation")
 	}
 	if _, ok := session.(TextSession); ok {
 		t.Fatal("Moss must not advertise TextSession without text injection")
 	}
 	select {
 	case attach := <-attachCh:
-		if attach["action"] != "attach_session" || attach["delegation"] != "client" {
+		delegation, _ := attach["delegation"].(map[string]any)
+		if attach["action"] != "attach_session" || delegation["type"] != "client" {
 			t.Fatalf("attach = %#v", attach)
 		}
 	case <-time.After(2 * time.Second):
@@ -577,7 +575,10 @@ func TestMossOpenAttachesClientDelegationForTools(t *testing.T) {
 	}
 }
 
-func TestMossFunctionCallAndDeferredContinue(t *testing.T) {
+// The documented sync tool flow keeps the run open: the client returns each
+// result, waits for conversation.item.created, then sends response.create with
+// the acknowledged call IDs. response.done repeats calls and is not terminal.
+func TestMossToolResultContinuesRunWithResponseCreate(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	outbound := make(chan map[string]any, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -591,13 +592,18 @@ func TestMossFunctionCallAndDeferredContinue(t *testing.T) {
 		_, _, _ = conn.ReadMessage()
 		_ = conn.WriteJSON(map[string]any{"action": "session.updated", "data": map[string]any{"error": ""}})
 		_, _, _ = conn.ReadMessage()
-		_ = conn.WriteJSON(map[string]any{
-			"action": "response.function_call_arguments.done",
-			"data": map[string]any{
-				"call_id": "call-1", "name": "get_time", "arguments": `{"timezone":"UTC"}`,
-				"item_id": "item-1", "response_id": "run-1",
-			},
-		})
+		for _, callID := range []string{"call-1", "call-2"} {
+			_ = conn.WriteJSON(map[string]any{
+				"action": "response.function_call_arguments.done",
+				"data": map[string]any{"call_id": callID, "name": "get_time", "arguments": `{}`,
+					"item_id": "item-" + callID, "response_id": "run-1"},
+			})
+		}
+		_ = conn.WriteJSON(map[string]any{"action": "response.done", "data": map[string]any{"response": map[string]any{
+			"id": "run-1", "status": "completed", "output": []any{
+				map[string]any{"type": "function_call", "call_id": "call-1", "name": "get_time", "arguments": `{}`},
+				map[string]any{"type": "function_call", "call_id": "call-2", "name": "get_time", "arguments": `{}`},
+			}}}})
 		for {
 			typ, body, err := conn.ReadMessage()
 			if err != nil {
@@ -611,15 +617,10 @@ func TestMossFunctionCallAndDeferredContinue(t *testing.T) {
 				continue
 			}
 			outbound <- event
-			if event["action"] == "session.continue" {
-				_ = conn.WriteJSON(map[string]any{
-					"action": "error",
-					"data":   map[string]any{"type": "error", "error": map[string]any{"code": "invalid_public_request", "message": "invalid or unsupported request"}},
-				})
-				_ = conn.WriteJSON(map[string]any{
-					"action": "response.audio.started",
-					"data":   map[string]any{"kind": "speech", "run_id": "run-2", "turn_id": "t-1"},
-				})
+			if event["action"] == "conversation.item.create" {
+				item := event["item"].(map[string]any)
+				_ = conn.WriteJSON(map[string]any{"action": "conversation.item.created", "data": map[string]any{
+					"item": map[string]any{"type": "function_call_output", "call_id": item["call_id"]}}})
 			}
 		}
 	}))
@@ -635,80 +636,57 @@ func TestMossFunctionCallAndDeferredContinue(t *testing.T) {
 	}
 	defer session.Close()
 
-	deadline := time.After(3 * time.Second)
-	var sawTool bool
-	for !sawTool {
+	var calls []string
+	deadline := time.After(2 * time.Second)
+	for len(calls) < 2 {
 		select {
 		case <-deadline:
-			t.Fatal("timeout tool call")
+			t.Fatalf("tool calls = %v", calls)
 		case event := <-session.Events():
-			if event.Kind == EventToolCall && event.CallID == "call-1" && event.Name == "get_time" {
-				sawTool = true
+			switch event.Kind {
+			case EventToolCall:
+				calls = append(calls, event.CallID)
+			case EventResponseDone, EventResponseCancelled:
+				t.Fatal("response.done must not end the run")
 			}
 		}
 	}
-	if err := session.(ToolResultSender).SendToolResult(context.Background(), "call-1", `{"ok":true}`); err != nil {
-		t.Fatal(err)
-	}
-	if err := session.(ResponseContinuer).CreateResponse(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	// Continue must stay deferred while the tool-bearing response is active.
-	select {
-	case event := <-outbound:
-		if event["action"] == "session.continue" {
-			t.Fatal("session.continue sent before response.ended")
-		}
-		if event["action"] != "conversation.item.create" {
-			t.Fatalf("outbound = %#v", event)
-		}
-		item := event["item"].(map[string]any)
-		if item["type"] != "function_call_output" || item["call_id"] != "call-1" {
-			t.Fatalf("item = %#v", item)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout tool result write")
-	}
-
-	// Drive response.ended through onJSON via a second write from test server:
-	// reopen path — inject by having the session receive ended. Use a direct
-	// onJSON call on the concrete session for the flush assertion.
-	concrete := session.(*mossSession)
-	events := concrete.onJSON([]byte(`{"action":"response.ended","data":{"run_id":"run-1","turn_id":"t-1","status":"completed"}}`))
-	if len(events) != 1 || events[0].Kind != EventResponseDone {
-		t.Fatalf("ended events = %#v", events)
-	}
-	continueDeadline := time.After(2 * time.Second)
-	for {
+	sender := session.(ToolResultSender)
+	nextAction := func() map[string]any {
 		select {
 		case event := <-outbound:
-			if event["action"] == "session.continue" {
-				goto continued
-			}
-		case <-continueDeadline:
-			t.Fatal("timeout deferred continue")
+			return event
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for client action")
+			return nil
 		}
 	}
-continued:
-	// Spurious invalid_public_request after continue must be swallowed (either
-	// by the live read loop or via direct onJSON with the suppress flag).
-	deadline = time.After(2 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			goto checkSuppress
-		case event := <-session.Events():
-			if event.Kind == EventError {
-				t.Fatalf("post-continue error should be suppressed: %v", event.Error)
-			}
-		}
+	if err := sender.SendToolResult(context.Background(), "call-1", `{"ok":1}`); err != nil {
+		t.Fatal(err)
 	}
-checkSuppress:
-	concrete.ctxMu.Lock()
-	concrete.suppressContinueError = true
-	concrete.ctxMu.Unlock()
-	if got := concrete.onJSON([]byte(`{"action":"error","data":{"type":"error","error":{"code":"invalid_public_request","message":"invalid or unsupported request"}}}`)); len(got) != 0 {
-		t.Fatalf("expected suppressed continue error, got %#v", got)
+	if action := nextAction()["action"]; action != "conversation.item.create" {
+		t.Fatalf("first action = %v", action)
+	}
+	if err := sender.SendToolResult(context.Background(), "call-2", `{"ok":2}`); err != nil {
+		t.Fatal(err)
+	}
+	if action := nextAction()["action"]; action != "conversation.item.create" {
+		t.Fatalf("second action = %v, want no response.create before every result is acknowledged", action)
+	}
+	create := nextAction()
+	if create["action"] != "response.create" {
+		t.Fatalf("continuation = %#v", create)
+	}
+	callIDs, _ := create["response"].(map[string]any)["call_ids"].([]any)
+	if len(callIDs) != 2 || callIDs[0] != "call-1" || callIDs[1] != "call-2" {
+		t.Fatalf("call_ids = %#v", callIDs)
+	}
+	select {
+	case event := <-session.Events():
+		if event.Kind == EventToolCall {
+			t.Fatalf("duplicate tool call from response.done: %#v", event)
+		}
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 
@@ -716,9 +694,6 @@ func TestMossSessionAdvertisesToolResultSender(t *testing.T) {
 	var session Session = &mossSession{}
 	if _, ok := session.(ToolResultSender); !ok {
 		t.Fatal("mossSession must implement ToolResultSender so managed Open accepts daemon tool catalogs")
-	}
-	if _, ok := session.(ResponseContinuer); !ok {
-		t.Fatal("mossSession must implement ResponseContinuer for ExplicitToolContinuation")
 	}
 	if _, ok := session.(TextSession); ok {
 		t.Fatal("mossSession must not advertise TextSession until Moss exposes text injection")
@@ -762,14 +737,8 @@ func TestMossManagedOpenAcceptsToolCatalog(t *testing.T) {
 	if !conversation.Info().Capabilities.CanSendToolResult {
 		t.Fatal("expected CanSendToolResult after ToolResultSender stub")
 	}
-	if !conversation.Info().Capabilities.CanContinueResponse {
-		t.Fatal("expected CanContinueResponse for Moss tool continuation")
-	}
 	if conversation.Info().Capabilities.CanSendText || conversation.TextSession != nil {
 		t.Fatal("Moss must remain voice-only until text injection exists")
-	}
-	if conversation.ResponseContinuer == nil {
-		t.Fatal("expected ResponseContinuer on Moss conversation")
 	}
 }
 

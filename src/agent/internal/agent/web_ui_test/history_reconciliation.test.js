@@ -733,11 +733,15 @@ globalThis.verifySemanticResyncReleasesExternalDrafts = async function() {
     assert.deepEqual(Array.from(messagesDiv.children).map(node => node._message.content),
         ['Earlier answer', 'What is the weather?', 'It is sunny'],
         'a user transcript should appear above the reply that is already streaming');
-    handleSemanticEvent({schema_version: 2, kind: 'text.delta', response_id: 'voice-response',
-        payload: {Text: ' today.'}});
+    // A realtime provider may call a tool mid-reply and keep speaking the same
+    // response; no tool.completed event follows on the semantic stream.
+    handleSemanticEvent({schema_version: 2, kind: 'tool.call_ready', origin: 'realtimevoice',
+        response_id: 'voice-response', call_id: 'voice-call', payload: {Name: 'weather'}});
+    handleSemanticEvent({schema_version: 2, kind: 'text.delta', origin: 'realtimevoice',
+        response_id: 'voice-response', payload: {Text: ' today.'}});
     assert.deepEqual(Array.from(messagesDiv.children).map(node => node._message.content),
         ['Earlier answer', 'What is the weather?', 'It is sunny today.'],
-        'the reply should keep streaming below the transcript');
+        'the reply should keep streaming below the transcript, across a realtime tool call');
     handleSemanticEvent({schema_version: 2, kind: 'transcript.segment_final', item_id: 'voice-item-2',
         payload: {Text: '   ', Role: 'user'}});
     assert.equal(messagesDiv.children.length, 3, 'an empty transcript should render nothing');
