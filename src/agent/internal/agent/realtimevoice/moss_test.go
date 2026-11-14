@@ -688,6 +688,15 @@ func TestMossToolResultContinuesRunWithResponseCreate(t *testing.T) {
 		}
 	case <-time.After(100 * time.Millisecond):
 	}
+
+	// A call first announced by response.done must open its response too.
+	fresh := &mossSession{}
+	events := fresh.onJSON([]byte(`{"action":"response.done","data":{"response":{"id":"run-9","output":[` +
+		`{"type":"function_call","call_id":"call-9","name":"get_time","arguments":"{}"}]}}}`))
+	if len(events) != 2 || events[0].Kind != EventResponseStarted || events[0].ResponseID != "run-9" ||
+		events[1].Kind != EventToolCall || events[1].CallID != "call-9" {
+		t.Fatalf("response.done-only call events = %#v", events)
+	}
 }
 
 func TestMossSessionAdvertisesToolResultSender(t *testing.T) {

@@ -850,9 +850,18 @@ func (s *mossSession) onJSON(body []byte) []Event {
 			name, _ := item["name"].(string)
 			arguments, _ := item["arguments"].(string)
 			itemID, _ := item["item_id"].(string)
-			if event, ok := s.toolCallEvent(responseID, itemID, callID, name, arguments); ok {
-				events = append(events, event)
+			event, ok := s.toolCallEvent(responseID, itemID, callID, name, arguments)
+			if !ok {
+				continue
 			}
+			// A call first announced here still opens its response, as in
+			// response.function_call_arguments.done, so the daemon admits
+			// the continued answer and its terminal event.
+			s.rememberRun(responseID, "")
+			if !s.responseStarted && s.beginNewResponse(responseID) {
+				events = append(events, Event{Kind: EventResponseStarted, ResponseID: responseID})
+			}
+			events = append(events, event)
 		}
 		return events
 	case "conversation.item.created":
