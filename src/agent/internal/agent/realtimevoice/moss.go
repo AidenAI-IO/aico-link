@@ -336,8 +336,9 @@ type mossSession struct {
 	interruptedRunID string
 	// toolCalls tracks the current run's client tool calls by call_id. A sync
 	// tool keeps the run open until response.create names every call whose
-	// result the server acknowledged with conversation.item.created.
-	toolCalls map[string]bool
+	// result the server acknowledged with conversation.item.created. Entries
+	// stay until the run ends so a late response.done cannot replay a call.
+	toolCalls map[string]mossToolCallState
 	// toolNameLocal maps Moss wire tool names back to the local catalog
 	// when a reserved identifier had to be aliased for session.update.
 	toolNameLocal map[string]string
@@ -378,25 +379,40 @@ func (s *mossSession) SendToolResult(ctx context.Context, id, output string) err
 	})
 }
 
+type mossToolCallState uint8
+
+const (
+	// mossToolCallPending waits for its acknowledged result.
+	mossToolCallPending mossToolCallState = iota
+	// mossToolCallAcknowledged has a result confirmed by conversation.item.created.
+	mossToolCallAcknowledged
+	// mossToolCallContinued was already named in a response.create.
+	mossToolCallContinued
+)
+
 // continueAfterToolResult records the server's acknowledgement of a tool
 // result. When no call of the current run is still waiting for its result, it
 // returns the call IDs for response.create, which resumes the same run.
 func (s *mossSession) continueAfterToolResult(callID string) []string {
 	s.ctxMu.Lock()
 	defer s.ctxMu.Unlock()
-	if _, known := s.toolCalls[callID]; !known {
+	if state, known := s.toolCalls[callID]; !known || state != mossToolCallPending {
 		return nil
 	}
-	s.toolCalls[callID] = true
+	s.toolCalls[callID] = mossToolCallAcknowledged
 	callIDs := make([]string, 0, len(s.toolCalls))
-	for id, acknowledged := range s.toolCalls {
-		if !acknowledged {
+	for id, state := range s.toolCalls {
+		switch state {
+		case mossToolCallPending:
 			return nil
+		case mossToolCallAcknowledged:
+			callIDs = append(callIDs, id)
 		}
-		callIDs = append(callIDs, id)
+	}
+	for _, id := range callIDs {
+		s.toolCalls[id] = mossToolCallContinued
 	}
 	sort.Strings(callIDs)
-	s.toolCalls = nil
 	return callIDs
 }
 
@@ -423,9 +439,9 @@ func (s *mossSession) toolCallEvent(responseID, itemID, callID, name, arguments 
 		return Event{}, false
 	}
 	if s.toolCalls == nil {
-		s.toolCalls = make(map[string]bool)
+		s.toolCalls = make(map[string]mossToolCallState)
 	}
-	s.toolCalls[callID] = false
+	s.toolCalls[callID] = mossToolCallPending
 	s.ctxMu.Unlock()
 	if local, ok := s.toolNameLocal[name]; ok {
 		name = local

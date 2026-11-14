@@ -689,6 +689,12 @@ func TestMossToolResultContinuesRunWithResponseCreate(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
+	// A response.done arriving after the continuation must not replay calls.
+	if got := session.(*mossSession).onJSON([]byte(`{"action":"response.done","data":{"response":{"id":"run-1","output":[` +
+		`{"type":"function_call","call_id":"call-1","name":"get_time","arguments":"{}"}]}}}`)); len(got) != 0 {
+		t.Fatalf("late response.done replayed a continued call: %#v", got)
+	}
+
 	// A call first announced by response.done must open its response too.
 	fresh := &mossSession{}
 	events := fresh.onJSON([]byte(`{"action":"response.done","data":{"response":{"id":"run-9","output":[` +
