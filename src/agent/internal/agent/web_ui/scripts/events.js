@@ -323,6 +323,11 @@ function handleSemanticEvent(event) {
             return;
         case 'tool.call_ready':
             if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
+            // A realtime voice reply speaks around its tool calls within one
+            // response: the text that follows the call is the rest of the
+            // same reply, not a late delta, and no tool.completed event
+            // reopens the draft. Keep streaming it.
+            if (event.origin === 'realtimevoice') return;
             retireAssistantDraft({
                 type: 'tool_call', request_id: requestId, episode_id: episodeId,
                 content: semanticText(payload),

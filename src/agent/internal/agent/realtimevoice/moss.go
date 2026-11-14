@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -90,16 +91,17 @@ func (p MossProvider) Open(ctx context.Context, cfg SessionConfig) (Session, err
 			EmitsSpeechEvents:                true,
 			ServerAuthoritativeInterruption:  true,
 			ServerAuthoritativeTurnDetection: true,
-			// Client tools need an explicit session.continue after results land.
-			ExplicitToolContinuation: len(cfg.Tools) > 0,
+			// Sync client tools continue inside the same run: the adapter sends
+			// response.create itself once every result is acknowledged, so the
+			// daemon must not wait for a terminal event before continuing.
 		}),
 	}
 	go s.readLoop()
 
 	attach := map[string]any{"action": "attach_session"}
-	// Public API accepts client tools only with delegation=client.
+	// Public API accepts client tools only with client delegation.
 	if len(cfg.Tools) > 0 {
-		attach["delegation"] = "client"
+		attach["delegation"] = map[string]any{"type": "client"}
 	}
 	if err := s.writeJSON(ctx, attach); err != nil {
 		_ = s.Close()
@@ -332,12 +334,11 @@ type mossSession struct {
 	// interruptedRunID is the run that issued playback.stopped. Late frames
 	// from that run must not clear suppressChunkAcks via beginNewResponse.
 	interruptedRunID string
-	// pendingContinue is set by CreateResponse while a tool-bearing response
-	// is still speaking; flushed on response.ended via session.continue.
-	pendingContinue bool
-	// suppressContinueError drops the spurious invalid_public_request that
-	// the public API emits after a successful session.continue.
-	suppressContinueError bool
+	// toolCalls tracks the current run's client tool calls by call_id. A sync
+	// tool keeps the run open until response.create names every call whose
+	// result the server acknowledged with conversation.item.created. Entries
+	// stay until the run ends so a late response.done cannot replay a call.
+	toolCalls map[string]mossToolCallState
 	// toolNameLocal maps Moss wire tool names back to the local catalog
 	// when a reserved identifier had to be aliased for session.update.
 	toolNameLocal map[string]string
@@ -378,44 +379,82 @@ func (s *mossSession) SendToolResult(ctx context.Context, id, output string) err
 	})
 }
 
-// CreateResponse continues after client tool results. Moss rejects
-// response.create; the working public action is session.continue, and it must
-// wait until the tool-bearing response has ended. Moss implements
-// ResponseContinuer without TextSession because the public API has no stable
-// text-inject action yet.
-func (s *mossSession) CreateResponse(ctx context.Context) error {
+type mossToolCallState uint8
+
+const (
+	// mossToolCallPending waits for its acknowledged result.
+	mossToolCallPending mossToolCallState = iota
+	// mossToolCallAcknowledged has a result confirmed by conversation.item.created.
+	mossToolCallAcknowledged
+	// mossToolCallContinued was already named in a response.create.
+	mossToolCallContinued
+)
+
+// continueAfterToolResult records the server's acknowledgement of a tool
+// result. When no call of the current run is still waiting for its result, it
+// returns the call IDs for response.create, which resumes the same run.
+func (s *mossSession) continueAfterToolResult(callID string) []string {
 	s.ctxMu.Lock()
-	active := s.responseStarted
-	if active {
-		s.pendingContinue = true
-		s.ctxMu.Unlock()
+	defer s.ctxMu.Unlock()
+	if state, known := s.toolCalls[callID]; !known || state != mossToolCallPending {
 		return nil
 	}
-	s.ctxMu.Unlock()
-	return s.sendSessionContinue(ctx)
-}
-
-func (s *mossSession) sendSessionContinue(ctx context.Context) error {
-	s.ctxMu.Lock()
-	s.suppressContinueError = true
-	s.pendingContinue = false
-	s.ctxMu.Unlock()
-	return s.writeJSON(ctx, map[string]any{"action": "session.continue"})
-}
-
-func (s *mossSession) flushPendingContinue() {
-	s.ctxMu.Lock()
-	pending := s.pendingContinue
-	s.pendingContinue = false
-	s.ctxMu.Unlock()
-	if !pending {
-		return
+	s.toolCalls[callID] = mossToolCallAcknowledged
+	callIDs := make([]string, 0, len(s.toolCalls))
+	for id, state := range s.toolCalls {
+		switch state {
+		case mossToolCallPending:
+			return nil
+		case mossToolCallAcknowledged:
+			callIDs = append(callIDs, id)
+		}
 	}
+	for _, id := range callIDs {
+		s.toolCalls[id] = mossToolCallContinued
+	}
+	sort.Strings(callIDs)
+	return callIDs
+}
+
+func (s *mossSession) sendResponseCreate(callIDs []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := s.sendSessionContinue(ctx); err != nil {
-		logging.Warnf("agent", "realtime", "Moss Live session.continue failed: err=%v", err)
+	if err := s.writeJSON(ctx, map[string]any{
+		"action":   "response.create",
+		"response": map[string]any{"call_ids": callIDs},
+	}); err != nil {
+		return fmt.Errorf("moss live: response.create for call_ids %v: %w", callIDs, err)
 	}
+	return nil
+}
+
+// toolCallEvent registers a tool call once per call_id. Moss announces a call
+// in response.function_call_arguments.done and may repeat it in response.done.
+func (s *mossSession) toolCallEvent(responseID, itemID, callID, name, arguments string) (Event, bool) {
+	if callID == "" {
+		return Event{}, false
+	}
+	s.ctxMu.Lock()
+	if _, seen := s.toolCalls[callID]; seen {
+		s.ctxMu.Unlock()
+		return Event{}, false
+	}
+	if s.toolCalls == nil {
+		s.toolCalls = make(map[string]mossToolCallState)
+	}
+	s.toolCalls[callID] = mossToolCallPending
+	s.ctxMu.Unlock()
+	if local, ok := s.toolNameLocal[name]; ok {
+		name = local
+	}
+	return Event{
+		Kind:       EventToolCall,
+		ResponseID: responseID,
+		ItemID:     itemID,
+		CallID:     callID,
+		Name:       name,
+		Arguments:  arguments,
+	}, true
 }
 
 func (s *mossSession) Close() error {
@@ -799,9 +838,6 @@ func (s *mossSession) onJSON(body []byte) []Event {
 	case "response.function_call_arguments.done":
 		callID, _ := data["call_id"].(string)
 		name, _ := data["name"].(string)
-		if local, ok := s.toolNameLocal[name]; ok {
-			name = local
-		}
 		arguments, _ := data["arguments"].(string)
 		responseID, _ := data["response_id"].(string)
 		itemID, _ := data["item_id"].(string)
@@ -810,15 +846,55 @@ func (s *mossSession) onJSON(body []byte) []Event {
 		if !s.responseStarted && s.beginNewResponse(responseID) {
 			events = append(events, Event{Kind: EventResponseStarted, ResponseID: responseID})
 		}
-		events = append(events, Event{
-			Kind:       EventToolCall,
-			ResponseID: responseID,
-			ItemID:     itemID,
-			CallID:     callID,
-			Name:       name,
-			Arguments:  arguments,
-		})
+		if event, ok := s.toolCallEvent(responseID, itemID, callID, name, arguments); ok {
+			events = append(events, event)
+		}
 		return events
+	case "response.done":
+		// A summary of the run's function calls, not a terminal event: the run
+		// stays open until response.ended. Only calls not already announced by
+		// response.function_call_arguments.done are new.
+		response, _ := data["response"].(map[string]any)
+		responseID, _ := response["id"].(string)
+		output, _ := response["output"].([]any)
+		var events []Event
+		for _, raw := range output {
+			item, _ := raw.(map[string]any)
+			if itemType, _ := item["type"].(string); itemType != "function_call" {
+				continue
+			}
+			callID, _ := item["call_id"].(string)
+			name, _ := item["name"].(string)
+			arguments, _ := item["arguments"].(string)
+			itemID, _ := item["item_id"].(string)
+			event, ok := s.toolCallEvent(responseID, itemID, callID, name, arguments)
+			if !ok {
+				continue
+			}
+			// A call first announced here still opens its response, as in
+			// response.function_call_arguments.done, so the daemon admits
+			// the continued answer and its terminal event.
+			s.rememberRun(responseID, "")
+			if !s.responseStarted && s.beginNewResponse(responseID) {
+				events = append(events, Event{Kind: EventResponseStarted, ResponseID: responseID})
+			}
+			events = append(events, event)
+		}
+		return events
+	case "conversation.item.created":
+		item, _ := data["item"].(map[string]any)
+		if itemType, _ := item["type"].(string); itemType != "function_call_output" {
+			return nil
+		}
+		callID, _ := item["call_id"].(string)
+		if callIDs := s.continueAfterToolResult(callID); len(callIDs) > 0 {
+			// Without response.create the run never continues and no later
+			// acknowledgement resends it; fail the session instead of stalling.
+			if err := s.sendResponseCreate(callIDs); err != nil {
+				return []Event{{Kind: EventError, Error: err}}
+			}
+		}
+		return nil
 	case "response.ended":
 		status, _ := data["status"].(string)
 		runID, _ := data["run_id"].(string)
@@ -829,25 +905,10 @@ func (s *mossSession) onJSON(body []byte) []Event {
 		s.ctxMu.Unlock()
 		s.maybeSendPlaybackCompleted()
 		s.resetResponseTurn()
-		// Continue after the tool-bearing turn fully ends; session.continue
-		// issued mid-response is rejected / starts a failed follow-up.
-		s.flushPendingContinue()
 		return []Event{terminalResponseEvent("moss", runID, normalizeMossResponseStatus(status), Usage{})}
 	case "error":
 		code := digString(data, "error", "code")
 		message := digString(data, "error", "message")
-		if code == "invalid_public_request" {
-			s.ctxMu.Lock()
-			suppress := s.suppressContinueError
-			if suppress {
-				s.suppressContinueError = false
-			}
-			s.ctxMu.Unlock()
-			if suppress {
-				logging.Debugf("agent", "realtime", "Moss Live ignored post-continue invalid_public_request")
-				return nil
-			}
-		}
 		if message == "" {
 			message = "moss live error"
 		}
@@ -879,6 +940,8 @@ func (s *mossSession) resetResponseTurn() {
 	s.audioContexts = nil
 	s.audioDone = false
 	s.playbackCompletedSent = false
+	// Results for an ended or interrupted run must not continue it.
+	s.toolCalls = nil
 	// Keep suppressChunkAcks until the next response starts so trailing binary
 	// frames after barge-in cannot emit late playback.chunk.completed.
 	s.ctxMu.Unlock()
