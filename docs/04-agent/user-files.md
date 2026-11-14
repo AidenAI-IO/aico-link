@@ -26,28 +26,34 @@ it briefly.
 On a device, run:
 
 ```bash
-ssh root@<DEVICE_IP>
-cd /userdata/agent_tools
-./view_agent_files.sh
+ssh aico@<DEVICE_IP>
+sudo /usr/share/aico/agent-tools/view_agent_files.sh
 ```
 
-The generated report is `/userdata/agent/files_report.html`. Either copy it
+The `aico-business` package installs the generator, template, and launcher under
+`/usr/share/aico/agent-tools/`; no separate tools deployment is needed. The
+launcher accepts an optional output path followed by an Agent data directory.
+The Web service uses its configured Agent data directory for both the report
+and its source files.
+
+The default generated report is `/userdata/agent/files_report.html`. Either copy it
 to a local machine:
 
 ```bash
-scp root@<DEVICE_IP>:/userdata/agent/files_report.html ~/Desktop/
+scp aico@<DEVICE_IP>:/userdata/agent/files_report.html ~/Desktop/
 open ~/Desktop/files_report.html
 ```
 
 or stream it over SSH:
 
 ```bash
-ssh root@<DEVICE_IP> "cat /userdata/agent/files_report.html" > report.html
+ssh aico@<DEVICE_IP> "cat /userdata/agent/files_report.html" > report.html
 ```
 
 The Agent Web service also exposes:
 
-- `GET /user_files` to view the current report; and
+- `GET /user_files` to view the current report;
+- `GET /user_files?refresh=1` to regenerate the report and redirect to its view;
 - `POST /user_files/regenerate` to start asynchronous regeneration. A successful
   response means regeneration has started; it does not mean that the new
   report is ready. Poll or reload `GET /user_files` after the generator

@@ -20,6 +20,11 @@ done
 rsync -aH --chown=0:0 "${REPO_ROOT}/src/config_web/web/" "${PKG_ROOT}/usr/share/aico/config-web/"
 rsync -aH --chown=0:0 "${REPO_ROOT}/src/agent/config/skills/" "${PKG_ROOT}/usr/share/aico/skills/"
 install -m 0644 "${REPO_ROOT}/src/agent/internal/agent/quick_actions.json" "${PKG_ROOT}/usr/share/aico/quick_actions.json"
+install -d -m 0755 "${PKG_ROOT}/usr/share/aico/agent-tools"
+install -m 0644 "${REPO_ROOT}/scripts/generate_agent_files_report.py" \
+  "${REPO_ROOT}/scripts/agent_files_template.html" \
+  "${PKG_ROOT}/usr/share/aico/agent-tools/"
+install -m 0755 "${REPO_ROOT}/scripts/view_agent_files.sh" "${PKG_ROOT}/usr/share/aico/agent-tools/"
 rsync -aH --chown=0:0 "${REPO_ROOT}/assets/business/audio/" "${PKG_ROOT}/usr/share/aico/audio/"
 (cd "${REPO_ROOT}/assets/business/models/dtln" && sha256sum --check SHA256SUMS)
 (cd "${REPO_ROOT}/assets/business/models/ui-detr" && sha256sum --check SHA256SUMS)
@@ -45,6 +50,7 @@ python3 "${REPO_ROOT}/scripts/release/contract.py" package \
 find "${PKG_ROOT}" -type d -exec chmod 0755 {} +
 find "${PKG_ROOT}" -type f ! -path '*/DEBIAN/*' -exec chmod 0644 {} +
 for binary in "${BINARIES[@]}"; do chmod 0755 "${PKG_ROOT}/usr/lib/aico/${binary}"; done
+chmod 0755 "${PKG_ROOT}/usr/share/aico/agent-tools/view_agent_files.sh"
 python3 "${REPO_ROOT}/scripts/debian-package/system_config.py" stage "${PKG_ROOT}"
 dpkg-deb --build --root-owner-group "${PKG_ROOT}" "${OUTPUT_DIR}/${PACKAGE_NAME}_${PACKAGE_VERSION}_armhf.deb"
 dpkg-deb --info "${OUTPUT_DIR}/${PACKAGE_NAME}_${PACKAGE_VERSION}_armhf.deb" >"${OUTPUT_DIR}/${PACKAGE_NAME}.deb.info"
