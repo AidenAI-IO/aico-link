@@ -9,6 +9,13 @@ env_run_bin="${AICO_ENV_RUN_BIN:-/usr/local/bin/aico-env-run}"
 config_web_pid=""
 ttyd_pid=""
 
+truthy() {
+    case "${1:-}" in
+        1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 mkdir -p \
     "$agent_dir/log" \
     "$agent_dir/memory" \
@@ -20,6 +27,20 @@ mkdir -p \
     /userdata/tmp \
     /run/agent
 chmod 1777 /userdata/tmp
+
+# The user Python base persists in the volume. Packages with native code only
+# load on the architecture that installed them, so set the old tree aside when
+# the image architecture changes (for example amd64 -> arm64 on Apple Silicon).
+python_base="${PYTHONUSERBASE:-/userdata/agent/python}"
+current_arch="$(uname -m)"
+if [ -f "$python_base/.aico-arch" ]; then
+    previous_arch="$(cat "$python_base/.aico-arch")"
+    if [ "$previous_arch" != "$current_arch" ]; then
+        mv "$python_base" "$python_base.$previous_arch.$(date +%s)"
+    fi
+fi
+mkdir -p "$python_base"
+[ -f "$python_base/.aico-arch" ] || printf '%s\n' "$current_arch" > "$python_base/.aico-arch"
 
 if [ ! -f "$agent_dir/agent.toml" ]; then
     cp /opt/aico/defaults/agent.toml "$agent_dir/agent.toml"
@@ -50,19 +71,23 @@ trap shutdown INT TERM EXIT
 "$wifi_proxy_service" start
 "$agent_service" start
 
-"$env_run_bin" ttyd \
-    --port=3000 \
-    --base-path=/webtty/ \
-    --max-clients="${TTYD_MAX_CLIENTS:-2}" \
-    --client-option "titleFixed=${TTYD_TITLE:-Aico Link Shell}" \
-    --client-option "rendererType=${TTYD_RENDERER:-canvas}" \
-    --client-option "fontSize=${TTYD_FONT_SIZE:-24}" \
-    --client-option "scrollback=${TTYD_SCROLLBACK:-500}" \
-    --client-option "cursorStyle=${TTYD_CURSOR_STYLE:-bar}" \
-    --client-option "disableResizeOverlay=${TTYD_DISABLE_RESIZE_OVERLAY:-true}" \
-    /bin/bash \
-    >>/userdata/agent/log/ttyd.log 2>&1 &
-ttyd_pid="$!"
+# The browser terminal is opt-in. Without ttyd, Agent Web /webtty/ answers
+# 502 with a short page explaining how to enable it (AICO_ENABLE_TERMINAL=1).
+if truthy "${AICO_ENABLE_TERMINAL:-0}"; then
+    "$env_run_bin" ttyd \
+        --port=3000 \
+        --base-path=/webtty/ \
+        --max-clients="${TTYD_MAX_CLIENTS:-2}" \
+        --client-option "titleFixed=${TTYD_TITLE:-Aico Link Shell}" \
+        --client-option "rendererType=${TTYD_RENDERER:-canvas}" \
+        --client-option "fontSize=${TTYD_FONT_SIZE:-24}" \
+        --client-option "scrollback=${TTYD_SCROLLBACK:-500}" \
+        --client-option "cursorStyle=${TTYD_CURSOR_STYLE:-bar}" \
+        --client-option "disableResizeOverlay=${TTYD_DISABLE_RESIZE_OVERLAY:-true}" \
+        /bin/bash \
+        >>/userdata/agent/log/ttyd.log 2>&1 &
+    ttyd_pid="$!"
+fi
 
 "$env_run_bin" "${AICO_AGENT_BIN:-/usr/lib/aico/agent}" config-web \
     --bind=0.0.0.0 \
@@ -75,9 +100,15 @@ ttyd_pid="$!"
     --storage-state=/run/aico/storage.state &
 config_web_pid="$!"
 
+# Tie Config Web, and ttyd when enabled, to the container lifecycle so
+# Compose restarts the whole sandbox when either one stops.
+web_pids=("$config_web_pid")
+if [ -n "$ttyd_pid" ]; then
+    web_pids+=("$ttyd_pid")
+fi
+
 set +e
-# Keep both web frontends tied to the container lifecycle so Compose can restart them together.
-wait -n "$config_web_pid" "$ttyd_pid"
+wait -n "${web_pids[@]}"
 status="$?"
 set -e
 exit "$status"

@@ -88,6 +88,13 @@ load_system_env() {
     fi
 }
 
+falsy() {
+    case "${1:-}" in
+        0|false|FALSE|False|no|NO|No|off|OFF|Off) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 bridge_enabled() {
     endpoint="$1"
     mode="$2"
@@ -363,6 +370,10 @@ run_agent() {
     if [ -n "${AICO_DEVICE_TYPE:-}" ]; then
         set -- "$@" --device-type "$AICO_DEVICE_TYPE"
     fi
+    # Classic (stt) voice needs on-device RKNN models that the image lacks.
+    if falsy "${AICO_CLASSIC_VOICE:-1}"; then
+        set -- "$@" --classic-voice=false
+    fi
     bridge_endpoint="${AICO_ENVIRONMENT_BRIDGE_ENDPOINT:-${ENVIRONMENT_BRIDGE_ENDPOINT:-}}"
     bridge_endpoint="${bridge_endpoint%/}"
     bridge_mode="${AICO_ENVIRONMENT_BRIDGE_MODE:-auto}"
@@ -391,7 +402,7 @@ run_agent() {
         return 0
     fi
 
-    service_log INFO process_starting "command=$agent_bin -dir $agent_dir -addr 0.0.0.0:8080"
+    service_log INFO process_starting "command=$*"
     "$env_run_bin" "$@" >> "$log_file" 2>&1 &
     agent_pid="$!"
     printf '%s\n' "$agent_pid" > "$agent_pid_file"

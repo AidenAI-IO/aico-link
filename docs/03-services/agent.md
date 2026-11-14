@@ -30,6 +30,16 @@ The HTTP server and Web UI run in every input mode:
 - **`input_mode = "stt"`**: Runs the device audio loop in parallel with the HTTP server, using `audio_service`, VAD, the selected STT provider, the model, and the selected TTS provider.
 - **`input_mode = "realtime"`**: Runs the configured realtime voice model directly; realtime activation is selected explicitly by this mode.
 
+The daemon flag `-classic-voice` (default `true`) controls whether `stt` mode
+may hold voice conversations. Hosts without the VAD models, such as the Docker
+image, start the Agent with `-classic-voice=false`. In `stt` mode the Agent
+then builds no audio dialog and never starts the VAD or Smart Turn helpers:
+wakeups from the MCU or GPIO keys are ignored, `GET /api/realtime/voice`
+reports `available: false` so the Web UI offers no voice button, and a browser
+voice start is refused. Typed chat keeps working and replies with text. The
+setting persists across configuration reloads, and `realtime` mode is not
+affected. The Agent logs one startup line when the flag is off.
+
 ## Configuration
 
 The service reads `/userdata/agent/agent.toml`. Provider tables define named provider instances, and the corresponding selection table references one of those names:

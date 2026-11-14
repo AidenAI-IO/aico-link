@@ -1,10 +1,15 @@
 services:
   aico:
-    platform: linux/amd64
     image: ${AICO_DOCKER_IMAGE:-aico-agent-sandbox:local}
     build:
       context: .
       dockerfile: docker/dev/Dockerfile
+      args:
+        BASE_IMAGE: ${AICO_DOCKER_BASE_IMAGE:-debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258}
+        GO_DOWNLOAD_BASE: ${AICO_GO_DOWNLOAD_BASE:-https://go.dev/dl}
+        GOPROXY: ${AICO_GOPROXY:-}
+        AICO_VERSION: ${AICO_VERSION:-dev}
+        AICO_COMMIT: ${AICO_COMMIT:-unknown}
     init: true
     restart: unless-stopped
     stop_grace_period: 20s
@@ -22,6 +27,8 @@ services:
       AICO_DEVICE_TYPE: ${AICO_DEVICE_TYPE:-}
       AICO_PUBLIC_AGENT_WEB_PORT: ${AICO_AGENT_WEB_PORT:-8080}
       AICO_CONFIG_WEB_PORT: ${AICO_CONFIG_WEB_PORT:-8000}
+      # The dev sandbox keeps the browser terminal; the image default is off.
+      AICO_ENABLE_TERMINAL: "1"
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,host.docker.internal}

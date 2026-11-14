@@ -286,15 +286,6 @@ class DockerSandboxContractTest(unittest.TestCase):
         self.assertNotEqual(agent_port, 0)
         self.assertNotEqual(config_port, agent_port)
 
-    def test_entrypoint_exits_when_either_web_process_stops(self):
-        entrypoint = read_repo_file("docker/dev/entrypoint.sh")
-
-        self.assertTrue(entrypoint.startswith("#!/bin/bash\n"))
-        self.assertIn(
-            'wait -n "$config_web_pid" "$ttyd_pid"',
-            entrypoint,
-        )
-
     def test_entrypoint_configures_ttyd_options(self):
         entrypoint = read_repo_file("docker/dev/entrypoint.sh")
 
@@ -378,6 +369,95 @@ class DockerSandboxContractTest(unittest.TestCase):
             stderr = supervisor.stderr.read()
             supervisor.stderr.close()
             self.assertEqual(supervisor.returncode, 0, stderr)
+
+    def test_agent_supervisor_disables_classic_voice_only_when_requested(self):
+        service = REPO_ROOT / "docker/dev/agent-service.sh"
+        cases = {
+            None: False,
+            "1": False,
+            "0": True,
+            "off": True,
+        }
+
+        for classic_voice, expect_disabled in cases.items():
+            with self.subTest(AICO_CLASSIC_VOICE=classic_voice):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    temporary_path = Path(temporary_directory)
+                    arguments_file = temporary_path / "arguments.json"
+                    agent = temporary_path / "fake-agent.py"
+                    agent.write_text(
+                        "#!/usr/bin/env python3\n"
+                        "import json\n"
+                        "import signal\n"
+                        "import sys\n"
+                        "import time\n"
+                        "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n"
+                        f"with open({str(arguments_file)!r}, 'w') as output:\n"
+                        "    json.dump(sys.argv[1:], output)\n"
+                        "time.sleep(30)\n",
+                        encoding="utf-8",
+                    )
+                    agent.chmod(0o755)
+
+                    environment = os.environ.copy()
+                    for key in (
+                        "AICO_CLASSIC_VOICE",
+                        "AICO_DEVICE_TYPE",
+                        "AICO_ENVIRONMENT_BRIDGE_ENDPOINT",
+                        "ENVIRONMENT_BRIDGE_ENDPOINT",
+                    ):
+                        environment.pop(key, None)
+                    if classic_voice is not None:
+                        environment["AICO_CLASSIC_VOICE"] = classic_voice
+                    environment.update(
+                        {
+                            "AICO_AGENT_BIN": str(agent),
+                            "AICO_AGENT_DIR": str(temporary_path / "agent"),
+                            "AICO_AGENT_RUN_DIR": str(temporary_path / "run"),
+                            "AICO_SYSTEM_ENV": str(temporary_path / "system-env"),
+                            "AICO_ENV_RUN_BIN": str(
+                                REPO_ROOT / "docker/dev/aico-env-run"
+                            ),
+                        }
+                    )
+                    supervisor = subprocess.Popen(
+                        ["sh", str(service), "run"],
+                        env=environment,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    try:
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline:
+                            if arguments_file.exists():
+                                try:
+                                    arguments = json.loads(
+                                        arguments_file.read_text(encoding="utf-8")
+                                    )
+                                    break
+                                except json.JSONDecodeError:
+                                    pass
+                            time.sleep(0.05)
+                        else:
+                            self.fail("agent supervisor did not start the agent")
+                    finally:
+                        supervisor.terminate()
+                        try:
+                            stdout, stderr = supervisor.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            supervisor.kill()
+                            stdout, stderr = supervisor.communicate(timeout=5)
+
+                    self.assertEqual(
+                        "--classic-voice=false" in arguments, expect_disabled
+                    )
+                    # The logged command line must match what was executed.
+                    self.assertIn(
+                        "command=" + " ".join([str(agent), *arguments]),
+                        stdout,
+                        stderr,
+                    )
 
     def test_bridge_session_outlives_agent_and_supervisor_restarts(self):
         service = REPO_ROOT / "docker/dev/agent-service.sh"

@@ -19,6 +19,23 @@ Use this workflow for interactive development, configuration checks, and Agent
 testing. For repeatable task suites, parallel environments, scoring, and reports,
 use the [Benchmark workflow](../09-benchmark/README.md) instead.
 
+## Aico Launcher
+
+The quickest way to try Aico is the repository-local Aico Launcher, a web UI
+that builds or selects an `aico-link` image, starts an environment bridge
+(none, MobileGym, Android through ADB, or a custom bridge), and runs the image
+with one click. From the repository root:
+
+```bash
+make launcher
+```
+
+Open the URL the launcher prints. It needs Docker and
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/). See the
+[Aico Launcher guide](../../benchmark/launcher/README.md) for bridge
+prerequisites, state, security, and troubleshooting. The rest of this page
+describes the Compose sandbox and manual bridge setup.
+
 ## Prerequisites
 
 - Docker Desktop, or Docker Engine with the Compose plugin;
@@ -85,6 +102,57 @@ image and replace the running container.
 
 Starting the sandbox preserves the `aico-data` volume. Use `make sandbox-logs`
 to follow the Agent logs and `make sandbox-stop` to stop the sandbox.
+
+### Image Runtime and Build Options
+
+The sandbox and the Aico Launcher use the same image, built from
+`docker/dev/Dockerfile` natively for `linux/amd64` or `linux/arm64`. It serves
+Config Web on container port 80 and the Agent Web UI on 8080 over plain HTTP;
+publish them on `127.0.0.1` only. Besides the bridge variables described below,
+the image reads:
+
+| Variable | Image default | Effect |
+| --- | --- | --- |
+| `AICO_ENABLE_TERMINAL` | `0` | `1` starts `ttyd` behind `/webtty/` on the Agent Web UI. The Compose sandbox sets it to `1`. |
+| `AICO_CLASSIC_VOICE` | `0` | Classic (speech-to-text) voice needs on-device RKNN models that the image lacks, so Classic mode is text-only in Docker. Realtime mode keeps text and browser voice: `localhost` is a secure context, so the browser microphone works without TLS. |
+
+Build arguments let you build through mirrors and stamp the build:
+
+| Build argument | Default | Purpose |
+| --- | --- | --- |
+| `BASE_IMAGE` | the pinned `debian:trixie-slim@sha256:...` | Base for every stage, for example a registry mirror such as `docker.1ms.run/library/debian:trixie-slim@sha256:<same digest>` |
+| `GO_DOWNLOAD_BASE` | `https://go.dev/dl` | Go toolchain download location, for example `https://golang.google.cn/dl` |
+| `GOPROXY` | Go's default | Go module proxy for `go mod download`, for example `https://goproxy.cn,direct` |
+| `AICO_VERSION` | `dev` | Version stamped into the Agent and the `org.opencontainers.image.version` label |
+| `AICO_COMMIT` | `unknown` | Commit stamped into the Agent and the `org.opencontainers.image.revision` label |
+
+For example:
+
+```bash
+docker build -f docker/dev/Dockerfile \
+  --build-arg GO_DOWNLOAD_BASE=https://golang.google.cn/dl \
+  --build-arg AICO_VERSION=local \
+  --build-arg AICO_COMMIT="$(git rev-parse HEAD)" \
+  -t aico-link:local .
+```
+
+The Compose sandbox forwards `AICO_DOCKER_BASE_IMAGE`, `AICO_GO_DOWNLOAD_BASE`,
+`AICO_VERSION`, and `AICO_COMMIT` from your shell to these build arguments. The
+Aico Launcher sets them from its Settings panel and the current checkout, and
+passes your shell's `GOPROXY` through when it is set.
+
+The Dockerfile requires BuildKit, which Docker Desktop and Docker Engine with
+the `docker-buildx` plugin use by default; `DOCKER_BUILDKIT=0` is not
+supported.
+
+On Apple Silicon the sandbox now runs as native `arm64` rather than emulated
+`amd64`. Python user packages with native code only load on the architecture
+that installed them, so the entrypoint records the architecture in
+`/userdata/agent/python/.aico-arch` and moves that directory aside when the
+architecture changes. A volume created before this marker existed is assumed
+to match; if Agent skills fail to import packages after the switch, run
+`rm -rf /userdata/agent/python` in the sandbox terminal (or reset the volume
+with `docker compose down -v`) and reinstall them.
 
 ## Configure a Native Local Agent
 
