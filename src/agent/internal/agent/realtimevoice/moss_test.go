@@ -695,6 +695,14 @@ func TestMossToolResultContinuesRunWithResponseCreate(t *testing.T) {
 		t.Fatalf("late response.done replayed a continued call: %#v", got)
 	}
 
+	// A failed response.create must surface as a provider error, not stall.
+	closed := &mossSession{done: make(chan struct{}), toolCalls: map[string]mossToolCallState{"call-x": mossToolCallPending}}
+	close(closed.done)
+	if got := closed.onJSON([]byte(`{"action":"conversation.item.created","data":{"item":` +
+		`{"type":"function_call_output","call_id":"call-x"}}}`)); len(got) != 1 || got[0].Kind != EventError {
+		t.Fatalf("failed response.create events = %#v", got)
+	}
+
 	// A call first announced by response.done must open its response too.
 	fresh := &mossSession{}
 	events := fresh.onJSON([]byte(`{"action":"response.done","data":{"response":{"id":"run-9","output":[` +

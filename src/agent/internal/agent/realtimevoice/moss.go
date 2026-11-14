@@ -416,15 +416,16 @@ func (s *mossSession) continueAfterToolResult(callID string) []string {
 	return callIDs
 }
 
-func (s *mossSession) sendResponseCreate(callIDs []string) {
+func (s *mossSession) sendResponseCreate(callIDs []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := s.writeJSON(ctx, map[string]any{
 		"action":   "response.create",
 		"response": map[string]any{"call_ids": callIDs},
 	}); err != nil {
-		logging.Warnf("agent", "realtime", "Moss Live response.create failed: call_ids=%v err=%v", callIDs, err)
+		return fmt.Errorf("moss live: response.create for call_ids %v: %w", callIDs, err)
 	}
+	return nil
 }
 
 // toolCallEvent registers a tool call once per call_id. Moss announces a call
@@ -887,7 +888,11 @@ func (s *mossSession) onJSON(body []byte) []Event {
 		}
 		callID, _ := item["call_id"].(string)
 		if callIDs := s.continueAfterToolResult(callID); len(callIDs) > 0 {
-			s.sendResponseCreate(callIDs)
+			// Without response.create the run never continues and no later
+			// acknowledgement resends it; fail the session instead of stalling.
+			if err := s.sendResponseCreate(callIDs); err != nil {
+				return []Event{{Kind: EventError, Error: err}}
+			}
 		}
 		return nil
 	case "response.ended":
