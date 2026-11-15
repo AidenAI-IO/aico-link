@@ -690,8 +690,10 @@ async function renderFolderPreview(folder, signal) {
         list.append(item);
     }
     document.getElementById('fileModalBody').replaceChildren(list);
-    // Back from an entry focuses the row it was opened from.
-    if (folder.focusKey) restoreListFocus(list, {key: folder.focusKey, control: 'main'});
+    // Back from an entry focuses the row it was opened from, scrolling it
+    // into view in a long folder.
+    const row = folder.focusKey && Array.from(list.children).find(item => item.dataset.key === folder.focusKey);
+    if (row) row.querySelector('.inspector-row-main').focus();
 }
 
 // stopFilePreview cancels a loading preview and releases its object URL.
