@@ -193,9 +193,21 @@ func (r *Runtime) startTurnDecision(utterance string) func() turnDecision {
 		// the context cannot interrupt, so the deadline is enforced here: a
 		// late worker finishes on its own into the buffered channel.
 		once.Do(func() {
+			// The worker cancels ctx right after sending its result, so a
+			// finished decision must win over the closed context; select
+			// alone would pick between them at random.
+			select {
+			case result = <-done:
+				return
+			default:
+			}
 			select {
 			case result = <-done:
 			case <-ctx.Done():
+				select {
+				case result = <-done:
+				default:
+				}
 			}
 		})
 		return result
