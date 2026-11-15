@@ -393,6 +393,11 @@ type compatibleUsage struct {
 	PromptTokensDetails *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details,omitempty"`
+	// OpenAI and OpenRouter report hidden reasoning here rather than in a
+	// top-level reasoning_tokens field.
+	CompletionTokensDetails *struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details,omitempty"`
 }
 
 func (u *compatibleUsage) generationInfo() map[string]any {
@@ -409,6 +414,8 @@ func (u *compatibleUsage) generationInfo() map[string]any {
 	}
 	if u.ReasoningTokens > 0 {
 		info["reasoning_tokens"] = u.ReasoningTokens
+	} else if u.CompletionTokensDetails != nil && u.CompletionTokensDetails.ReasoningTokens > 0 {
+		info["reasoning_tokens"] = u.CompletionTokensDetails.ReasoningTokens
 	}
 	if u.Cost != nil {
 		info["cost_usd"] = *u.Cost
@@ -424,7 +431,8 @@ type compatibleChatResponse struct {
 			ReasoningContent any                  `json:"reasoning_content,omitempty"`
 			ToolCalls        []compatibleToolCall `json:"tool_calls,omitempty"`
 		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
+		FinishReason       string `json:"finish_reason"`
+		NativeFinishReason string `json:"native_finish_reason,omitempty"`
 	} `json:"choices"`
 	Usage              *compatibleUsage `json:"usage,omitempty"`
 	OpenRouterMetadata map[string]any   `json:"openrouter_metadata,omitempty"`
@@ -434,11 +442,15 @@ type compatibleChatStreamResponse struct {
 	ID      string `json:"id,omitempty"`
 	Choices []struct {
 		Delta struct {
-			Content          any                       `json:"content,omitempty"`
-			ReasoningContent any                       `json:"reasoning_content,omitempty"`
-			ToolCalls        []compatibleToolCallDelta `json:"tool_calls,omitempty"`
+			Content          any `json:"content,omitempty"`
+			ReasoningContent any `json:"reasoning_content,omitempty"`
+			// OpenRouter streams reasoning text as `reasoning`. It is captured
+			// for diagnostics only; reasoning_content stays the replayed field.
+			Reasoning any                       `json:"reasoning,omitempty"`
+			ToolCalls []compatibleToolCallDelta `json:"tool_calls,omitempty"`
 		} `json:"delta"`
-		FinishReason string `json:"finish_reason"`
+		FinishReason       string `json:"finish_reason"`
+		NativeFinishReason string `json:"native_finish_reason,omitempty"`
 	} `json:"choices"`
 	Usage              *compatibleUsage `json:"usage,omitempty"`
 	OpenRouterMetadata map[string]any   `json:"openrouter_metadata,omitempty"`
@@ -461,15 +473,36 @@ type compatibleStreamingLogResponse struct {
 }
 
 type compatibleStreamingLogChoice struct {
-	Message      compatibleStreamingLogMessage `json:"message"`
-	FinishReason string                        `json:"finish_reason"`
+	Message            compatibleStreamingLogMessage `json:"message"`
+	FinishReason       string                        `json:"finish_reason"`
+	NativeFinishReason string                        `json:"native_finish_reason,omitempty"`
 }
 
 type compatibleStreamingLogMessage struct {
 	Content          string               `json:"content"`
 	ReasoningContent string               `json:"reasoning_content,omitempty"`
+	Reasoning        string               `json:"reasoning,omitempty"`
 	ToolCalls        []compatibleToolCall `json:"tool_calls,omitempty"`
 }
+
+// compatibleStreamingLog is the parsed outcome of one streamed response, as
+// written to the raw HTTP log.
+type compatibleStreamingLog struct {
+	Content            string
+	ReasoningContent   string
+	Reasoning          string
+	FinishReason       string
+	NativeFinishReason string
+	ToolCalls          []compatibleToolCall
+	Usage              map[string]any
+	Done               bool
+	Err                error
+	RawSSE             string
+}
+
+// compatibleRawSSELogLimit bounds the raw SSE kept in the raw HTTP log for a
+// failed or empty streamed response.
+const compatibleRawSSELogLimit = 256 * 1024
 
 func newOpenAICompatibleModel(baseURL, model, token string, httpClient *http.Client, opts ...openAICompatibleModelOption) llms.Model {
 	if httpClient == nil {
@@ -727,6 +760,9 @@ func (m *openAICompatibleModel) generateContent(ctx context.Context, messages []
 	if choice.FinishReason != "" {
 		generationInfo["llm_finish_reason"] = choice.FinishReason
 	}
+	if choice.NativeFinishReason != "" {
+		generationInfo["llm_native_finish_reason"] = choice.NativeFinishReason
+	}
 	if decoded.ID != "" {
 		generationInfo["llm_response_id"] = decoded.ID
 	}
@@ -745,7 +781,9 @@ func (m *openAICompatibleModel) decodeStreamingResponse(ctx context.Context, bod
 	}
 	var content strings.Builder
 	var reasoningContent strings.Builder
+	var providerReasoning strings.Builder
 	stopReason := ""
+	nativeStopReason := ""
 	toolCalls := map[int]*compatibleToolCall{}
 	var usageInfo map[string]any
 	filteredStream := stream
@@ -791,18 +829,29 @@ func (m *openAICompatibleModel) decodeStreamingResponse(ctx context.Context, bod
 		// failures, keep the partial parsed response and attach raw_sse for
 		// debugging the malformed or interrupted stream.
 		logStatusCode := statusCode
-		rawSSE := ""
 		if scanErr != nil {
 			logStatusCode = 0
-			if hasRawStream {
-				rawSSE = rawStream.String()
-			}
 		}
 		loggedContent := content.String()
 		if rawContentForLog != "" {
 			loggedContent = rawContentForLog
 		}
-		body := formatStreamingRawHTTPLogBody(loggedContent, reasoningContent.String(), stopReason, orderedCompatibleToolCalls(toolCalls), usageInfo, streamDone, scanErr, rawSSE)
+		rawSSE := ""
+		if hasRawStream {
+			rawSSE = rawStream.String()
+		}
+		body := formatStreamingRawHTTPLogBody(compatibleStreamingLog{
+			Content:            loggedContent,
+			ReasoningContent:   reasoningContent.String(),
+			Reasoning:          providerReasoning.String(),
+			FinishReason:       stopReason,
+			NativeFinishReason: nativeStopReason,
+			ToolCalls:          orderedCompatibleToolCalls(toolCalls),
+			Usage:              usageInfo,
+			Done:               streamDone,
+			Err:                scanErr,
+			RawSSE:             rawSSE,
+		})
 		_ = m.logRawHTTP(ctx, requestModel, "response", logStatusCode, body)
 	}
 	var scanErr error
@@ -858,6 +907,10 @@ func (m *openAICompatibleModel) decodeStreamingResponse(ctx context.Context, bod
 		if choice.FinishReason != "" {
 			stopReason = choice.FinishReason
 		}
+		if choice.NativeFinishReason != "" {
+			nativeStopReason = choice.NativeFinishReason
+		}
+		providerReasoning.WriteString(flattenResponseContent(choice.Delta.Reasoning))
 
 		// Process reasoning_content delta (e.g., from kimi-k3 forced-reasoning models)
 		reasoningChunk := flattenResponseContent(choice.Delta.ReasoningContent)
@@ -967,6 +1020,12 @@ func (m *openAICompatibleModel) decodeStreamingResponse(ctx context.Context, bod
 	if stopReason != "" {
 		generationInfo["llm_finish_reason"] = stopReason
 	}
+	if nativeStopReason != "" {
+		generationInfo["llm_native_finish_reason"] = nativeStopReason
+	}
+	if providerReasoning.Len() > 0 {
+		generationInfo["llm_provider_reasoning_chars"] = providerReasoning.Len()
+	}
 	choice.GenerationInfo = finalizeLLMGenerationInfo(mergeGenerationInfo(usageInfo, generationInfo), callStarted)
 	return &llms.ContentResponse{Choices: []*llms.ContentChoice{choice}}, nil
 }
@@ -1051,27 +1110,38 @@ func orderedCompatibleToolCalls(toolCalls map[int]*compatibleToolCall) []compati
 	return orderedToolCalls
 }
 
-func formatStreamingRawHTTPLogBody(content, reasoningContent, finishReason string, toolCalls []compatibleToolCall, usage map[string]any, done bool, streamErr error, rawSSE string) string {
+// formatStreamingRawHTTPLogBody renders a streamed response as a readable Chat
+// Completions-style JSON body. Raw SSE is attached when the stream failed or
+// produced neither text nor a tool call, so an empty turn can be diagnosed.
+func formatStreamingRawHTTPLogBody(log compatibleStreamingLog) string {
 	resp := compatibleStreamingLogResponse{
 		Stream: true,
-		Done:   done,
+		Done:   log.Done,
 		Choices: []compatibleStreamingLogChoice{{
 			Message: compatibleStreamingLogMessage{
-				Content:          content,
-				ReasoningContent: reasoningContent,
-				ToolCalls:        toolCalls,
+				Content:          log.Content,
+				ReasoningContent: log.ReasoningContent,
+				Reasoning:        log.Reasoning,
+				ToolCalls:        log.ToolCalls,
 			},
-			FinishReason: finishReason,
+			FinishReason:       log.FinishReason,
+			NativeFinishReason: log.NativeFinishReason,
 		}},
-		Usage: usage,
+		Usage: log.Usage,
 	}
-	if streamErr != nil {
-		resp.Error = streamErr.Error()
-		resp.RawSSE = rawSSE
+	emptyTurn := strings.TrimSpace(log.Content) == "" && len(log.ToolCalls) == 0
+	if log.Err != nil {
+		resp.Error = log.Err.Error()
+	}
+	if log.Err != nil || emptyTurn {
+		resp.RawSSE = log.RawSSE
+		if len(resp.RawSSE) > compatibleRawSSELogLimit {
+			resp.RawSSE = resp.RawSSE[:compatibleRawSSELogLimit] + "\n...[truncated]"
+		}
 	}
 	body, err := json.Marshal(resp)
 	if err != nil {
-		return fmt.Sprintf(`{"stream":true,"done":%t,"error":%q}`, done, err.Error())
+		return fmt.Sprintf(`{"stream":true,"done":%t,"error":%q}`, log.Done, err.Error())
 	}
 	return string(body)
 }

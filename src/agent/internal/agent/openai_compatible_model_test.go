@@ -504,74 +504,118 @@ func TestOpenAICompatibleModelLogsRawStreamingHTTPWhenEnabled(t *testing.T) {
 	assertRawHTTPLogIsValidJSONL(t, logText)
 }
 
-func TestOpenAICompatibleModelLogsRawStreamingHTTPOnDecodeError(t *testing.T) {
-	validEvent := `data: {"choices":[{"delta":{"content":"hello"}}]}`
-	malformedEvent := `data: {"choices":[`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Write([]byte(validEvent + "\n\n"))
-		w.Write([]byte(malformedEvent + "\n\n"))
-	}))
-	defer server.Close()
+// A failed or empty streamed response keeps its raw SSE in the raw HTTP log;
+// the parsed summary alone cannot show what the provider actually sent.
+func TestOpenAICompatibleModelLogsRawStreamingHTTPForFailedOrEmptyTurn(t *testing.T) {
+	cases := []struct {
+		name        string
+		events      []string
+		wantErr     string
+		wantContent string
+		wantNative  string
+		wantReason  string
+	}{
+		{
+			name:        "decode_error",
+			events:      []string{`data: {"choices":[{"delta":{"content":"hello"}}]}`, `data: {"choices":[`},
+			wantErr:     "decode stream event",
+			wantContent: "hello",
+		},
+		{
+			name: "empty_stop_turn",
+			events: []string{
+				`data: {"choices":[{"delta":{"reasoning":"looked at the screen"}}]}`,
+				`data: {"choices":[{"delta":{"content":""},"finish_reason":"stop","native_finish_reason":"MALFORMED_FUNCTION_CALL"}],"usage":{"prompt_tokens":10,"completion_tokens":128,"total_tokens":138,"completion_tokens_details":{"reasoning_tokens":120}}}`,
+				`data: [DONE]`,
+			},
+			wantNative: "MALFORMED_FUNCTION_CALL",
+			wantReason: "looked at the screen",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				for _, event := range tc.events {
+					w.Write([]byte(event + "\n\n"))
+				}
+			}))
+			defer server.Close()
 
-	logDir := t.TempDir()
-	model := newOpenAICompatibleModel(
-		server.URL,
-		"test-model",
-		"",
-		server.Client(),
-		withOpenAICompatibleRawHTTPLogger(newTestLLMRawHTTPLogger(logDir, "test-session-1")),
-	)
-	_, err := model.GenerateContent(
-		contextWithRawHTTPLog(context.Background()),
-		[]llms.MessageContent{{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart("stream please")},
-		}},
-		llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error { return nil }),
-	)
-	if err == nil || !strings.Contains(err.Error(), "decode stream event") {
-		t.Fatalf("GenerateContent() error = %v, want decode stream event", err)
-	}
+			logDir := t.TempDir()
+			model := newOpenAICompatibleModel(
+				server.URL,
+				"test-model",
+				"",
+				server.Client(),
+				withOpenAICompatibleRawHTTPLogger(newTestLLMRawHTTPLogger(logDir, "test-session-1")),
+			)
+			resp, err := model.GenerateContent(
+				contextWithRawHTTPLog(context.Background()),
+				[]llms.MessageContent{{
+					Role:  llms.ChatMessageTypeHuman,
+					Parts: []llms.ContentPart{llms.TextPart("stream please")},
+				}},
+				llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error { return nil }),
+			)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("GenerateContent() error = %v, want %s", err, tc.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("GenerateContent() error = %v", err)
+			} else {
+				info := resp.Choices[0].GenerationInfo
+				if info["llm_native_finish_reason"] != tc.wantNative || info["reasoning_tokens"] != 120 {
+					t.Fatalf("generation info = %#v, want native finish reason and reasoning tokens", info)
+				}
+			}
 
-	logText := readRawHTTPLog(t, logDir)
-	var streamBody string
-	for _, line := range strings.Split(strings.TrimSpace(logText), "\n") {
-		var entry map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue
-		}
-		if entry["kind"] == "response" {
-			streamBody, _ = entry["body"].(string)
-			break
-		}
+			logText := readRawHTTPLog(t, logDir)
+			var streamBody string
+			for _, line := range strings.Split(strings.TrimSpace(logText), "\n") {
+				var entry map[string]interface{}
+				if err := json.Unmarshal([]byte(line), &entry); err != nil {
+					continue
+				}
+				if entry["kind"] == "response" {
+					streamBody, _ = entry["body"].(string)
+					break
+				}
+			}
+			var logged struct {
+				Stream  bool   `json:"stream"`
+				Error   string `json:"error"`
+				RawSSE  string `json:"raw_sse"`
+				Choices []struct {
+					Message struct {
+						Content   string `json:"content"`
+						Reasoning string `json:"reasoning"`
+					} `json:"message"`
+					NativeFinishReason string `json:"native_finish_reason"`
+				} `json:"choices"`
+			}
+			if err := json.Unmarshal([]byte(streamBody), &logged); err != nil {
+				t.Fatalf("raw streaming response body should be JSON: %v\n%s", err, streamBody)
+			}
+			if !logged.Stream || len(logged.Choices) != 1 {
+				t.Fatalf("raw streaming response = %#v", logged)
+			}
+			if tc.wantErr != "" && !strings.Contains(logged.Error, tc.wantErr) {
+				t.Fatalf("raw streaming response missing error: %#v", logged)
+			}
+			choice := logged.Choices[0]
+			if choice.Message.Content != tc.wantContent || choice.Message.Reasoning != tc.wantReason || choice.NativeFinishReason != tc.wantNative {
+				t.Fatalf("raw streaming response choice = %#v", choice)
+			}
+			for _, event := range tc.events {
+				if !strings.Contains(logged.RawSSE, event) {
+					t.Fatalf("raw streaming response missing SSE event %q:\n%s", event, streamBody)
+				}
+			}
+			assertRawHTTPLogIsValidJSONL(t, logText)
+		})
 	}
-	var logged struct {
-		Stream  bool   `json:"stream"`
-		Error   string `json:"error"`
-		RawSSE  string `json:"raw_sse"`
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal([]byte(streamBody), &logged); err != nil {
-		t.Fatalf("raw streaming error response body should be JSON: %v\n%s", err, streamBody)
-	}
-	if !logged.Stream {
-		t.Fatalf("raw streaming error response missing stream marker: %#v", logged)
-	}
-	if !strings.Contains(logged.Error, "decode stream event") {
-		t.Fatalf("raw streaming error response missing decode error: %#v", logged)
-	}
-	if len(logged.Choices) != 1 || logged.Choices[0].Message.Content != "hello" {
-		t.Fatalf("raw streaming error response missing partial content: %#v", logged.Choices)
-	}
-	if !strings.Contains(logged.RawSSE, validEvent) || !strings.Contains(logged.RawSSE, malformedEvent) {
-		t.Fatalf("raw streaming error response missing failed SSE events:\nlog=%s\nstream=%s", logText, streamBody)
-	}
-	assertRawHTTPLogIsValidJSONL(t, logText)
 }
 
 func TestOpenAICompatibleModelRawHTTPLogKeepsRunInInitialSessionFile(t *testing.T) {
