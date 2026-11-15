@@ -205,6 +205,39 @@ textarea:focus-visible {
     background: #000;
 }
 
+/* Clicking the screen enlarges it to the whole free area right of the
+   conversation column: the card grows left over the empty margin beside the
+   980px conversation, fills the column's height, and hides the other
+   sections. Clicking again (or Escape) restores the normal card. */
+.device-screen { cursor: zoom-in; }
+.device-screen:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.inspector.screen-expanded {
+    --screen-expanded-extra: max(0px, calc((100vw - var(--inspector-width) - 980px) / 2 - 16px));
+    position: relative;
+    z-index: 2;
+    align-self: stretch;
+    max-height: none;
+    margin-left: calc(-1 * var(--screen-expanded-extra));
+}
+
+.inspector.screen-expanded > .inspector-section:not(.device-card) { display: none; }
+
+.inspector.screen-expanded .device-card {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 12px;
+}
+
+.inspector.screen-expanded .device-screen {
+    flex: 1;
+    min-height: 0;
+    aspect-ratio: auto;
+    cursor: zoom-out;
+}
+
 .device-screen img {
     position: absolute;
     inset: 0;
@@ -1391,6 +1424,9 @@ details.tool-details summary {
         margin: 12px;
         overflow: visible;
     }
+
+    .inspector.screen-expanded { margin: 12px; }
+    .inspector.screen-expanded .device-screen { flex: none; height: 80vh; }
 
     .conversation {
         padding: 10px 14px 0;
