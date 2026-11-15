@@ -276,10 +276,13 @@ func TestStartTurnDecisionKeepsResultFinishedBeforeWait(t *testing.T) {
 	}
 	server := newDecisionServer(t, body)
 	runtime, _ := turnDecisionHookRuntime(t, true, server.URL, NewMemoryManager(t.TempDir(), WithLongTermMemoryStore(store)))
+	workerDone := make(chan struct{}, 1)
+	turnDecisionWorkerDone = func() { workerDone <- struct{}{} }
+	t.Cleanup(func() { turnDecisionWorkerDone = nil })
 	for i := 0; i < 20; i++ {
 		turn := runtime.startTurnDecision("what is my daughter's name")
-		<-server.requested
-		time.Sleep(20 * time.Millisecond) // let the worker send and cancel
+		<-server.requested // drain the server's bounded notice channel
+		<-workerDone       // the result is buffered and the context is cancelled
 		if got := turn().Recalled; len(got) != 1 {
 			t.Fatalf("attempt %d: recalled %d memories, want the finished decision's 1", i, len(got))
 		}

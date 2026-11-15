@@ -282,6 +282,9 @@ func uploadSharedFileWithLimit(w http.ResponseWriter, r *http.Request, limit int
 	}
 	// Link publishes the completed file atomically and never replaces an existing file.
 	// Publishing and recording the name happen under one lock with deletes.
+	if sharedPublishHook != nil {
+		sharedPublishHook()
+	}
 	sharedUploadsMu.Lock()
 	published := name
 	for attempts := 0; ; attempts++ {
@@ -356,6 +359,10 @@ func deleteSharedFile(w http.ResponseWriter, r *http.Request, rel string) {
 // sharedRemoveHook runs between validating the parent folder and removing the
 // entry; tests use it to swap folders in that window.
 var sharedRemoveHook func()
+
+// sharedPublishHook, when set by a test, runs just before an upload takes
+// the lock to publish its file.
+var sharedPublishHook func()
 
 // removeSharedEntry removes rel without following symbolic links. It opens each
 // parent folder in turn and checks that the open handle is the folder Lstat saw,

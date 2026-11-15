@@ -28,6 +28,38 @@ function restoreListFocus(list, focus) {
     if (target && !target.disabled) target.focus({preventScroll: true});
 }
 
+// A dialog returns focus to the row that opened it. The list may have been
+// rebuilt meanwhile, so the row is found again by key; if it is gone, focus
+// goes to the list's first row, or the section heading when it is empty.
+let dialogReturnFocus = null;
+
+function rememberDialogOpener() {
+    const active = document.activeElement;
+    const list = active && active.closest('.inspector-list');
+    dialogReturnFocus = list ? {list: list.id, focus: rememberListFocus(list)} : null;
+}
+
+function returnFocusFromDialog() {
+    const saved = dialogReturnFocus;
+    dialogReturnFocus = null;
+    if (!saved) return;
+    const list = document.getElementById(saved.list);
+    if (!list) return;
+    restoreListFocus(list, saved.focus);
+    if (list.contains(document.activeElement)) return;
+    const fallback = list.querySelector('.inspector-row-main');
+    if (fallback) {
+        fallback.focus({preventScroll: true});
+        return;
+    }
+    const heading = document.getElementById(list.getAttribute('aria-labelledby') || '') ||
+        list.closest('section')?.querySelector('.inspector-section-title');
+    if (heading) {
+        heading.tabIndex = -1;
+        heading.focus({preventScroll: true});
+    }
+}
+
 function inspectorElement(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -368,6 +400,7 @@ async function refreshTaskModal() {
 }
 
 function openTaskModal(taskId) {
+    rememberDialogOpener();
     activeTaskModalId = taskId;
     taskModalEl().classList.remove('hidden');
     document.body.classList.add('state-modal-open');
@@ -381,6 +414,7 @@ function closeTaskModal() {
     activeTaskModalId = '';
     taskModalEl().classList.add('hidden');
     document.body.classList.remove('state-modal-open');
+    returnFocusFromDialog();
 }
 
 // ---- Shared files --------------------------------------------------------
@@ -522,6 +556,7 @@ async function renderFilePreview(file, signal) {
 
 function openFileModal(file) {
     closeFileModal();
+    rememberDialogOpener();
     document.getElementById('fileModalTitle').textContent = file.name;
     document.getElementById('fileModalMeta').textContent = [formatFileSize(file.size),
         file.shared_by === 'user' ? 'Shared by you' : 'Shared by Aico',
@@ -549,6 +584,7 @@ function closeFileModal() {
     fileModalEl().classList.add('hidden');
     document.getElementById('fileModalBody').replaceChildren();
     if (!activeTaskModalId) document.body.classList.remove('state-modal-open');
+    returnFocusFromDialog();
 }
 
 async function deleteSharedFile(file) {

@@ -38,6 +38,10 @@ const turnRecallMax = 5
 // A variable so tests can shorten it.
 var turnDecisionTimeout = 4 * time.Second
 
+// turnDecisionWorkerDone, when set by a test, runs after the worker has sent
+// its result and cancelled its context.
+var turnDecisionWorkerDone func()
+
 // turnDecision is the decision model's reading of one user utterance.
 type turnDecision struct {
 	// SkipScreenshot is true only for a confident "the screen is not needed".
@@ -172,6 +176,11 @@ func (r *Runtime) startTurnDecision(utterance string) func() turnDecision {
 	done := make(chan turnDecision, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), turnDecisionTimeout)
 	go func() {
+		defer func() {
+			if turnDecisionWorkerDone != nil {
+				turnDecisionWorkerDone()
+			}
+		}()
 		defer cancel()
 		var candidates []MemoryResult
 		if store != nil {

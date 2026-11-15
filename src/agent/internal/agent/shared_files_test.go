@@ -574,14 +574,17 @@ func TestSharedFilesDeleteKeepsRecordOfSameNameUpload(t *testing.T) {
 	if response := postSharedFile(t, handler, "report.txt", "old"); response.Code != http.StatusCreated {
 		t.Fatalf("upload: %d %s", response.Code, response.Body)
 	}
+	// While the delete holds the lock, between validating report.txt and
+	// removing it, a same-name upload reaches the point where it publishes.
 	uploaded := make(chan *httptest.ResponseRecorder)
+	publishing := make(chan struct{})
+	sharedPublishHook = func() { close(publishing) }
 	sharedRemoveHook = func() {
 		sharedRemoveHook = nil
-		// The delete holds the lock here, so this upload waits for it.
 		go func() { uploaded <- postSharedFile(t, handler, "report.txt", "new") }()
-		time.Sleep(50 * time.Millisecond)
+		<-publishing
 	}
-	t.Cleanup(func() { sharedRemoveHook = nil })
+	t.Cleanup(func() { sharedRemoveHook, sharedPublishHook = nil, nil })
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodDelete, "/api/files?path=report.txt", nil))
 	if response.Code != http.StatusNoContent {
