@@ -1025,6 +1025,9 @@ var realtimeDelegatedTools = []string{
 var realtimeBackendCommunicationRuntimeTools = map[string]struct{}{
 	realtimeRequestUserActionTool: {},
 	realtimeWaitForWakeupTool:     {},
+	// read_image returns an image the realtime protocol cannot attach; the
+	// realtime model would receive it as base64 text.
+	"read_image": {},
 }
 
 func realtimeVoiceToolDefinitions(cfg agent.Config, runtime *agent.Runtime) []realtimevoice.Tool {

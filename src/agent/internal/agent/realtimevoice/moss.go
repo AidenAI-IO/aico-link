@@ -191,6 +191,7 @@ var mossLowPriorityClientTools = []string{
 	"inspect_episode",
 	"web_scraper",
 	"wikipedia",
+	"read_image",
 	"wait_for_stable_screen",
 	"mouse_scroll",
 	"mouse_move",

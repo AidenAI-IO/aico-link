@@ -72,6 +72,7 @@ func TestBuiltinToolSetRegistersExpectedTools(t *testing.T) {
 		"mouse_move",
 		"mouse_scroll",
 		"quick_action",
+		"read_image",
 		"request_user_action",
 		"screenshot",
 		"shell",
