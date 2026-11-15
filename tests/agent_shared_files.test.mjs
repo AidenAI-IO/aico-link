@@ -230,8 +230,19 @@ test('HTML previews resolve relative links from the file folder and keep a page 
   assert.equal(context.withPreviewBase('<!doctype html><html><head><title>t</title></head></html>', '/share/report/index.html'),
     '<!doctype html><html><head>' + base + '<title>t</title></head></html>');
   assert.equal(context.withPreviewBase('<!DOCTYPE html><p>x', '/share/report/index.html'), '<!DOCTYPE html>' + base + '<p>x');
-  const own = '<head><base href="https://cdn.test/"></head>';
-  assert.equal(context.withPreviewBase(own, '/share/report/index.html'), own);
+  // A page's own base is resolved against the file, as when it is opened
+  // directly; the added base goes first, so the page's tag is ignored.
+  for (const [own, resolved] of [
+    ['<base href="https://cdn.test/">', 'https://cdn.test/'],
+    ['<base target=_self href=assets/>', 'http://192.168.42.1:8080/share/report/assets/'],
+    ["<base href='../img/?a=1&amp;b=2'>", 'http://192.168.42.1:8080/share/img/?a=1&amp;b=2'],
+  ]) {
+    assert.equal(context.withPreviewBase('<head>' + own + '</head>', '/share/report/index.html'),
+      '<head><base href="' + resolved + '">' + own + '</head>');
+  }
+  // A base inside a comment is not an element.
+  assert.equal(context.withPreviewBase('<head><!-- <base href="https://cdn.test/"> --></head>', '/share/report/index.html'),
+    '<head>' + base + '<!-- <base href="https://cdn.test/"> --></head>');
 });
 
 test('a slower shared-link lookup from an earlier click does not replace the latest one', async () => {

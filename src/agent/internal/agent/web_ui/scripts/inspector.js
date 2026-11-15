@@ -558,19 +558,36 @@ function createHTMLPreviewFrame(html, title, baseUrl) {
 }
 
 // withPreviewBase adds <base href> for a srcdoc document, which otherwise
-// takes this page's URL as its base. A page that sets its own base keeps it.
-// The tag goes inside <head>, or after the doctype, so a standards-mode page
-// does not fall into quirks mode.
+// takes this page's URL as its base. A page's own <base href> (outside
+// comments) is resolved against the file's URL, as it would be when the file
+// is opened directly, and the result goes first: only the first base element
+// counts, so the page's own tag is then ignored. The tag goes inside <head>,
+// or after the doctype, so a standards-mode page does not fall into quirks
+// mode.
 function withPreviewBase(html, baseUrl) {
     html = String(html || '');
-    if (!baseUrl || /<base\s[^>]*href/i.test(html)) return html;
+    if (!baseUrl) return html;
     let href;
-    try { href = new URL(baseUrl, window.location.href).href; } catch (_) { return html; }
+    try {
+        href = new URL(baseUrl, window.location.href).href;
+        const own = /<base\s[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(html.replace(/<!--[\s\S]*?(?:-->|$)/g, ''));
+        if (own) href = new URL(decodePreviewEntities(own[1] ?? own[2] ?? own[3]).trim(), href).href;
+    } catch (_) { return html; }
     const tag = '<base href="' + href.replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '">';
     const anchor = /<head(\s[^>]*)?>/i.exec(html) || /^\s*<!doctype[^>]*>/i.exec(html);
     if (!anchor) return tag + html;
     const at = anchor.index + anchor[0].length;
     return html.slice(0, at) + tag + html.slice(at);
+}
+
+// decodePreviewEntities decodes the character references an attribute value
+// is likely to hold, enough to resolve a base URL.
+function decodePreviewEntities(value) {
+    return String(value).replace(/&(?:#(\d+)|#x([0-9a-f]+)|(amp|quot|apos|lt|gt));?/gi, (match, dec, hex, name) => {
+        if (dec) return String.fromCodePoint(Number(dec));
+        if (hex) return String.fromCodePoint(parseInt(hex, 16));
+        return {amp: '&', quot: '"', apos: "'", lt: '<', gt: '>'}[name.toLowerCase()];
+    });
 }
 
 // Framed previews (HTML, PDF) fill the dialog body edge to edge and scroll
