@@ -29,7 +29,18 @@ const (
 const (
 	defaultQueueSize = 64
 	maxResultRunes   = 8000
+
+	// Each task keeps a short, bounded timeline for observers such as the Web
+	// UI. Timelines of finished tasks are kept only for the most recent ones.
+	maxTimelineSteps         = 40
+	maxTimelineDetailRunes   = 400
+	maxFinishedTaskTimelines = 16
 )
+
+// ErrStaleOrder reports a reorder request whose task list no longer matches
+// the queued work, for example because a task started or was cancelled after
+// the caller read the queue.
+var ErrStaleOrder = errors.New("queued tasks changed; refresh and try again")
 
 // terminal reports whether the task has finished and will not change state
 // again. cancelling is not terminal: the runtime still owns the task until it
@@ -57,6 +68,25 @@ type Task struct {
 	GoalRevision      uint64      `json:"-"` // Snapshot identity for observer-side result correlation.
 }
 
+// Step is one entry in a task's observer timeline. Tool steps are keyed by
+// their call ID so a result updates the step that announced the call.
+type Step struct {
+	ID      string    `json:"id,omitempty"`
+	At      time.Time `json:"at"`
+	Kind    string    `json:"kind"`
+	Title   string    `json:"title"`
+	Detail  string    `json:"detail,omitempty"`
+	Status  string    `json:"status,omitempty"`
+	IsError bool      `json:"is_error,omitempty"`
+}
+
+// Timeline is a bounded copy of a task's recent steps. Omitted counts older
+// steps dropped to keep the timeline short.
+type Timeline struct {
+	Steps   []Step `json:"steps"`
+	Omitted int    `json:"omitted,omitempty"`
+}
+
 type UserAction struct {
 	Reason          string `json:"reason"`
 	Details         string `json:"details"`
@@ -64,6 +94,15 @@ type UserAction struct {
 }
 
 type userActionHandlerContextKey struct{}
+type stepRecorderContextKey struct{}
+
+// StepRecorderFromContext returns the hook a runner uses to add steps to the
+// running task's timeline, or nil outside a managed task.
+func StepRecorderFromContext(ctx context.Context) func(Step) {
+	recorder, _ := ctx.Value(stepRecorderContextKey{}).(func(Step))
+	return recorder
+}
+
 type steerControlContextKey struct{}
 
 type SteerMessage struct {
@@ -248,10 +287,14 @@ type Manager struct {
 	runner Runner
 	now    func() time.Time
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	queue  chan string
-	wg     sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	queueSize int
+	// pending holds task IDs in the order the worker starts them. Queued tasks
+	// can be reordered; resumed tasks keep their position.
+	pending        []string
+	pendingChanged chan struct{}
+	wg             sync.WaitGroup
 
 	mu                    sync.RWMutex
 	tasks                 map[string]*entry
@@ -263,6 +306,8 @@ type Manager struct {
 	closed                bool
 	observationSequence   uint64
 	streamSink            stream.EventSink // Optional nonblocking observer; never a network sink.
+	timelines             map[string]*Timeline
+	finishedTimelines     []string
 }
 
 // SetEventSink installs a nonblocking in-process recorder before tasks are submitted.
@@ -275,6 +320,7 @@ func (m *Manager) SetEventSink(sink stream.EventSink) {
 }
 
 func (m *Manager) observeLocked(item *entry, phase string, cause ...Cause) {
+	m.recordPhaseLocked(item, phase)
 	m.observationSequence++
 	observation := Observation{Task: item.task, Phase: phase, GoalRevision: item.goalRevision,
 		AppliedRevision: item.appliedRevision, Sequence: m.observationSequence, StreamSink: m.streamSink}
@@ -314,8 +360,10 @@ func newManager(runner Runner, queueSize int, now func() time.Time) *Manager {
 		now:                   now,
 		ctx:                   ctx,
 		cancel:                cancel,
-		queue:                 make(chan string, queueSize),
+		queueSize:             queueSize,
+		pendingChanged:        make(chan struct{}, 1),
 		tasks:                 make(map[string]*entry),
+		timelines:             make(map[string]*Timeline),
 		terminalNotifications: make(map[string]terminalNotificationState),
 		terminalChanged:       make(chan struct{}, 1),
 		wakeChanged:           make(chan struct{}, 1),
@@ -351,18 +399,208 @@ func (m *Manager) CreateWithCause(prompt string, cause Cause) (Task, error) {
 		m.mu.Unlock()
 		return Task{}, errors.New("agent task manager is closed")
 	}
+	if !m.enqueueLocked(task.ID) {
+		m.mu.Unlock()
+		return Task{}, errQueueFull
+	}
 	task.Status = StatusQueued
 	m.tasks[task.ID] = &entry{task: task, goalRevision: 1}
+	m.observeLocked(m.tasks[task.ID], "created", cause)
+	m.observeLocked(m.tasks[task.ID], "queued", cause)
+	m.mu.Unlock()
+	return task, nil
+}
+
+var errQueueFull = errors.New("agent task queue is full")
+
+// enqueueLocked appends taskID to the work order, or reports false when the
+// queue is full.
+func (m *Manager) enqueueLocked(taskID string) bool {
+	if len(m.pending) >= m.queueSize {
+		return false
+	}
+	m.pending = append(m.pending, taskID)
 	select {
-	case m.queue <- task.ID:
-		m.observeLocked(m.tasks[task.ID], "created", cause)
-		m.observeLocked(m.tasks[task.ID], "queued", cause)
-		m.mu.Unlock()
-		return task, nil
+	case m.pendingChanged <- struct{}{}:
 	default:
-		delete(m.tasks, task.ID)
-		m.mu.Unlock()
-		return Task{}, errors.New("agent task queue is full")
+	}
+	return true
+}
+
+func (m *Manager) dequeueLocked(taskID string) {
+	m.pending = slices.DeleteFunc(m.pending, func(id string) bool { return id == taskID })
+}
+
+// Active returns unfinished tasks in execution order: work already started
+// first, oldest start first, then waiting work in the order the worker will
+// start it.
+func (m *Manager) Active() []Task {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	waiting := make(map[string]bool, len(m.pending))
+	for _, id := range m.pending {
+		waiting[id] = true
+	}
+	var started []Task
+	for id, item := range m.tasks {
+		if !waiting[id] && !item.task.Status.terminal() {
+			started = append(started, item.task)
+		}
+	}
+	slices.SortFunc(started, func(a, b Task) int {
+		if order := taskStartTime(a).Compare(taskStartTime(b)); order != 0 {
+			return order
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	result := started
+	for _, id := range m.pending {
+		if item, ok := m.tasks[id]; ok && !item.task.Status.terminal() {
+			result = append(result, item.task)
+		}
+	}
+	return result
+}
+
+func taskStartTime(task Task) time.Time {
+	if task.StartedAt != nil {
+		return *task.StartedAt
+	}
+	return task.CreatedAt
+}
+
+// Reorder sets the order of queued tasks. taskIDs must name exactly the tasks
+// that are queued now; otherwise ErrStaleOrder is returned and nothing
+// changes. Resumed tasks waiting in the queue keep their positions.
+func (m *Manager) Reorder(taskIDs []string) error {
+	if m == nil {
+		return errors.New("agent task manager is unavailable")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var slots []int
+	queued := make(map[string]bool)
+	for index, id := range m.pending {
+		if item, ok := m.tasks[id]; ok && item.task.Status == StatusQueued {
+			slots = append(slots, index)
+			queued[id] = true
+		}
+	}
+	if len(taskIDs) != len(slots) {
+		return ErrStaleOrder
+	}
+	seen := make(map[string]bool, len(taskIDs))
+	for _, id := range taskIDs {
+		if !queued[id] || seen[id] {
+			return ErrStaleOrder
+		}
+		seen[id] = true
+	}
+	for position, index := range slots {
+		m.pending[index] = taskIDs[position]
+	}
+	return nil
+}
+
+// Timeline returns a copy of a task's recent steps.
+func (m *Manager) Timeline(taskID string) (Timeline, bool) {
+	if m == nil {
+		return Timeline{}, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	timeline, ok := m.timelines[strings.TrimSpace(taskID)]
+	if !ok {
+		return Timeline{Steps: []Step{}}, false
+	}
+	return Timeline{Steps: slices.Clone(timeline.Steps), Omitted: timeline.Omitted}, true
+}
+
+func (m *Manager) recordStep(taskID string, step Step) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recordStepLocked(taskID, step)
+}
+
+// recordStepLocked appends step, or replaces the step with the same ID.
+func (m *Manager) recordStepLocked(taskID string, step Step) {
+	if _, ok := m.tasks[taskID]; !ok {
+		return
+	}
+	if step.At.IsZero() {
+		step.At = m.now().UTC()
+	}
+	step.Title = limitText(step.Title, 120)
+	step.Detail = limitText(step.Detail, maxTimelineDetailRunes)
+	if m.timelines == nil {
+		m.timelines = make(map[string]*Timeline)
+	}
+	timeline := m.timelines[taskID]
+	if timeline == nil {
+		timeline = &Timeline{}
+		m.timelines[taskID] = timeline
+	}
+	if step.ID != "" {
+		for index := range timeline.Steps {
+			if timeline.Steps[index].ID == step.ID {
+				step.At = timeline.Steps[index].At
+				timeline.Steps[index] = step
+				return
+			}
+		}
+	}
+	timeline.Steps = append(timeline.Steps, step)
+	if extra := len(timeline.Steps) - maxTimelineSteps; extra > 0 {
+		timeline.Steps = slices.Delete(timeline.Steps, 0, extra)
+		timeline.Omitted += extra
+	}
+}
+
+func (m *Manager) recordPhaseLocked(item *entry, phase string) {
+	step := Step{Kind: "status"}
+	switch phase {
+	case "queued":
+		step.Title = "Queued"
+	case "running":
+		step.Title = "Started"
+		if item.task.StartedAt != nil && item.task.UpdatedAt.After(*item.task.StartedAt) {
+			step.Title = "Continued"
+		}
+	case "goal_updated":
+		step.Title, step.Detail = "Goal updated", item.task.Prompt
+	case "user_action_required":
+		step.Title = "Waiting for you"
+		if action := item.task.PendingUserAction; action != nil {
+			step.Detail = strings.TrimSpace(action.Reason + "\n" + action.SuggestedAction)
+		}
+	case "cancelling":
+		step.Title = "Cancelling"
+	case "terminal":
+		step.Title = map[Status]string{StatusCompleted: "Completed", StatusFailed: "Failed", StatusCancelled: "Cancelled"}[item.task.Status]
+		step.Detail = item.task.Result
+		if item.task.Error != "" {
+			step.Detail = item.task.Error
+		}
+		step.IsError = item.task.Status == StatusFailed
+		m.recordStepLocked(item.task.ID, step)
+		m.retireTimelineLocked(item.task.ID)
+		return
+	default:
+		return
+	}
+	m.recordStepLocked(item.task.ID, step)
+}
+
+// retireTimelineLocked keeps timelines only for the most recently finished
+// tasks so a long-running daemon does not accumulate them.
+func (m *Manager) retireTimelineLocked(taskID string) {
+	m.finishedTimelines = append(m.finishedTimelines, taskID)
+	for len(m.finishedTimelines) > maxFinishedTaskTimelines {
+		delete(m.timelines, m.finishedTimelines[0])
+		m.finishedTimelines = m.finishedTimelines[1:]
 	}
 }
 
@@ -474,16 +712,14 @@ func (m *Manager) UpdateWithCause(taskID, prompt string, cause Cause) (Task, err
 		m.updateGoalLocked(item, prompt)
 	case StatusRunning:
 		if item.task.PendingUserAction != nil {
-			select {
-			case m.queue <- taskID:
-				m.updateGoalLocked(item, prompt)
-				item.task.PendingUserAction = nil
-				item.actionNotified = false
-				item.nextPrompt = formatUpdatedTaskPrompt(oldPrompt, prompt)
-				item.resumeQueued = true
-			default:
-				return Task{}, errors.New("agent task queue is full")
+			if !m.enqueueLocked(taskID) {
+				return Task{}, errQueueFull
 			}
+			m.updateGoalLocked(item, prompt)
+			item.task.PendingUserAction = nil
+			item.actionNotified = false
+			item.nextPrompt = formatUpdatedTaskPrompt(oldPrompt, prompt)
+			item.resumeQueued = true
 			break
 		}
 		m.updateGoalLocked(item, prompt)
@@ -534,21 +770,19 @@ func (m *Manager) Continue(taskID, userMessage string) (Task, error) {
 		m.mu.Unlock()
 		return Task{}, errors.New("agent task is not waiting for user action")
 	}
-	select {
-	case m.queue <- taskID:
-		item.task.PendingUserAction = nil
-		item.actionNotified = false
-		item.nextPrompt = userMessage
-		item.resumeQueued = true
-		item.task.UpdatedAt = m.now().UTC()
-		m.observeLocked(item, "resumed")
-		task := item.task
+	if !m.enqueueLocked(taskID) {
 		m.mu.Unlock()
-		return task, nil
-	default:
-		m.mu.Unlock()
-		return Task{}, errors.New("agent task queue is full")
+		return Task{}, errQueueFull
 	}
+	item.task.PendingUserAction = nil
+	item.actionNotified = false
+	item.nextPrompt = userMessage
+	item.resumeQueued = true
+	item.task.UpdatedAt = m.now().UTC()
+	m.observeLocked(item, "resumed")
+	task := item.task
+	m.mu.Unlock()
+	return task, nil
 }
 
 func (m *Manager) TerminalNotifications() <-chan struct{} {
@@ -813,12 +1047,25 @@ func (m *Manager) Close() {
 func (m *Manager) worker() {
 	defer m.wg.Done()
 	for {
-		select {
-		case <-m.ctx.Done():
+		if m.ctx.Err() != nil {
 			return
-		case taskID := <-m.queue:
-			m.runTask(taskID)
 		}
+		m.mu.Lock()
+		var taskID string
+		if len(m.pending) > 0 {
+			taskID = m.pending[0]
+			m.pending = m.pending[1:]
+		}
+		m.mu.Unlock()
+		if taskID == "" {
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-m.pendingChanged:
+			}
+			continue
+		}
+		m.runTask(taskID)
 	}
 }
 
@@ -884,6 +1131,9 @@ func (m *Manager) runTask(taskID string) {
 		}, func(message SteerMessage) {
 			m.acknowledgeSteer(taskID, message)
 		})
+		runCtx = context.WithValue(runCtx, stepRecorderContextKey{}, func(step Step) {
+			m.recordStep(taskID, step)
+		})
 		result, err := m.runner.Run(runCtx, prompt)
 		cancel()
 
@@ -933,6 +1183,7 @@ func (m *Manager) runTask(taskID string) {
 }
 
 func (m *Manager) finishLocked(item *entry, status Status, result, taskError string) {
+	m.dequeueLocked(item.task.ID)
 	now := m.now().UTC()
 	item.task.Status = status
 	item.task.Result = result

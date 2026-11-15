@@ -38,6 +38,8 @@ type sharedFile struct {
 	MIMEType    string    `json:"mime_type,omitempty"`
 	DownloadURL string    `json:"download_url,omitempty"`
 	Modified    time.Time `json:"modified"`
+	// SharedBy is "user" for uploads and "aico" for files the Agent wrote.
+	SharedBy string `json:"shared_by,omitempty"`
 }
 
 func validSharedName(name string) bool {
@@ -279,6 +281,11 @@ func uploadSharedFileWithLimit(w http.ResponseWriter, r *http.Request, limit int
 		return
 	}
 	// Link publishes the completed file atomically and never replaces an existing file.
+	// Publishing and recording the name happen under one lock with deletes.
+	if sharedPublishHook != nil {
+		sharedPublishHook()
+	}
+	sharedUploadsMu.Lock()
 	published := name
 	for attempts := 0; ; attempts++ {
 		err = root.Link(temp, published)
@@ -286,19 +293,24 @@ func uploadSharedFileWithLimit(w http.ResponseWriter, r *http.Request, limit int
 			break
 		}
 		if !errors.Is(err, os.ErrExist) || attempts >= 8 {
+			sharedUploadsMu.Unlock()
 			http.Error(w, "Cannot publish upload", http.StatusInsufficientStorage)
 			return
 		}
 		published = sharedCollisionName(name)
 	}
+	recordSharedUploadLocked(root, published)
+	sharedUploadsMu.Unlock()
 	info, err := root.Stat(published)
 	if err != nil {
 		http.Error(w, "Cannot inspect upload", http.StatusInternalServerError)
 		return
 	}
+	item := sharedFileInfo(published, info)
+	item.SharedBy = sharedByUser
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, sharedFileInfo(published, info))
+	writeJSON(w, item)
 }
 
 // deleteSharedFile removes one regular file or one empty folder below the
@@ -322,7 +334,15 @@ func deleteSharedFile(w http.ResponseWriter, r *http.Request, rel string) {
 		return
 	}
 	defer root.Close()
-	if err := removeSharedEntry(root, rel); err != nil {
+	// Removing the file and forgetting its record happen under one lock with
+	// uploads, so a same-name upload in between keeps its record.
+	sharedUploadsMu.Lock()
+	err = removeSharedEntry(root, rel)
+	if err == nil {
+		forgetSharedUploadLocked(root, rel)
+	}
+	sharedUploadsMu.Unlock()
+	if err != nil {
 		switch {
 		case errors.Is(err, os.ErrNotExist):
 			http.NotFound(w, r)
@@ -339,6 +359,10 @@ func deleteSharedFile(w http.ResponseWriter, r *http.Request, rel string) {
 // sharedRemoveHook runs between validating the parent folder and removing the
 // entry; tests use it to swap folders in that window.
 var sharedRemoveHook func()
+
+// sharedPublishHook, when set by a test, runs just before an upload takes
+// the lock to publish its file.
+var sharedPublishHook func()
 
 // removeSharedEntry removes rel without following symbolic links. It opens each
 // parent folder in turn and checks that the open handle is the folder Lstat saw,
@@ -411,6 +435,9 @@ func listSharedFiles(rel string) ([]sharedFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	sharedUploadsMu.Lock()
+	uploads := readSharedUploads(root)
+	sharedUploadsMu.Unlock()
 	result := make([]sharedFile, 0, len(entries))
 	for _, entry := range entries {
 		if !validSharedName(entry.Name()) || entry.Type()&os.ModeSymlink != 0 {
@@ -420,7 +447,11 @@ func listSharedFiles(rel string) ([]sharedFile, error) {
 		if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
 			continue
 		}
-		result = append(result, sharedFileInfo(path.Join(rel, entry.Name()), info))
+		item := sharedFileInfo(path.Join(rel, entry.Name()), info)
+		if item.Kind == "file" {
+			item.SharedBy = sharedFileSource(uploads, path.Join(rel, entry.Name()))
+		}
+		result = append(result, item)
 	}
 	return result, nil
 }

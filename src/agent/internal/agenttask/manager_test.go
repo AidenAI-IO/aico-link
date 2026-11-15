@@ -850,3 +850,112 @@ func waitForTerminalTasks(t *testing.T, manager *Manager) []Task {
 		return nil
 	}
 }
+
+func TestManagerReordersQueuedWorkAndRejectsStaleOrders(t *testing.T) {
+	runner := &fakeRunner{started: make(chan string, 4), release: make(chan struct{})}
+	manager := newManager(runner, 4, time.Now)
+	defer manager.Close()
+
+	running, err := manager.Create("running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := <-runner.started; got != "running" {
+		t.Fatalf("first run = %q", got)
+	}
+	var queued []Task
+	for _, prompt := range []string{"a", "b", "c"} {
+		task, err := manager.Create(prompt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		queued = append(queued, task)
+	}
+	for name, order := range map[string][]string{
+		"missing task":   {queued[2].ID, queued[0].ID},
+		"duplicate task": {queued[2].ID, queued[2].ID, queued[0].ID},
+		"running task":   {running.ID, queued[1].ID, queued[0].ID},
+	} {
+		if err := manager.Reorder(order); !errors.Is(err, ErrStaleOrder) {
+			t.Fatalf("%s: Reorder() error = %v, want ErrStaleOrder", name, err)
+		}
+	}
+	if err := manager.Reorder([]string{queued[2].ID, queued[0].ID, queued[1].ID}); err != nil {
+		t.Fatal(err)
+	}
+	var active []string
+	for _, task := range manager.Active() {
+		active = append(active, task.Prompt)
+	}
+	if strings.Join(active, ",") != "running,c,a,b" {
+		t.Fatalf("Active() order = %v", active)
+	}
+
+	close(runner.release)
+	var ran []string
+	for range queued {
+		select {
+		case prompt := <-runner.started:
+			ran = append(ran, prompt)
+		case <-time.After(time.Second):
+			t.Fatalf("queued work stalled after %v", ran)
+		}
+	}
+	if strings.Join(ran, ",") != "c,a,b" {
+		t.Fatalf("run order = %v, want reordered c,a,b", ran)
+	}
+}
+
+type steppingRunner struct{}
+
+func (steppingRunner) Run(ctx context.Context, _ string) (string, error) {
+	record := StepRecorderFromContext(ctx)
+	for i := 0; i < maxTimelineSteps; i++ {
+		record(Step{Kind: "message", Title: "Agent"})
+	}
+	return "finished", nil
+}
+
+func TestManagerTimelineIsBoundedAndKeyedByCall(t *testing.T) {
+	manager := newManager(steppingRunner{}, 4, time.Now)
+	defer manager.Close()
+	task, err := manager.Create("goal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, manager, task.ID, StatusCompleted)
+	timeline, ok := manager.Timeline(task.ID)
+	if !ok || len(timeline.Steps) != maxTimelineSteps || timeline.Omitted == 0 {
+		t.Fatalf("timeline = %d steps, %d omitted", len(timeline.Steps), timeline.Omitted)
+	}
+	if last := timeline.Steps[len(timeline.Steps)-1]; last.Title != "Completed" || last.Detail != "finished" {
+		t.Fatalf("last step = %+v", last)
+	}
+
+	// A fresh run shows the tool call replaced by its result, with a bounded detail.
+	short := newManager(runnerFunc(func(ctx context.Context) {
+		record := StepRecorderFromContext(ctx)
+		record(Step{ID: "call-1", Kind: "tool", Title: "screenshot", Status: "running"})
+		record(Step{ID: "call-1", Kind: "tool", Title: "screenshot", Status: "done", Detail: strings.Repeat("x", maxTimelineDetailRunes+50)})
+	}), 4, time.Now)
+	defer short.Close()
+	task, _ = short.Create("goal")
+	waitForStatus(t, short, task.ID, StatusCompleted)
+	timeline, _ = short.Timeline(task.ID)
+	var tools []Step
+	for _, step := range timeline.Steps {
+		if step.Kind == "tool" {
+			tools = append(tools, step)
+		}
+	}
+	if len(tools) != 1 || tools[0].Status != "done" || len([]rune(tools[0].Detail)) > maxTimelineDetailRunes+1 {
+		t.Fatalf("tool steps = %+v", tools)
+	}
+}
+
+type runnerFunc func(context.Context)
+
+func (f runnerFunc) Run(ctx context.Context, _ string) (string, error) {
+	f(ctx)
+	return "", nil
+}

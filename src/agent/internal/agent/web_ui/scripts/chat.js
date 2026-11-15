@@ -85,15 +85,10 @@ async function sendMessage(options) {
             return;
         }
         console.error('Failed to send message:', err);
+        showErrorToast('Message failed', err);
         try {
             await loadHistory();
         } catch (_) {}
-
-        addMessage({
-            type: 'assistant',
-            content: 'Error: ' + err.message,
-            timestamp: new Date().toISOString()
-        });
     } finally {
         if (!completed) assistantTextReveal.flush();
         // SSE terminal events leave this request's draft to its stream. Once
@@ -122,7 +117,7 @@ async function submitSteerMessage() {
     const message = inputEl.value.trim();
     if (!message) return;
     if (draftAttachments.length > 0) {
-        alert('Attachments can be sent after the current run finishes.');
+        showToast('Attachments can be sent after the current run finishes.', {kind: 'info'});
         return;
     }
 
@@ -165,11 +160,7 @@ async function submitSteerMessage() {
         }
         pendingSteer = null;
         renderPendingSteer();
-        addMessage({
-            type: 'assistant',
-            content: 'Error: ' + err.message,
-            timestamp: new Date().toISOString()
-        });
+        showErrorToast('Steer failed', err);
     } finally {
         pendingSteerSubmitting = false;
         setComposerState(!!currentChatRequestId);
@@ -286,6 +277,7 @@ async function cancelCurrentRun(event) {
         keepalive: true
     }).catch(function(err) {
         console.error('Failed to cancel chat request:', err);
+        showErrorToast('Stop failed', err);
     }).finally(function() {
         if (externalActiveRequestId === requestId) externalActiveRequestId = '';
         setComposerState(!!activeChatRequestId());
@@ -310,6 +302,7 @@ async function cancelPendingSteer() {
         }
     } catch (err) {
         console.error('Failed to cancel steer:', err);
+        showErrorToast('Cancel failed', err);
         if (currentChatRequestId === requestId) {
             pendingSteer = previous;
             renderPendingSteer();
@@ -591,6 +584,7 @@ async function clearSession() {
         renderHistory([]);
     } catch (err) {
         console.error('Failed to clear the session:', err);
+        showErrorToast('Clear failed', err);
     }
 }
 
@@ -608,6 +602,7 @@ async function clearSessionAndMemory() {
         renderHistory([]);
     } catch (err) {
         console.error('Failed to clear the session and memory:', err);
+        showErrorToast('Clear failed', err);
     }
 }
 

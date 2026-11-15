@@ -8,33 +8,34 @@
 </head>
 <body>
     <div class="app-shell">
+        <header class="topbar">
+            <div class="topbar-title">
+                <span class="brand-dot" aria-hidden="true"></span>
+                <div>
+                    <h1>Aico</h1>
+                    <span class="topbar-subtitle">AICO LINK · WORKSPACE</span>
+                </div>
+            </div>
+            <div class="topbar-actions">
+                <nav class="workspace-links" aria-label="Workspace tools">
+                    <a href="https://aico.link" target="_blank" rel="noopener noreferrer" class="new-chat-btn">aico.link</a>
+                    <a href="/coordinate-debug" class="new-chat-btn">Coordinate Debug</a>
+                    <a href="/user_files" class="new-chat-btn">User Files</a>
+                    <a href="/web-ui/context.html" target="_blank" rel="noopener" class="new-chat-btn">Context</a>
+                </nav>
+                <div class="session-actions">
+                    <details class="clear-menu" id="clearMenu">
+                        <summary class="new-chat-btn" aria-label="Open clear menu">Clear <span aria-hidden="true">▾</span></summary>
+                        <div class="clear-menu-items" role="menu">
+                            <button type="button" role="menuitem" onclick="clearSession()">Clear Session</button>
+                            <button type="button" role="menuitem" class="danger-btn" onclick="clearSessionAndMemory()">Clear Session &amp; Memory</button>
+                        </div>
+                    </details>
+                </div>
+            </div>
+        </header>
+
         <main class="main-panel">
-            <header class="topbar">
-                <div class="topbar-title">
-                    <span class="brand-dot" aria-hidden="true"></span>
-                    <div>
-                        <h1>Aico</h1>
-                        <span class="topbar-subtitle">AICO LINK · WORKSPACE</span>
-                    </div>
-                </div>
-                <div class="topbar-actions">
-                    <nav class="workspace-links" aria-label="Workspace tools">
-                        <a href="https://aico.link" target="_blank" rel="noopener noreferrer" class="new-chat-btn">aico.link</a>
-                        <a href="/coordinate-debug" class="new-chat-btn">Coordinate Debug</a>
-                        <a href="/user_files" class="new-chat-btn">User Files</a>
-                        <a href="/web-ui/context.html" target="_blank" rel="noopener" class="new-chat-btn">Context</a>
-                    </nav>
-                    <div class="session-actions">
-                        <details class="clear-menu" id="clearMenu">
-                            <summary class="new-chat-btn" aria-label="Open clear menu">Clear <span aria-hidden="true">▾</span></summary>
-                            <div class="clear-menu-items" role="menu">
-                                <button type="button" role="menuitem" onclick="clearSession()">Clear Session</button>
-                                <button type="button" role="menuitem" class="danger-btn" onclick="clearSessionAndMemory()">Clear Session &amp; Memory</button>
-                            </div>
-                        </details>
-                    </div>
-                </div>
-            </header>
 
             <div class="workspace-content">
               <section class="conversation" id="conversation">
@@ -113,90 +114,89 @@
             </div>
         </main>
 
-        <aside class="inspector">
-            <div class="inspector-header">
-                <span class="sidebar-kicker">Inspector</span>
-                <span class="inspector-hint">TOOLS · HARDWARE</span>
-            </div>
-            <section class="sidebar-card resource-panel" aria-labelledby="resourceTitle">
-                <div class="resource-panel-head">
-                    <span class="sidebar-kicker" id="resourceTitle">Hardware resources</span>
-                    <span class="resource-status" id="resourceStatus">Loading…</span>
-                </div>
-                <div class="resource-network">
-                    <div class="resource-reading"><span>Wi-Fi</span><span id="resourceWiFi">Unavailable</span></div>
-                    <div class="resource-rate-grid">
-                        <div><span class="resource-caption">↓ RX</span><span id="resourceRX">Unavailable</span></div>
-                        <div><span class="resource-caption">↑ TX</span><span id="resourceTX">Unavailable</span></div>
-                    </div>
-                </div>
-                <div class="resource-gauge">
-                    <div class="resource-reading"><span>Battery</span><span><span id="resourceBattery">Unavailable</span><span class="resource-caption" id="resourceVoltage"></span></span></div>
-                    <meter id="resourceBatteryMeter" min="0" max="100" value="0" aria-label="Battery level" hidden></meter>
-                </div>
-                <div class="resource-gauge-grid">
-                    <div class="resource-gauge">
-                        <div class="resource-reading"><span>CPU</span><span id="resourceCPU">Unavailable</span></div>
-                        <meter id="resourceCPUMeter" min="0" max="100" value="0" aria-label="CPU utilization" hidden></meter>
-                    </div>
-                    <div class="resource-gauge">
-                        <div class="resource-reading"><span>NPU</span><span id="resourceNPU">Unavailable</span></div>
-                        <meter id="resourceNPUMeter" min="0" max="100" value="0" aria-label="NPU utilization" hidden></meter>
-                    </div>
-                </div>
-                <div class="resource-gauge">
-                    <div class="resource-reading"><span>Memory</span><span id="resourceMemory">Unavailable</span></div>
-                    <meter id="resourceMemoryMeter" min="0" max="100" value="0" aria-label="Memory usage" hidden></meter>
-                </div>
-                <div class="resource-gauge">
-                    <div class="resource-reading"><span title="Contiguous memory reserved for camera, NPU and other DMA buffers">CMA</span><span id="resourceCMA">Unavailable</span></div>
-                    <meter id="resourceCMAMeter" min="0" max="100" value="0" aria-label="CMA usage" hidden></meter>
-                </div>
-                <div class="resource-storage">
-                    <div class="resource-caption">Storage</div>
-                    <div id="resourceDisks">Unavailable</div>
-                </div>
-                <details class="resource-details">
-                    <summary>Details</summary>
-                    <dl>
-                        <dt>Network addresses</dt><dd id="resourceAddresses">Unavailable</dd>
-                        <dt>Traffic totals · RX / TX</dt><dd id="resourceTotals">Unavailable</dd>
-                        <dt>Memory · used / total</dt><dd id="resourceMemoryDetail">Unavailable</dd>
-                        <dt>CMA · allocated / reserved</dt><dd id="resourceCMADetail">Unavailable</dd>
-                        <dt>Storage · used / total</dt><dd id="resourceDiskDetails">Unavailable</dd>
-                    </dl>
-                </details>
+        <aside class="inspector" id="inspector" aria-label="Device inspector">
+            <section class="inspector-section device-card" aria-label="Connected device">
+                <figure class="device-screen" id="deviceScreen" data-state="empty">
+                    <img id="deviceScreenImage" alt="Latest screen of the connected device" hidden>
+                    <figcaption class="device-overlay">
+                        <div class="device-info">
+                            <h2 class="device-name" id="deviceName"></h2>
+                            <div class="device-subtitle" id="deviceSubtitle"></div>
+                            <dl class="device-facts" id="deviceFacts"></dl>
+                        </div>
+                        <span class="device-screen-caption" id="deviceScreenCaption">No screen</span>
+                    </figcaption>
+                </figure>
             </section>
-            <a class="terminal-open-link" id="terminalOpenLink" href="/webtty/" target="_blank" rel="noopener noreferrer">Open terminal ↗</a>
-            <div class="sidebar-card tool-lab">
-                <div class="sidebar-kicker">Tool Lab</div>
-                <strong>Manual tool test</strong>
-                <label class="tool-lab-label" for="toolSelect">Tool</label>
-                <select id="toolSelect" class="tool-lab-select">
-                    <option value="">Loading tools...</option>
-                </select>
-                <div class="sidebar-note" id="toolDescription"></div>
-                <textarea
-                    id="toolInput"
-                    class="tool-lab-input"
-                    rows="7"
-                    spellcheck="false"
-                    placeholder='{"command":"pwd"}'
-                ></textarea>
-                <div class="tool-lab-row">
-                    <button type="button" class="composer-btn tool-secondary-btn" id="toolExampleBtn" onclick="loadSelectedToolExample()">Use example</button>
-                    <button type="button" class="send-btn tool-run-btn" id="toolInvokeBtn" onclick="invokeSelectedTool()">Run tool</button>
-                </div>
-                <div class="tool-lab-status" id="toolStatus"></div>
-                <div class="tool-lab-result hidden" id="toolResultPanel">
-                    <div class="tool-lab-result-meta" id="toolResultMeta"></div>
-                    <div class="tool-lab-preview hidden" id="toolResultPreviewWrap">
-                        <img id="toolResultPreview" alt="Tool output preview" />
+
+            <details class="inspector-section resource-panel" id="resourcePanel">
+                <summary class="resource-panel-head">
+                    <span class="inspector-section-title">Hardware resources</span>
+                    <span class="resource-summary" id="resourceSummary"></span>
+                </summary>
+                <div class="resource-panel-body">
+                    <div class="resource-status" id="resourceStatus"></div>
+                    <div class="resource-network">
+                        <div class="resource-reading"><span>Wi-Fi</span><span id="resourceWiFi">Unavailable</span></div>
+                        <div class="resource-rate-grid">
+                            <div><span class="resource-caption">↓ RX</span><span id="resourceRX">Unavailable</span></div>
+                            <div><span class="resource-caption">↑ TX</span><span id="resourceTX">Unavailable</span></div>
+                        </div>
                     </div>
-                    <pre class="tool-block" id="toolResultOutput"></pre>
+                    <div class="resource-gauge">
+                        <div class="resource-reading"><span>Battery</span><span><span id="resourceBattery">Unavailable</span><span class="resource-caption" id="resourceVoltage"></span></span></div>
+                        <meter id="resourceBatteryMeter" min="0" max="100" value="0" aria-label="Battery level" hidden></meter>
+                    </div>
+                    <div class="resource-gauge-grid">
+                        <div class="resource-gauge">
+                            <div class="resource-reading"><span>CPU</span><span id="resourceCPU">Unavailable</span></div>
+                            <meter id="resourceCPUMeter" min="0" max="100" value="0" aria-label="CPU utilization" hidden></meter>
+                        </div>
+                        <div class="resource-gauge">
+                            <div class="resource-reading"><span>NPU</span><span id="resourceNPU">Unavailable</span></div>
+                            <meter id="resourceNPUMeter" min="0" max="100" value="0" aria-label="NPU utilization" hidden></meter>
+                        </div>
+                    </div>
+                    <div class="resource-gauge">
+                        <div class="resource-reading"><span>Memory</span><span id="resourceMemory">Unavailable</span></div>
+                        <meter id="resourceMemoryMeter" min="0" max="100" value="0" aria-label="Memory usage" hidden></meter>
+                    </div>
+                    <div class="resource-gauge">
+                        <div class="resource-reading"><span title="Contiguous memory reserved for camera, NPU and other DMA buffers">CMA</span><span id="resourceCMA">Unavailable</span></div>
+                        <meter id="resourceCMAMeter" min="0" max="100" value="0" aria-label="CMA usage" hidden></meter>
+                    </div>
+                    <div class="resource-storage">
+                        <div class="resource-caption">Storage</div>
+                        <div id="resourceDisks">Unavailable</div>
+                    </div>
+                    <details class="resource-details">
+                        <summary>Details</summary>
+                        <dl>
+                            <dt>Network addresses</dt><dd id="resourceAddresses">Unavailable</dd>
+                            <dt>Traffic totals · RX / TX</dt><dd id="resourceTotals">Unavailable</dd>
+                            <dt>Memory · used / total</dt><dd id="resourceMemoryDetail">Unavailable</dd>
+                            <dt>CMA · allocated / reserved</dt><dd id="resourceCMADetail">Unavailable</dd>
+                            <dt>Storage · used / total</dt><dd id="resourceDiskDetails">Unavailable</dd>
+                        </dl>
+                    </details>
+                    <a class="terminal-open-link" id="terminalOpenLink" href="/webtty/" target="_blank" rel="noopener noreferrer">Open terminal ↗</a>
                 </div>
-            </div>
+            </details>
+
+            <section class="inspector-section" aria-labelledby="tasksTitle">
+                <h2 class="inspector-section-title" id="tasksTitle">Background tasks <span class="inspector-summary" id="inspectorSummary"></span></h2>
+                <ol class="inspector-list task-list" id="taskList" aria-describedby="taskHint"></ol>
+                <p class="inspector-empty" id="taskEmpty">No background tasks.</p>
+                <p class="inspector-hint" id="taskHint" hidden>Drag queued tasks to change their order.</p>
+            </section>
+
+            <section class="inspector-section" aria-labelledby="filesTitle">
+                <h2 class="inspector-section-title" id="filesTitle">Shared files</h2>
+                <ul class="inspector-list file-list" id="fileList"></ul>
+                <p class="inspector-empty" id="fileEmpty">No shared files.</p>
+            </section>
         </aside>
+
     </div>
 
     <div class="state-modal hidden" id="stateModal" role="dialog" aria-modal="true" aria-labelledby="stateModalTitle">
@@ -212,18 +212,48 @@
         </section>
     </div>
 
+    <div class="state-modal hidden" id="fileModal" role="dialog" aria-modal="true" aria-labelledby="fileModalTitle">
+        <section class="state-modal-card file-modal-card">
+            <div class="state-detail-header">
+                <div class="file-modal-heading">
+                    <div class="message-role" id="fileModalMeta">File</div>
+                    <strong id="fileModalTitle">File</strong>
+                </div>
+                <div class="file-modal-actions">
+                    <a class="file-download-btn" id="fileModalDownload" href="#" download>Download</a>
+                    <button type="button" class="state-detail-close" id="fileModalClose" aria-label="Close file preview">×</button>
+                </div>
+            </div>
+            <div class="file-modal-body" id="fileModalBody"></div>
+        </section>
+    </div>
+
+    <div class="state-modal hidden" id="taskModal" role="dialog" aria-modal="true" aria-labelledby="taskModalTitle">
+        <section class="state-modal-card task-modal-card">
+            <div class="state-detail-header">
+                <div>
+                    <div class="message-role" id="taskModalStatus">Task</div>
+                    <strong id="taskModalTitle">Task</strong>
+                </div>
+                <button type="button" class="state-detail-close" id="taskModalClose" aria-label="Close task details">×</button>
+            </div>
+            <div class="state-detail-body task-modal-body" id="taskModalBody"></div>
+        </section>
+    </div>
+
     <!-- These classic scripts share page state. Load projection first and bootstrap last. -->
+    <script defer src="/web-ui/scripts/toast.js"></script>
     <script defer src="/web-ui/scripts/conversation_projection.js"></script>
     <script defer src="/web-ui/scripts/state.js"></script>
     <script defer src="/web-ui/scripts/streaming_text.js"></script>
     <script defer src="/web-ui/scripts/events.js"></script>
-    <script defer src="/web-ui/scripts/tools.js"></script>
     <script defer src="/web-ui/scripts/chat.js"></script>
     <script defer src="/web-ui/scripts/markdown.js"></script>
     <script defer src="/web-ui/scripts/messages.js"></script>
     <script defer src="/web-ui/scripts/attachments.js"></script>
     <script defer src="/web-ui/scripts/tool_messages.js"></script>
     <script defer src="/web-ui/scripts/resources.js"></script>
+    <script defer src="/web-ui/scripts/inspector.js"></script>
     <script defer src="/web-ui/scripts/voice.js"></script>
     <script defer src="/web-ui/scripts/bootstrap.js"></script>
 </body>

@@ -263,3 +263,28 @@ func TestStateHookTurnDecisionDoesNotWaitForBlockedMemorySearch(t *testing.T) {
 		t.Fatalf("screenshot attached = %d, want 1", len(state.Attachments))
 	}
 }
+
+// A decision that finished before the turn asks for it is kept. The worker
+// cancels its context after sending the result, so a wait that did not prefer
+// the result dropped about half of these.
+func TestStartTurnDecisionKeepsResultFinishedBeforeWait(t *testing.T) {
+	body := `{"answers":{"screen":{"type":"noul","noul":0.95},"recall_memory_0":{"type":"noul","noul":0.9}}}`
+	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+	if _, err := store.AddMemory(context.Background(), MemoryItem{ID: "mem_1700000000000000000_test", Type: "fact", Priority: 90, Confidence: 1,
+		Title: "Daughter", Content: "Daughter note", EvidenceExcerpts: []string{"Daughter"}}); err != nil {
+		t.Fatal(err)
+	}
+	server := newDecisionServer(t, body)
+	runtime, _ := turnDecisionHookRuntime(t, true, server.URL, NewMemoryManager(t.TempDir(), WithLongTermMemoryStore(store)))
+	workerDone := make(chan struct{}, 1)
+	// Scoped to this runtime, so workers left by other tests never signal it.
+	runtime.turnDecisionWorkerDone = func() { workerDone <- struct{}{} }
+	for i := 0; i < 20; i++ {
+		turn := runtime.startTurnDecision("what is my daughter's name")
+		<-server.requested // drain the server's bounded notice channel
+		<-workerDone       // the result is buffered and the context is cancelled
+		if got := turn().Recalled; len(got) != 1 {
+			t.Fatalf("attempt %d: recalled %d memories, want the finished decision's 1", i, len(got))
+		}
+	}
+}

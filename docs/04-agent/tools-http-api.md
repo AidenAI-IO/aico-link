@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Tools HTTP API
 
-In every input mode, the Agent exposes Agent-owned tools that can be safely invoked via HTTP for the browser Tool Lab, external agents, or manual calls. Internal maintenance tools (such as `skill_manage`) are not exposed via HTTP.
+In every input mode, the Agent exposes Agent-owned tools that can be safely invoked via HTTP for external agents or manual calls. Internal maintenance tools (such as `skill_manage`) are not exposed via HTTP.
 
 For MCP Streamable HTTP on the same Agent (`POST /mcp`), see [mcp.md](./mcp.md).
 
@@ -82,7 +82,7 @@ Tool execution failures are also returned in JSON format. Check:
 
 ## Catalog Scope
 
-The HTTP catalog is generated from registered Agent-owned tools at runtime. It can include diagnostic, browser Tool Lab, and external-agent tools that are intentionally absent from the default conversational Agent prompt.
+The HTTP catalog is generated from registered Agent-owned tools at runtime. It can include diagnostic and external-agent tools that are intentionally absent from the default conversational Agent prompt.
 
 `current_time` and `calculator` are not registered and therefore do not appear in either the conversational or HTTP tool catalogs. Use `shell` for controller-local precise time, timezone, and deterministic calculations.
 
@@ -90,7 +90,7 @@ The HTTP catalog is generated from registered Agent-owned tools at runtime. It c
 
 The conversational Agent tool catalog is filtered by the global `[basic_settings.device].device_type` state. Valid configured device type values are `iOS`, `Android`, `macOS`, `windows`, and `linux`; the runtime derives lowercase platform identifiers (`ios`, `android`, `macos`, `windows`, `linux`) from those values for tool-catalog filtering. Tools with no platform metadata are treated as portable.
 
-Platform-specific tools should stay registered and HTTP-visible for Tool Lab and manual diagnostics unless they are unsafe or impossible to invoke directly. The platform split applies to the model-facing catalog so the model is not taught tools that cannot run for the current device.
+Platform-specific tools should stay registered and HTTP-visible for manual diagnostics unless they are unsafe or impossible to invoke directly. The platform split applies to the model-facing catalog so the model is not taught tools that cannot run for the current device.
 
 When adding or changing a tool, use this rule:
 
