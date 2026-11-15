@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"aico-agent/internal/agent/contextmanager"
@@ -269,10 +270,18 @@ func modelConversationIdentity(model ModelConfig) string {
 }
 
 // userConversationIdentity fingerprints the settings whose change must start a
-// new realtime user context: the backend model and the whole voice model
-// configuration, matching the live rotation in applyConfig. Only a hash is
-// stored, so credentials in the voice model configuration never reach disk.
+// new realtime user context, matching the live rotation in applyConfig. Only
+// the backend model counts. The voice model does not: the user context stores
+// plain messages and tool calls and is replayed as provider-neutral items, so
+// switching voice provider keeps the conversation.
 func userConversationIdentity(cfg Config) string {
+	return conversationIdentity(modelConversationIdentity(cfg.Model), "user")
+}
+
+// legacyUserConversationIdentity is the identity recorded before the voice
+// model stopped counting. A folder still carrying it for the current settings
+// runs the same conversation, so it must not start a new one on upgrade.
+func legacyUserConversationIdentity(cfg Config) string {
 	voiceModel, err := json.Marshal(cfg.VoiceModel)
 	if err != nil {
 		voiceModel = []byte(fmt.Sprintf("%#v", cfg.VoiceModel))
@@ -287,13 +296,18 @@ func conversationIdentity(parts ...string) string {
 
 // startConversationForIdentity starts a new conversation in sessionFolder when
 // its current conversation was recorded under a different identity, then
-// records identity. A folder without a record keeps its conversation.
-func startConversationForIdentity(sessionFolder, identity, systemPrompt string) error {
+// records identity. A folder without a record keeps its conversation, and so
+// does one recorded under any of the equivalent identities.
+func startConversationForIdentity(sessionFolder, identity, systemPrompt string, equivalent ...string) error {
 	stored, err := os.ReadFile(filepath.Join(sessionFolder, conversationIdentityFile))
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read conversation identity: %w", err)
 	}
-	if recorded := strings.TrimSpace(string(stored)); recorded != "" && recorded != identity && contextmanager.CurrentSessionID(sessionFolder) != "" {
+	recorded := strings.TrimSpace(string(stored))
+	if slices.Contains(equivalent, recorded) {
+		recorded = identity
+	}
+	if recorded != "" && recorded != identity && contextmanager.CurrentSessionID(sessionFolder) != "" {
 		if _, err := contextmanager.NewContextManager(sessionFolder, systemPrompt); err != nil {
 			return fmt.Errorf("start conversation for changed model: %w", err)
 		}
