@@ -596,8 +596,10 @@ func canonicalProxyAddr(u *url.URL) string {
 	if host == "" {
 		return ""
 	}
-	if ascii, err := idna.Lookup.ToASCII(host); err == nil {
-		host = ascii
+	if !isASCII(host) {
+		if ascii, err := idna.Lookup.ToASCII(host); err == nil {
+			host = ascii
+		}
 	}
 	port := u.Port()
 	if port == "" {
@@ -613,6 +615,15 @@ func canonicalProxyAddr(u *url.URL) string {
 		}
 	}
 	return net.JoinHostPort(host, port)
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 func dialAllowedScrapeAddress(ctx context.Context, dialContext func(context.Context, string, string) (net.Conn, error), network, address string) (net.Conn, error) {

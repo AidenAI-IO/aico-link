@@ -260,6 +260,7 @@ func TestWebScraperDialsLoopbackProxyForPublicTarget(t *testing.T) {
 func TestCanonicalProxyAddrMatchesNetHTTPDialAddress(t *testing.T) {
 	for raw, want := range map[string]string{
 		"http://bücher.example:7890": "xn--bcher-kva.example:7890",
+		"http://PROXY.example:7890":  "PROXY.example:7890",
 		"http://192.168.1.2":         "192.168.1.2:80",
 		"socks5h://[::1]":            "[::1]:1080",
 	} {
