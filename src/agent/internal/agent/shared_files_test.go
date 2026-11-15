@@ -564,3 +564,37 @@ func sharedFileSourceByName(files []sharedFile, name string) string {
 	}
 	return ""
 }
+
+// A same-name upload that arrives while a delete is removing the file keeps
+// its "shared by user" record once both finish.
+func TestSharedFilesDeleteKeepsRecordOfSameNameUpload(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AICO_SHARE_DIR", dir)
+	handler := (&Server{}).sharedFilesHandler()
+	if response := postSharedFile(t, handler, "report.txt", "old"); response.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", response.Code, response.Body)
+	}
+	uploaded := make(chan *httptest.ResponseRecorder)
+	sharedRemoveHook = func() {
+		sharedRemoveHook = nil
+		// The delete holds the lock here, so this upload waits for it.
+		go func() { uploaded <- postSharedFile(t, handler, "report.txt", "new") }()
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Cleanup(func() { sharedRemoveHook = nil })
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodDelete, "/api/files?path=report.txt", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d", response.Code)
+	}
+	if upload := <-uploaded; upload.Code != http.StatusCreated {
+		t.Fatalf("second upload: %d %s", upload.Code, upload.Body)
+	}
+	listing, err := listSharedFiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sharedFileSourceByName(listing, "report.txt"); got != sharedByUser {
+		t.Fatalf("re-uploaded report.txt shared_by = %q, want user", got)
+	}
+}

@@ -12,6 +12,22 @@ let inspectorScreenInFlight = false;
 let inspectorScreenUrl = '';
 let activeTaskModalId = '';
 
+// Lists are rebuilt on every poll. A rebuilt list would drop keyboard focus,
+// so remember which row and which control had it and focus the new copy.
+function rememberListFocus(list) {
+    const active = document.activeElement;
+    const row = active && list.contains(active) ? active.closest('[data-key]') : null;
+    if (!row) return null;
+    return {key: row.dataset.key, control: active.classList.contains('inspector-row-remove') ? 'remove' : 'main'};
+}
+
+function restoreListFocus(list, focus) {
+    if (!focus) return;
+    const row = Array.from(list.querySelectorAll('[data-key]')).find(node => node.dataset.key === focus.key);
+    const target = row && row.querySelector(focus.control === 'remove' ? '.inspector-row-remove' : '.inspector-row-main');
+    if (target && !target.disabled) target.focus({preventScroll: true});
+}
+
 function inspectorElement(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -136,11 +152,13 @@ function queuedTaskIds() {
 function renderAgentTasks() {
     const list = document.getElementById('taskList');
     const empty = document.getElementById('taskEmpty');
+    const focus = rememberListFocus(list);
     list.replaceChildren();
     const queued = queuedTaskIds();
     for (const task of inspectorTasks) {
         const item = inspectorElement('li', 'inspector-row task-row');
         item.dataset.taskId = task.id;
+        item.dataset.key = task.id;
         item.dataset.status = task.pending_user_action ? 'action' : task.status;
         const open = inspectorElement('button', 'inspector-row-main', '');
         open.type = 'button';
@@ -168,6 +186,7 @@ function renderAgentTasks() {
     empty.hidden = inspectorTasks.length > 0;
     empty.textContent = inspectorTasksEnabled ? 'No background tasks.' : 'Background tasks run in Realtime mode.';
     document.getElementById('taskHint').hidden = queued.length < 2;
+    restoreListFocus(list, focus);
     renderInspectorSummary();
 }
 
@@ -372,10 +391,12 @@ function formatFileSize(bytes) {
 
 function renderSharedFiles(files) {
     const list = document.getElementById('fileList');
+    const focus = rememberListFocus(list);
     list.replaceChildren();
     const entries = files.slice().sort((a, b) => String(b.modified).localeCompare(String(a.modified)));
     for (const file of entries) {
         const item = inspectorElement('li', 'inspector-row file-row');
+        item.dataset.key = file.path;
         const directory = file.kind === 'directory';
         const link = inspectorElement(directory ? 'a' : 'button', 'inspector-row-main');
         if (directory) {
@@ -403,6 +424,7 @@ function renderSharedFiles(files) {
         list.append(item);
     }
     document.getElementById('fileEmpty').hidden = entries.length > 0;
+    restoreListFocus(list, focus);
 }
 
 async function refreshSharedFiles() {
@@ -468,7 +490,7 @@ async function renderFilePreview(file, signal) {
         setFilePreviewMessage('No preview for this file type. Download it to open it.');
         return;
     }
-    if (file.size > (kind === 'text' ? previewTextMaxBytes : previewMaxBytes) && kind !== 'video' && kind !== 'audio') {
+    if (file.size > (kind === 'text' ? previewTextMaxBytes : previewMaxBytes)) {
         setFilePreviewMessage('This file is too large to preview. Download it to open it.');
         return;
     }
@@ -542,6 +564,32 @@ async function deleteSharedFile(file) {
     refreshSharedFiles();
 }
 
+// Keeps Tab and Shift+Tab inside the open task or file dialog, as the
+// aria-modal dialogs promise.
+function trapDialogFocus(event) {
+    const dialog = [taskModalEl(), fileModalEl()].find(el => !el.classList.contains('hidden'));
+    if (!dialog) return;
+    const focusable = Array.from(dialog.querySelectorAll(
+        'button:not([disabled]), a[href], audio[controls], video[controls], iframe, [tabindex]:not([tabindex="-1"])'))
+        .filter(node => node.offsetParent !== null || node === document.activeElement);
+    if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!dialog.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+}
+
 // ---- Startup -------------------------------------------------------------
 
 function startInspector() {
@@ -555,6 +603,7 @@ function startInspector() {
         if (event.target === fileModalEl()) closeFileModal();
     });
     document.addEventListener('keydown', event => {
+        if (event.key === 'Tab') trapDialogFocus(event);
         if (event.key !== 'Escape') return;
         closeTaskModal();
         closeFileModal();

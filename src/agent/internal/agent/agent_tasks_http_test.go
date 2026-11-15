@@ -74,6 +74,11 @@ func TestTaskTimelineStepHidesPrivateToolOutput(t *testing.T) {
 	if !ok || step.ID != "c1" || step.Status != "done" || step.Detail != "" {
 		t.Fatalf("private tool step = %+v", step)
 	}
+	step, _ = TaskTimelineStep(RunEvent{Type: "tool_result", ToolCallID: "c2", ToolName: toolBridgeContacts, IsError: true,
+		Content: "Alice +61 400 000 000", ToolError: &ToolError{Message: "lookup failed for Alice"}})
+	if !step.IsError || step.Status != "failed" || step.Detail != "" {
+		t.Fatalf("failed private tool step = %+v", step)
+	}
 	step, _ = TaskTimelineStep(RunEvent{Type: "tool_result", ToolName: "shell", IsError: true, ToolError: &ToolError{Message: "exit 1"}})
 	if !step.IsError || step.Detail != "exit 1" {
 		t.Fatalf("failed tool step = %+v", step)

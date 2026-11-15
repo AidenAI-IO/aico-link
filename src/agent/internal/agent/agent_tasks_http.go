@@ -128,7 +128,8 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request) {
 
 // TaskTimelineStep converts a backend run event into a task timeline step.
 // Tool steps share the tool call ID so a result replaces its call. Output of
-// tools that read private phone data is never copied into the timeline.
+// tools that read private phone data is never copied into the timeline, even
+// when the call failed.
 func TaskTimelineStep(event RunEvent) (agenttask.Step, bool) {
 	step := agenttask.Step{At: event.Timestamp, ID: event.ToolCallID}
 	switch event.Type {
@@ -152,8 +153,17 @@ func TaskTimelineStep(event RunEvent) (agenttask.Step, bool) {
 	default:
 		return agenttask.Step{}, false
 	}
-	if step.Kind == "tool" && toolResultIsSensitive(event.ToolName) && step.Status != "running" && !step.IsError {
+	// A failed result still shows as failed through Status and IsError; its
+	// text can carry the same private data as a successful one.
+	if step.Kind == "tool" && step.Status != "running" && PrivateToolOutput(event.ToolName) {
 		step.Detail = ""
 	}
 	return step, true
+}
+
+// PrivateToolOutput reports whether a tool's output holds private phone data
+// (clipboard, calendar, contacts, notifications) that observers such as task
+// timelines and cancelled-run summaries must not copy.
+func PrivateToolOutput(toolName string) bool {
+	return toolResultIsSensitive(toolName)
 }

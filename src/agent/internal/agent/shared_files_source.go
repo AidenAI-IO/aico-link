@@ -17,7 +17,9 @@ const (
 	sharedByAico = "aico"
 )
 
-// Listings, uploads and deletes run concurrently; the manifest is one file.
+// sharedUploadsMu guards the manifest. Uploads and deletes also hold it while
+// they publish or remove a file, so a delete that is about to drop a name's
+// record cannot remove the record of a newer upload that took the same name.
 var sharedUploadsMu sync.Mutex
 
 func readSharedUploads(root *os.Root) map[string]bool {
@@ -52,21 +54,19 @@ func writeSharedUploads(root *os.Root, uploads map[string]bool) error {
 	return root.Rename(temp, sharedUploadsManifest)
 }
 
-// recordSharedUpload marks rel as shared by the user. A failure only loses
-// the label; the upload itself has already been published.
-func recordSharedUpload(root *os.Root, rel string) {
-	sharedUploadsMu.Lock()
-	defer sharedUploadsMu.Unlock()
+// recordSharedUploadLocked marks rel as shared by the user. A failure only
+// loses the label; the upload itself has already been published. The caller
+// holds sharedUploadsMu across publishing rel and this call.
+func recordSharedUploadLocked(root *os.Root, rel string) {
 	uploads := readSharedUploads(root)
 	uploads[rel] = true
 	_ = writeSharedUploads(root, uploads)
 }
 
-// forgetSharedUpload drops rel after a delete, so a file the Agent later
-// writes under the same name is not labelled as the user's.
-func forgetSharedUpload(root *os.Root, rel string) {
-	sharedUploadsMu.Lock()
-	defer sharedUploadsMu.Unlock()
+// forgetSharedUploadLocked drops rel after a delete, so a file the Agent later
+// writes under the same name is not labelled as the user's. The caller holds
+// sharedUploadsMu across removing rel and this call.
+func forgetSharedUploadLocked(root *os.Root, rel string) {
 	uploads := readSharedUploads(root)
 	if !uploads[rel] {
 		return
