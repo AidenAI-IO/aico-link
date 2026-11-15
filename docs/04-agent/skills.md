@@ -56,6 +56,28 @@ canonical form.
 - For skills with `source: agent` or `created_by: agent`, `skill_list` automatically executes lifecycle based on last use time: enter `stale` after 90 days of non-use, enter `archived` after 180 days; this automatic scan runs at most once every 24 hours;
 - `skill_mark_used` automatically restores `stale` / `archived` skills to `active`.
 
+## Bundled Skills
+
+The business package installs bundled skills under `/usr/share/aico/skills/`.
+At startup the Agent copies them into `/userdata/agent/skills/` and records the
+sync state in `/userdata/agent/skill-state/.bundled_manifest.json`.
+
+- `SKILL.md` is copied when missing, updated while unedited, and merged with the
+  configured model when both the bundled and local copies changed.
+- Supporting files under `references/`, `templates/`, `scripts/`, and `assets/`
+  are copied when missing and updated while the local copy still matches the
+  last synced version. A file the user edited or deleted is left alone, and a
+  file dropped from the bundle is removed only while unedited. Supporting files
+  are not merged.
+- Restoring a bundled skill overwrites `SKILL.md` and every bundled supporting
+  file with the packaged copies.
+
+The bundled `dataviz` skill is an example of a skill with supporting files: it
+loads its chart guidance from `references/` on demand and runs
+`scripts/validate_palette.py` through `shell` to check palette contrast and
+colorblind separation. It writes each chart as a self-contained HTML file under
+`/share/charts/` for download.
+
 ## Agent Execution
 
 The Agent uses a streamlined execution loop that handles tool calls and generates responses in a single unified flow. All tools are available to the Agent throughout execution, and the Agent directly manages its own task breakdown and execution strategy.
