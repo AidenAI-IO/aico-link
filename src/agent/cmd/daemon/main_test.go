@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"aico-agent/internal/agent"
+	"aico-agent/internal/agent/agentpath"
 	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/messages"
 	"aico-agent/internal/agent/realtimevoice"
@@ -317,7 +319,50 @@ func TestRealtimeSessionConfigIncludesConfiguredResponseLanguage(t *testing.T) {
 			if !strings.Contains(got.Instructions, "Always respond in "+tc.language) {
 				t.Fatalf("realtime instructions missing fixed response language: %q", got.Instructions)
 			}
+			// The realtime model speaks directly; a <tts> requirement belongs
+			// to the backend agent's text output only.
+			for _, useBackend := range []bool{true, false} {
+				cfg.VoiceModel.UseBackendAgent = useBackend
+				if got := realtimeProviderSessionConfig(cfg, nil).Instructions; strings.Contains(got, "<tts>") {
+					t.Fatalf("use_backend_agent=%t: realtime instructions require <tts>: %q", useBackend, got)
+				}
+			}
 		})
+	}
+}
+
+// The realtime model gets the same user profile section the backend system
+// prompt ends with, so saved preferences apply in voice replies too.
+func TestRealtimeSessionConfigEndsWithUserProfile(t *testing.T) {
+	configDir := t.TempDir()
+	memories := agent.NewMemoryManager(filepath.Join(configDir, "memory"))
+	runtime := agent.NewRuntimeWithDeps(agent.Config{ConfigDir: configDir}, nil, memories, agent.NewBuiltinToolSet(agent.HIDConfig{}, agent.AudioConfig{}, agent.SearchConfig{}, agent.ProxyConfig{}), agent.NewSkillIndex())
+	defer runtime.Close()
+	store := memories.EnsureLongTermStore(filepath.Join(configDir, "memory"))
+	if _, err := store.AddMemory(context.Background(), agent.MemoryItem{Type: "preference", Priority: 80, Confidence: 0.9, Content: "Prefers metric units.", EvidenceExcerpts: []string{"use metric"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := realtimeProviderSessionConfig(agent.Config{ConfigDir: configDir}, runtime).Instructions
+	if !strings.HasSuffix(got, "\n- (preference) Prefers metric units.") || !strings.Contains(got, "\n\n## User profile\n") {
+		t.Fatalf("realtime instructions do not end with the user profile:\n%s", got)
+	}
+
+	// A failed read keeps the section the stored user context carries rather
+	// than dropping it.
+	if err := runtime.PrepareUserContext(got); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agent.InitializeContextManager(got, agentpath.UserContextManagerSessionFolder(configDir), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "memory", "long_term", "index.yaml"), []byte("memories: [unterminated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.UserProfilePrompt(context.Background()); err == nil {
+		t.Fatal("corrupt memory index did not fail the profile read")
+	}
+	if kept := realtimeProviderSessionConfig(agent.Config{ConfigDir: configDir}, runtime).Instructions; kept != got {
+		t.Fatalf("failed profile read changed the instructions:\n%s", kept)
 	}
 }
 

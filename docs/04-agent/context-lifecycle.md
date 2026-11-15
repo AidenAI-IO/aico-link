@@ -13,11 +13,12 @@ Each run is assembled from several layers. Some layers are persisted memory, whi
 | Layer | Source | Visibility | Persistence |
 | --- | --- | --- | --- |
 | Base instruction | built-in Agent instruction plus `agent.toml` `prompt` | Agent | configuration |
-| Runtime defaults | built-in prompt rules, current date, host runtime information | Agent | not persisted |
+| Runtime defaults | built-in prompt rules, host runtime information | Agent | not persisted |
+| Turn state | state message before each user turn: device type, `controller_time`, `controller_timezone`, `shared_files`, screenshot | Agent | conversation history |
 | Skills | skill index plus active `SKILL.md` content | Agent | skill files and skill state |
 | Runtime context | `RunRequest.RuntimeContext`, for example phone bridge state | Agent | not persisted |
 | Tool catalog | resolved built-in tools plus skill tools | Agent can call | not persisted in memory |
-| Session summary and user profile | session and long-term profile files | Agent system prompt | filesystem memory |
+| Session summary and user profile | session and long-term profile files | Agent system prompt; the user profile also ends the realtime instructions | filesystem memory |
 | Recalled device memory | `recall_device_memory` tool results | Agent tool context | filesystem memory |
 | Conversation history | hot-window memory, optional compressed-history markers | Agent | filesystem memory |
 | Input attachments | `RunRequest.Attachments` | Agent user messages | current run only |

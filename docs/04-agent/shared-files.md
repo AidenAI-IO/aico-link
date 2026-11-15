@@ -99,6 +99,37 @@ Oversized uploads return `413`; invalid multipart data or filenames return `400`
 storage failures return `503` or `507`. Filenames must not be hidden, contain
 path separators or control characters, or exceed 240 UTF-8 bytes.
 
+## How the Agent sees shared files
+
+The Agent reads and writes `/share` as an ordinary directory on the controller,
+through `shell` and Python. An attached file reaches the model as its absolute
+path in the user message.
+
+To look at an image file, the Agent calls `read_image` with its path. The tool
+reads PNG, JPEG, or GIF (first frame) files below `/share` only, with the same
+rules as downloads: hidden entries, symbolic links, and paths outside the root
+are refused. Every image is fully decoded first, so a truncated file is
+refused rather than sent. A GIF's first frame is placed on its full canvas.
+Images whose longer side exceeds 1568 px are scaled down and sent
+as JPEG, with transparency flattened onto white; files over 25 MiB or 40
+megapixels are refused. The image is attached to the next model request with a
+caption naming the file and stating that it is not the connected display, so
+its coordinates are not used for `touch_gesture`; it is also not recorded as
+the latest display screenshot. The transcript keeps only the
+path, size, and format. `read_image` is a backend tool: the realtime foreground
+cannot attach images, so it does not receive it.
+
+Each user turn's state message also carries a `shared_files` entry that lists
+the 20 most recently modified files below `/share`, newest first, with size,
+`shared by user` or `shared by aico`, and modification time in the configured
+time zone. Hidden entries and symbolic links are skipped, as in listings. When
+more files exist, the entry says so and the Agent lists the directory with
+`shell`. Each refresh checks at most 5,000 entries, reading directories in
+batches and the most recently modified directories first; when the share is
+larger, the entry says it covers only the files checked. The entry is omitted while `/share` holds no files. The realtime
+foreground does not receive it; device work that needs the files runs in the
+backend Agent.
+
 ## Generated outputs and other files
 
 The Agent is instructed to save downloadable outputs under `/share` and return

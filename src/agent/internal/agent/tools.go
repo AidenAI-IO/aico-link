@@ -250,6 +250,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		"web_search":  NewWebSearchTool(searchCfg, proxyCfg),
 		"wikipedia":   NewWikipediaTool(proxyCfg),
 		"web_scraper": NewWebScraperTool(proxyCfg),
+		toolReadImage: NewReadImageTool(),
 	}
 	if toolOptions.waitForWakeupController != nil {
 		tools[toolWaitForWakeup] = NewWaitForWakeupTool(toolOptions.waitForWakeupController)

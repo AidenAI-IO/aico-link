@@ -41,7 +41,7 @@ func TestScheduleRuntimeResumesPersistedSessionAndCompaction(t *testing.T) {
 		if !runtimeModelCallContains(input, "shipment is blue") {
 			t.Error("scheduled execution lost original conversation")
 		}
-		if !runtimeModelCallContains(input, "Current date: 2026-10-23") {
+		if !runtimeModelCallContains(input, "controller_time: 2026-10-23") {
 			t.Error("resumed conversation did not receive the current date")
 		}
 		return contentResponse("Checked the blue shipment."), nil
