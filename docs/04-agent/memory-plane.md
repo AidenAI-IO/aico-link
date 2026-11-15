@@ -146,7 +146,8 @@ In realtime mode the foreground voice model's instructions end with the same
 section. It is read when each provider session opens, so a profile saved during
 a conversation applies from the next session. The saved realtime user context
 records the section that session was opened with. If the profile cannot be
-read, the session opens without it and logs a warning.
+read, the session logs a warning and keeps the section the saved user context
+already carries.
 
 Sensitive memories, `fact` memories, and memories whose content was written by
 Notification Memory are not listed; notification content is written by third

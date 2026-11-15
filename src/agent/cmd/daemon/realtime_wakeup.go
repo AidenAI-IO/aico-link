@@ -875,8 +875,13 @@ func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Run
 	instructions := strings.TrimSpace(strings.Join(instructionParts, "\n\n"))
 	// The saved profile closes the instructions, as it closes the backend
 	// system prompt. Each provider session reads it when it opens, so a
-	// profile saved during a conversation applies from the next session.
-	instructions = agent.WithUserProfileSection(instructions, runtime.UserProfilePrompt(context.Background()))
+	// profile saved during a conversation applies from the next session. A
+	// failed read keeps the section the stored user context already carries.
+	profile, profileErr := runtime.UserProfilePrompt(context.Background())
+	if profileErr != nil {
+		profile = runtime.StoredUserContextProfile()
+	}
+	instructions = agent.WithUserProfileSection(instructions, profile)
 	enableEmotion := cfg.VoiceModel.EnableSpeechEmotion
 	if enableEmotion == nil {
 		v := true

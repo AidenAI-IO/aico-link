@@ -148,6 +148,19 @@ func encodeImageForModel(data []byte) (readImageResult, error) {
 	result := readImageResult{SourceFormat: format}
 	result.SourceWidth, result.SourceHeight = config.Width, config.Height
 
+	// Decode before anything is sent: DecodeConfig reads only the header, so
+	// a file truncated after it would otherwise pass as a valid image.
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return readImageResult{}, errors.New("unsupported or corrupt image; supported formats are PNG, JPEG, and GIF")
+	}
+	// A GIF's first frame may cover only part of its logical canvas. Place it
+	// at its offset so the margins and aspect ratio survive scaling.
+	canvas := image.Rect(0, 0, config.Width, config.Height)
+	if img.Bounds() != canvas {
+		img = placeOnCanvas(img, canvas)
+	}
+
 	width, height := scaledImageSize(config.Width, config.Height, readImageMaxEdge)
 	if width == config.Width && height == config.Height && (format == "jpeg" || format == "png") {
 		result.Width, result.Height = width, height
@@ -157,10 +170,6 @@ func encodeImageForModel(data []byte) (readImageResult, error) {
 		return result, nil
 	}
 
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return readImageResult{}, errors.New("unsupported or corrupt image; supported formats are PNG, JPEG, and GIF")
-	}
 	scaled := scaleImageBox(img, width, height)
 	var out bytes.Buffer
 	if err := jpeg.Encode(&out, scaled, &jpeg.Options{Quality: readImageJPEGQuality}); err != nil {
@@ -241,4 +250,17 @@ func readImageToolContent(observation string) string {
 		"format": result.Format,
 	})
 	return string(encoded)
+}
+
+// placeOnCanvas draws img at its own bounds on a transparent canvas, so the
+// area outside a partial frame stays empty instead of being stretched over.
+func placeOnCanvas(img image.Image, canvas image.Rectangle) image.Image {
+	dst := image.NewNRGBA(canvas)
+	bounds := img.Bounds().Intersect(canvas)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			dst.Set(x, y, img.At(x, y))
+		}
+	}
+	return dst
 }

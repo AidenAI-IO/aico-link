@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"aico-agent/internal/agent"
+	"aico-agent/internal/agent/agentpath"
 	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/messages"
 	"aico-agent/internal/agent/realtimevoice"
@@ -344,6 +345,24 @@ func TestRealtimeSessionConfigEndsWithUserProfile(t *testing.T) {
 	got := realtimeProviderSessionConfig(agent.Config{ConfigDir: configDir}, runtime).Instructions
 	if !strings.HasSuffix(got, "\n- (preference) Prefers metric units.") || !strings.Contains(got, "\n\n## User profile\n") {
 		t.Fatalf("realtime instructions do not end with the user profile:\n%s", got)
+	}
+
+	// A failed read keeps the section the stored user context carries rather
+	// than dropping it.
+	if err := runtime.PrepareUserContext(got); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agent.InitializeContextManager(got, agentpath.UserContextManagerSessionFolder(configDir), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "memory", "long_term", "index.yaml"), []byte("memories: [unterminated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.UserProfilePrompt(context.Background()); err == nil {
+		t.Fatal("corrupt memory index did not fail the profile read")
+	}
+	if kept := realtimeProviderSessionConfig(agent.Config{ConfigDir: configDir}, runtime).Instructions; kept != got {
+		t.Fatalf("failed profile read changed the instructions:\n%s", kept)
 	}
 }
 

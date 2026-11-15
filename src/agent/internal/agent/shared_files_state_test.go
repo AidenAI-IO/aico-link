@@ -58,3 +58,41 @@ func TestSharedFilesStateListsNewestFilesWithSource(t *testing.T) {
 		t.Fatalf("capped shared files state =\n%s", got)
 	}
 }
+
+// The scan budget must not hide a new upload behind a large, older directory
+// that sorts first, and a scan cut short must say it is partial.
+func TestSharedFilesStateBudgetPrefersRecentDirectories(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AICO_SHARE_DIR", dir)
+	old := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	archive := filepath.Join(dir, "2025")
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range sharedFilesStateMaxVisits + 10 {
+		file := filepath.Join(archive, fmt.Sprintf("%05d.txt", i))
+		if err := os.WriteFile(file, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(file, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chtimes(archive, old, old); err != nil {
+		t.Fatal(err)
+	}
+	upload := filepath.Join(dir, "2026", "new.png")
+	if err := os.MkdirAll(filepath.Dir(upload), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(upload, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := sharedFilesState("UTC")
+	lines := strings.Split(got, "\n")
+	if !strings.Contains(lines[0], "too large to scan in full") || !strings.HasPrefix(lines[1], "- "+upload+" ") ||
+		lines[len(lines)-1] != "- (other files were not checked; use shell to list "+dir+")" {
+		t.Fatalf("budgeted shared files state =\n%s", got)
+	}
+}

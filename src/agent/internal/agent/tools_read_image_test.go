@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"aico-agent/internal/agent/screen"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/schema"
@@ -96,6 +99,13 @@ func TestReadImageToolReturnsImageObservation(t *testing.T) {
 		!strings.Contains(caption.Text, "3200x1600") {
 		t.Fatalf("caption = %q", caption.Text)
 	}
+
+	// The file is not the display: touch coordinates must not follow its size.
+	state := &screen.ScreenState{}
+	newScreenToolResultObserver(state)(context.Background(), ToolCall{Spec: NewToolSpec(tool)}, ToolResult{Output: observation})
+	if _, _, ok := state.ScreenshotDimensions(); ok {
+		t.Fatal("read_image result was recorded as the display screenshot")
+	}
 }
 
 func TestReadImageToolRejectsPathsOutsideShareAndNonImages(t *testing.T) {
@@ -129,5 +139,56 @@ func TestReadImageToolRejectsPathsOutsideShareAndNonImages(t *testing.T) {
 		if toolErr := ToolErrorFromContext(ctx); toolErr == nil || toolErr.Code != CodeInvalidArguments || strings.Contains(out, `"data"`) {
 			t.Fatalf("%s: result = %s, error = %+v", name, out, toolErr)
 		}
+	}
+}
+
+// A PNG cut off after its header passes DecodeConfig; it must still be refused.
+func TestEncodeImageForModelRejectsHeaderOnlyPNG(t *testing.T) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewNRGBA(image.Rect(0, 0, 40, 20))); err != nil {
+		t.Fatal(err)
+	}
+	headerOnly := buf.Bytes()[:33] // signature + IHDR chunk
+	if _, _, err := image.DecodeConfig(bytes.NewReader(headerOnly)); err != nil {
+		t.Fatalf("fixture header does not parse: %v", err)
+	}
+	if _, err := encodeImageForModel(headerOnly); err == nil {
+		t.Fatal("header-only PNG was accepted")
+	}
+}
+
+// A GIF whose first frame covers part of the canvas keeps its margins.
+func TestEncodeImageForModelKeepsGIFCanvas(t *testing.T) {
+	palette := color.Palette{color.Black, color.NRGBA{R: 255, A: 255}}
+	frame := image.NewPaletted(image.Rect(40, 10, 60, 90), palette)
+	for y := 10; y < 90; y++ {
+		for x := 40; x < 60; x++ {
+			frame.SetColorIndex(x, y, 1)
+		}
+	}
+	var buf bytes.Buffer
+	if err := gif.EncodeAll(&buf, &gif.GIF{
+		Image: []*image.Paletted{frame}, Delay: []int{0},
+		Config: image.Config{Width: 100, Height: 100, ColorModel: palette},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := encodeImageForModel(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Width != 100 || result.Height != 100 {
+		t.Fatalf("size = %dx%d, want 100x100", result.Width, result.Height)
+	}
+	data, _ := base64.StdEncoding.DecodeString(result.Data)
+	img, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, g, b, _ := img.At(10, 50).RGBA(); r>>8 < 240 || g>>8 < 240 || b>>8 < 240 {
+		t.Fatalf("margin pixel = %d,%d,%d, want white", r>>8, g>>8, b>>8)
+	}
+	if r, g, _, _ := img.At(50, 50).RGBA(); r>>8 < 200 || g>>8 > 60 {
+		t.Fatalf("frame pixel = %d,%d, want red", r>>8, g>>8)
 	}
 }

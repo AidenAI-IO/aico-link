@@ -1466,18 +1466,28 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 }
 
 // UserProfilePrompt returns the saved profile, preference, and rule memories
-// in the format the backend system prompt carries. A read failure is logged
-// and yields "", so a caller building a new prompt simply goes without it.
-func (r *Runtime) UserProfilePrompt(ctx context.Context) string {
+// in the format the backend system prompt carries. It returns "" with a nil
+// error only when the user has none; a read failure is an error, so callers
+// keep the profile they already have.
+func (r *Runtime) UserProfilePrompt(ctx context.Context) (string, error) {
 	if r == nil {
-		return ""
+		return "", nil
 	}
 	userProfile, err := r.memories.UserProfilePrompt(ctx)
 	if err != nil {
 		r.memories.warnProfileReadFailure(err)
+	}
+	return userProfile, err
+}
+
+// StoredUserContextProfile returns the user profile section the saved
+// realtime user context carries, or "" when it has none.
+func (r *Runtime) StoredUserContextProfile() string {
+	systemPrompt, ok, err := r.currentUserContextSystemPrompt()
+	if err != nil || !ok {
 		return ""
 	}
-	return userProfile
+	return userProfileSection(systemPrompt)
 }
 
 func (r *Runtime) getSystemPrompt() string {

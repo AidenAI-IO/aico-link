@@ -15,9 +15,13 @@ const (
 	// sharedFilesStateLimit bounds the shared_files state entry, which rides
 	// on every user turn.
 	sharedFilesStateLimit = 20
-	// sharedFilesStateMaxScan bounds the walk so a large share cannot slow
-	// down every turn; files past it are reported as unlisted.
-	sharedFilesStateMaxScan = 2000
+	// sharedFilesStateMaxVisits bounds the directory entries one state
+	// refresh may visit, files and directories alike, so a large share
+	// cannot slow down every turn.
+	sharedFilesStateMaxVisits = 5000
+	// sharedFilesStateReadBatch bounds how many entries a directory read
+	// returns at once, so one huge directory is not loaded in full.
+	sharedFilesStateReadBatch = 256
 )
 
 // sharedFilesStateUpdater reports the files in the shared directory, newest
@@ -41,9 +45,27 @@ type sharedFileStateEntry struct {
 	modified time.Time
 }
 
+type sharedDirStateEntry struct {
+	rel      string
+	modified time.Time
+}
+
+// newerSharedFile orders files newest first, then by path for a stable list.
+func newerSharedFile(a, b sharedFileStateEntry) bool {
+	if !a.modified.Equal(b.modified) {
+		return a.modified.After(b.modified)
+	}
+	return a.rel < b.rel
+}
+
 // sharedFilesState lists regular files below the shared directory, newest
 // first, one per line. Hidden entries and symbolic links are skipped, as in
 // GET /api/files. It returns "" when there are none, so the entry is omitted.
+//
+// The scan visits at most sharedFilesStateMaxVisits entries. Directories are
+// read in batches and visited most recently modified first, since adding a
+// file updates its directory's modification time; when the budget runs out,
+// the list says it covers only the entries checked.
 func sharedFilesState(timezone string) string {
 	root, err := os.OpenRoot(sharedFilesDir())
 	if err != nil {
@@ -51,67 +73,91 @@ func sharedFilesState(timezone string) string {
 	}
 	defer root.Close()
 
-	var entries []sharedFileStateEntry
-	truncated := false
-	_ = fs.WalkDir(root.FS(), ".", func(rel string, entry fs.DirEntry, err error) error {
+	var newest []sharedFileStateEntry
+	files, visits := 0, 0
+	complete := true
+	keep := func(entry sharedFileStateEntry) {
+		files++
+		index := sort.Search(len(newest), func(i int) bool { return newerSharedFile(entry, newest[i]) })
+		if index >= sharedFilesStateLimit {
+			return
+		}
+		newest = append(newest, sharedFileStateEntry{})
+		copy(newest[index+1:], newest[index:])
+		newest[index] = entry
+		if len(newest) > sharedFilesStateLimit {
+			newest = newest[:sharedFilesStateLimit]
+		}
+	}
+
+	pending := []sharedDirStateEntry{{rel: "."}}
+scan:
+	for len(pending) > 0 {
+		sort.Slice(pending, func(i, j int) bool { return pending[i].modified.After(pending[j].modified) })
+		dir := pending[0]
+		pending = pending[1:]
+		handle, err := root.Open(dir.rel)
 		if err != nil {
-			return nil
+			continue
 		}
-		if rel == "." {
-			return nil
-		}
-		if !validSharedName(entry.Name()) || entry.Type()&fs.ModeSymlink != 0 {
-			if entry.IsDir() {
-				return fs.SkipDir
+		for {
+			batch, err := handle.ReadDir(sharedFilesStateReadBatch)
+			for _, entry := range batch {
+				if visits >= sharedFilesStateMaxVisits {
+					complete = false
+					handle.Close()
+					break scan
+				}
+				visits++
+				if !validSharedName(entry.Name()) || entry.Type()&fs.ModeSymlink != 0 {
+					continue
+				}
+				rel := path.Join(dir.rel, entry.Name())
+				info, infoErr := entry.Info()
+				if infoErr != nil {
+					continue
+				}
+				switch {
+				case entry.IsDir():
+					pending = append(pending, sharedDirStateEntry{rel: rel, modified: info.ModTime()})
+				case entry.Type().IsRegular():
+					keep(sharedFileStateEntry{rel: rel, size: info.Size(), modified: info.ModTime()})
+				}
 			}
-			return nil
+			if err != nil || len(batch) == 0 {
+				break
+			}
 		}
-		if entry.IsDir() || !entry.Type().IsRegular() {
-			return nil
-		}
-		if len(entries) >= sharedFilesStateMaxScan {
-			truncated = true
-			return fs.SkipAll
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return nil
-		}
-		entries = append(entries, sharedFileStateEntry{rel: rel, size: info.Size(), modified: info.ModTime()})
-		return nil
-	})
-	if len(entries) == 0 {
+		handle.Close()
+	}
+	if len(pending) > 0 {
+		complete = false
+	}
+	if len(newest) == 0 && complete {
 		return ""
 	}
 
-	sort.Slice(entries, func(i, j int) bool {
-		if !entries[i].modified.Equal(entries[j].modified) {
-			return entries[i].modified.After(entries[j].modified)
-		}
-		return entries[i].rel < entries[j].rel
-	})
 	sharedUploadsMu.Lock()
 	uploads := readSharedUploads(root)
 	sharedUploadsMu.Unlock()
 
-	shown := entries
-	if len(shown) > sharedFilesStateLimit {
-		shown = shown[:sharedFilesStateLimit]
-	}
 	var b strings.Builder
-	count := fmt.Sprint(len(entries))
-	if truncated {
-		count = "over " + count
+	if complete {
+		fmt.Fprintf(&b, "%d in %s, newest first", files, sharedFilesDir())
+	} else {
+		fmt.Fprintf(&b, "%s is too large to scan in full; newest of the %d files checked", sharedFilesDir(), files)
 	}
-	fmt.Fprintf(&b, "%s in %s, newest first", count, sharedFilesDir())
-	for _, entry := range shown {
+	for _, entry := range newest {
 		fmt.Fprintf(&b, "\n- %s (%s, shared by %s, modified %s)",
 			filepath.Join(sharedFilesDir(), filepath.FromSlash(entry.rel)),
 			formatSharedFileSize(entry.size),
-			sharedFileSource(uploads, path.Clean(entry.rel)),
+			sharedFileSource(uploads, entry.rel),
 			configuredTime(entry.modified, timezone).Format("2006-01-02 15:04"))
 	}
-	if len(entries) > len(shown) {
+	switch {
+	case !complete:
+		fmt.Fprintf(&b, "\n- (other files were not checked; use shell to list %s)", sharedFilesDir())
+	case files > len(newest):
 		fmt.Fprintf(&b, "\n- (older files not listed; use shell to list %s)", sharedFilesDir())
 	}
 	return b.String()

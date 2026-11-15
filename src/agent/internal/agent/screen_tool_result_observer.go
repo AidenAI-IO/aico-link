@@ -14,7 +14,9 @@ import (
 // synchronization logic.
 func newScreenToolResultObserver(state *screen.ScreenState) ToolResultObserver {
 	return func(_ context.Context, call ToolCall, result ToolResult) {
-		if state == nil || result.IsError() || !returnsVisualObservation(call.Spec.Tool) {
+		// read_image returns a file, not the display: recording it would make
+		// touch coordinates follow the file's size.
+		if state == nil || result.IsError() || !returnsVisualObservation(call.Spec.Tool) || call.Spec.Name == toolReadImage {
 			return
 		}
 		observation, ok := screenObservationFromToolOutput(result.Output)
