@@ -107,6 +107,10 @@ type Runtime struct {
 	telemetryExports        asyncRuntimeWork
 	episodeMemoryInitErr    error
 	routines                *routines.Manager
+
+	// turnDecisionWorkerDone, when set by a test before any turn, runs after
+	// a turn decision worker has sent its result and cancelled its context.
+	turnDecisionWorkerDone func()
 }
 
 // ConfigSnapshot returns an immutable copy of the currently active runtime
