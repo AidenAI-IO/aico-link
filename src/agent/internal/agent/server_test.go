@@ -39,6 +39,7 @@ import (
 	"aico-agent/internal/agent/screenprovider"
 	speechtext "aico-agent/internal/agent/speech"
 	ttsmodule "aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
 	streamcontract "aico-agent/internal/stream"
 )
 
@@ -3059,6 +3060,33 @@ func TestTerminalReverseProxyPreservesPublicHostAndRewritesFrameHeaders(t *testi
 	}
 	if got := recorder.Header().Get("Location"); got != "/webtty/" {
 		t.Fatalf("Location = %q, want /webtty/", got)
+	}
+}
+
+func TestTerminalReverseProxyExplainsMissingTerminal(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	target, _ := url.Parse("http://" + listener.Addr().String())
+	_ = listener.Close()
+
+	var proxyLog bytes.Buffer
+	restoreOutput := logging.SetOutput(&proxyLog)
+	defer restoreOutput()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/webtty/", nil)
+	newTerminalReverseProxyForTarget(target).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "AICO_ENABLE_TERMINAL=1") {
+		t.Fatalf("body = %q, want instructions to enable the terminal", recorder.Body.String())
+	}
+	if !strings.Contains(proxyLog.String(), listener.Addr().String()) {
+		t.Fatalf("log = %q, want the upstream error for %s", proxyLog.String(), listener.Addr())
 	}
 }
 

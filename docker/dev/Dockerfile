@@ -1,29 +1,54 @@
-FROM --platform=linux/amd64 debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258 AS agent-builder
+# BASE_IMAGE lets users build through a registry mirror, for example
+# docker.1ms.run/library/debian:trixie-slim@sha256:<same digest>.
+ARG BASE_IMAGE=debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
+
+# The agent is pure Go, so it is cross-compiled on the build platform instead
+# of running the Go toolchain under emulation.
+FROM --platform=$BUILDPLATFORM ${BASE_IMAGE} AS agent-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG BUILDARCH
 ARG GO_VERSION=1.26.0
-ARG GO_SHA256=aac1b08a0fb0c4e0a7c1555beb7b59180b05dfc5a3d62e40e9de90cd42f88235
+ARG GO_DOWNLOAD_BASE=https://go.dev/dl
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tar \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL --retry 3 --connect-timeout 20 \
-        "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
-        -o /tmp/go.tar.gz \
-    && echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - \
-    && tar -C /usr/local -xzf /tmp/go.tar.gz \
-    && rm /tmp/go.tar.gz
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl tar; \
+    rm -rf /var/lib/apt/lists/*; \
+    go_architecture="${BUILDARCH:-$(dpkg --print-architecture)}"; \
+    case "$go_architecture" in \
+        amd64) go_sha256="aac1b08a0fb0c4e0a7c1555beb7b59180b05dfc5a3d62e40e9de90cd42f88235" ;; \
+        arm64) go_sha256="bd03b743eb6eb4193ea3c3fd3956546bf0e3ca5b7076c8226334afe6b75704cd" ;; \
+        *) echo "Unsupported Go build architecture: $go_architecture (supported: amd64, arm64)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 --connect-timeout 20 \
+        "${GO_DOWNLOAD_BASE%/}/go${GO_VERSION}.linux-${go_architecture}.tar.gz" \
+        -o /tmp/go.tar.gz; \
+    echo "${go_sha256}  /tmp/go.tar.gz" | sha256sum -c -; \
+    tar -C /usr/local -xzf /tmp/go.tar.gz; \
+    rm /tmp/go.tar.gz
 
 ENV PATH=/usr/local/go/bin:${PATH} GOTOOLCHAIN=local
 WORKDIR /build
 
+# GOPROXY is optional; unset or empty keeps Go's default
+# (https://proxy.golang.org,direct). Example mirror: https://goproxy.cn,direct.
+ARG GOPROXY
 COPY src/agent/go.mod src/agent/go.sum ./
 RUN go mod download
 COPY src/agent/ ./
-RUN mkdir -p /out \
-    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/agent ./cmd/daemon
+# Declared late so that a new version or commit only rebuilds the final step.
+ARG TARGETARCH
+ARG AICO_VERSION=dev
+ARG AICO_COMMIT=unknown
+RUN set -eux; \
+    mkdir -p /out; \
+    CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
+        go build -trimpath \
+        -ldflags="-s -w -X aico-agent/internal/agent.buildVersion=${AICO_VERSION} -X aico-agent/internal/agent.buildCommit=${AICO_COMMIT}" \
+        -o /out/agent ./cmd/daemon
 
-FROM --platform=linux/amd64 debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258 AS ttyd-builder
+FROM ${BASE_IMAGE} AS ttyd-builder
 
 ARG TARGETARCH
 
@@ -55,7 +80,7 @@ RUN apt-get update \
         echo "$sha256  /out/ttyd" | sha256sum -c -; \
         chmod 0755 /out/ttyd
 
-FROM --platform=linux/amd64 debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258 AS runtime-base
+FROM ${BASE_IMAGE} AS runtime-base
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -114,8 +139,11 @@ COPY --from=runtime-tools-builder /out/rg /usr/bin/rg
 COPY --from=runtime-tools-builder /out/yq /usr/bin/yq
 COPY src/config_web/web/ /usr/share/aico/config-web/
 COPY src/agent/config/skills/ /usr/share/aico/skills/
+COPY benchmark/ios_device/quick_actions.json /usr/share/aico/quick-actions/ios_device.json
+COPY benchmark/iphone_mirroring/quick_actions.json /usr/share/aico/quick-actions/iphone_mirroring.json
 COPY docker/dev/agent.toml /opt/aico/defaults/agent.toml
 COPY docker/dev/aico-env-run /usr/local/bin/aico-env-run
+COPY docker/dev/aico-quick-actions /usr/local/bin/aico-quick-actions
 COPY docker/dev/aico-wifi-proxy-service /usr/local/bin/aico-wifi-proxy-service
 COPY docker/dev/agent-service.sh /usr/local/bin/aico-agent-service
 COPY docker/dev/entrypoint.sh /usr/local/bin/aico-docker-entrypoint
@@ -123,6 +151,7 @@ COPY docker/dev/entrypoint.sh /usr/local/bin/aico-docker-entrypoint
 RUN chmod 0755 \
         /usr/lib/aico/agent \
         /usr/local/bin/aico-env-run \
+        /usr/local/bin/aico-quick-actions \
         /usr/local/bin/aico-wifi-proxy-service \
         /usr/local/bin/aico-agent-service \
         /usr/local/bin/aico-docker-entrypoint \
@@ -138,7 +167,17 @@ ENV AICO_AGENT_BIN=/usr/lib/aico/agent \
     PIP_USER=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    AICO_ENABLE_TERMINAL=0 \
+    AICO_CLASSIC_VOICE=0
+
+ARG AICO_VERSION=dev
+ARG AICO_COMMIT=unknown
+
+LABEL org.opencontainers.image.title="Aico Link" \
+    org.opencontainers.image.source="https://github.com/AidenAI-IO/aico-link" \
+    org.opencontainers.image.version="${AICO_VERSION}" \
+    org.opencontainers.image.revision="${AICO_COMMIT}"
 
 EXPOSE 80 8080
 VOLUME ["/userdata"]

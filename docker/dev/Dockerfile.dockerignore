@@ -4,3 +4,5 @@
 !docker/
 !docker/dev/
 !docker/dev/**
+!benchmark/ios_device/quick_actions.json
+!benchmark/iphone_mirroring/quick_actions.json

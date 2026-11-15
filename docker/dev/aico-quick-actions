@@ -1,0 +1,105 @@
+#!/bin/sh
+# Installs the quick-actions preset named by AICO_QUICK_ACTIONS_PRESET as
+# $agent_dir/quick_actions.json, which the Agent reads at startup.
+#
+# The marker file $agent_dir/.quick-actions-preset records
+# "<preset> <sha256 of the installed content>". A quick_actions.json whose
+# hash still matches the marker, or that is byte-identical to a bundled preset,
+# is an unmodified launcher-managed copy: it is replaced when the preset changes
+# and removed when the preset is cleared. Matching the bundled presets as well
+# keeps recovery idempotent when a crash lands between replacing the file and
+# updating the marker. Any other file belongs to the user and is never touched.
+set -eu
+
+agent_dir="${AICO_AGENT_DIR:-/userdata/agent}"
+preset_dir="${AICO_QUICK_ACTIONS_DIR:-/usr/share/aico/quick-actions}"
+preset="${AICO_QUICK_ACTIONS_PRESET:-}"
+target="$agent_dir/quick_actions.json"
+marker="$agent_dir/.quick-actions-preset"
+log_file="$agent_dir/log/agent.log"
+
+log() {
+    level="$1"
+    event="$2"
+    shift 2
+    line="$(date -u '+%Y-%m-%dT%H:%M:%SZ') [$level][agent][quick-actions] $event $*"
+    mkdir -p "$(dirname "$log_file")"
+    printf '%s\n' "$line" >> "$log_file"
+    printf '%s\n' "$line"
+}
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d ' ' -f 1
+    else
+        shasum -a 256 "$1" | cut -d ' ' -f 1
+    fi
+}
+
+# Leftovers from an interrupted earlier run.
+rm -f "$target".tmp.* "$marker".tmp.* 2>/dev/null || true
+
+marker_preset=""
+marker_hash=""
+if [ -f "$marker" ]; then
+    read -r marker_preset marker_hash < "$marker" || true
+fi
+
+# True when quick_actions.json is the copy this script installed last, or an
+# unmodified copy of any bundled preset.
+managed_copy_unmodified() {
+    [ -f "$target" ] || return 1
+    target_hash="$(sha256_of "$target")"
+    if [ -n "$marker_hash" ] && [ "$target_hash" = "$marker_hash" ]; then
+        return 0
+    fi
+    for bundled in "$preset_dir"/*.json; do
+        [ -f "$bundled" ] || continue
+        if [ "$(sha256_of "$bundled")" = "$target_hash" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [ -z "$preset" ]; then
+    if managed_copy_unmodified; then
+        rm -f "$target" "$marker"
+        log INFO quick_actions_preset_removed "preset=${marker_preset:-unknown}; using built-in defaults"
+    elif [ -f "$marker" ] && [ ! -e "$target" ]; then
+        rm -f "$marker"
+    fi
+    exit 0
+fi
+
+case "$preset" in
+    *[!A-Za-z0-9_-]*) source_file="" ;;
+    *) source_file="$preset_dir/$preset.json" ;;
+esac
+if [ -z "$source_file" ] || [ ! -f "$source_file" ]; then
+    log WARN quick_actions_preset_unknown "preset=$preset; leaving quick_actions.json unchanged"
+    exit 0
+fi
+
+if [ -e "$target" ] && ! managed_copy_unmodified; then
+    log WARN quick_actions_preset_skipped \
+        "preset=$preset; $target was modified by the user and is kept"
+    exit 0
+fi
+
+source_hash="$(sha256_of "$source_file")"
+# The marker alone is not enough: an interrupted switch can leave another
+# preset's content behind a marker that still names this one.
+if [ "$marker_preset" = "$preset" ] && [ "$marker_hash" = "$source_hash" ] && [ -f "$target" ] \
+    && [ "$(sha256_of "$target")" = "$source_hash" ]; then
+    exit 0
+fi
+
+mkdir -p "$agent_dir"
+temporary="$target.tmp.$$"
+cp "$source_file" "$temporary"
+mv -f "$temporary" "$target"
+marker_temporary="$marker.tmp.$$"
+printf '%s %s\n' "$preset" "$source_hash" > "$marker_temporary"
+mv -f "$marker_temporary" "$marker"
+log INFO quick_actions_preset_installed "preset=$preset"

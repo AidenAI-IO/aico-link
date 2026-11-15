@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 
 DEFAULT_MOBILEGYM_IMAGE = "aico-mobilegym-simulator:py311"
@@ -785,8 +785,16 @@ def ensure_mobilegym_image(
     log_path: Path,
     *,
     repo_root: Path | None = None,
+    extra_build_args: Mapping[str, str] | None = None,
+    extra_args: Sequence[str] = (),
+    stop_requested: Callable[[], bool] | None = None,
 ) -> None:
-    """Ensure the MobileGym image matches the commit pinned by the firmware tree."""
+    """Ensure the MobileGym image matches the commit pinned by the firmware tree.
+
+    extra_build_args (for example MOBILEGYM_NODE_IMAGE or proxy settings) take
+    precedence over the matching environment variables. extra_args are passed
+    to ``docker build`` as is, and stop_requested cancels a running build.
+    """
     repo_root = repo_root or Path(__file__).resolve().parents[2]
     source = resolve_mobilegym_source(repo_root)
     build_args = {
@@ -796,6 +804,9 @@ def ensure_mobilegym_image(
     for name in ("MOBILEGYM_NODE_IMAGE", "MOBILEGYM_DEBIAN_MIRROR"):
         if value := os.environ.get(name):
             build_args[name] = value
+    for name, value in (extra_build_args or {}).items():
+        if value:
+            build_args[name] = value
     ensure_docker_image(
         image,
         build_missing,
@@ -804,6 +815,8 @@ def ensure_mobilegym_image(
         repo_root=repo_root,
         build_args=build_args,
         required_labels={MOBILEGYM_COMMIT_LABEL: source.commit},
+        extra_args=extra_args,
+        stop_requested=stop_requested,
     )
 
 
@@ -817,6 +830,7 @@ def ensure_docker_image(
     repo_root: Path | None = None,
     build_args: Mapping[str, str] | None = None,
     required_labels: Mapping[str, str] | None = None,
+    extra_args: Sequence[str] = (),
 ) -> None:
     """Ensure Docker image exists, optionally building it."""
     repo_root = repo_root or Path(__file__).resolve().parents[2]
@@ -866,6 +880,7 @@ def ensure_docker_image(
     ]
     for key, value in (build_args or {}).items():
         cmd.extend(["--build-arg", f"{key}={value}"])
+    cmd.extend(str(arg) for arg in extra_args)
     cmd.extend(["-t", image, str(repo_root)])
     append_log(log_path, "$ " + " ".join(cmd))
 
@@ -878,7 +893,10 @@ def ensure_docker_image(
         while proc.poll() is None:
             if stop_requested is not None and stop_requested():
                 # Import here to avoid circular dependency
-                from benchmark.runner.webui import terminate_process_tree, JobStopped
+                try:
+                    from benchmark.runner.webui import terminate_process_tree, JobStopped
+                except ImportError:
+                    from runner.webui import terminate_process_tree, JobStopped
 
                 terminate_process_tree(proc)
                 raise JobStopped("job stop requested")

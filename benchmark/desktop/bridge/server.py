@@ -49,11 +49,14 @@ def _handler_for(bridge: DesktopBridgeServer):
             if path == "/api/providers/mnk":
                 self._send(200, {"capabilities": getattr(bridge.state.device, "mnk_capabilities", {})}); return
             if path == "/api/tools": bridge.tools_api.handle_request(self, path); return
-            if path == "/api/concurrent": self._send(200, bridge_ok({"bridge_type": bridge.bridge_type, "concurrent": 1, "env_count": 1, "active_task_id": bridge.state.active_task_id})); return
+            if path == "/api/concurrent":
+                bridge.state.active_task_lease_state()  # clear an expired lease before reporting its id
+                self._send(200, bridge_ok({"bridge_type": bridge.bridge_type, "concurrent": 1, "env_count": 1, "active_task_id": bridge.state.active_task_id})); return
             if path == "/health":
                 try: info = bridge.state.device.check_device()
                 except Exception as exc: self._send_error(503, "desktop_unavailable", str(exc)); return
-                self._send(200, bridge_ok({"status": "ok", "bridge_type": bridge.bridge_type, "platform": bridge.state.device.platform, "env_count": 1, "concurrent": 1, "active_task_id": bridge.state.active_task_id, "active_episode_id": bridge.state.active_episode_id, "active_task_lease_state": bridge.state.active_task_lease_state(), "interfaces": ["/api/tools", "/api/providers/screenshot", "/api/providers/mnk", "/api/setup", "/api/release", "/api/concurrent"], **info})); return
+                lease_state = bridge.state.active_task_lease_state()  # clears an expired lease first
+                self._send(200, bridge_ok({"status": "ok", "bridge_type": bridge.bridge_type, "platform": bridge.state.device.platform, "env_count": 1, "concurrent": 1, "active_task_id": bridge.state.active_task_id, "active_episode_id": bridge.state.active_episode_id, "active_task_lease_state": lease_state, "interfaces": ["/api/tools", "/api/providers/screenshot", "/api/providers/mnk", "/api/setup", "/api/release", "/api/concurrent"], **info})); return
             self._send_error(404, "not_found", "unknown endpoint")
 
         def do_POST(self) -> None:

@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>Aico Launcher</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#instances-heading">Skip to instances</a>
+
+  <header class="masthead">
+    <div class="masthead-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <h1>Aico Launcher</h1>
+      </div>
+      <dl class="host-facts" aria-label="Host status" hidden>
+        <div class="fact">
+          <dt>Docker</dt>
+          <dd><span id="docker-status" class="docker-status" data-state="unknown">Checking</span></dd>
+        </div>
+        <div class="fact">
+          <dt>Host</dt>
+          <dd id="host-platform">&nbsp;</dd>
+        </div>
+        <div class="fact">
+          <dt>Checkout</dt>
+          <dd id="repo-commit" class="code">&nbsp;</dd>
+        </div>
+      </dl>
+    </div>
+  </header>
+
+  <main id="app" class="page" hidden>
+    <section class="instances" aria-labelledby="instances-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="instances-heading" tabindex="-1">Instances</h2>
+          <p class="section-note">Each instance runs Config Web and the Agent Web UI in Docker, connected to one environment bridge.</p>
+        </div>
+        <button type="button" class="btn btn-primary" id="new-instance">New instance</button>
+      </div>
+      <div id="instance-list" class="instance-list" aria-live="polite"></div>
+    </section>
+
+    <details class="settings" id="settings-panel">
+      <summary><span class="summary-title">Settings</span><span class="summary-note">Build sources and proxy</span></summary>
+      <form id="settings-form" class="settings-form" novalidate>
+        <p class="hint">When Docker Hub or go.dev are unreachable, point these at mirrors, for example
+          <code>docker.1ms.run/library/debian:trixie-slim@sha256:…</code> and <code>https://golang.google.cn/dl</code>.</p>
+        <div class="field">
+          <label for="set-base-image">Base image</label>
+          <input id="set-base-image" name="base_image" type="text" spellcheck="false" autocomplete="off"
+                 placeholder="Default: debian:trixie-slim@sha256:3a39a059…">
+          <p class="field-help">Debian image every Aico Link build starts from. Keep the same digest when using a mirror.</p>
+        </div>
+        <div class="field">
+          <label for="set-go-base">Go download base</label>
+          <input id="set-go-base" name="go_download_base" type="text" spellcheck="false" autocomplete="off"
+                 placeholder="Default: https://go.dev/dl">
+          <p class="field-help">Where the build downloads the Go toolchain archive.</p>
+        </div>
+        <div class="field">
+          <label for="set-node-image">MobileGym Node image</label>
+          <input id="set-node-image" name="mobilegym_node_image" type="text" spellcheck="false" autocomplete="off"
+                 placeholder="Default: node:22-bookworm">
+          <p class="field-help">Base image for the MobileGym simulator, built on first start.</p>
+        </div>
+        <div class="field field-check">
+          <input id="set-proxy" name="pass_host_proxy" type="checkbox">
+          <label for="set-proxy">Pass host proxy settings to builds and containers</label>
+        </div>
+        <div class="form-actions">
+          <span class="form-status" id="settings-status" role="status"></span>
+          <button type="submit" class="btn btn-primary">Save settings</button>
+        </div>
+      </form>
+    </details>
+  </main>
+
+  <section id="auth-screen" class="auth-screen" hidden aria-labelledby="auth-heading">
+    <div class="auth-card">
+      <h2 id="auth-heading">Access link required</h2>
+      <p>Open the link printed by the Launcher in your terminal (it contains the access token).</p>
+      <p class="hint">Start it with <code>make launcher</code> if it is not running.</p>
+    </div>
+  </section>
+
+  <div id="loading" class="loading" role="status">Connecting to the Launcher</div>
+
+  <!-- Create / edit instance -->
+  <dialog id="instance-dialog" class="sheet" aria-labelledby="instance-dialog-title">
+    <form id="instance-form" class="sheet-body" novalidate>
+      <header class="sheet-head">
+        <h2 id="instance-dialog-title">New instance</h2>
+        <button type="button" class="btn btn-quiet" data-close>Close</button>
+      </header>
+
+      <div class="sheet-scroll">
+        <div class="field">
+          <label for="inst-name">Name <span class="req" aria-hidden="true">*</span></label>
+          <input id="inst-name" name="name" type="text" required autocomplete="off" spellcheck="false" placeholder="my-phone">
+        </div>
+
+        <fieldset class="group">
+          <legend>Image</legend>
+          <div class="field">
+            <label for="inst-image">Local image</label>
+            <div class="inline-row">
+              <select id="inst-image" name="image"></select>
+              <button type="button" class="btn" id="build-image">Build from this checkout</button>
+            </div>
+            <p class="field-help" id="image-help">Images tagged <code>aico-link</code> on this machine.</p>
+          </div>
+          <div id="build-progress" class="build-progress" hidden>
+            <div class="build-line">
+              <span class="badge" id="build-badge" data-status="running">Building</span>
+              <span id="build-text" class="build-text"></span>
+            </div>
+            <details>
+              <summary>Build log</summary>
+              <pre id="build-log" class="log log-small" tabindex="0"></pre>
+            </details>
+          </div>
+          <div class="field">
+            <label for="inst-image-ref">Or image reference</label>
+            <input id="inst-image-ref" name="image_ref" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="registry.example.com/aico-link:1.4.0">
+            <p class="field-help">Overrides the local image when filled in.</p>
+          </div>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Environment bridge</legend>
+          <div id="bridge-types" class="bridge-types"></div>
+          <div id="bridge-fields" class="bridge-fields"></div>
+          <ul id="bridge-notes" class="bridge-notes" aria-label="Setup notes" hidden></ul>
+          <div class="probe-row">
+            <button type="button" class="btn" id="probe-bridge">Check</button>
+            <span id="bridge-actions" class="bridge-actions"></span>
+            <span id="probe-summary" class="probe-summary" role="status"></span>
+          </div>
+          <ul id="probe-checks" class="checks" hidden></ul>
+          <div id="action-result" class="action-result" hidden>
+            <div class="action-head">
+              <span id="action-badge" class="badge" hidden></span>
+              <p id="action-summary" class="action-summary" role="status"></p>
+              <span id="action-elapsed" class="action-elapsed" aria-hidden="true"></span>
+            </div>
+            <ul id="action-checks" class="checks" hidden></ul>
+            <details id="action-output" class="action-output" hidden>
+              <summary>Output</summary>
+              <pre id="action-output-text" class="log log-small" tabindex="0"></pre>
+            </details>
+          </div>
+        </fieldset>
+
+        <details class="group advanced">
+          <summary>Advanced</summary>
+          <div class="field-grid">
+            <div class="field">
+              <label for="inst-port-config">Config Web port</label>
+              <input id="inst-port-config" name="config_web" type="number" min="1" max="65535" inputmode="numeric" placeholder="Auto">
+            </div>
+            <div class="field">
+              <label for="inst-port-agent">Agent Web UI port</label>
+              <input id="inst-port-agent" name="agent_web" type="number" min="1" max="65535" inputmode="numeric" placeholder="Auto">
+            </div>
+          </div>
+          <p class="field-help">Leave blank to pick free ports on 127.0.0.1.</p>
+          <div class="field field-check">
+            <input id="inst-terminal" name="enable_terminal" type="checkbox">
+            <label for="inst-terminal">Enable the web terminal</label>
+          </div>
+        </details>
+
+        <p id="instance-error" class="form-error" role="alert" hidden></p>
+      </div>
+
+      <footer class="sheet-foot">
+        <button type="button" class="btn btn-quiet" data-close>Cancel</button>
+        <button type="submit" class="btn" value="save">Save</button>
+        <button type="submit" class="btn btn-primary" value="start">Save and start</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Logs -->
+  <dialog id="logs-dialog" class="sheet sheet-wide" aria-labelledby="logs-title">
+    <div class="sheet-body">
+      <header class="sheet-head">
+        <h2 id="logs-title">Logs</h2>
+        <button type="button" class="btn btn-quiet" data-close>Close</button>
+      </header>
+      <div class="tabs" role="tablist" aria-label="Log source">
+        <button type="button" role="tab" id="tab-agent" data-source="agent" aria-controls="logs-panel">Agent</button>
+        <button type="button" role="tab" id="tab-bridge" data-source="bridge" aria-controls="logs-panel">Bridge</button>
+        <button type="button" role="tab" id="tab-launcher" data-source="launcher" aria-controls="logs-panel">Launcher</button>
+        <span class="tabs-note" id="logs-updated" aria-live="off"></span>
+      </div>
+      <div id="logs-panel" role="tabpanel" class="logs-panel">
+        <pre id="logs-text" class="log" tabindex="0"></pre>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Delete confirmation -->
+  <dialog id="delete-dialog" class="sheet sheet-narrow" aria-labelledby="delete-title">
+    <form id="delete-form" class="sheet-body" method="dialog">
+      <header class="sheet-head">
+        <h2 id="delete-title">Delete instance</h2>
+      </header>
+      <div class="sheet-scroll">
+        <p id="delete-text"></p>
+        <div class="field field-check">
+          <input id="delete-purge" type="checkbox">
+          <label for="delete-purge">Also delete the saved data volume</label>
+        </div>
+        <p class="field-help">The data volume keeps the agent configuration, chats and memory between starts.</p>
+        <p id="delete-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="sheet-foot">
+        <button type="button" class="btn btn-quiet" data-close>Cancel</button>
+        <button type="submit" class="btn btn-danger" id="delete-confirm">Delete</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
+</body>
+</html>

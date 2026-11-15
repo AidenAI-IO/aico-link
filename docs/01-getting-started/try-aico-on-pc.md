@@ -19,6 +19,37 @@ Use this workflow for interactive development, configuration checks, and Agent
 testing. For repeatable task suites, parallel environments, scoring, and reports,
 use the [Benchmark workflow](../09-benchmark/README.md) instead.
 
+## Aico Launcher
+
+The quickest way to try Aico is the repository-local Aico Launcher, a web UI
+that builds or selects an `aico-link` image, starts an environment bridge, and
+runs the image with one click. The bridge types are:
+
+- **No device**: chat only;
+- **MobileGym simulator**: a simulated Android phone in Docker;
+- **Android (ADB)**: a phone, emulator, or VM through `adb`;
+- **Host desktop**: this computer's screen, mouse, and keyboard (macOS and
+  Linux);
+- **iPhone Mirroring**: a real iPhone through macOS iPhone Mirroring;
+- **iOS device**: a real iPhone over USB through WebDriverAgent (macOS);
+- **Virtual iPhone**: a vphone-cli virtual iPhone (macOS);
+- **Custom bridge**: any Environment Bridge you already run.
+
+From the repository root:
+
+```bash
+make launcher
+```
+
+Open the URL the launcher prints. It needs Docker and
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/). See the
+[Aico Launcher guide](../../benchmark/launcher/README.md) for bridge
+prerequisites, state, security, and troubleshooting. Keep the launcher running
+while a Host desktop, iPhone Mirroring, or iOS device instance runs: it renews
+their bridge routes, which those bridges otherwise release after 30 idle
+minutes. The rest of this page describes the Compose sandbox and manual bridge
+setup.
+
 ## Prerequisites
 
 - Docker Desktop, or Docker Engine with the Compose plugin;
@@ -85,6 +116,59 @@ image and replace the running container.
 
 Starting the sandbox preserves the `aico-data` volume. Use `make sandbox-logs`
 to follow the Agent logs and `make sandbox-stop` to stop the sandbox.
+
+### Image Runtime and Build Options
+
+The sandbox and the Aico Launcher use the same image, built from
+`docker/dev/Dockerfile` natively for `linux/amd64` or `linux/arm64`. It serves
+Config Web on container port 80 and the Agent Web UI on 8080 over plain HTTP;
+publish them on `127.0.0.1` only. Besides the bridge variables described below,
+the image reads:
+
+| Variable | Image default | Effect |
+| --- | --- | --- |
+| `AICO_ENABLE_TERMINAL` | `0` | `1` starts `ttyd` behind `/webtty/` on the Agent Web UI. The Compose sandbox sets it to `1`. |
+| `AICO_CLASSIC_VOICE` | `0` | Classic (speech-to-text) voice needs on-device RKNN models that the image lacks, so Classic mode is text-only in Docker. Realtime mode keeps text and browser voice: `localhost` is a secure context, so the browser microphone works without TLS. |
+| `AICO_QUICK_ACTIONS_PRESET` | empty | `ios_device` or `iphone_mirroring` installs that bundled iOS quick-actions preset as `/userdata/agent/quick_actions.json` before the Agent starts. The Aico Launcher sets it for the matching bridge types. An unmodified preset copy is replaced when the preset changes and removed when it is cleared; a `quick_actions.json` you edited is never overwritten. |
+
+Build arguments let you build through mirrors and stamp the build:
+
+| Build argument | Default | Purpose |
+| --- | --- | --- |
+| `BASE_IMAGE` | the pinned `debian:trixie-slim@sha256:...` | Base for every stage, for example a registry mirror such as `docker.1ms.run/library/debian:trixie-slim@sha256:<same digest>` |
+| `GO_DOWNLOAD_BASE` | `https://go.dev/dl` | Go toolchain download location, for example `https://golang.google.cn/dl` |
+| `GOPROXY` | Go's default | Go module proxy for `go mod download`, for example `https://goproxy.cn,direct` |
+| `AICO_VERSION` | `dev` | Version stamped into the Agent and the `org.opencontainers.image.version` label |
+| `AICO_COMMIT` | `unknown` | Commit stamped into the Agent and the `org.opencontainers.image.revision` label |
+
+For example:
+
+```bash
+docker build -f docker/dev/Dockerfile \
+  --build-arg GO_DOWNLOAD_BASE=https://golang.google.cn/dl \
+  --build-arg AICO_VERSION=local \
+  --build-arg AICO_COMMIT="$(git rev-parse HEAD)" \
+  -t aico-link:local .
+```
+
+The Compose sandbox forwards `AICO_DOCKER_BASE_IMAGE`, `AICO_GO_DOWNLOAD_BASE`,
+`AICO_VERSION`, and `AICO_COMMIT` from your shell to these build arguments. The
+Aico Launcher sets them from its Settings panel and the current checkout, and
+passes your shell's `GOPROXY` through when it is set.
+
+The Dockerfile requires BuildKit, which Docker Desktop and Docker Engine with
+the `docker-buildx` plugin use by default; `DOCKER_BUILDKIT=0` is not
+supported.
+
+On Apple Silicon the sandbox now runs as native `arm64` rather than emulated
+`amd64`. Python user packages with native code only load on the architecture
+that installed them, so the entrypoint records the architecture in
+`/userdata/agent/python/.aico-arch` and moves that directory aside when the
+architecture changes. A nonempty directory without the marker (from a volume
+created before the marker existed) has an unknown architecture, so it is moved
+aside as `/userdata/agent/python.unknown.<timestamp>`. Reinstall the Python
+packages your Agent skills need after the switch, then delete the old
+directory once you no longer need it.
 
 ## Configure a Native Local Agent
 

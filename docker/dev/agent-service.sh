@@ -88,6 +88,13 @@ load_system_env() {
     fi
 }
 
+falsy() {
+    case "${1:-}" in
+        0|false|FALSE|False|no|NO|No|off|OFF|Off) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 bridge_enabled() {
     endpoint="$1"
     mode="$2"
@@ -196,7 +203,11 @@ try:
     bridge_type = data.get("bridge_type")
     if bridge_type == "mobilegym" and isinstance(data.get("active_routes"), dict):
         print("active" if sys.argv[2] in data["active_routes"] else "missing")
-    elif bridge_type == "adb_android" and "active_task_id" in data:
+    elif bridge_type in {
+        "adb_android", "desktop", "iphone_mirroring", "ios_device", "vphone_ios",
+    } and "active_task_id" in data:
+        # Single-route bridges report the route they lease; an expired lease
+        # reads as empty, so a restart claims it again.
         active_task_id = str(data.get("active_task_id") or "")
         if active_task_id == sys.argv[2]:
             print("active")
@@ -363,6 +374,10 @@ run_agent() {
     if [ -n "${AICO_DEVICE_TYPE:-}" ]; then
         set -- "$@" --device-type "$AICO_DEVICE_TYPE"
     fi
+    # Classic (stt) voice needs on-device RKNN models that the image lacks.
+    if falsy "${AICO_CLASSIC_VOICE:-1}"; then
+        set -- "$@" --classic-voice=false
+    fi
     bridge_endpoint="${AICO_ENVIRONMENT_BRIDGE_ENDPOINT:-${ENVIRONMENT_BRIDGE_ENDPOINT:-}}"
     bridge_endpoint="${bridge_endpoint%/}"
     bridge_mode="${AICO_ENVIRONMENT_BRIDGE_MODE:-auto}"
@@ -391,7 +406,7 @@ run_agent() {
         return 0
     fi
 
-    service_log INFO process_starting "command=$agent_bin -dir $agent_dir -addr 0.0.0.0:8080"
+    service_log INFO process_starting "command=$*"
     "$env_run_bin" "$@" >> "$log_file" 2>&1 &
     agent_pid="$!"
     printf '%s\n' "$agent_pid" > "$agent_pid_file"

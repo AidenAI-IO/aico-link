@@ -151,6 +151,19 @@ def test_task_access_requires_matching_active_lease():
     state.check_task_access("task")
 
 
+@pytest.mark.parametrize("path", ["/health", "/api/concurrent"])
+def test_status_endpoints_do_not_report_an_expired_lease(bridge, path):
+    assert request(bridge, "/api/setup", {}, headers={"benchmark-task-id": "stale"})[0] == 200
+    bridge.state.active_task_expires_at = 1.0  # monotonic time well in the past
+
+    status, payload = request(bridge, path)
+
+    assert status == 200
+    assert payload["data"]["active_task_id"] == ""
+    if path == "/health":
+        assert payload["data"]["active_task_lease_state"] == ""
+
+
 def test_protected_http_calls_require_task_lease(bridge):
     assert request(bridge, "/api/setup", {})[0] == 400
     assert request(bridge, "/api/providers/screenshot", {})[0] == 429
@@ -171,10 +184,55 @@ def test_read_body_rejects_negative_content_length():
         _read_body(Handler())
 
 
-def test_start_bridge_rejects_non_loopback_host(monkeypatch):
+@pytest.mark.parametrize(
+    ("host", "allow_private_bind"),
+    [
+        ("0.0.0.0", False),
+        ("0.0.0.0", True),
+        ("172.17.0.1", False),
+        ("8.8.8.8", True),
+        ("::1", True),
+        ("example.com", True),
+    ],
+)
+def test_start_bridge_rejects_disallowed_host(monkeypatch, host, allow_private_bind):
     monkeypatch.setattr(start_bridge, "DesktopBridgeServer", lambda **kwargs: pytest.fail("server must not be constructed"))
-    with pytest.raises(SystemExit):
-        start_bridge.main(["--bridge-host", "0.0.0.0"])
+    argv = ["--bridge-host", host] + (["--allow-private-bind"] if allow_private_bind else [])
+    with pytest.raises(SystemExit) as excinfo:
+        start_bridge.main(argv)
+    assert excinfo.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("host", "allow_private_bind"),
+    [
+        ("127.0.0.1", False),
+        ("localhost", False),
+        ("172.17.0.1", True),
+        ("192.168.65.254", True),
+        ("10.0.0.5", True),
+        ("100.64.1.1", True),
+        ("169.254.1.1", True),
+    ],
+)
+def test_start_bridge_accepts_allowed_host(monkeypatch, host, allow_private_bind):
+    bound_hosts = []
+
+    def fake_server(*, device, host, port):
+        bound_hosts.append(host)
+        raise OSError("stop before binding")
+
+    class FakeDesktopDevice:
+        permission_hint = ""
+
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(start_bridge, "DesktopDevice", FakeDesktopDevice)
+    monkeypatch.setattr(start_bridge, "DesktopBridgeServer", fake_server)
+    argv = ["--bridge-host", host] + (["--allow-private-bind"] if allow_private_bind else [])
+    assert start_bridge.main(argv) == 1
+    assert bound_hosts == [host]
 
 
 @pytest.mark.parametrize(
