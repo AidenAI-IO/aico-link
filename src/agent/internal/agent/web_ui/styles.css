@@ -1509,6 +1509,9 @@ button, textarea, select, .tool-block {
 .topbar h1 { font: 600 16px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .02em; }
 .new-chat-btn { border-radius: 5px; padding: 7px 11px; background: var(--panel-strong); color: var(--text); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .new-chat-btn:hover, .new-chat-btn:focus-visible { box-shadow: none; transform: none; border-color: var(--accent); color: var(--accent); }
+/* The run activity row sits on .workspace-content between the conversation
+   and composer; keep all three the same colour so it shows no band. */
+.workspace-content { background: #121316; }
 .conversation { padding: 10px 18px 0; background: #121316; }
 .tool-section-label, .tool-meta-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
 .tool-block { border-color: var(--line); background: var(--surface-code); color: #d6d8de; }
@@ -2010,7 +2013,7 @@ body { background: #f5f5f7; color: var(--text); }
 .main-panel { background: var(--panel); }
 .inspector { background: #fff; }
 .topbar { background: #fbfbfc; }
-.conversation, .composer { background: #f7f7f8; }
+.workspace-content, .conversation, .composer { background: #f7f7f8; }
 .new-chat-btn { background: #fff; color: var(--muted-strong); }
 .tool-block { color: var(--text); }
 .composer-shell { background: #fff; }
