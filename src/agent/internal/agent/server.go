@@ -108,6 +108,7 @@ type Server struct {
 	pendingResults          map[string]*chatPendingResult
 	pendingResultsMu        sync.Mutex
 	activeRuns              map[string]context.CancelFunc
+	activeRunStartedAt      map[string]time.Time
 	activeRunsMu            sync.Mutex
 	terminatedRequests      map[string]struct{}
 	terminatedRequestsMu    sync.RWMutex
@@ -577,6 +578,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chat/steer", s.handleChatSteer)
 	mux.HandleFunc("/api/chat/steer/cancel", s.handleChatSteerCancel)
 	mux.HandleFunc("/api/chat/result", s.handleChatResult)
+	mux.HandleFunc("/api/chat/active", s.handleChatActive)
 	if s.httpsAuthority != nil {
 		mux.HandleFunc(localtls.AuthorityPath, s.httpsAuthority.ServeAuthority)
 	}
@@ -1199,6 +1201,10 @@ func (s *Server) registerActiveRun(requestID string, cancel context.CancelFunc) 
 		return false
 	}
 	s.activeRuns[requestID] = cancel
+	if s.activeRunStartedAt == nil {
+		s.activeRunStartedAt = make(map[string]time.Time)
+	}
+	s.activeRunStartedAt[requestID] = time.Now()
 	s.deleteRequestTerminationLocked(requestID)
 	return true
 }
@@ -1211,8 +1217,57 @@ func (s *Server) unregisterActiveRun(requestID string) {
 	}
 	s.activeRunsMu.Lock()
 	delete(s.activeRuns, requestID)
+	delete(s.activeRunStartedAt, requestID)
 	s.activeRunsMu.Unlock()
 	s.clearRequestTerminationIfInactive(requestID)
+}
+
+// settleActiveRun marks a run's agent loop as finished while the run stays
+// registered, for example during its final speech, so Stop still reaches it.
+func (s *Server) settleActiveRun(requestID string) {
+	s.activeRunsMu.Lock()
+	delete(s.activeRunStartedAt, requestID)
+	s.activeRunsMu.Unlock()
+}
+
+// latestActiveRun reports the most recently started run whose agent loop has
+// not finished.
+func (s *Server) latestActiveRun() (string, time.Time, bool) {
+	s.activeRunsMu.Lock()
+	defer s.activeRunsMu.Unlock()
+	var latestID string
+	var latestAt time.Time
+	for requestID, startedAt := range s.activeRunStartedAt {
+		if latestID == "" || startedAt.After(latestAt) {
+			latestID, latestAt = requestID, startedAt
+		}
+	}
+	return latestID, latestAt, latestID != ""
+}
+
+type ChatActiveResponse struct {
+	Status    string `json:"status"`
+	RequestID string `json:"request_id,omitempty"`
+	ElapsedMS int64  `json:"elapsed_ms,omitempty"`
+}
+
+// handleChatActive lets a page that did not start the current run, such as one
+// reloaded mid-run, find it and show its progress. Elapsed time is relative so
+// a browser clock that differs from the board's does not skew the timer.
+func (s *Server) handleChatActive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp := ChatActiveResponse{Status: "idle"}
+	if requestID, startedAt, ok := s.latestActiveRun(); ok {
+		resp = ChatActiveResponse{Status: "running", RequestID: requestID}
+		if !startedAt.IsZero() {
+			resp.ElapsedMS = time.Since(startedAt).Milliseconds()
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // cancelActiveRun marks an active request before invoking its cancellation
@@ -1812,6 +1867,7 @@ func (s *Server) handleChatAsync(
 
 		pending.mu.Lock()
 		if err != nil {
+			s.settleActiveRun(requestID)
 			canceled := errors.Is(run.ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
 			if canceled {
 				if s.liveActivity != nil {
@@ -1857,6 +1913,7 @@ func (s *Server) handleChatAsync(
 			return
 		}
 
+		s.settleActiveRun(requestID)
 		if s.liveActivity != nil {
 			s.liveActivity.CompleteTask(requestID, result.Output)
 		}
@@ -2226,6 +2283,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	historySnapshot := turn
+	s.settleActiveRun(req.RequestID)
 	if s.liveActivity != nil {
 		s.liveActivity.CompleteTask(req.RequestID, result.Output)
 	}

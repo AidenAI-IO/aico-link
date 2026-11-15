@@ -27,6 +27,7 @@ let draftAttachments = [];
 let composerHintTimer = null;
 let currentChatRequestId = '';
 let externalActiveRequestId = '';
+let externalActiveStartedAt = 0;
 let currentChatAbortController = null;
 let currentChatCancelRequested = false;
 let currentChatStartedAt = 0;

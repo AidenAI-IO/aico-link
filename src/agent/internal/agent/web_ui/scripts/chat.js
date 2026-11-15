@@ -211,18 +211,58 @@ function armStopRun() {
     }, 3100);
 }
 
+// A run this page did not start (another tab, voice, or a run that was
+// already going when the page loaded or reloaded) still shows its progress.
 async function refreshCurrentLiveActivity() {
     if (currentChatRequestId) return;
+    let active = await fetchActiveChatRun();
+    if (!active) {
+        const liveActivity = await fetchActiveLiveActivity();
+        // Keep the current state when neither check reached the board.
+        if (active === undefined && liveActivity === undefined) return;
+        active = liveActivity || null;
+    }
+    if (currentChatRequestId) return;
+    const requestId = active ? active.requestId : '';
+    if (requestId !== externalActiveRequestId) {
+        // Restart the timer from the run's own start, not from this page's.
+        setActivityRunning(false);
+        externalActiveStartedAt = active ? active.startedAt : 0;
+    }
+    externalActiveRequestId = requestId;
+    setComposerState(!!activeChatRequestId());
+}
+
+// Each check returns the active run, null when there is none, or undefined
+// when it could not be read.
+async function fetchActiveChatRun() {
+    try {
+        const res = await fetch('/api/chat/active');
+        if (!res.ok) return undefined;
+        const data = await res.json();
+        if (data.status !== 'running' || !data.request_id) return null;
+        return {requestId: data.request_id, startedAt: Date.now() - Math.max(0, Number(data.elapsed_ms) || 0)};
+    } catch (err) {
+        console.warn('Failed to refresh active chat run:', err);
+        return undefined;
+    }
+}
+
+// Live Activity also covers a finished run that waits for the user on the
+// phone. It is reachable only over USB and when Live Activity is enabled.
+async function fetchActiveLiveActivity() {
     try {
         const res = await fetch('/api/live-activity/current');
-        if (!res.ok) return;
+        if (!res.ok) return undefined;
         const data = await res.json();
         const state = data.live_activity;
         const isActive = data.status === 'ok' && state && (state.status === 'running' || state.status === 'needs_app');
-        externalActiveRequestId = isActive ? state.request_id : '';
-        setComposerState(!!activeChatRequestId());
+        if (!isActive || !state.request_id) return null;
+        const startedAt = Date.parse(state.started_at);
+        return {requestId: state.request_id, startedAt: Number.isFinite(startedAt) ? Math.min(startedAt, Date.now()) : Date.now()};
     } catch (err) {
         console.warn('Failed to refresh current live activity:', err);
+        return undefined;
     }
 }
 

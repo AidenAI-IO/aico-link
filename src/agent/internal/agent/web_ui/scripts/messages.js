@@ -671,7 +671,7 @@ function setActivityRunning(isLoading) {
         activityTimer = null;
         return;
     }
-    if (!activityStartedAt) activityStartedAt = currentChatStartedAt || Date.now();
+    if (!activityStartedAt) activityStartedAt = currentChatStartedAt || externalActiveStartedAt || Date.now();
     if (!activityTimer) activityTimer = setInterval(renderActivity, 250);
     renderActivity();
 }

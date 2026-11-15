@@ -5289,3 +5289,40 @@ func startDeviceVoiceForTest(t *testing.T, server *Server) {
 	voice := server.ClaimRealtimeVoiceSession(Config{}, RealtimeAudioRouteDevice)
 	t.Cleanup(func() { server.EndRealtimeVoiceSession(voice, "") })
 }
+
+func TestServerHandleChatActiveReportsLatestRun(t *testing.T) {
+	server := &Server{activeRuns: make(map[string]context.CancelFunc)}
+	get := func() ChatActiveResponse {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		server.handleChatActive(rec, httptest.NewRequest(http.MethodGet, "/api/chat/active", nil))
+		var resp ChatActiveResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return resp
+	}
+
+	if resp := get(); resp.Status != "idle" || resp.RequestID != "" {
+		t.Fatalf("idle response = %+v", resp)
+	}
+	server.registerActiveRun("req-old", func() {})
+	server.registerActiveRun("req-new", func() {})
+	server.activeRunStartedAt["req-old"] = time.Now().Add(-time.Minute)
+	if resp := get(); resp.Status != "running" || resp.RequestID != "req-new" {
+		t.Fatalf("running response = %+v, want req-new", resp)
+	}
+	server.unregisterActiveRun("req-new")
+	if resp := get(); resp.RequestID != "req-old" || resp.ElapsedMS < time.Minute.Milliseconds() {
+		t.Fatalf("remaining response = %+v, want req-old with its elapsed time", resp)
+	}
+	// A run speaking its final reply stays registered but is no longer busy.
+	server.settleActiveRun("req-old")
+	if resp := get(); resp.Status != "idle" {
+		t.Fatalf("response after the loop settles = %+v", resp)
+	}
+	if !server.cancelActiveRun("req-old") {
+		t.Fatal("settled run is no longer cancelable")
+	}
+	server.unregisterActiveRun("req-old")
+}
