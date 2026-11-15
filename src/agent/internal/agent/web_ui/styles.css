@@ -420,7 +420,8 @@ textarea:focus-visible {
 .task-modal-card { width: min(720px, 100%); }
 
 .file-modal-card { width: min(960px, 100%); max-height: min(88vh, 900px); }
-.file-modal-heading { min-width: 0; }
+.file-modal-heading { flex: 1 1 auto; min-width: 0; }
+.file-modal-back { flex: 0 0 auto; }
 .file-modal-heading strong { display: block; overflow-wrap: anywhere; }
 .file-modal-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 
@@ -490,6 +491,13 @@ textarea:focus-visible {
 }
 
 .file-preview-message { color: var(--muted); font-size: 0.86rem; }
+
+/* A folder lists its entries across the whole body, from the top. */
+.file-folder-list {
+    justify-self: stretch;
+    align-self: start;
+    padding: 0 8px;
+}
 .task-modal-body { gap: 14px; }
 .task-modal-section .message-role { margin-bottom: 6px; }
 .task-modal-action { padding: 8px 10px; border-radius: var(--radius-md); background: var(--tool-call); }

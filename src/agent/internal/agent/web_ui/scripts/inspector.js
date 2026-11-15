@@ -453,17 +453,10 @@ function renderSharedFiles(files) {
         const item = inspectorElement('li', 'inspector-row file-row');
         item.dataset.key = file.path;
         const directory = file.kind === 'directory';
-        const link = inspectorElement(directory ? 'a' : 'button', 'inspector-row-main');
-        if (directory) {
-            link.href = '/share/' + encodeURIComponent(file.name) + '/';
-            link.target = '_blank';
-            link.rel = 'noopener noreferrer';
-            link.title = 'Open folder';
-        } else {
-            link.type = 'button';
-            link.title = 'Preview · ' + formatFileSize(file.size);
-            link.addEventListener('click', () => openFileModal(file));
-        }
+        const link = inspectorElement('button', 'inspector-row-main');
+        link.type = 'button';
+        link.title = directory ? 'Open folder' : 'Preview · ' + formatFileSize(file.size);
+        link.addEventListener('click', () => openFileModal(Object.assign({rel: file.name}, file)));
         link.append(inspectorElement('span', 'inspector-row-name', file.name + (directory ? '/' : '')),
             inspectorElement('span', 'file-source', directory ? 'Folder'
                 : file.shared_by === 'user' ? 'Shared by you' : 'Shared by Aico'));
@@ -511,6 +504,10 @@ const previewTextExtensions = new Set(['txt', 'md', 'markdown', 'log', 'csv', 't
     'hpp', 'java', 'kt', 'swift', 'sh', 'bash', 'zsh', 'sql', 'diff', 'patch']);
 let activeFilePreviewUrl = '';
 let activeFilePreviewController = null;
+// Entries opened in the dialog, the shown one last. Opening a folder's entry
+// pushes it, and Back returns to the folder it was opened from. Folders carry
+// rel, their path below the shared root as /api/files?path= takes it.
+let fileModalStack = [];
 
 function fileModalEl() {
     return document.getElementById('fileModal');
@@ -660,30 +657,113 @@ async function renderFilePreview(file, signal) {
     body.replaceChildren(node);
 }
 
-function openFileModal(file) {
-    closeFileModal();
-    rememberDialogOpener();
-    document.getElementById('fileModalTitle').textContent = file.name;
-    document.getElementById('fileModalMeta').textContent = sharedFileMeta(file, true);
+// renderFolderPreview lists a folder's entries: subfolders first, then files,
+// each by name. Selecting one opens it in the same dialog.
+async function renderFolderPreview(folder, signal) {
+    setFilePreviewFramed(false);
+    setFilePreviewMessage('Loading folder…');
+    const response = await fetch('/api/files?path=' + encodeURIComponent(folder.rel), {cache: 'no-store', signal});
+    if (!response.ok) throw new Error(response.status === 404 ? 'This folder no longer exists.' : 'Could not list this folder.');
+    const result = await response.json();
+    const entries = (Array.isArray(result.files) ? result.files : []).sort((a, b) =>
+        (a.kind === 'directory' ? 0 : 1) - (b.kind === 'directory' ? 0 : 1) ||
+        String(a.name).localeCompare(String(b.name), undefined, {numeric: true}));
+    if (entries.length === 0) {
+        setFilePreviewMessage('This folder is empty.');
+        return;
+    }
+    const list = inspectorElement('ul', 'inspector-list file-folder-list');
+    for (const entry of entries) {
+        const directory = entry.kind === 'directory';
+        const item = inspectorElement('li', 'inspector-row file-row');
+        item.dataset.key = entry.name;
+        const button = inspectorElement('button', 'inspector-row-main');
+        button.type = 'button';
+        button.title = directory ? 'Open folder' : 'Preview · ' + formatFileSize(entry.size);
+        button.append(inspectorElement('span', 'inspector-row-name', entry.name + (directory ? '/' : '')),
+            inspectorElement('span', 'file-source', directory ? 'Folder' : formatFileSize(entry.size)));
+        button.addEventListener('click', () => {
+            folder.focusKey = entry.name;
+            pushFileModalEntry(Object.assign({rel: folder.rel + '/' + entry.name}, entry));
+        });
+        item.append(button);
+        list.append(item);
+    }
+    document.getElementById('fileModalBody').replaceChildren(list);
+    // Back from an entry focuses the row it was opened from.
+    if (folder.focusKey) restoreListFocus(list, {key: folder.focusKey, control: 'main'});
+}
+
+// stopFilePreview cancels a loading preview and releases its object URL.
+function stopFilePreview() {
+    if (activeFilePreviewController) activeFilePreviewController.abort();
+    activeFilePreviewController = null;
+    if (activeFilePreviewUrl) URL.revokeObjectURL(activeFilePreviewUrl);
+    activeFilePreviewUrl = '';
+}
+
+// showFileModalEntry shows the top of fileModalStack: a file preview, or a
+// folder's entries.
+function showFileModalEntry() {
+    stopFilePreview();
+    const entry = fileModalStack[fileModalStack.length - 1];
+    const directory = entry.kind === 'directory';
+    document.getElementById('fileModalTitle').textContent = directory ? entry.name + '/' : entry.name;
+    document.getElementById('fileModalMeta').textContent = directory
+        ? ['Folder', entry.modified ? formatTaskTime(entry.modified) : ''].filter(Boolean).join(' · ')
+        : sharedFileMeta(entry, true);
     const download = document.getElementById('fileModalDownload');
-    download.href = file.download_url;
-    download.setAttribute('download', file.name);
-    fileModalEl().classList.remove('hidden');
-    document.body.classList.add('state-modal-open');
-    document.getElementById('fileModalClose').focus();
+    download.classList.toggle('hidden', directory);
+    if (directory) {
+        download.removeAttribute('href');
+    } else {
+        download.href = entry.download_url;
+        download.setAttribute('download', entry.name);
+    }
+    const back = document.getElementById('fileModalBack');
+    const parent = fileModalStack[fileModalStack.length - 2];
+    back.classList.toggle('hidden', !parent);
+    back.title = parent ? 'Back to ' + parent.name : '';
     const controller = new AbortController();
     activeFilePreviewController = controller;
-    renderFilePreview(file, controller.signal).catch(err => {
+    const render = directory ? renderFolderPreview(entry, controller.signal) : renderFilePreview(entry, controller.signal);
+    render.catch(err => {
         if (controller.signal.aborted) return;
         setFilePreviewMessage(err.message || 'Preview failed.');
     });
 }
 
+function pushFileModalEntry(entry) {
+    fileModalStack.push(entry);
+    showFileModalEntry();
+    document.getElementById('fileModalBack').focus();
+}
+
+function fileModalBack() {
+    if (fileModalStack.length < 2) return;
+    fileModalStack.pop();
+    showFileModalEntry();
+    const back = document.getElementById('fileModalBack');
+    if (!document.getElementById('fileModalBody').contains(document.activeElement)) {
+        (back.classList.contains('hidden') ? document.getElementById('fileModalClose') : back).focus();
+    }
+}
+
+// openFileModal opens the dialog on a shared file, or on a folder that
+// carries rel.
+function openFileModal(file) {
+    closeFileModal();
+    rememberDialogOpener();
+    fileModalStack = [file];
+    fileModalEl().classList.remove('hidden');
+    document.body.classList.add('state-modal-open');
+    showFileModalEntry();
+    document.getElementById('fileModalClose').focus();
+}
+
 function closeFileModal() {
-    if (activeFilePreviewController) activeFilePreviewController.abort();
-    activeFilePreviewController = null;
-    if (activeFilePreviewUrl) URL.revokeObjectURL(activeFilePreviewUrl);
-    activeFilePreviewUrl = '';
+    stopFilePreview();
+    fileModalStack = [];
     if (fileModalEl().classList.contains('hidden')) return;
     fileModalEl().classList.add('hidden');
     document.getElementById('fileModalBody').replaceChildren();
@@ -753,6 +833,7 @@ function startInspector() {
         if (event.target === taskModalEl()) closeTaskModal();
     });
     document.getElementById('fileModalClose').addEventListener('click', closeFileModal);
+    document.getElementById('fileModalBack').addEventListener('click', fileModalBack);
     fileModalEl().addEventListener('click', event => {
         if (event.target === fileModalEl()) closeFileModal();
     });
