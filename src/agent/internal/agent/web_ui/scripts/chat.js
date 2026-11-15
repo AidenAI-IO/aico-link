@@ -170,7 +170,10 @@ async function submitSteerMessage() {
 }
 
 function restoreSteerDraft(requestId, message, localSteer) {
-    if (currentChatRequestId === requestId && !inputEl.value.trim()) {
+    // The run may have ended while the steer was in flight; the text still
+    // belongs in the composer then, but never in a different run's.
+    const sameOrNoRun = !currentChatRequestId || currentChatRequestId === requestId;
+    if (sameOrNoRun && !inputEl.value.trim()) {
         inputEl.value = message;
         autoResizeInput();
     }

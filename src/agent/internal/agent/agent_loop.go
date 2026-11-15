@@ -633,6 +633,14 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 	}
 
 	if isRunPausingTool(toolExecution.Call.Action.Tool) && !toolExecution.Result.IsError() {
+		// Pausing ends the run, so this is its last steer check: a steer
+		// queued now resumes the run instead of waiting behind the pause.
+		if _, hasPending, err := l.consumeAndPersistFinalSteer(ctx, llmExecutor); err != nil {
+			return "", iterationContinue, err
+		} else if hasPending {
+			policy.ResetForSteer()
+			return "", iterationRestartBudget, nil
+		}
 		if err := l.contextManager.AppendMessage(messages.Message{
 			Role:    messages.MessageRoleNotice,
 			Content: fmt.Sprintf("Pause [%s]: Execution is intentionally paused. This is not confirmation that the task is complete. Continue when the requested user action or wakeup input arrives.", toolExecution.Call.Action.Tool),

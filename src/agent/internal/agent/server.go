@@ -1212,8 +1212,16 @@ func (s *Server) unregisterActiveRun(requestID string) {
 	if requestID == "" {
 		return
 	}
+	// Drop the run and its steer state in one critical section, in the
+	// activeRunsMu-then-steersMu order setPendingSteer uses, so a run that
+	// reuses this request ID never sees or loses the old run's steer state.
 	s.activeRunsMu.Lock()
 	delete(s.activeRuns, requestID)
+	s.steersMu.Lock()
+	delete(s.pendingSteers, requestID)
+	delete(s.steerSignals, requestID)
+	delete(s.closedSteers, requestID)
+	s.steersMu.Unlock()
 	s.activeRunsMu.Unlock()
 	s.clearRequestTerminationIfInactive(requestID)
 }
@@ -1489,26 +1497,21 @@ func (s *Server) cancelPendingSteer(requestID string) bool {
 	return true
 }
 
-func (s *Server) clearSteerState(requestID string) {
+// consumeFinalPendingSteer is the run's last steer check: it consumes a
+// queued steer, or else stops accepting steers for the request. Both happen
+// under one lock, so a steer is either delivered or refused, never accepted
+// after the check and dropped.
+func (s *Server) consumeFinalPendingSteer(requestID string) (RunSteerMessage, bool) {
 	if requestID == "" {
-		return
+		return RunSteerMessage{}, false
 	}
 	s.steersMu.Lock()
 	defer s.steersMu.Unlock()
-	delete(s.pendingSteers, requestID)
-	delete(s.steerSignals, requestID)
-	delete(s.closedSteers, requestID)
-}
-
-// consumeFinalPendingSteer is the run's last steer check: it consumes a
-// queued steer, or else stops accepting steers for the request.
-func (s *Server) consumeFinalPendingSteer(requestID string) (RunSteerMessage, bool) {
-	if steer, ok := s.consumePendingSteer(requestID); ok {
+	if steer, ok := s.consumePendingSteerLocked(requestID); ok {
 		return steer, true
 	}
-	s.closeSteerAcceptance(requestID)
-	// A steer accepted between the two calls above is still delivered.
-	return s.consumePendingSteer(requestID)
+	s.closeSteerAcceptanceLocked(requestID)
+	return RunSteerMessage{}, false
 }
 
 // closeSteerAcceptance refuses further steers for a run whose agent loop has
@@ -1519,6 +1522,10 @@ func (s *Server) closeSteerAcceptance(requestID string) {
 	}
 	s.steersMu.Lock()
 	defer s.steersMu.Unlock()
+	s.closeSteerAcceptanceLocked(requestID)
+}
+
+func (s *Server) closeSteerAcceptanceLocked(requestID string) {
 	if s.closedSteers == nil {
 		s.closedSteers = make(map[string]struct{})
 	}
@@ -1533,6 +1540,10 @@ func (s *Server) consumePendingSteer(requestID string) (RunSteerMessage, bool) {
 	}
 	s.steersMu.Lock()
 	defer s.steersMu.Unlock()
+	return s.consumePendingSteerLocked(requestID)
+}
+
+func (s *Server) consumePendingSteerLocked(requestID string) (RunSteerMessage, bool) {
 	steer, ok := s.pendingSteers[requestID]
 	if !ok {
 		return RunSteerMessage{}, false
@@ -1652,7 +1663,6 @@ func (s *Server) beginChatRun(req ChatRequest, input TurnInput, userMessage Mess
 	cleanup := func() {
 		once.Do(func() {
 			s.unregisterActiveRun(req.RequestID)
-			s.clearSteerState(req.RequestID)
 			cancel()
 		})
 	}
