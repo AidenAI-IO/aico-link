@@ -498,6 +498,9 @@ type compatibleStreamingLog struct {
 	Done               bool
 	Err                error
 	RawSSE             string
+	// EmptyTurn is classified from the visible content after tagged thinking
+	// is stripped; Content keeps the original text for display.
+	EmptyTurn bool
 }
 
 // compatibleRawSSELogLimit bounds the raw SSE kept in the raw HTTP log for a
@@ -840,17 +843,22 @@ func (m *openAICompatibleModel) decodeStreamingResponse(ctx context.Context, bod
 		if hasRawStream {
 			rawSSE = rawStream.String()
 		}
+		// content holds the normalized visible text once the stream finished;
+		// a tagged-thinking-only reply is empty to the agent loop, so log it so.
+		visibleContent, _, _ := normalizeTaggedThinkingText(content.String())
+		orderedToolCalls := orderedCompatibleToolCalls(toolCalls)
 		body := formatStreamingRawHTTPLogBody(compatibleStreamingLog{
 			Content:            loggedContent,
 			ReasoningContent:   reasoningContent.String(),
 			Reasoning:          providerReasoning.String(),
 			FinishReason:       stopReason,
 			NativeFinishReason: nativeStopReason,
-			ToolCalls:          orderedCompatibleToolCalls(toolCalls),
+			ToolCalls:          orderedToolCalls,
 			Usage:              usageInfo,
 			Done:               streamDone,
 			Err:                scanErr,
 			RawSSE:             rawSSE,
+			EmptyTurn:          strings.TrimSpace(visibleContent) == "" && len(orderedToolCalls) == 0,
 		})
 		_ = m.logRawHTTP(ctx, requestModel, "response", logStatusCode, body)
 	}
@@ -1129,11 +1137,10 @@ func formatStreamingRawHTTPLogBody(log compatibleStreamingLog) string {
 		}},
 		Usage: log.Usage,
 	}
-	emptyTurn := strings.TrimSpace(log.Content) == "" && len(log.ToolCalls) == 0
 	if log.Err != nil {
 		resp.Error = log.Err.Error()
 	}
-	if log.Err != nil || emptyTurn {
+	if log.Err != nil || log.EmptyTurn {
 		resp.RawSSE = log.RawSSE
 		if len(resp.RawSSE) > compatibleRawSSELogLimit {
 			resp.RawSSE = resp.RawSSE[:compatibleRawSSELogLimit] + "\n...[truncated]"

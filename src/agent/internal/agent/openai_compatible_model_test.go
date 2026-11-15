@@ -420,7 +420,9 @@ func TestOpenAICompatibleModelStreamsContent(t *testing.T) {
 
 func TestOpenAICompatibleModelLogsRawStreamingHTTPWhenEnabled(t *testing.T) {
 	firstEvent := `data: {"choices":[{"delta":{"content":"<think>\n"}}]}`
-	secondEvent := `data: {"choices":[{"delta":{"content":"需要查当前时间。\n</think>"},"finish_reason":"tool_calls"}]}`
+	// Visible text after the thinking block keeps this a non-empty turn, which
+	// is logged without raw_sse.
+	secondEvent := `data: {"choices":[{"delta":{"content":"需要查当前时间。\n</think>现在是十点。"},"finish_reason":"stop"}]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(firstEvent + "\n\n"))
@@ -492,10 +494,10 @@ func TestOpenAICompatibleModelLogsRawStreamingHTTPWhenEnabled(t *testing.T) {
 	if len(logged.Choices) != 1 {
 		t.Fatalf("raw streaming HTTP response choices = %#v", logged.Choices)
 	}
-	if logged.Choices[0].Message.Content != "<think>\n需要查当前时间。\n</think>" {
+	if logged.Choices[0].Message.Content != "<think>\n需要查当前时间。\n</think>现在是十点。" {
 		t.Fatalf("raw streaming HTTP response content = %q", logged.Choices[0].Message.Content)
 	}
-	if logged.Choices[0].FinishReason != "tool_calls" {
+	if logged.Choices[0].FinishReason != "stop" {
 		t.Fatalf("raw streaming HTTP response finish_reason = %q", logged.Choices[0].FinishReason)
 	}
 	if !strings.Contains(logText, `"kind":"response"`) {
@@ -531,6 +533,16 @@ func TestOpenAICompatibleModelLogsRawStreamingHTTPForFailedOrEmptyTurn(t *testin
 			wantNative: "MALFORMED_FUNCTION_CALL",
 			wantReason: "looked at the screen",
 		},
+		{
+			// Tagged thinking is stripped from the visible reply, so this turn
+			// is empty even though the logged content keeps the original tags.
+			name: "tagged_thinking_only_turn",
+			events: []string{
+				`data: {"choices":[{"delta":{"content":"<think>inspect</think>"},"finish_reason":"stop"}]}`,
+				`data: [DONE]`,
+			},
+			wantContent: "<think>inspect</think>",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -564,7 +576,7 @@ func TestOpenAICompatibleModelLogsRawStreamingHTTPForFailedOrEmptyTurn(t *testin
 				}
 			} else if err != nil {
 				t.Fatalf("GenerateContent() error = %v", err)
-			} else {
+			} else if tc.wantNative != "" {
 				info := resp.Choices[0].GenerationInfo
 				if info["llm_native_finish_reason"] != tc.wantNative || info["reasoning_tokens"] != 120 {
 					t.Fatalf("generation info = %#v, want native finish reason and reasoning tokens", info)
