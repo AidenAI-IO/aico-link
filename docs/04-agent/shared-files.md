@@ -173,7 +173,10 @@ in a new tab. Previews cover images (including SVG, shown as an image), PDF,
 audio, video, text, and HTML. HTML renders in a sandboxed frame without
 `allow-same-origin`: its scripts run in an opaque origin that cannot read the
 Web UI, its storage, or the session cookie, and the board refuses its requests
-as cross-site. Chat images also show inline in the message. The phone App offers file
+as cross-site. Selecting a folder in the inspector opens it in the same dialog,
+listing its subfolders and files; selecting an entry previews it or opens the
+subfolder there, and **Back** returns to the folder it was opened from. Chat
+images also show inline in the message. The phone App offers file
 selection through the attachment menu and a shared-file browser. iOS downloads
 to a temporary file and opens the system share sheet (including Save to Files);
 Android opens the system save-document picker and streams to the selected
