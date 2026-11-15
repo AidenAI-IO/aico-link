@@ -36,13 +36,20 @@ let dialogReturnFocus = null;
 function rememberDialogOpener() {
     const active = document.activeElement;
     const list = active && active.closest('.inspector-list');
-    dialogReturnFocus = list ? {list: list.id, focus: rememberListFocus(list)} : null;
+    // Dialogs opened from elsewhere, such as a shared-file link in the
+    // conversation, return focus to that element while it is still shown.
+    dialogReturnFocus = list ? {list: list.id, focus: rememberListFocus(list)}
+        : active && active !== document.body ? {element: active} : null;
 }
 
 function returnFocusFromDialog() {
     const saved = dialogReturnFocus;
     dialogReturnFocus = null;
     if (!saved) return;
+    if (saved.element) {
+        if (saved.element.isConnected) saved.element.focus({preventScroll: true});
+        return;
+    }
     const list = document.getElementById(saved.list);
     if (!list) return;
     restoreListFocus(list, saved.focus);
@@ -475,12 +482,15 @@ async function refreshSharedFiles() {
 // ---- Shared file preview -------------------------------------------------
 
 // /share serves every file as an opaque download, so previews fetch the bytes
-// and render them here. Only formats the browser displays without running
-// page code are rendered; HTML, SVG and anything unknown are shown as text or
+// and render them here. Images (SVG included) render as <img>, which runs no
+// page code. HTML renders in a sandboxed frame with an opaque origin: its
+// scripts run but cannot read this page, its storage or the session cookie,
+// and the board refuses its requests as cross-site. Anything unknown is shown
 // as details with the download button.
 const previewMaxBytes = 20 << 20;
 const previewTextMaxBytes = 512 << 10;
-const previewImageTypes = {png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp'};
+const previewHTMLMaxBytes = 5 << 20;
+const previewImageTypes = {png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml'};
 const previewMediaTypes = {mp4: 'video/mp4', webm: 'video/webm', mov: 'video/mp4', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg'};
 const previewTextExtensions = new Set(['txt', 'md', 'markdown', 'log', 'csv', 'tsv', 'json', 'jsonl', 'yaml', 'yml', 'toml',
     'ini', 'conf', 'cfg', 'xml', 'html', 'htm', 'svg', 'css', 'js', 'mjs', 'ts', 'py', 'go', 'rs', 'c', 'h', 'cc', 'cpp',
@@ -501,6 +511,7 @@ function filePreviewKind(file) {
     const ext = fileExtension(file.name);
     if (previewImageTypes[ext]) return 'image';
     if (ext === 'pdf') return 'pdf';
+    if (ext === 'html' || ext === 'htm') return 'html';
     if (previewMediaTypes[ext]) return previewMediaTypes[ext].startsWith('video/') ? 'video' : 'audio';
     if (previewTextExtensions.has(ext) || String(file.mime_type || '').startsWith('text/')) return 'text';
     return '';
@@ -513,6 +524,31 @@ function previewMimeType(file, kind) {
     return previewMediaTypes[ext] || 'application/octet-stream';
 }
 
+function filePreviewMaxBytes(kind) {
+    if (kind === 'text') return previewTextMaxBytes;
+    if (kind === 'html') return previewHTMLMaxBytes;
+    return previewMaxBytes;
+}
+
+// createHTMLPreviewFrame renders untrusted HTML without access to this page.
+// allow-scripts without allow-same-origin gives the frame an opaque origin;
+// no forms, popups or top-level navigation are allowed.
+function createHTMLPreviewFrame(html, title) {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.setAttribute('referrerpolicy', 'no-referrer');
+    frame.title = title || 'HTML preview';
+    frame.srcdoc = html;
+    return frame;
+}
+
+// Framed previews (HTML, PDF) fill the dialog body edge to edge and scroll
+// only inside the frame; other previews keep the padded, scrolling body.
+function setFilePreviewFramed(framed) {
+    document.getElementById('fileModalBody').classList.toggle('framed', framed);
+    fileModalEl().querySelector('.file-modal-card').classList.toggle('framed', framed);
+}
+
 function setFilePreviewMessage(text) {
     document.getElementById('fileModalBody').replaceChildren(inspectorElement('p', 'file-preview-message', text));
 }
@@ -520,11 +556,12 @@ function setFilePreviewMessage(text) {
 async function renderFilePreview(file, signal) {
     const kind = filePreviewKind(file);
     const body = document.getElementById('fileModalBody');
+    setFilePreviewFramed(false);
     if (!kind) {
         setFilePreviewMessage('No preview for this file type. Download it to open it.');
         return;
     }
-    if (file.size > (kind === 'text' ? previewTextMaxBytes : previewMaxBytes)) {
+    if (file.size > filePreviewMaxBytes(kind)) {
         setFilePreviewMessage('This file is too large to preview. Download it to open it.');
         return;
     }
@@ -534,6 +571,13 @@ async function renderFilePreview(file, signal) {
     if (kind === 'text') {
         const text = await response.text();
         body.replaceChildren(inspectorElement('pre', 'file-preview-text', text));
+        return;
+    }
+    if (kind === 'html') {
+        const frame = createHTMLPreviewFrame(await response.text(), file.name);
+        frame.className = 'file-preview-html';
+        setFilePreviewFramed(true);
+        body.replaceChildren(frame);
         return;
     }
     const blob = new Blob([await response.arrayBuffer()], {type: previewMimeType(file, kind)});
@@ -551,6 +595,7 @@ async function renderFilePreview(file, signal) {
     }
     node.className = 'file-preview-' + kind;
     node.src = activeFilePreviewUrl;
+    setFilePreviewFramed(kind === 'pdf');
     body.replaceChildren(node);
 }
 
@@ -558,9 +603,7 @@ function openFileModal(file) {
     closeFileModal();
     rememberDialogOpener();
     document.getElementById('fileModalTitle').textContent = file.name;
-    document.getElementById('fileModalMeta').textContent = [formatFileSize(file.size),
-        file.shared_by === 'user' ? 'Shared by you' : 'Shared by Aico',
-        file.modified ? formatTaskTime(file.modified) : ''].filter(Boolean).join(' · ');
+    document.getElementById('fileModalMeta').textContent = sharedFileMeta(file, true);
     const download = document.getElementById('fileModalDownload');
     download.href = file.download_url;
     download.setAttribute('download', file.name);
@@ -583,8 +626,15 @@ function closeFileModal() {
     if (fileModalEl().classList.contains('hidden')) return;
     fileModalEl().classList.add('hidden');
     document.getElementById('fileModalBody').replaceChildren();
+    setFilePreviewFramed(false);
     if (!activeTaskModalId) document.body.classList.remove('state-modal-open');
     returnFocusFromDialog();
+}
+
+function sharedFileMeta(file, withTime) {
+    return [formatFileSize(file.size),
+        file.shared_by === 'user' ? 'Shared by you' : 'Shared by Aico',
+        withTime && file.modified ? formatTaskTime(file.modified) : ''].filter(Boolean).join(' · ');
 }
 
 async function deleteSharedFile(file) {

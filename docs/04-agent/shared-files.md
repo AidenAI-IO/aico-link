@@ -89,6 +89,17 @@ An individual read or upload failure does not stop later files in the selection.
 The composer reports failed and skipped counts with the first failure reason.
 A login-required response stops the batch and preserves the existing draft.
 
+### Chat images
+
+Images sent inline with a chat turn (base64 `data`, from the picker, paste, or
+the API) still reach the model as visual input, and are also saved to the shared
+root as if uploaded through `POST /api/files`: they are listed with
+`shared_by: user`, a taken name gets a random suffix, and a name without an
+image extension gets one from the MIME type. The Agent receives the saved path
+next to the image, and the history entry carries its `download_url`. A failed
+save is logged and does not stop the turn. Turns sent while a realtime voice
+session handles chat refuse attachments and save nothing.
+
 Uploads stream to a hidden temporary file and become visible only after the
 complete request is persisted. A duplicate filename receives a random suffix;
 existing files are never overwritten. Failed uploads remove temporary files.
@@ -101,8 +112,10 @@ path separators or control characters, or exceed 240 UTF-8 bytes.
 
 ## Generated outputs and other files
 
-The Agent is instructed to save downloadable outputs under `/share` and return
-Markdown links such as `[Download report](/share/report.pdf)`. Encode each path
+The Agent is instructed to save downloadable outputs under `/share` and, whenever
+a reply mentions any shared file (an upload, a chat image, or its own output),
+to write it as a Markdown link whose text is the filename and whose target is
+its `/share/` path, such as `[report.pdf](/share/report.pdf)`. Encode each path
 segment when it contains spaces, parentheses, non-ASCII characters, `#`, or `?`.
 For example, `report (final).pdf` becomes `report%20%28final%29.pdf`.
 
@@ -118,8 +131,18 @@ through the API drops its record. Files uploaded before this record existed are
 reported as `aico`. Downloads use attachment disposition, support HEAD and byte ranges,
 and do not execute HTML or SVG as same-origin content.
 
-The Web composer has an **Add file** control. Download cards
-appear for attached files and Agent output links. The phone App offers file
+The Web composer has an **Add file** control. In the Web conversation, attached
+files and every link to a file under `/share/` (including a bare `/share/...`
+path in a reply) render as shared-file links. Hovering one shows a small preview
+card with the file's size and owner and, where supported, an image thumbnail,
+the start of a text file, or a scaled-down HTML page. Clicking opens the same
+preview dialog as the inspector's shared-file list, with a download button;
+modified clicks (for example Ctrl or Cmd) keep the browser's default and download
+in a new tab. Previews cover images (including SVG, shown as an image), PDF,
+audio, video, text, and HTML. HTML renders in a sandboxed frame without
+`allow-same-origin`: its scripts run in an opaque origin that cannot read the
+Web UI, its storage, or the session cookie, and the board refuses its requests
+as cross-site. Chat images also show inline in the message. The phone App offers file
 selection through the attachment menu and a shared-file browser. iOS downloads
 to a temporary file and opens the system share sheet (including Save to Files);
 Android opens the system save-document picker and streams to the selected
@@ -142,8 +165,9 @@ example `path=outputs/report.pdf`.
 
 Deletion never removes a tree in one request and never follows a symbolic
 link, so a link inside `/share` cannot be used to delete files elsewhere.
-Chat messages that already reference a deleted file keep their download card;
-downloading it then fails with `404`. Deletion uses the same access rules as
+Chat messages that already reference a deleted file keep their link; its
+preview then reports that the file no longer exists, and downloading it fails
+with `404`. Deletion uses the same access rules as
 uploads (see below).
 
 Both ports use the same `lanaccess.Guard` as the Agent. LAN clients sign in at

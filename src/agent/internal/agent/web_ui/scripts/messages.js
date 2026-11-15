@@ -51,11 +51,6 @@ function createMessageNode(msg) {
         body.appendChild(contentDiv);
     }
 
-    if (msg.type === 'assistant' || msg.type === 'proactive') {
-        const downloads = renderMessageAttachments(sharedLinksFromText(msg.content));
-        if (downloads) body.appendChild(downloads);
-    }
-
     // Add audio playback button for voice messages with archived audio
     if (msg.audio_file && msg.audio_file !== '') {
         const audioBtn = document.createElement('button');

@@ -172,6 +172,8 @@ function revokeAttachmentPreview(attachment) {
     }
 }
 
+// Images and recordings show inline. Shared files show as links to /share
+// that preview on hover and open the file preview on click.
 function renderMessageAttachments(attachments) {
     if (!attachments || attachments.length === 0) return null;
 
@@ -179,14 +181,11 @@ function renderMessageAttachments(attachments) {
     wrapper.className = 'message-attachments';
 
     attachments.forEach(function(attachment) {
-        const card = document.createElement('div');
-        card.className = 'attachment-card';
-
         if (attachment.kind === 'image') {
             const image = document.createElement('img');
             image.alt = attachment.name || 'Image attachment';
             image.src = attachmentDataURL(attachment);
-            image.className = 'zoomable';
+            image.className = 'attachment-image zoomable';
             image.tabIndex = 0;
             image.setAttribute('role', 'button');
             image.setAttribute('aria-label', 'View ' + (attachment.name || 'image') + ' full size');
@@ -197,50 +196,45 @@ function renderMessageAttachments(attachments) {
                 event.preventDefault();
                 zoom();
             });
-            card.appendChild(image);
-        } else if (attachment.kind === 'audio') {
+            wrapper.appendChild(image);
+            return;
+        }
+        if (attachment.kind === 'audio') {
+            const card = document.createElement('div');
+            card.className = 'attachment-card';
             const audio = document.createElement('audio');
             audio.controls = true;
             audio.src = attachmentDataURL(attachment);
             card.appendChild(audio);
+            if (attachment.transcript) {
+                const transcript = document.createElement('div');
+                transcript.className = 'attachment-transcript';
+                transcript.textContent = 'Transcript: ' + attachment.transcript;
+                card.appendChild(transcript);
+            }
+            wrapper.appendChild(card);
+            return;
         }
-
-        const meta = document.createElement('div');
-        meta.className = 'attachment-meta';
-
-        const badge = document.createElement('span');
-        badge.className = 'attachment-kind';
-        badge.textContent = getAttachmentTitle(attachment.kind);
-        meta.appendChild(badge);
-
-        const name = document.createElement('span');
-        name.textContent = attachment.name || getAttachmentTitle(attachment.kind);
-        meta.appendChild(name);
-        card.appendChild(meta);
-
-        const downloadURL = safeSharedURL(attachment.download_url);
-        if (downloadURL) {
-            const link = document.createElement('a');
-            link.href = downloadURL;
-            // Let Content-Disposition trigger the save. A forced download
-            // would save a redirected login page as if it were the artifact.
-            link.target = '_blank';
-            link.rel = 'noopener';
-            link.textContent = 'Download';
-            card.appendChild(link);
-        }
-
-        if (attachment.transcript) {
-            const transcript = document.createElement('div');
-            transcript.className = 'attachment-transcript';
-            transcript.textContent = 'Transcript: ' + attachment.transcript;
-            card.appendChild(transcript);
-        }
-
-        wrapper.appendChild(card);
+        const href = safeSharedURL(attachment.download_url);
+        if (!href) return;
+        wrapper.appendChild(createSharedFileLink(href, attachment.name));
     });
 
-    return wrapper;
+    return wrapper.children.length ? wrapper : null;
+}
+
+// A link to a shared file. Following it without script support downloads the
+// file in a new tab; shared_links.js turns it into a preview.
+function createSharedFileLink(href, label) {
+    const link = document.createElement('a');
+    link.href = href;
+    link.className = 'shared-file-link';
+    // Let Content-Disposition trigger the save. A forced download would
+    // save a redirected login page as if it were the artifact.
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = label || sharedFileNameFromURL(href);
+    return link;
 }
 
 function cloneAttachmentsForTransport(attachments) {
@@ -420,18 +414,14 @@ function safeSharedURL(value) {
     } catch (_) { return ''; }
 }
 
-function sharedLinksFromText(text) {
-    const result = [];
-    const seen = new Set();
-    const pattern = /\[([^\]\n]+)\]\(([^\s)]+)\)|https?:\/\/[^\s<>"')]+|\/share\/[^\s<>"')\]]+/g;
-    for (const match of String(text || '').matchAll(pattern)) {
-        const target = match[2] || match[0].replace(/[.,;:!?。，；：！？、]+$/, '');
-        const href = safeSharedURL(target);
-        if (!href || seen.has(href) || href.endsWith('/')) continue;
-        seen.add(href);
-        let name = href.split('/').pop();
-        try { name = decodeURIComponent(name); } catch (_) {}
-        result.push({kind: 'file', name: match[1] || name, download_url: href});
-    }
-    return result;
+// isSharedFileURL reports whether href names a file (not a folder) under /share.
+function isSharedFileURL(href) {
+    const path = safeSharedURL(href);
+    return path !== '' && !path.endsWith('/');
+}
+
+function sharedFileNameFromURL(href) {
+    let name = String(safeSharedURL(href) || href).split('/').pop();
+    try { name = decodeURIComponent(name); } catch (_) {}
+    return name;
 }

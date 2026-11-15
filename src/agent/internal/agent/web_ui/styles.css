@@ -424,11 +424,23 @@ textarea:focus-visible {
     border-radius: 8px;
 }
 
-.file-preview-pdf {
+/* HTML and PDF frames take the whole body; the frame is the only scroller. */
+.file-modal-card.framed { height: min(88vh, 900px); max-height: min(88vh, 900px); }
+.file-modal-body.framed {
+    flex: 1 1 auto;
+    display: block;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #fff;
+}
+
+.file-preview-pdf,
+.file-preview-html {
+    display: block;
     width: 100%;
-    height: 72vh;
+    height: 100%;
     border: 0;
-    border-radius: 8px;
     background: #fff;
 }
 
@@ -784,6 +796,7 @@ textarea:focus-visible {
     padding: 8px;
 }
 
+.state-detail-attachments .attachment-image,
 .state-detail-attachments .attachment-card img {
     width: 100%;
     max-width: none;
@@ -908,6 +921,23 @@ textarea:focus-visible {
     border-radius: 14px;
     background: rgba(243, 237, 228, 0.78);
     border: 1px solid rgba(52, 56, 49, 0.06);
+}
+
+.attachment-image {
+    display: block;
+    max-width: min(100%, 420px);
+    max-height: 360px;
+    object-fit: contain;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: #ffffff;
+}
+
+.message-attachments .shared-file-link {
+    justify-self: start;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    font-size: 0.9rem;
 }
 
 .attachment-card img,
@@ -1845,6 +1875,54 @@ img.zoomable { cursor: zoom-in; }
 .thumb-preview-caption span:last-child { color: var(--muted); white-space: nowrap; }
 .thumb-preview-caption span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (hover: none) { .thumb-preview { display: none; } }
+
+/* Shared-file links preview on hover and open the file dialog on click. */
+.shared-file-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.shared-link-preview {
+    position: fixed;
+    z-index: 55;
+    width: 320px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel-strong);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(4px) scale(0.98);
+    transition: opacity 120ms ease, transform 120ms ease, visibility 0s linear 120ms;
+}
+.shared-link-preview.visible { opacity: 1; visibility: visible; transform: none; transition-delay: 0s; }
+.shared-link-preview-media[hidden] { display: none; }
+.shared-link-preview-media { display: grid; place-items: center; max-height: 220px; overflow: hidden; background: var(--surface-code); }
+.shared-link-preview-media img { display: block; width: 100%; max-height: 220px; object-fit: contain; background: #000; }
+.shared-link-preview-html-viewport { width: 100%; height: 200px; overflow: hidden; background: #fff; }
+/* Lay the page out at desktop width, then scale it down to the card. */
+.shared-link-preview-html { width: 1280px; height: 800px; border: 0; transform: scale(0.25); transform-origin: 0 0; pointer-events: none; }
+.shared-link-preview-text {
+    justify-self: stretch;
+    margin: 0;
+    padding: 10px 12px;
+    max-height: 200px;
+    overflow: hidden;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--text);
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.shared-link-preview-badge {
+    margin: 22px 0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--surface-soft);
+    color: var(--muted-strong);
+    font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.shared-link-preview-caption { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; font-size: 12.5px; }
+.shared-link-preview-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shared-link-preview-meta { color: var(--muted); font-size: 11.5px; }
+@media (hover: none) { .shared-link-preview { display: none; } }
 
 .image-viewer {
     position: fixed;

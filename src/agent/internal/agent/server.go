@@ -4060,6 +4060,10 @@ func (s *Server) resolveRequestInput(req ChatRequest) (TurnInput, []MessageAttac
 	if err != nil {
 		return TurnInput{}, nil, err
 	}
+	// Realtime chat refuses attachments, so do not leave copies behind for it.
+	if s.realtimeChatHandlerSnapshot() == nil {
+		s.shareChatImages(decodedAttachments, historyAttachments)
+	}
 
 	audioAttachment, nonAudioAttachments, err := splitAudioAttachment(decodedAttachments)
 	if err != nil {
@@ -4089,6 +4093,32 @@ func (s *Server) resolveRequestInput(req ChatRequest) (TurnInput, []MessageAttac
 		return TurnInput{}, nil, fmt.Errorf("message or attachment is required")
 	}
 	return turnInput, historyAttachments, nil
+}
+
+// shareChatImages saves each image the user attached to a chat turn into the
+// shared directory, as if it had been uploaded through /api/files, so it shows
+// in the shared file list and the Agent can refer to it by path. The image
+// still reaches the model as visual input. A failed save only logs: the turn
+// goes ahead without the shared copy. decoded and history are parallel.
+func (s *Server) shareChatImages(decoded []InputAttachment, history []MessageAttachment) {
+	for i := range decoded {
+		if decoded[i].Kind != AttachmentKindImage || len(decoded[i].Data) == 0 || decoded[i].Path != "" {
+			continue
+		}
+		item, err := saveSharedUpload(sharedImageName(decoded[i].Name, decoded[i].MIMEType), decoded[i].Data)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Warn("Cannot save chat image to shared files: %v", err)
+			}
+			continue
+		}
+		decoded[i].Path = item.Path
+		decoded[i].Size = item.Size
+		if i < len(history) {
+			history[i].Path = item.Path
+			history[i].DownloadURL = item.DownloadURL
+		}
+	}
 }
 
 func (s *Server) webAudioInputMode() string {

@@ -13,6 +13,7 @@ autoResizeInput();
 connectSSE();
 startResourcePolling();
 startInspector();
+startSharedFileLinks();
 startRealtimeVoiceStatusPolling();
 
 inputEl.addEventListener('input', autoResizeInput);

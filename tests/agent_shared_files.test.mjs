@@ -29,15 +29,24 @@ function harness(fetch) {
   return context;
 }
 
-test('download cards accept encoded board links and reject external or executable URLs', () => {
+test('shared-file links accept encoded board paths and reject external or executable URLs', () => {
   const context = harness();
-  const links = context.sharedLinksFromText('[报告](/share/%E6%8A%A5%E5%91%8A%20%281%29.pdf) http://192.168.42.1:8000/share/report.csv [bad](https://evil.test/share/file) [bad](javascript:alert)');
-  assert.equal(links.length, 2);
-  assert.equal(links[0].name, '报告');
-  assert.equal(links[1].download_url, '/share/report.csv');
-  assert.equal(context.safeSharedURL('//evil.test/share/file'), '');
-  assert.equal(context.safeSharedURL('file:///share/file'), '');
-  assert.equal(context.sharedLinksFromText('下载 /share/report.pdf。')[0].download_url, '/share/report.pdf');
+  assert.equal(context.isSharedFileURL('/share/%E6%8A%A5%E5%91%8A%20%281%29.pdf'), true);
+  assert.equal(context.sharedFileNameFromURL('/share/%E6%8A%A5%E5%91%8A%20%281%29.pdf'), '报告 (1).pdf');
+  assert.equal(context.safeSharedURL('http://192.168.42.1:8000/share/report.csv'), '/share/report.csv');
+  assert.equal(context.isSharedFileURL('/share/outputs/'), false);
+  for (const bad of ['https://evil.test/share/file', 'javascript:alert(1)', '//evil.test/share/file', 'file:///share/file', '/other/file']) {
+    assert.equal(context.isSharedFileURL(bad), false, bad);
+  }
+});
+
+test('markdown turns shared paths into preview links and leaves other links alone', () => {
+  const context = vm.createContext({window: {location: {origin: 'http://192.168.42.1:8080', hostname: '192.168.42.1'}}});
+  vm.runInContext(readFileSync('src/agent/internal/agent/web_ui/scripts/attachments.js', 'utf8'), context);
+  vm.runInContext(readFileSync('src/agent/internal/agent/web_ui/scripts/markdown.js', 'utf8'), context);
+  const links = text => JSON.parse(JSON.stringify(context.parseMarkdownInline(text).filter(node => node.type === 'link').map(node => node.href)));
+  assert.deepEqual(links('[photo.png](/share/photo.png) and /share/a%20b.txt。 not x/share/c.txt or /share/dir/'), ['/share/photo.png', '/share/a%20b.txt']);
+  assert.deepEqual(links('see https://example.com/share/x'), ['https://example.com/share/x']);
 });
 
 test('individual attachment failures preserve the draft and process later mixed files', async t => {
@@ -187,14 +196,22 @@ test('expired upload sessions offer local login without navigating away or losin
   assert.equal(link.rel, 'noopener');
 });
 
-test('download cards let a login redirect open as a page without replacing the composer', () => {
+test('message attachments show shared files as links that open as a page on login redirect', () => {
   const context = harness();
-  const wrapper = context.renderMessageAttachments([{kind: 'file', name: 'report.csv', download_url: '/share/report.csv'}]);
-  const link = wrapper.children[0].children.find(child => child.tag === 'a');
+  const wrapper = context.renderMessageAttachments([
+    {kind: 'file', name: 'report.csv', download_url: '/share/report.csv'},
+    {kind: 'file', name: 'gone.csv'},
+  ]);
+  assert.equal(wrapper.children.length, 1);
+  const link = wrapper.children[0];
+  assert.equal(link.tag, 'a');
+  assert.equal(link.className, 'shared-file-link');
+  assert.equal(link.textContent, 'report.csv');
   assert.equal(link.href, '/share/report.csv');
   assert.equal(link.download, undefined);
   assert.equal(link.target, '_blank');
   assert.equal(link.rel, 'noopener');
+  assert.equal(context.renderMessageAttachments([{kind: 'file', name: 'gone.csv'}]), null);
 });
 
 test('other authorization errors do not prompt for a device password', async () => {

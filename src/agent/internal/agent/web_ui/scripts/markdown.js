@@ -234,6 +234,16 @@ function parseMarkdownInline(text) {
                 continue;
             }
         }
+        if (character === '/' && text.startsWith('/share/', i) && !/[\w/:.%-]/.test(text[i - 1] || '')) {
+            const match = text.slice(i).match(/^\/share\/[^\s<>"'`()[\]]+/);
+            const path = match ? match[0].replace(/[.,;:!?。，；：！？、]+$/, '') : '';
+            if (path && !path.endsWith('/')) {
+                flush();
+                nodes.push({type: 'link', href: path, children: [{type: 'text', text: path}]});
+                i += path.length;
+                continue;
+            }
+        }
         if (character === 'h' && text.startsWith('http', i) && !mdWordCharacter.test(text[i - 1] || '')) {
             const match = text.slice(i).match(/^https?:\/\/[^\s<>"'`]+/);
             if (match) {
@@ -373,7 +383,13 @@ function appendMarkdownInline(parent, nodes) {
         } else if (item.type === 'link') {
             const link = document.createElement('a');
             link.href = item.href;
-            if (/^https?:/i.test(item.href)) {
+            if (typeof isSharedFileURL === 'function' && isSharedFileURL(item.href)) {
+                // shared_links.js previews these on hover and opens them on click.
+                link.href = safeSharedURL(item.href);
+                link.className = 'shared-file-link';
+                link.target = '_blank';
+                link.rel = 'noopener';
+            } else if (/^https?:/i.test(item.href)) {
                 link.target = '_blank';
                 link.rel = 'noopener noreferrer';
             }

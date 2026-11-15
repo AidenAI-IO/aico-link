@@ -280,27 +280,11 @@ func uploadSharedFileWithLimit(w http.ResponseWriter, r *http.Request, limit int
 		http.Error(w, "Cannot persist upload", http.StatusInsufficientStorage)
 		return
 	}
-	// Link publishes the completed file atomically and never replaces an existing file.
-	// Publishing and recording the name happen under one lock with deletes.
-	if sharedPublishHook != nil {
-		sharedPublishHook()
+	published, err := publishSharedUpload(root, temp, name)
+	if err != nil {
+		http.Error(w, "Cannot publish upload", http.StatusInsufficientStorage)
+		return
 	}
-	sharedUploadsMu.Lock()
-	published := name
-	for attempts := 0; ; attempts++ {
-		err = root.Link(temp, published)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, os.ErrExist) || attempts >= 8 {
-			sharedUploadsMu.Unlock()
-			http.Error(w, "Cannot publish upload", http.StatusInsufficientStorage)
-			return
-		}
-		published = sharedCollisionName(name)
-	}
-	recordSharedUploadLocked(root, published)
-	sharedUploadsMu.Unlock()
 	info, err := root.Stat(published)
 	if err != nil {
 		http.Error(w, "Cannot inspect upload", http.StatusInternalServerError)
@@ -311,6 +295,120 @@ func uploadSharedFileWithLimit(w http.ResponseWriter, r *http.Request, limit int
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, item)
+}
+
+// publishSharedUpload links the completed temporary file to name, or to a
+// suffixed name when name is taken, and records it as shared by the user.
+// Link publishes the file atomically and never replaces an existing file.
+// Publishing and recording the name happen under one lock with deletes.
+func publishSharedUpload(root *os.Root, temp, name string) (string, error) {
+	if sharedPublishHook != nil {
+		sharedPublishHook()
+	}
+	sharedUploadsMu.Lock()
+	defer sharedUploadsMu.Unlock()
+	published := name
+	for attempts := 0; ; attempts++ {
+		err := root.Link(temp, published)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrExist) || attempts >= 8 {
+			return "", err
+		}
+		published = sharedCollisionName(name)
+	}
+	recordSharedUploadLocked(root, published)
+	return published, nil
+}
+
+// saveSharedUpload stores data as a file the user shared, as an upload through
+// POST /api/files would. Chat images use it so they appear in /share too.
+func saveSharedUpload(name string, data []byte) (sharedFile, error) {
+	if !validSharedName(name) {
+		return sharedFile{}, fmt.Errorf("invalid shared file name")
+	}
+	if int64(len(data)) > maxSharedFileBytes {
+		return sharedFile{}, fmt.Errorf("file exceeds the shared file limit")
+	}
+	if err := os.MkdirAll(sharedFilesDir(), 0755); err != nil {
+		return sharedFile{}, err
+	}
+	root, err := os.OpenRoot(sharedFilesDir())
+	if err != nil {
+		return sharedFile{}, err
+	}
+	defer root.Close()
+	temp := ".upload-" + uuid.NewString()
+	file, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return sharedFile{}, err
+	}
+	defer root.Remove(temp)
+	_, err = file.Write(data)
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return sharedFile{}, err
+	}
+	published, err := publishSharedUpload(root, temp, name)
+	if err != nil {
+		return sharedFile{}, err
+	}
+	info, err := root.Stat(published)
+	if err != nil {
+		return sharedFile{}, err
+	}
+	item := sharedFileInfo(published, info)
+	item.SharedBy = sharedByUser
+	return item, nil
+}
+
+// sharedImageName turns a chat image's name into a valid shared file name
+// that ends in an image extension.
+func sharedImageName(name, mimeType string) string {
+	name = strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || unicode.IsControl(r) {
+			return '_'
+		}
+		return r
+	}, strings.TrimSpace(name))
+	name = strings.TrimLeft(name, ".")
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" || !strings.HasPrefix(mime.TypeByExtension(ext), "image/") {
+		ext = sharedImageExtension(mimeType)
+		name += ext
+	}
+	if strings.TrimSuffix(name, ext) == "" {
+		name = "image" + ext
+	}
+	if len(name) > 240 {
+		stem := strings.TrimSuffix(name, ext)[:240-len(ext)]
+		for !utf8.ValidString(stem) {
+			stem = stem[:len(stem)-1]
+		}
+		name = stem + ext
+	}
+	return name
+}
+
+func sharedImageExtension(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/bmp":
+		return ".bmp"
+	default:
+		return ".png"
+	}
 }
 
 // deleteSharedFile removes one regular file or one empty folder below the
