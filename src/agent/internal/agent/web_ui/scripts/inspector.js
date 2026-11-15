@@ -558,26 +558,39 @@ function createHTMLPreviewFrame(html, title, baseUrl) {
 }
 
 // withPreviewBase adds <base href> for a srcdoc document, which otherwise
-// takes this page's URL as its base. A page's own <base href> (outside
-// comments) is resolved against the file's URL, as it would be when the file
+// takes this page's URL as its base. A page's own <base href> is resolved
+// against the file's URL, as it would be when the file
 // is opened directly, and the result goes first: only the first base element
 // counts, so the page's own tag is then ignored. The tag goes inside <head>,
 // or after the doctype, so a standards-mode page does not fall into quirks
-// mode.
+// mode. Both searches run on maskPreviewMarkup's copy, so a <head> or <base>
+// written in a comment or a script is not taken for the element.
 function withPreviewBase(html, baseUrl) {
     html = String(html || '');
     if (!baseUrl) return html;
+    const markup = maskPreviewMarkup(html);
     let href;
     try {
         href = new URL(baseUrl, window.location.href).href;
-        const own = /<base\s[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(html.replace(/<!--[\s\S]*?(?:-->|$)/g, ''));
+        const own = /<base\s[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(markup);
         if (own) href = new URL(decodePreviewEntities(own[1] ?? own[2] ?? own[3]).trim(), href).href;
     } catch (_) { return html; }
     const tag = '<base href="' + href.replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '">';
-    const anchor = /<head(\s[^>]*)?>/i.exec(html) || /^\s*<!doctype[^>]*>/i.exec(html);
+    const anchor = /<head(\s[^>]*)?>/i.exec(markup) || /^\s*<!doctype[^>]*>/i.exec(markup);
     if (!anchor) return tag + html;
     const at = anchor.index + anchor[0].length;
     return html.slice(0, at) + tag + html.slice(at);
+}
+
+// maskPreviewMarkup blanks comments and the text inside raw-text elements
+// (script, style, textarea, title) with spaces of the same length, so
+// positions found in the copy are positions in the original. One pass takes
+// whichever starts first, as the HTML tokenizer does.
+function maskPreviewMarkup(html) {
+    return html.replace(/<!--[\s\S]*?(?:-->|$)|(<(script|style|textarea|title)\b[^>]*>)([\s\S]*?)(<\/\2\s*>|$)/gi,
+        (match, open, name, body, close) => open === undefined
+            ? ' '.repeat(match.length)
+            : open + ' '.repeat(body.length) + close);
 }
 
 // decodePreviewEntities decodes the character references an attribute value

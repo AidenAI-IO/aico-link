@@ -240,6 +240,11 @@ test('HTML previews resolve relative links from the file folder and keep a page 
     assert.equal(context.withPreviewBase('<head>' + own + '</head>', '/share/report/index.html'),
       '<head><base href="' + resolved + '">' + own + '</head>');
   }
+  // A <head> or <base> written in a comment or a script is not the element.
+  assert.equal(context.withPreviewBase('<!doctype html><!-- <head> --><head><img src="chart.png">', '/share/report/index.html'),
+    '<!doctype html><!-- <head> --><head>' + base + '<img src="chart.png">');
+  assert.equal(context.withPreviewBase('<script>"<head><base href=x>"</script><head></head>', '/share/report/index.html'),
+    '<script>"<head><base href=x>"</script><head>' + base + '</head>');
   // A base inside a comment is not an element.
   assert.equal(context.withPreviewBase('<head><!-- <base href="https://cdn.test/"> --></head>', '/share/report/index.html'),
     '<head>' + base + '<!-- <base href="https://cdn.test/"> --></head>');
