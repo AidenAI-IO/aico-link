@@ -501,6 +501,8 @@
   // Settings
 
   let settingsDirty = false;
+  // Bumped on every edit so a save only clears edits it actually submitted.
+  let settingsRevision = 0;
 
   function settingsFields() {
     const form = ui.settingsForm;
@@ -525,6 +527,7 @@
 
   ui.settingsForm.addEventListener("input", () => {
     settingsDirty = true;
+    settingsRevision += 1;
     ui.settingsStatus.textContent = "Unsaved changes";
   });
 
@@ -539,15 +542,18 @@
       },
       pass_host_proxy: fields.pass_host_proxy.checked,
     };
+    const revision = settingsRevision;
     ui.settingsStatus.textContent = "Saving";
     try {
       const saved = await api("PUT", "/api/settings", body);
-      settingsDirty = false;
       if (state && saved) state.settings = saved;
+      // Edits made while the save was pending stay dirty and on screen.
+      if (revision !== settingsRevision) return;
+      settingsDirty = false;
       ui.settingsStatus.textContent = "Settings saved";
       renderSettings();
     } catch (error) {
-      ui.settingsStatus.textContent = "";
+      ui.settingsStatus.textContent = revision === settingsRevision ? "" : "Unsaved changes";
       if (error.status !== 401) toast(error.message, "error");
     }
   });
@@ -563,6 +569,9 @@
     actionResults: {}, // type -> {name, label, result}
     preselectImage: "",
   };
+  // Incremented each time the dialog opens, so a request started in an earlier
+  // dialog never acts on a newer one.
+  let dialogGeneration = 0;
 
   function localImages() {
     return state && Array.isArray(state.images) ? state.images : [];
@@ -778,17 +787,22 @@
     }
   }
 
-  function saveBridgeConfig() {
-    if (!form.type) return;
+  // The current field values as typed, without validating or marking them.
+  function bridgeInputValues() {
     const spec = currentSpec();
     const fields = spec && Array.isArray(spec.fields) ? spec.fields : [];
-    const saved = {};
+    const values = {};
     for (const field of fields) {
       const input = $(fieldId(field.name));
       if (!input) continue;
-      saved[field.name] = field.kind === "checkbox" ? input.checked : input.value;
+      values[field.name] = field.kind === "checkbox" ? input.checked : input.value;
     }
-    form.configs[form.type] = saved;
+    return values;
+  }
+
+  function saveBridgeConfig() {
+    if (!form.type) return;
+    form.configs[form.type] = bridgeInputValues();
   }
 
   function clearProbe() {
@@ -805,6 +819,7 @@
 
   function openInstanceDialog(instance) {
     if (!state) return;
+    dialogGeneration += 1;
     form.editingId = instance ? instance.id : null;
     form.configs = {};
     form.probeOptions = {};
@@ -927,6 +942,7 @@
     }
     setFormError("");
     saving = true;
+    const generation = dialogGeneration;
     const buttons = ui.instanceForm.querySelectorAll(".sheet-foot button");
     buttons.forEach((button) => { button.disabled = true; });
     try {
@@ -944,10 +960,12 @@
       } else {
         toast(`Saved ${body.name}.`, "ok", 3000);
       }
-      ui.instanceDialog.close();
+      if (generation === dialogGeneration) ui.instanceDialog.close();
       await refreshState();
     } catch (error) {
-      if (error.status !== 401) setFormError(error.message);
+      if (error.status === 401) return;
+      if (generation === dialogGeneration && ui.instanceDialog.open) setFormError(error.message);
+      else toast(`Could not save ${body.name}: ${error.message}`, "error");
     } finally {
       saving = false;
       buttons.forEach((button) => { button.disabled = false; });
@@ -973,13 +991,21 @@
     const spec = currentSpec();
     if (!spec) return;
     const type = form.type;
+    const generation = dialogGeneration;
     const { config } = readBridgeConfig();
+    const probedValues = JSON.stringify(bridgeInputValues());
+    // A result only describes the dialog, bridge type and settings it probed.
+    const current = () => generation === dialogGeneration && ui.instanceDialog.open && form.type === type;
     ui.probeButton.disabled = true;
     ui.probeSummary.textContent = "Checking";
     delete ui.probeSummary.dataset.ok;
     try {
       const result = (await api("POST", `/api/bridge-types/${encodeURIComponent(type)}/probe`, { config })) || {};
-      if (form.type !== type) return;
+      if (!current()) return;
+      if (JSON.stringify(bridgeInputValues()) !== probedValues) {
+        clearProbe();
+        return;
+      }
       saveBridgeConfig();
       form.probeOptions[type] = result.options && typeof result.options === "object" ? result.options : {};
       // Preselect the only dynamic choice when the field is still empty.
@@ -991,10 +1017,11 @@
       renderBridgeFields();
       renderProbe(result);
     } catch (error) {
+      if (!current()) return;
       ui.probeSummary.textContent = error.status === 401 ? "" : error.message;
       ui.probeSummary.dataset.ok = "false";
     } finally {
-      ui.probeButton.disabled = !currentSpec() || !currentSpec().available;
+      if (generation === dialogGeneration) ui.probeButton.disabled = !currentSpec() || !currentSpec().available;
     }
   });
 
@@ -1175,6 +1202,18 @@
 
   let build = null;
   let buildTimer = 0;
+  // The dialog a build may auto-select its image in, with that dialog's image
+  // choice when the build started; a later choice or dialog keeps its image.
+  let buildOrigin = null;
+  let buildSelectedIn = 0;
+
+  function imageChoice() {
+    return JSON.stringify([ui.instImageRef.value.trim(), ui.instImage.value]);
+  }
+
+  function trackBuildOrigin() {
+    buildOrigin = { generation: dialogGeneration, choice: imageChoice() };
+  }
 
   function syncBuildFromState() {
     if (build && build.status === "running") return;
@@ -1182,10 +1221,11 @@
     const running = builds.filter((item) => item.status === "running");
     if (running.length) {
       build = running[running.length - 1];
+      trackBuildOrigin();
       renderBuild();
       pollBuild();
-    } else if (!build) {
-      ui.buildProgress.hidden = true;
+    } else {
+      renderBuild();
     }
   }
 
@@ -1201,7 +1241,7 @@
     const ref = str(build.image_ref);
     let text = ref;
     if (status === "running" && build.started_at) text = `${ref}, started ${relativeTime(build.started_at)}`;
-    else if (status === "succeeded") text = `${ref} is ready and selected.`;
+    else if (status === "succeeded") text = buildSelectedIn === dialogGeneration ? `${ref} is ready and selected.` : `${ref} is ready.`;
     else if (status === "failed") text = `${ref} failed. Open the build log for details.`;
     ui.buildText.textContent = text;
 
@@ -1226,13 +1266,18 @@
         if (error.status === 401) return;
         if (error.status === 404) build.status = "failed";
       }
+      const select = build.status === "succeeded" && ui.instanceDialog.open && buildOrigin
+        && buildOrigin.generation === dialogGeneration && buildOrigin.choice === imageChoice();
+      if (select) buildSelectedIn = dialogGeneration;
       renderBuild();
       if (build.status === "running") {
         pollBuild();
       } else if (build.status === "succeeded") {
-        form.preselectImage = str(build.image_ref);
-        ui.instImageRef.value = "";
-        ui.instImage.disabled = false;
+        if (select) {
+          form.preselectImage = str(build.image_ref);
+          ui.instImageRef.value = "";
+          ui.instImage.disabled = false;
+        }
         toast(`Built ${build.image_ref}.`, "ok");
         await refreshState();
         if (ui.instanceDialog.open) refreshImageOptions();
@@ -1245,6 +1290,7 @@
   ui.buildButton.addEventListener("click", async () => {
     ui.buildButton.disabled = true;
     try {
+      trackBuildOrigin();
       build = await api("POST", "/api/images/build", {});
       renderBuild();
       pollBuild();

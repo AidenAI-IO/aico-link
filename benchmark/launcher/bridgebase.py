@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ipaddress
 import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
@@ -141,6 +142,8 @@ class BridgeContext:
     cancelled: Callable[[], bool] = lambda: False
     # Device keys held by other active instances -> their names.
     in_use: Callable[[], dict[str, str]] = dict
+    # Serializes device claims across instances (the instance manager's lock).
+    claim_lock: Any = field(default_factory=threading.RLock)
 
     @property
     def route_id(self) -> str:
@@ -153,6 +156,20 @@ class BridgeContext:
     def remember(self, **values: Any) -> None:
         self.runtime.update(values)
         self.save_runtime(dict(values))
+
+    def claim_device(self, key: str, description: str) -> None:
+        """Reserve a device key for this instance, or raise when another instance holds it.
+
+        The check and the reservation happen under one lock, so two instances
+        that picked the same device at start cannot both reserve it.
+        """
+        if not key:
+            return
+        with self.claim_lock:
+            owner = self.in_use().get(key)
+            if owner:
+                raise RuntimeError(f"{description} is already used by instance {owner!r}.")
+            self.remember(device_claim=key)
 
     def log(self, text: str) -> None:
         self.bridge_log.parent.mkdir(parents=True, exist_ok=True)
@@ -440,6 +457,4 @@ class HostProcessBridge(BridgeType):
         return f"Renewing the {self.process_label} route failed (HTTP {status or 'no answer'})."
 
     def claim_free(self, ctx: BridgeContext, key: str, description: str) -> None:
-        owner = ctx.in_use().get(key) if key else None
-        if owner:
-            raise RuntimeError(f"{description} is already used by instance {owner!r}.")
+        ctx.claim_device(key, description)

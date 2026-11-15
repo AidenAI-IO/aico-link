@@ -20,8 +20,9 @@ def _check_removal(result, verb: str, name: str) -> None:
     """Raise unless a stop/remove succeeded or the object was already gone."""
     if result.returncode == 0:
         return
-    text = f"{result.stderr or ''}\n{result.stdout or ''}"
-    if "No such container" in text or "No such volume" in text:
+    # Docker 29 prints "no such object" in lowercase; older CLIs capitalise it.
+    text = f"{result.stderr or ''}\n{result.stdout or ''}".lower()
+    if "no such container" in text or "no such volume" in text or "no such object" in text:
         return
     raise DockerError(f"docker {verb} {name} failed: {_detail(result)}")
 
@@ -127,8 +128,14 @@ class Docker:
         return containers
 
     def container_state(self, name: str) -> str:
+        """The container's status, or '' when Docker reports that it does not exist."""
         result = self._run("inspect", "--format", "{{.State.Status}}", name)
-        return result.stdout.strip() if result.returncode == 0 else ""
+        if result.returncode == 0:
+            return result.stdout.strip()
+        text = f"{result.stderr or ''}\n{result.stdout or ''}".lower()
+        if "no such object" in text or "no such container" in text:
+            return ""
+        raise DockerError(f"docker inspect {name} failed: {_detail(result)}")
 
     def remove(self, name: str) -> None:
         _check_removal(self._run("rm", "-f", name, timeout=60), "rm", name)

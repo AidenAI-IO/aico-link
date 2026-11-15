@@ -151,6 +151,19 @@ def test_task_access_requires_matching_active_lease():
     state.check_task_access("task")
 
 
+@pytest.mark.parametrize("path", ["/health", "/api/concurrent"])
+def test_status_endpoints_do_not_report_an_expired_lease(bridge, path):
+    assert request(bridge, "/api/setup", {}, headers={"benchmark-task-id": "stale"})[0] == 200
+    bridge.state.active_task_expires_at = 1.0  # monotonic time well in the past
+
+    status, payload = request(bridge, path)
+
+    assert status == 200
+    assert payload["data"]["active_task_id"] == ""
+    if path == "/health":
+        assert payload["data"]["active_task_lease_state"] == ""
+
+
 def test_protected_http_calls_require_task_lease(bridge):
     assert request(bridge, "/api/setup", {})[0] == 400
     assert request(bridge, "/api/providers/screenshot", {})[0] == 429

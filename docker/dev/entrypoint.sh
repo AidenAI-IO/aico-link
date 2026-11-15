@@ -17,6 +17,30 @@ truthy() {
     esac
 }
 
+# Usage: prepare_python_base <base> <arch>
+# Moves <base> aside as <base>.<arch>.<epoch> when its .aico-arch marker names
+# another architecture, or as <base>.unknown.<epoch> when it holds files but no
+# marker (a volume from before the marker existed, whose packages may have been
+# built for another architecture). Then creates <base> and marks it with <arch>.
+prepare_python_base() {
+    local base="$1" arch="$2" previous_arch
+    if [ -f "$base/.aico-arch" ]; then
+        previous_arch="$(cat "$base/.aico-arch")"
+        if [ "$previous_arch" != "$arch" ]; then
+            mv "$base" "$base.${previous_arch:-unknown}.$(date +%s)"
+        fi
+    elif [ -d "$base" ] && [ -n "$(ls -A "$base")" ]; then
+        mv "$base" "$base.unknown.$(date +%s)"
+    fi
+    mkdir -p "$base"
+    [ -f "$base/.aico-arch" ] || printf '%s\n' "$arch" > "$base/.aico-arch"
+}
+
+# Sourcing this file (as the tests do) only defines the helpers above.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    return 0
+fi
+
 mkdir -p \
     "$agent_dir/log" \
     "$agent_dir/memory" \
@@ -32,16 +56,7 @@ chmod 1777 /userdata/tmp
 # The user Python base persists in the volume. Packages with native code only
 # load on the architecture that installed them, so set the old tree aside when
 # the image architecture changes (for example amd64 -> arm64 on Apple Silicon).
-python_base="${PYTHONUSERBASE:-/userdata/agent/python}"
-current_arch="$(uname -m)"
-if [ -f "$python_base/.aico-arch" ]; then
-    previous_arch="$(cat "$python_base/.aico-arch")"
-    if [ "$previous_arch" != "$current_arch" ]; then
-        mv "$python_base" "$python_base.$previous_arch.$(date +%s)"
-    fi
-fi
-mkdir -p "$python_base"
-[ -f "$python_base/.aico-arch" ] || printf '%s\n' "$current_arch" > "$python_base/.aico-arch"
+prepare_python_base "${PYTHONUSERBASE:-/userdata/agent/python}" "$(uname -m)"
 
 if [ ! -f "$agent_dir/agent.toml" ]; then
     cp /opt/aico/defaults/agent.toml "$agent_dir/agent.toml"

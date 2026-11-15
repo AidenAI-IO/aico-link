@@ -274,6 +274,10 @@ class InstanceManager:
             if current.get("status") not in EDITABLE_STATUSES:
                 raise Conflict("Stop the instance before editing it.")
             fields = self._validated(body, instance_id=current["id"], current=current)
+            if fields["bridge"] != (current.get("bridge") or {}) and self._bridge_leftovers(current):
+                # Teardown and device claims follow the saved bridge; changing it
+                # would leave the running bridge untracked or its device unclaimed.
+                raise Conflict("The previous bridge is still running. Stop the instance before changing its bridge.")
             record = self.store.patch_instance(current["id"], **fields)
         self.log(current["id"], "Updated the instance configuration")
         return self.payload(record)
@@ -294,15 +298,37 @@ class InstanceManager:
         self.store.delete_instance(record["id"])
         shutil.rmtree(self.instance_dir(record["id"]), ignore_errors=True)
 
-    def devices_in_use(self, exclude: str = "") -> dict[str, str]:
-        """Map device key -> instance name for active instances that hold a device.
+    def _bridge_leftovers(self, record: dict[str, Any]) -> bool:
+        """True while the bridge an instance started may still run (its runtime is kept)."""
+        runtime = record.get("runtime") or {}
+        if not runtime:
+            return False
+        containers: dict[str, dict[str, str]] = {}
+        if runtime.get("bridge_container"):
+            try:
+                containers = self.docker.containers(LABEL_INSTANCE)
+            except DockerError:
+                return True
+        try:
+            bridge = get_bridge((record.get("bridge") or {}).get("type"))
+        except validation.ValidationError:
+            return False
+        return bridge.has_leftovers(runtime, containers, self.system)
 
-        The key comes from the started bridge (it may have picked the only
-        connected device) or, before that, from the saved config.
+    def devices_in_use(self, exclude: str = "") -> dict[str, str]:
+        """Map device key -> instance name for instances that hold a device.
+
+        Active instances hold their device, and so does an instance in error
+        while its bridge still runs. The key comes from the started bridge (it
+        may have picked the only connected device) or, before that, from the
+        saved config.
         """
         used: dict[str, str] = {}
         for record in self.store.instances():
-            if record["id"] == exclude or record.get("status") not in ACTIVE_STATUSES:
+            if record["id"] == exclude:
+                continue
+            status = record.get("status")
+            if status not in ACTIVE_STATUSES and not (status == "error" and record.get("runtime")):
                 continue
             bridge_record = record.get("bridge") or {}
             key = str((record.get("runtime") or {}).get("device_claim") or "")
@@ -312,7 +338,7 @@ class InstanceManager:
                     key, _ = bridge.device_claim(dict(bridge_record.get("config") or {}))
                 except validation.ValidationError:
                     key = ""
-            if key:
+            if key and (status in ACTIVE_STATUSES or self._bridge_leftovers(record)):
                 used[key] = record.get("name") or record["id"]
         return used
 
@@ -372,6 +398,7 @@ class InstanceManager:
             save_runtime=lambda values: self.store.patch_instance(instance_id, runtime=values),
             cancelled=(cancel.is_set if cancel is not None else (lambda: False)),
             in_use=lambda: self.devices_in_use(exclude=instance_id),
+            claim_lock=self._lock,
         )
 
     def _run_start(self, instance_id: str, cancel: threading.Event) -> None:
@@ -542,7 +569,7 @@ class InstanceManager:
                     pending.pop(label)
             if not pending:
                 return
-            state = self.docker.container_state(container)
+            state = self._known_state(container)
             if state and state != "running":
                 raise RuntimeError(self._agent_failure(container, f"The Agent container {state}."))
             if self.system.monotonic() >= deadline:
@@ -614,13 +641,14 @@ class InstanceManager:
                 self.log(instance_id, f"Cleanup: {exc}")
 
         def stop_agent() -> None:
+            if not self.docker.container_state(container):
+                return
+            if not quiet:
+                self._step(instance_id, "Stopping the Agent container")
             self.docker.stop(container, AGENT_STOP_TIMEOUT_SEC)
             self.docker.remove(container)
 
-        if self.docker.container_state(container):
-            if not quiet:
-                self._step(instance_id, "Stopping the Agent container")
-            attempt(stop_agent)
+        attempt(stop_agent)
         bridge = get_bridge((record.get("bridge") or {}).get("type"))
         if not quiet and bridge.type != "none":
             self._step(instance_id, f"Stopping the {bridge.label} bridge")
@@ -760,14 +788,14 @@ class InstanceManager:
         elif source == "bridge":
             text = tail_text(self.bridge_log(record["id"]), max_bytes)
             container = (record.get("runtime") or {}).get("bridge_container")
-            if container and self.docker.container_state(container):
+            if container and self._known_state(container):
                 text += f"\n--- docker logs {container} ---\n" + self.docker.logs(container, tail)
             text = tail_lines(text, tail)
             if not text.strip():
                 text = "No bridge output yet." if (record.get("bridge") or {}).get("type") != "none" else "This instance has no bridge."
         elif source == "agent":
             container = agent_container(record["id"])
-            state = self.docker.container_state(container)
+            state = self._known_state(container)
             if not state:
                 text = "The Agent container is not running. Start the instance to see its output."
             else:
@@ -782,4 +810,11 @@ class InstanceManager:
         else:
             raise validation.ValidationError("source must be agent, bridge, or launcher.")
         return {"source": source, "text": text}
+
+    def _known_state(self, container: str) -> str:
+        """The container's state, or '' when it is absent or Docker cannot tell."""
+        try:
+            return self.docker.container_state(container)
+        except DockerError:
+            return ""
 

@@ -152,8 +152,8 @@ class ImageManager:
 
     def _run_build(self, build_id: str, image_ref: str, tag: str) -> None:
         log_path = self._log_path(build_id)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
             command = build_command(
                 repo_root=self.repo_root,
                 image_ref=image_ref,
@@ -175,10 +175,16 @@ class ImageManager:
                     build_id, status="failed", finished_at=now_iso(),
                     error=f"docker build exited with code {code}",
                 )
-        except Exception as exc:  # pragma: no cover - defensive
-            with log_path.open("a", encoding="utf-8") as log:
-                log.write(f"ERROR: {exc}\n")
-            self.store.patch_build(build_id, status="failed", finished_at=now_iso(), error=str(exc))
+        except Exception as exc:  # noqa: BLE001 - every failure ends the build as failed
+            try:  # Best effort: the log may be what failed.
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                with log_path.open("a", encoding="utf-8") as log:
+                    log.write(f"ERROR: {exc}\n")
+            except OSError:
+                pass
+            self.store.patch_build(
+                build_id, status="failed", finished_at=now_iso(), error=str(exc) or exc.__class__.__name__,
+            )
         finally:
             with self._lock:
                 self._threads.pop(build_id, None)

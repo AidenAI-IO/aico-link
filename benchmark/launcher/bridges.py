@@ -322,6 +322,8 @@ class ADBAndroidBridge(HostProcessBridge):
         if state.returncode != 0 or device_state != "device":
             detail = device_state or (state.stderr or "").strip() or "not connected"
             raise RuntimeError(f"ADB device {serial} is not ready: {ADB_STATE_HELP.get(detail, detail)}.")
+        # Reserve the serial atomically, like the other device bridges.
+        self.claim_free(ctx, *self.device_claim({"serial": serial}))
         bind_host = ctx.system.bridge_bind_host()
         port = ctx.system.free_port()
         argv = self.python_command(
@@ -824,7 +826,6 @@ class IOSDeviceBridge(HostProcessBridge):
             udid = devices[0]["udid"]
         key, description = self.device_claim({"udid": udid})
         self.claim_free(ctx, key, description)
-        ctx.remember(device_claim=key)
         policy = ctx.config.get("permission_policy") or ""
         if policy and not os.path.isfile(policy):
             raise RuntimeError(f"The permission policy file does not exist: {policy}")

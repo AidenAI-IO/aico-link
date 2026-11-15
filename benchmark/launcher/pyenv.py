@@ -20,7 +20,36 @@ from .system import System
 
 UV_MISSING = "Install uv (https://docs.astral.sh/uv/) so the launcher can prepare bridge dependencies."
 PYTHON_VERSION = "3.12"
-_REQUIREMENT_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:(==)\s*([^\s;#]+))?")
+_REQUIREMENT_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\]\s*)?([^;#]*)")
+_SPECIFIER_RE = re.compile(r"^\s*(==|>=)\s*([^\s,]+)\s*$")
+
+# Runs inside the environment, so it may only use the standard library.
+# Versions compare by their numeric release; a pre-release (a, b, rc, dev)
+# sorts below its release and any other suffix (post, local) above it.
+_PROBE = """\
+import re
+from importlib.metadata import version
+
+
+def key(text):
+    match = re.match(r"\\d+(?:\\.\\d+)*", text)
+    release = [int(part) for part in match.group(0).split(".")] if match else []
+    while release and release[-1] == 0:
+        release.pop()
+    rest = text[match.end():] if match else text
+    rank = 1 if not rest else 0 if re.match(r"[.-]?(a|b|c|rc|alpha|beta|pre|preview|dev)", rest) else 2
+    return release, rank
+
+
+for name, constraints in CONSTRAINTS:
+    installed = version(name)
+    for op, wanted in constraints:
+        if op == "==":
+            ok = installed == wanted or key(installed) == key(wanted)
+        else:
+            ok = key(installed) >= key(wanted)
+        assert ok, (name, installed, op, wanted)
+"""
 
 # One install at a time per environment: a start and an action may race.
 _locks: dict[str, threading.Lock] = {}
@@ -48,6 +77,9 @@ class PythonEnv:
     name: str
     requirements: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        self.probe_code()  # reject unsupported specifiers when the env is declared
+
     def directory(self, state_dir: Path) -> Path:
         return Path(state_dir) / "pyenv" / self.name
 
@@ -60,20 +92,25 @@ class PythonEnv:
     def probe_code(self) -> str:
         """Python that exits non-zero unless every requirement is installed.
 
-        Only presence and exact (==) pins are checked; that is what decides
-        whether an existing environment can be reused.
+        Presence, exact pins (==), and minimum versions (>=) are checked; that
+        is what decides whether an existing environment can be reused. Other
+        specifiers are not evaluated, so only these two may be used.
         """
-        pins: list[tuple[str, str]] = []
+        constraints: list[tuple[str, list[tuple[str, str]]]] = []
         for spec in self.requirements:
             match = _REQUIREMENT_RE.match(spec)
-            if match:
-                pins.append((match.group(1), match.group(3) or ""))
-        return (
-            "from importlib.metadata import version\n"
-            f"for name, pinned in {pins!r}:\n"
-            "    installed = version(name)\n"
-            "    assert not pinned or installed == pinned, (name, installed, pinned)\n"
-        )
+            if not match:
+                continue
+            checks = []
+            for part in match.group(2).split(","):
+                if not part.strip():
+                    continue
+                specifier = _SPECIFIER_RE.match(part)
+                if not specifier:
+                    raise ValueError(f"unsupported requirement specifier in {spec!r}; use == or >=")
+                checks.append((specifier.group(1), specifier.group(2)))
+            constraints.append((match.group(1), checks))
+        return f"CONSTRAINTS = {constraints!r}\n" + _PROBE
 
 
 def requirements_file(path: Path) -> tuple[str, ...]:

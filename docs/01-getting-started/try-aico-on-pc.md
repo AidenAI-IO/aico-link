@@ -164,10 +164,11 @@ On Apple Silicon the sandbox now runs as native `arm64` rather than emulated
 `amd64`. Python user packages with native code only load on the architecture
 that installed them, so the entrypoint records the architecture in
 `/userdata/agent/python/.aico-arch` and moves that directory aside when the
-architecture changes. A volume created before this marker existed is assumed
-to match; if Agent skills fail to import packages after the switch, run
-`rm -rf /userdata/agent/python` in the sandbox terminal (or reset the volume
-with `docker compose down -v`) and reinstall them.
+architecture changes. A nonempty directory without the marker (from a volume
+created before the marker existed) has an unknown architecture, so it is moved
+aside as `/userdata/agent/python.unknown.<timestamp>`. Reinstall the Python
+packages your Agent skills need after the switch, then delete the old
+directory once you no longer need it.
 
 ## Configure a Native Local Agent
 

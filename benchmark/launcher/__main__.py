@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import DEFAULT_PORT, DEFAULT_STATE_DIR
 from .server import Launcher, create_server
+from .store import StateDirBusy, lock_state_dir
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,6 +31,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--port must be between 0 and 65535")
 
     state_dir = args.state_dir.expanduser().resolve()
+    try:
+        # Held until the process exits; released by the OS.
+        state_lock = lock_state_dir(state_dir)  # noqa: F841
+    except StateDirBusy as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     app = Launcher(state_dir)
     try:
         server, token = create_server(app, port=args.port)

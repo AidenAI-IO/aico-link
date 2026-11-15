@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 STATE_FILE_NAME = "state.json"
+LOCK_FILE_NAME = "launcher.lock"
 STATE_VERSION = 1
 MAX_STORED_BUILDS = 20
 
@@ -25,6 +26,40 @@ def default_settings() -> dict[str, Any]:
         "build": {"base_image": "", "go_download_base": "", "mobilegym_node_image": ""},
         "pass_host_proxy": False,
     }
+
+
+class StateDirBusy(RuntimeError):
+    """Another launcher process already owns the state directory."""
+
+
+def lock_state_dir(state_dir: Path) -> Any:
+    """Take an exclusive, non-blocking process lock on ``state_dir``.
+
+    Each launcher caches state.json in memory and rewrites it whole, so two
+    launchers sharing a directory would overwrite each other's changes. Keep
+    the returned handle open for the life of the process; the OS releases the
+    lock when the process exits. Raises :class:`StateDirBusy` if it is held.
+    """
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    handle = open(state_dir / LOCK_FILE_NAME, "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        raise StateDirBusy(
+            f"Another launcher is already using the state directory {state_dir}. "
+            "Stop it, or start this one with a different --state-dir."
+        ) from exc
+    return handle
 
 
 def _empty_state() -> dict[str, Any]:
@@ -86,8 +121,8 @@ class Store:
                 data["builds"] = [item for item in builds if isinstance(item, dict)]
         return data
 
-    def _save(self) -> None:
-        payload = json.dumps(self._data, ensure_ascii=False, indent=2, sort_keys=True)
+    def _save(self, data: dict[str, Any]) -> None:
+        payload = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
         fd, tmp_name = tempfile.mkstemp(prefix=".state-", suffix=".json", dir=self.state_dir)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -109,10 +144,15 @@ class Store:
             return copy.deepcopy(reader(self._data))
 
     def update(self, mutator: Callable[[dict[str, Any]], Any]) -> Any:
-        """Apply mutator to the live document, persist, and return a copy of its result."""
+        """Apply mutator to a copy of the document, persist it, then publish it.
+
+        If saving fails, the live document is left unchanged.
+        """
         with self._lock:
-            result = mutator(self._data)
-            self._save()
+            data = copy.deepcopy(self._data)
+            result = mutator(data)
+            self._save(data)
+            self._data = data
             return copy.deepcopy(result)
 
     @property

@@ -21,7 +21,9 @@ from launcher import LABEL_INSTANCE, pyenv, validation
 from launcher.bridges import detect_guest_ip, device_type_from_health, parse_dhcp_leases
 from launcher.images import build_command
 from launcher.instances import Conflict, agent_container, choose_ports
+from launcher.net import container_proxy, container_side_url, host_side_url
 from launcher.server import COOKIE_NAME, Launcher, create_server
+from launcher.store import Store, lock_state_dir
 from launcher.system import System
 
 
@@ -88,7 +90,7 @@ class FakeSystem(System):
             return done(out="")
         if sub == "inspect":
             container = self.containers.get(args[-1])
-            return done(out=container["state"] + "\n") if container else done(1, err="No such object")
+            return done(out=container["state"] + "\n") if container else done(1, err=f"error: no such object: {args[-1]}")
         if sub == "run":
             name = args[args.index("--name") + 1]
             label = next(a for a in args if a.startswith(LABEL_INSTANCE + "="))
@@ -408,11 +410,13 @@ def test_stop_stops_agent_before_bridge(app: Launcher, fake: FakeSystem):
     assert fake.events == [f"stop {container}", f"rm {container}", f"terminate {pid}"]
 
 
-def test_stop_reports_docker_failures_instead_of_stopped(app: Launcher, fake: FakeSystem):
+# inspect: a failed inspection must not read as an absent container.
+@pytest.mark.parametrize("failing", [{"stop", "rm"}, {"inspect"}])
+def test_stop_reports_docker_failures_instead_of_stopped(app: Launcher, fake: FakeSystem, failing: set[str]):
     created = app.instances.create(body("Demo", "none"))
     app.instances.start(created["id"])
     assert wait_settled(app, created["id"])["status"] == "running"
-    fake.failing = {"stop", "rm"}
+    fake.failing = failing
 
     app.instances.stop(created["id"])
     instance = wait_settled(app, created["id"])
@@ -698,18 +702,22 @@ def test_pyenv_reuses_or_installs(tmp_path: Path, fake: FakeSystem, python_exist
     assert steps == expected_steps and installed == bool(expected_steps)
 
 
-def test_pyenv_import_probe_checks_presence_and_exact_pins():
+def test_pyenv_import_probe_checks_presence_pins_and_minimums():
     import importlib.metadata
 
     pinned = importlib.metadata.version("pytest")
+    major = int(pinned.split(".")[0])
 
     def probe(*requirements: str) -> int:
         code = pyenv.PythonEnv("x", requirements).probe_code()
         return subprocess.run([sys.executable, "-c", code], capture_output=True).returncode
 
-    assert probe("pytest>=1", f"pytest=={pinned}") == 0
+    assert probe("pytest>=1", f"pytest=={pinned}", f"pytest>={pinned}") == 0
     assert probe("pytest==0.0.1") != 0
+    assert probe(f"pytest>={major + 1}.0.0") != 0  # installed but older than required: not reused
     assert probe("surely-not-installed-package") != 0
+    with pytest.raises(ValueError, match="unsupported"):
+        pyenv.PythonEnv("x", ("pytest~=8.0",))
 
 
 LEASES = """{
@@ -769,3 +777,150 @@ def test_vphone_guest_ip_is_newest_reachable_iphone_lease(tmp_path: Path, fake: 
     fake.reachable = {("192.168.64.3", 22222)}  # the newest lease is stale
     assert detect_guest_ip(fake, 22222, leases)[0] == "192.168.64.3"
     assert detect_guest_ip(fake, 22222, tmp_path / "missing")[0] == ""
+
+
+# -- store, net, and pyenv review fixes ---------------------------------------
+
+
+def test_store_keeps_state_unchanged_when_saving_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    store = Store(tmp_path)
+    store.put_instance({"id": "a", "image": "old"})
+
+    def fail(data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "_save", fail)
+    with pytest.raises(OSError):
+        store.patch_instance("a", image="new")
+    assert store.instance("a")["image"] == "old"
+
+
+def test_state_dir_lock_admits_one_launcher(tmp_path: Path):
+    code = (
+        "import sys\n"
+        "from launcher.store import StateDirBusy, lock_state_dir\n"
+        "try:\n"
+        "    lock_state_dir(sys.argv[1])\n"
+        "except StateDirBusy as exc:\n"
+        "    sys.exit(str(exc))\n"
+    )
+
+    def other_process() -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-c", code, str(tmp_path)],
+            capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1],
+        )
+
+    handle = lock_state_dir(tmp_path)
+    try:
+        busy = other_process()
+        assert busy.returncode != 0 and str(tmp_path) in busy.stderr and "--state-dir" in busy.stderr
+    finally:
+        handle.close()
+    assert other_process().returncode == 0
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "container", "host_probe"),
+    [
+        ("http://127.0.0.1:19090", "http://host.docker.internal:19090", "http://10.0.0.1:19090"),
+        ("http://127.0.0.2:19090/x", "http://host.docker.internal:19090/x", "http://10.0.0.1:19090/x"),
+        ("http://[::1]:19090", "http://host.docker.internal:19090", "http://10.0.0.1:19090"),
+        ("http://user:pw@LOCALHOST:8080", "http://user:pw@host.docker.internal:8080", "http://10.0.0.1:8080"),
+        ("http://host.docker.internal:19090", "http://host.docker.internal:19090", "http://10.0.0.1:19090"),
+        ("http://[fe80::1]:19090", "http://[fe80::1]:19090", "http://[fe80::1]:19090"),
+        ("http://192.168.1.5:19090", "http://192.168.1.5:19090", "http://192.168.1.5:19090"),
+    ],
+)
+def test_loopback_urls_are_rewritten_for_containers_and_host_probes(endpoint, container, host_probe):
+    assert container_side_url(endpoint) == container
+    assert host_side_url(endpoint, "10.0.0.1") == host_probe
+
+
+@pytest.mark.parametrize(
+    ("proxy", "expected"),
+    [
+        ("127.0.0.5:7890", "host.docker.internal:7890"),
+        ("http://[::1]:7890", "http://host.docker.internal:7890"),
+        ("http://proxy.example:7890", "http://proxy.example:7890"),
+    ],
+)
+def test_container_proxy_rewrites_any_loopback(proxy, expected):
+    assert container_proxy(proxy) == expected
+
+
+# -- lifecycle: device claims, failed inspections, and failed builds ------------------
+
+
+def test_two_starts_cannot_reserve_the_same_automatically_selected_iphone(app: Launcher, fake: FakeSystem):
+    fake.usbmux = json.dumps([{"UniqueDeviceID": "00008110-001A", "ConnectionType": "USB"}])
+    # Both workers list the one connected iPhone before either reserves it.
+    listed = threading.Barrier(2, timeout=5)
+    run = fake.run
+
+    def run_in_step(args, **kwargs):
+        result = run(args, **kwargs)
+        if [str(arg) for arg in args][2:5] == ["pymobiledevice3", "usbmux", "list"]:
+            listed.wait()
+        return result
+
+    fake.run = run_in_step
+    patch_instance = app.store.patch_instance
+
+    def slow_reservation(instance_id, **changes):
+        if "device_claim" in (changes.get("runtime") or {}):
+            time.sleep(0.2)  # widen the gap between the ownership check and the reservation
+        return patch_instance(instance_id, **changes)
+
+    app.store.patch_instance = slow_reservation
+    ids = [app.instances.create(body(name, "ios_device"))["id"] for name in ("One", "Two")]
+    for instance_id in ids:
+        app.instances.start(instance_id)
+    results = [wait_settled(app, instance_id) for instance_id in ids]
+
+    assert sorted(result["status"] for result in results) == ["error", "running"]
+    assert "already used" in next(result["error"] for result in results if result["status"] == "error")
+    assert sum("ios_device" in " ".join(args) for args in fake.started) == 1
+
+
+@pytest.mark.parametrize("edit", [
+    body("One", "none"),
+    body("One", "adb_android", {"serial": "emulator-5556"}),
+])
+def test_an_errored_instance_keeps_its_device_and_bridge_until_its_bridge_stops(
+    app: Launcher, fake: FakeSystem, edit: dict
+):
+    first = app.instances.create(body("One", "adb_android", {"serial": "emulator-5554"}))
+    second = app.instances.create(body("Two", "adb_android", {"serial": "emulator-5554"}))
+    app.instances.start(first["id"])
+    assert wait_settled(app, first["id"])["status"] == "running"
+    # The Agent exits; the ADB bridge process keeps running.
+    fake.containers.pop(agent_container(first["id"]))
+    app.instances.check_running(force=True)
+    assert app.instances.get(first["id"])["status"] == "error"
+
+    with pytest.raises(Conflict, match="already used"):
+        app.instances.start(second["id"])
+    with pytest.raises(Conflict, match="still running"):
+        app.instances.update(first["id"], edit)
+    with pytest.raises(Conflict, match="already used"):
+        app.instances.start(second["id"])
+
+    app.instances.stop(first["id"])
+    assert wait_settled(app, first["id"])["status"] == "stopped"
+    assert not fake.pids
+    app.instances.update(first["id"], edit)
+    app.instances.start(second["id"])
+    assert wait_settled(app, second["id"])["status"] == "running"
+
+
+def test_a_build_whose_log_cannot_be_written_still_ends_failed(app: Launcher, tmp_path: Path):
+    app.images.builds_dir = tmp_path / "not-a-directory"
+    app.images.builds_dir.write_text("")
+    build = app.images.start_build("t1")
+    deadline = time.monotonic() + 10
+    while app.store.build(build["id"])["status"] == "running":
+        assert time.monotonic() < deadline, "the build never finished"
+        time.sleep(0.01)
+    assert app.store.build(build["id"])["status"] == "failed"
+    app.images.start_build("t2")  # no BuildConflict from the failed build

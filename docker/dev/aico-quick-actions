@@ -88,7 +88,10 @@ if [ -e "$target" ] && ! managed_copy_unmodified; then
 fi
 
 source_hash="$(sha256_of "$source_file")"
-if [ "$marker_preset" = "$preset" ] && [ "$marker_hash" = "$source_hash" ] && [ -f "$target" ]; then
+# The marker alone is not enough: an interrupted switch can leave another
+# preset's content behind a marker that still names this one.
+if [ "$marker_preset" = "$preset" ] && [ "$marker_hash" = "$source_hash" ] && [ -f "$target" ] \
+    && [ "$(sha256_of "$target")" = "$source_hash" ]; then
     exit 0
 fi
 

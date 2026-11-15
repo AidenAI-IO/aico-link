@@ -371,6 +371,13 @@ class DockerSandboxContractTest(unittest.TestCase):
             run("")
             self.assertIsNone(installed())
 
+            # The same interruption followed by reselecting the original
+            # preset must restore it rather than trust the stale marker.
+            run("alpha")
+            target.write_text('{"preset": "beta"}\n')
+            run("alpha")
+            self.assertEqual(installed(), '{"preset": "alpha"}\n')
+
             run("alpha")
             target.write_text('{"custom": true}\n')
             run("beta")
@@ -382,6 +389,61 @@ class DockerSandboxContractTest(unittest.TestCase):
             marker.unlink()
             run("alpha")
             self.assertEqual(installed(), '{"custom": true}\n')
+
+    def test_python_base_is_reset_unless_marked_for_the_current_arch(self):
+        entrypoint = REPO_ROOT / "docker/dev/entrypoint.sh"
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            base = temporary_path / "python"
+
+            def prepare(arch):
+                completed = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        'source "$1" && prepare_python_base "$2" "$3"',
+                        "test",
+                        str(entrypoint),
+                        str(base),
+                        arch,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            def set_aside(prefix):
+                return sorted(
+                    path.name.rsplit(".", 1)[0]
+                    for path in temporary_path.glob(f"python.{prefix}.*")
+                )
+
+            # A missing or empty base is simply marked.
+            prepare("aarch64")
+            self.assertEqual((base / ".aico-arch").read_text(), "aarch64\n")
+            (base / ".aico-arch").unlink()
+            prepare("aarch64")
+            self.assertEqual((base / ".aico-arch").read_text(), "aarch64\n")
+            self.assertEqual(set_aside("*"), [])
+
+            # A matching marker keeps installed packages.
+            (base / "lib").mkdir()
+            prepare("aarch64")
+            self.assertTrue((base / "lib").is_dir())
+
+            # A different marker, or packages without any marker, are moved
+            # aside so the new base starts empty.
+            prepare("x86_64")
+            self.assertEqual(set_aside("aarch64"), ["python.aarch64"])
+            self.assertEqual(sorted(path.name for path in base.iterdir()), [".aico-arch"])
+            (base / ".aico-arch").unlink()
+            (base / "lib").mkdir()
+            prepare("aarch64")
+            self.assertEqual(set_aside("unknown"), ["python.unknown"])
+            self.assertEqual((base / ".aico-arch").read_text(), "aarch64\n")
+            self.assertFalse((base / "lib").exists())
 
     def test_agent_supervisor_truncates_the_persistent_log(self):
         service = REPO_ROOT / "docker/dev/agent-service.sh"

@@ -41,6 +41,7 @@ import (
 	"aico-agent/internal/ble"
 	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/localtls"
+	"aico-agent/internal/logging"
 	"aico-agent/internal/mcu"
 	streamcontract "aico-agent/internal/stream"
 )
@@ -733,6 +734,7 @@ func newTerminalReverseProxyForTarget(target *url.URL) *httputil.ReverseProxy {
 	// ttyd is optional in the Docker image (AICO_ENABLE_TERMINAL), so explain
 	// an unreachable terminal instead of answering with an empty 502.
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		logging.Warnf("agent", "webtty", "terminal proxy %s %s failed: %v", r.Method, r.URL.Path, err)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusBadGateway)

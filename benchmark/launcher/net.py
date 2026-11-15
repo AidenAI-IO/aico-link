@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import urllib.parse
 from typing import Mapping
 
@@ -9,7 +10,27 @@ PROXY_VARIABLES = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https
 NO_PROXY_HOSTS = ("localhost", "127.0.0.1", "host.docker.internal")
 
 
-LOCAL_HOSTS = {"host.docker.internal", "127.0.0.1", "localhost"}
+def is_loopback_host(hostname: str | None) -> bool:
+    """True for localhost and any loopback IP (127.0.0.0/8, ::1)."""
+    name = (hostname or "").lower()
+    if name == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
+def _with_host(parsed: urllib.parse.SplitResult, host: str, *, userinfo: bool) -> str:
+    """netloc of ``parsed`` with its host replaced, keeping the port."""
+    netloc = f"[{host}]" if ":" in host else host
+    if parsed.port:
+        netloc += f":{parsed.port}"
+    if userinfo:
+        info, _, _ = parsed.netloc.rpartition("@")
+        if info:
+            netloc = f"{info}@{netloc}"
+    return netloc
 
 
 def host_side_url(endpoint: str, host: str = "127.0.0.1") -> str:
@@ -20,21 +41,19 @@ def host_side_url(endpoint: str, host: str = "127.0.0.1") -> str:
     Linux), so a host-side probe fails exactly when a container's would.
     """
     parsed = urllib.parse.urlsplit(endpoint)
-    if (parsed.hostname or "").lower() not in LOCAL_HOSTS:
+    hostname = (parsed.hostname or "").lower()
+    if hostname != "host.docker.internal" and not is_loopback_host(hostname):
         return endpoint
-    netloc = host + (f":{parsed.port}" if parsed.port else "")
+    netloc = _with_host(parsed, host, userinfo=False)
     return urllib.parse.urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 def container_side_url(endpoint: str) -> str:
     """Rewrite loopback hosts to host.docker.internal for use inside a container."""
     parsed = urllib.parse.urlsplit(endpoint)
-    if (parsed.hostname or "").lower() not in {"127.0.0.1", "localhost"}:
+    if not is_loopback_host(parsed.hostname):
         return endpoint
-    userinfo, _, _ = parsed.netloc.rpartition("@")
-    netloc = (f"{userinfo}@" if userinfo else "") + "host.docker.internal"
-    if parsed.port:
-        netloc += f":{parsed.port}"
+    netloc = _with_host(parsed, "host.docker.internal", userinfo=True)
     return urllib.parse.urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
 

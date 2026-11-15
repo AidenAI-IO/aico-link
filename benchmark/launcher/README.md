@@ -253,10 +253,15 @@ Everything the launcher keeps is under the state directory
 | Path | Contents |
 | --- | --- |
 | `state.json` | Settings, instances, and recent builds |
+| `launcher.lock` | Held by the running launcher so only one uses this directory |
 | `builds/<id>.log` | Image build output |
 | `instances/<id>/launcher.log` | Lifecycle steps and errors for one instance |
 | `instances/<id>/bridge.log` | Bridge process output, bridge dependency installs, or MobileGym image build output |
 | `pyenv/<name>/` | Python environments for the desktop and iOS device bridges |
+
+Only one launcher can use a state directory at a time; a second one exits
+with an error. To run another launcher alongside it, give it its own
+`--port` and `--state-dir`.
 
 Agent output comes from `docker logs` and from `/userdata/agent/log/agent.log`
 inside the container; the **Logs** dialog shows all three sources.
