@@ -222,3 +222,38 @@ test('other authorization errors do not prompt for a device password', async () 
     assert.equal(context.draftAttachments.length, 0);
   }
 });
+
+test('HTML previews resolve relative links from the file folder and keep a page base', () => {
+  const context = vm.createContext({window: {location: {href: 'http://192.168.42.1:8080/'}}, URL});
+  vm.runInContext(readFileSync('src/agent/internal/agent/web_ui/scripts/inspector.js', 'utf8'), context);
+  const base = '<base href="http://192.168.42.1:8080/share/report/index.html">';
+  assert.equal(context.withPreviewBase('<!doctype html><html><head><title>t</title></head></html>', '/share/report/index.html'),
+    '<!doctype html><html><head>' + base + '<title>t</title></head></html>');
+  assert.equal(context.withPreviewBase('<!DOCTYPE html><p>x', '/share/report/index.html'), '<!DOCTYPE html>' + base + '<p>x');
+  const own = '<head><base href="https://cdn.test/"></head>';
+  assert.equal(context.withPreviewBase(own, '/share/report/index.html'), own);
+});
+
+test('a slower shared-link lookup from an earlier click does not replace the latest one', async () => {
+  const resolvers = {};
+  const opened = [];
+  const conversationEl = {contains: () => true};
+  const context = vm.createContext({
+    URL, conversationEl, window: {location: {origin: 'http://192.168.42.1:8080', hostname: '192.168.42.1'}},
+    fetch: url => new Promise(resolve => { resolvers[url] = resolve; }),
+    openFileModal: file => opened.push(file.name),
+    showToast() {}, showErrorToast() {}, fileModalEl: () => ({classList: {contains: () => true}}),
+    document: {addEventListener() {}},
+  });
+  vm.runInContext(readFileSync('src/agent/internal/agent/web_ui/scripts/attachments.js', 'utf8'), context);
+  vm.runInContext(readFileSync('src/agent/internal/agent/web_ui/scripts/shared_links.js', 'utf8'), context);
+  const link = href => ({getAttribute: () => href, focus() {}});
+  const listing = name => ({ok: true, status: 200, json: async () => ({files: [{kind: 'file', name, download_url: '/share/' + name}]})});
+  const first = context.openSharedLink(link('/share/a/one.txt'));
+  const second = context.openSharedLink(link('/share/b/two.txt'));
+  resolvers['/api/files?path=b'](listing('two.txt'));
+  await second;
+  resolvers['/api/files?path=a'](listing('one.txt'));
+  await first;
+  assert.deepEqual(opened, ['two.txt']);
+});

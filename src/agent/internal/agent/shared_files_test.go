@@ -195,6 +195,24 @@ func TestChatImagesAreSavedAsSharedUploads(t *testing.T) {
 	}
 }
 
+func TestSharedImageName(t *testing.T) {
+	for _, tc := range []struct{ name, mimeType, want string }{
+		{"diagram", "image/svg+xml", "diagram.svg"},
+		{"photo", "image/avif", "photo.avif"},
+		{"scan", "image/tiff", "scan.tiff"},
+		{"scan.TIF", "image/tiff", "scan.TIF"},
+		{"shot.jpeg", "image/png", "shot.jpeg"},
+		{"notes.txt", "image/jpeg; charset=binary", "notes.txt.jpg"},
+		{"mystery", "image/x-unknown", "mystery.png"},
+		{"../.hidden", "image/gif", "_.hidden.gif"},
+		{"", "image/webp", "image.webp"},
+	} {
+		if got := sharedImageName(tc.name, tc.mimeType); got != tc.want {
+			t.Errorf("sharedImageName(%q, %q) = %q, want %q", tc.name, tc.mimeType, got, tc.want)
+		}
+	}
+}
+
 func TestSharedFilesExternalOutputsAndConfinement(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("AICO_SHARE_DIR", dir)

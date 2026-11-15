@@ -369,7 +369,8 @@ func saveSharedUpload(name string, data []byte) (sharedFile, error) {
 }
 
 // sharedImageName turns a chat image's name into a valid shared file name
-// that ends in an image extension.
+// that ends in an image extension. A name without one gets the extension of
+// its MIME type.
 func sharedImageName(name, mimeType string) string {
 	name = strings.Map(func(r rune) rune {
 		if r == '/' || r == '\\' || unicode.IsControl(r) {
@@ -379,7 +380,7 @@ func sharedImageName(name, mimeType string) string {
 	}, strings.TrimSpace(name))
 	name = strings.TrimLeft(name, ".")
 	ext := strings.ToLower(filepath.Ext(name))
-	if ext == "" || !strings.HasPrefix(mime.TypeByExtension(ext), "image/") {
+	if !sharedImageExtensionKnown(ext) {
 		ext = sharedImageExtension(mimeType)
 		name += ext
 	}
@@ -396,19 +397,46 @@ func sharedImageName(name, mimeType string) string {
 	return name
 }
 
+// sharedImageExtensions maps image MIME types to the extension a saved chat
+// image gets. Unknown image types fall back to .png.
+var sharedImageExtensions = map[string]string{
+	"image/png":     ".png",
+	"image/jpeg":    ".jpg",
+	"image/jpg":     ".jpg",
+	"image/gif":     ".gif",
+	"image/webp":    ".webp",
+	"image/bmp":     ".bmp",
+	"image/svg+xml": ".svg",
+	"image/avif":    ".avif",
+	"image/tiff":    ".tiff",
+	"image/heic":    ".heic",
+	"image/heif":    ".heif",
+}
+
 func sharedImageExtension(mimeType string) string {
-	switch strings.ToLower(strings.TrimSpace(mimeType)) {
-	case "image/jpeg", "image/jpg":
-		return ".jpg"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	case "image/bmp":
-		return ".bmp"
-	default:
-		return ".png"
+	mimeType, _, _ = strings.Cut(strings.ToLower(strings.TrimSpace(mimeType)), ";")
+	if ext, ok := sharedImageExtensions[strings.TrimSpace(mimeType)]; ok {
+		return ext
 	}
+	return ".png"
+}
+
+// sharedImageExtensionKnown reports whether ext already names an image type,
+// so the name is kept as is. The system MIME table may lack some image
+// types, so the extensions above count too.
+func sharedImageExtensionKnown(ext string) bool {
+	if ext == "" {
+		return false
+	}
+	if strings.HasPrefix(mime.TypeByExtension(ext), "image/") || ext == ".jpeg" || ext == ".tif" {
+		return true
+	}
+	for _, known := range sharedImageExtensions {
+		if ext == known {
+			return true
+		}
+	}
+	return false
 }
 
 // deleteSharedFile removes one regular file or one empty folder below the

@@ -129,7 +129,7 @@ function renderSharedLinkHoverPreview(card, file, entry) {
         image.src = entry.url;
         setSharedLinkHoverMedia(card, image);
     } else if (entry.kind === 'html' && entry.text !== undefined) {
-        const frame = createHTMLPreviewFrame(entry.text, file.name);
+        const frame = createHTMLPreviewFrame(entry.text, file.name, file.download_url);
         frame.className = 'shared-link-preview-html';
         frame.tabIndex = -1;
         const viewport = document.createElement('div');
@@ -209,8 +209,13 @@ function hideSharedLinkHover() {
     setSharedLinkHoverMedia(sharedLinkHover, null);
 }
 
+// Each click takes a new generation; a slower lookup from an earlier click
+// that finishes after a later one is dropped, so the last click wins.
+let sharedLinkOpenGeneration = 0;
+
 async function openSharedLink(anchor) {
     hideSharedLinkHover();
+    const generation = ++sharedLinkOpenGeneration;
     const href = anchor.getAttribute('href');
     let file;
     try {
@@ -219,9 +224,10 @@ async function openSharedLink(anchor) {
         if (location) sharedLinkListings.delete(location.folder);
         file = await sharedLinkFile(href);
     } catch (err) {
-        showErrorToast('Preview failed', err);
+        if (generation === sharedLinkOpenGeneration) showErrorToast('Preview failed', err);
         return;
     }
+    if (generation !== sharedLinkOpenGeneration) return;
     if (!file) {
         showToast('"' + sharedFileNameFromURL(href) + '" no longer exists.', {kind: 'error'});
         return;

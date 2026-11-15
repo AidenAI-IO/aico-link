@@ -546,14 +546,31 @@ function filePreviewMaxBytes(kind) {
 
 // createHTMLPreviewFrame renders untrusted HTML without access to this page.
 // allow-scripts without allow-same-origin gives the frame an opaque origin;
-// no forms, popups or top-level navigation are allowed.
-function createHTMLPreviewFrame(html, title) {
+// no forms, popups or top-level navigation are allowed. baseUrl, the file's
+// own URL, makes relative links resolve from its folder instead of this page.
+function createHTMLPreviewFrame(html, title, baseUrl) {
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts');
     frame.setAttribute('referrerpolicy', 'no-referrer');
     frame.title = title || 'HTML preview';
-    frame.srcdoc = html;
+    frame.srcdoc = withPreviewBase(html, baseUrl);
     return frame;
+}
+
+// withPreviewBase adds <base href> for a srcdoc document, which otherwise
+// takes this page's URL as its base. A page that sets its own base keeps it.
+// The tag goes inside <head>, or after the doctype, so a standards-mode page
+// does not fall into quirks mode.
+function withPreviewBase(html, baseUrl) {
+    html = String(html || '');
+    if (!baseUrl || /<base\s[^>]*href/i.test(html)) return html;
+    let href;
+    try { href = new URL(baseUrl, window.location.href).href; } catch (_) { return html; }
+    const tag = '<base href="' + href.replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '">';
+    const anchor = /<head(\s[^>]*)?>/i.exec(html) || /^\s*<!doctype[^>]*>/i.exec(html);
+    if (!anchor) return tag + html;
+    const at = anchor.index + anchor[0].length;
+    return html.slice(0, at) + tag + html.slice(at);
 }
 
 // Framed previews (HTML, PDF) fill the dialog body edge to edge and scroll
@@ -588,7 +605,7 @@ async function renderFilePreview(file, signal) {
         return;
     }
     if (kind === 'html') {
-        const frame = createHTMLPreviewFrame(await response.text(), file.name);
+        const frame = createHTMLPreviewFrame(await response.text(), file.name, file.download_url);
         frame.className = 'file-preview-html';
         setFilePreviewFramed(true);
         body.replaceChildren(frame);
