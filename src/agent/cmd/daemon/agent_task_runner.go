@@ -63,13 +63,25 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 		}
 	}
 	acknowledge := agenttask.SteerAcknowledgerFromContext(ctx)
+	recordStep := agenttask.StepRecorderFromContext(ctx)
 	request.EventHandler = func(event agent.RunEvent) {
+		if recordStep != nil {
+			if step, ok := agent.TaskTimelineStep(event); ok {
+				recordStep(step)
+			}
+		}
 		switch event.Type {
 		case "tool_result":
 			if !event.IsError {
+				// The summary reports which steps already took effect. Private
+				// phone data is left out: it also reaches the task timeline.
+				output := event.Content
+				if agent.PrivateToolOutput(event.ToolName) {
+					output = ""
+				}
 				suppliedMu.Lock()
 				completed = append(completed, agenttask.CompletedStep{
-					Tool: event.ToolName, Input: event.ToolInput, Output: event.Content})
+					Tool: event.ToolName, Input: event.ToolInput, Output: output})
 				suppliedMu.Unlock()
 			}
 		case "steer":

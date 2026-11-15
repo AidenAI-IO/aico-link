@@ -9,10 +9,10 @@ conversationEl.addEventListener('scroll', loadOlderHistoryNearTop, {passive: tru
 conversationEl.addEventListener('scroll', hideThumbPreview, {passive: true});
 refreshCurrentLiveActivity();
 setInterval(refreshCurrentLiveActivity, 2000);
-loadToolCatalog();
 autoResizeInput();
 connectSSE();
 startResourcePolling();
+startInspector();
 startRealtimeVoiceStatusPolling();
 
 inputEl.addEventListener('input', autoResizeInput);
@@ -23,7 +23,6 @@ stateModalCloseEl.addEventListener('click', closeStateDetails);
 stateModalEl.addEventListener('click', function(event) {
     if (event.target === stateModalEl) closeStateDetails();
 });
-toolSelectEl.addEventListener('change', syncSelectedTool);
 inputEl.addEventListener('keydown', function(event) {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
         event.preventDefault();

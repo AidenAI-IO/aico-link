@@ -71,6 +71,7 @@ type Server struct {
 	usbListeners            []net.Listener
 	usbListenStops          []chan struct{}
 	lanAccess               *lanaccess.State
+	agentTasks              agentTaskRegistry
 	usbIngress              USBIngress
 	runtime                 *Runtime
 	addr                    string
@@ -591,6 +592,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/context", s.handleContext)
 	mux.HandleFunc("/api/context/attachment", s.handleContextAttachment)
 	mux.HandleFunc("/api/episodes/", s.handleEpisodes)
+	mux.HandleFunc("/api/agent-tasks", s.handleAgentTasks)
+	mux.HandleFunc("/api/agent-tasks/", s.handleAgentTasks)
 	mux.HandleFunc("/api/setup", s.handleSetup)
 	if s.benchmarkToken() != "" {
 		mux.HandleFunc("/api/benchmark/seed_memory", s.handleBenchmarkSeedMemory)
