@@ -996,16 +996,18 @@
     const probedValues = JSON.stringify(bridgeInputValues());
     // A result only describes the dialog, bridge type and settings it probed.
     const current = () => generation === dialogGeneration && ui.instanceDialog.open && form.type === type;
+    // Settings edited while the probe was pending invalidate its result.
+    const staleValues = () => {
+      if (JSON.stringify(bridgeInputValues()) === probedValues) return false;
+      clearProbe();
+      return true;
+    };
     ui.probeButton.disabled = true;
     ui.probeSummary.textContent = "Checking";
     delete ui.probeSummary.dataset.ok;
     try {
       const result = (await api("POST", `/api/bridge-types/${encodeURIComponent(type)}/probe`, { config })) || {};
-      if (!current()) return;
-      if (JSON.stringify(bridgeInputValues()) !== probedValues) {
-        clearProbe();
-        return;
-      }
+      if (!current() || staleValues()) return;
       saveBridgeConfig();
       form.probeOptions[type] = result.options && typeof result.options === "object" ? result.options : {};
       // Preselect the only dynamic choice when the field is still empty.
@@ -1017,7 +1019,7 @@
       renderBridgeFields();
       renderProbe(result);
     } catch (error) {
-      if (!current()) return;
+      if (!current() || staleValues()) return;
       ui.probeSummary.textContent = error.status === 401 ? "" : error.message;
       ui.probeSummary.dataset.ok = "false";
     } finally {

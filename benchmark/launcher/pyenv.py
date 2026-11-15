@@ -21,11 +21,13 @@ from .system import System
 UV_MISSING = "Install uv (https://docs.astral.sh/uv/) so the launcher can prepare bridge dependencies."
 PYTHON_VERSION = "3.12"
 _REQUIREMENT_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\]\s*)?([^;#]*)")
-_SPECIFIER_RE = re.compile(r"^\s*(==|>=)\s*([^\s,]+)\s*$")
+# Only plain release versions: the probe's key cannot order pre-release numbers.
+_SPECIFIER_RE = re.compile(r"^\s*(==|>=)\s*(\d+(?:\.\d+)*)\s*$")
 
 # Runs inside the environment, so it may only use the standard library.
 # Versions compare by their numeric release; a pre-release (a, b, rc, dev)
-# sorts below its release and any other suffix (post, local) above it.
+# sorts below its release and any other suffix (post, local) above it. That is
+# exact only because constraint versions are plain releases (see _SPECIFIER_RE).
 _PROBE = """\
 import re
 from importlib.metadata import version
@@ -94,7 +96,8 @@ class PythonEnv:
 
         Presence, exact pins (==), and minimum versions (>=) are checked; that
         is what decides whether an existing environment can be reused. Other
-        specifiers are not evaluated, so only these two may be used.
+        specifiers are not evaluated, so only these two may be used, each with a
+        plain release version (no pre-release, post or local suffix).
         """
         constraints: list[tuple[str, list[tuple[str, str]]]] = []
         for spec in self.requirements:
@@ -107,7 +110,9 @@ class PythonEnv:
                     continue
                 specifier = _SPECIFIER_RE.match(part)
                 if not specifier:
-                    raise ValueError(f"unsupported requirement specifier in {spec!r}; use == or >=")
+                    raise ValueError(
+                        f"unsupported requirement specifier in {spec!r}; use == or >= with a release version"
+                    )
                 checks.append((specifier.group(1), specifier.group(2)))
             constraints.append((match.group(1), checks))
         return f"CONSTRAINTS = {constraints!r}\n" + _PROBE

@@ -43,6 +43,7 @@ ROUTE_RENEW_INTERVAL_SEC = 5 * 60
 MAX_LOG_TAIL_LINES = 5000
 ACTIVE_STATUSES = {"starting", "running", "stopping"}
 EDITABLE_STATUSES = {"stopped", "error"}
+CLEANUP_FAILED = "Cleaning up failed (see the launcher log); stop the instance to retry."
 
 
 class NotFound(LookupError):
@@ -407,7 +408,13 @@ class InstanceManager:
         ctx = self._context(record, cancel)
         try:
             # Leftovers from an earlier failed run would block names and ports.
-            self._teardown(record, quiet=True)
+            # When that fails the runtime stays saved (see below) so a stop can retry.
+            if not self._teardown(record, quiet=True):
+                info = self.docker.info()
+                raise RuntimeError(
+                    (info["error"] or "Docker is not available.") if not info["available"]
+                    else "Could not remove what an earlier run left behind."
+                )
             ctx.runtime.clear()
             self.store.patch_instance(instance_id, runtime=None)
             self._step(instance_id, "Checking Docker")
@@ -429,24 +436,41 @@ class InstanceManager:
             self.log(instance_id, "Running")
         except Cancelled:
             self.log(instance_id, "Start cancelled")
-            self._cleanup_after_start(instance_id, ctx)
-            self.store.patch_instance(instance_id, status="stopped", step="", runtime=None)
+            if self._cleanup_after_start(instance_id, ctx):
+                self.store.patch_instance(instance_id, status="stopped", step="", runtime=None)
+            else:
+                self.store.patch_instance(
+                    instance_id, status="error", step="", error=f"The start was cancelled. {CLEANUP_FAILED}",
+                )
         except Exception as exc:  # noqa: BLE001 - every failure becomes instance.error
             message = str(exc) or exc.__class__.__name__
             self.log(instance_id, f"ERROR: {message}")
-            self._cleanup_after_start(instance_id, ctx)
-            self.store.patch_instance(
-                instance_id, status="error", step="", error=message, runtime=None,
-            )
+            if self._cleanup_after_start(instance_id, ctx):
+                self.store.patch_instance(instance_id, status="error", step="", error=message, runtime=None)
+            else:
+                self.store.patch_instance(
+                    instance_id, status="error", step="", error=f"{message}\n\n{CLEANUP_FAILED}",
+                )
         finally:
             with self._lock:
                 self._workers.pop(instance_id, None)
                 self._cancel.pop(instance_id, None)
 
-    def _cleanup_after_start(self, instance_id: str, ctx: BridgeContext) -> None:
+    def _cleanup_after_start(self, instance_id: str, ctx: BridgeContext) -> bool:
+        """Tear down a failed or cancelled start; True when everything was removed.
+
+        On failure the runtime stays saved so a later stop can finish the cleanup.
+        """
         record = self.store.instance(instance_id) or {"id": instance_id}
         record["runtime"] = {**(record.get("runtime") or {}), **ctx.runtime}
-        self._teardown(record, quiet=True)
+        if self._teardown(record, quiet=True):
+            return True
+        if not record["runtime"] and not self.docker.info()["available"]:
+            # Nothing was started and Docker itself is down (the start failed
+            # on that): there is nothing for a later stop to clean up.
+            return True
+        self.store.patch_instance(instance_id, runtime=record["runtime"])
+        return False
 
     def _preflight(self, record: dict[str, Any], ctx: BridgeContext, cancel: threading.Event) -> dict[str, Any]:
         instance_id = record["id"]
@@ -624,20 +648,27 @@ class InstanceManager:
             with self._lock:
                 self._workers.pop(instance_id, None)
 
-    def _teardown(self, record: dict[str, Any], *, quiet: bool = False) -> None:
-        """Stop the Agent first (its entrypoint releases the bridge route), then the bridge."""
+    def _teardown(self, record: dict[str, Any], *, quiet: bool = False) -> bool:
+        """Stop the Agent first (its entrypoint releases the bridge route), then the bridge.
+
+        Returns False when a quiet teardown could not remove everything; the
+        caller must then keep the runtime so a later stop can retry.
+        """
         instance_id = record["id"]
         container = agent_container(instance_id)
+        complete = True
 
         def attempt(action: Callable[[], None]) -> None:
             # Quiet teardowns clean up after another outcome (a failed or
             # cancelled start, a reconcile); their own failures are only logged
             # so they do not mask that outcome.
+            nonlocal complete
             try:
                 action()
             except DockerError as exc:
                 if not quiet:
                     raise
+                complete = False
                 self.log(instance_id, f"Cleanup: {exc}")
 
         def stop_agent() -> None:
@@ -655,6 +686,7 @@ class InstanceManager:
         attempt(lambda: bridge.stop(self._context(record)))
         if not quiet and self.docker.container_state(container):
             raise DockerError(f"The Agent container {container} is still present after stopping it.")
+        return complete
 
     # -- health -------------------------------------------------------------
 
@@ -764,8 +796,12 @@ class InstanceManager:
             elif status in {"starting", "stopping"}:
                 # The launcher exited mid-operation; finish by cleaning up.
                 self.log(instance_id, f"Reconcile: the launcher exited while {status}; cleaning up")
-                self._teardown(record, quiet=True)
-                if status == "stopping":
+                if not self._teardown(record, quiet=True):
+                    self.store.patch_instance(
+                        instance_id, status="error", step="",
+                        error=f"The launcher exited while this instance was {status}. {CLEANUP_FAILED}",
+                    )
+                elif status == "stopping":
                     self.store.patch_instance(
                         instance_id, status="stopped", step="", error="",
                         runtime=None,

@@ -716,8 +716,10 @@ def test_pyenv_import_probe_checks_presence_pins_and_minimums():
     assert probe("pytest==0.0.1") != 0
     assert probe(f"pytest>={major + 1}.0.0") != 0  # installed but older than required: not reused
     assert probe("surely-not-installed-package") != 0
-    with pytest.raises(ValueError, match="unsupported"):
-        pyenv.PythonEnv("x", ("pytest~=8.0",))
+    # The probe cannot order pre-release numbers (1.0rc1 vs 1.0rc2), so suffixed constraints are rejected.
+    for unsupported in ("pytest~=8.0", "pytest==1.0rc2", "pytest>=1.0b1", "pytest==1.0.post1"):
+        with pytest.raises(ValueError, match="unsupported"):
+            pyenv.PythonEnv("x", (unsupported,))
 
 
 LEASES = """{
@@ -912,6 +914,35 @@ def test_an_errored_instance_keeps_its_device_and_bridge_until_its_bridge_stops(
     app.instances.update(first["id"], edit)
     app.instances.start(second["id"])
     assert wait_settled(app, second["id"])["status"] == "running"
+
+
+def test_a_failed_cleanup_keeps_the_bridge_runtime_until_a_stop_removes_it(app: Launcher, fake: FakeSystem):
+    fake.ensure_mobilegym_image = lambda *args, **kwargs: None
+    run = fake.run
+
+    def docker_lost_after_bridge_started(args, **kwargs):
+        if [str(arg) for arg in args][:2] == ["docker", "port"]:
+            fake.failing.add("rm")  # Docker goes away once the MobileGym container runs
+            return subprocess.CompletedProcess(args, 1, "", "Cannot connect to the Docker daemon")
+        return run(args, **kwargs)
+
+    fake.run = docker_lost_after_bridge_started
+    created = app.instances.create(body("Sim", "mobilegym"))
+    app.instances.start(created["id"])
+    instance = wait_settled(app, created["id"])
+    container = app.store.instance(created["id"])["runtime"].get("bridge_container")
+
+    assert instance["status"] == "error"
+    assert container and container in fake.containers
+    with pytest.raises(Conflict, match="still running"):
+        app.instances.update(created["id"], body("Sim", "none"))
+
+    fake.run = run
+    fake.failing.clear()
+    app.instances.stop(created["id"])
+    assert wait_settled(app, created["id"])["status"] == "stopped"
+    assert container not in fake.containers
+    app.instances.update(created["id"], body("Sim", "none"))
 
 
 def test_a_build_whose_log_cannot_be_written_still_ends_failed(app: Launcher, tmp_path: Path):
