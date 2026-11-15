@@ -160,3 +160,99 @@ def integer(value: Any, *, field: str, minimum: int, maximum: int) -> int:
     if float(value) != number or not minimum <= number <= maximum:
         raise ValidationError(f"{field} must be a whole number from {minimum} to {maximum}.")
     return number
+
+
+_UDID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+_BUNDLE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$")
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+_USER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,31}$")
+_INSETS_RE = re.compile(r"^\s*\d+(?:\.\d+)?(?:\s*,\s*\d+(?:\.\d+)?){3}\s*$")
+MAX_PATH_LENGTH = 1024
+MAX_COMMAND_LENGTH = 1024
+
+
+def _no_control(text: str, field: str) -> None:
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
+        raise ValidationError(f"{field} must not contain control characters.")
+
+
+def host_path(value: Any, *, field: str, must_exist: bool = False, kind: str = "") -> str:
+    """An absolute path on this computer ('~' is expanded); '' when blank.
+
+    kind "file" requires an existing regular file when must_exist is set.
+    """
+    import os
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    _no_control(text, field)
+    if len(text) > MAX_PATH_LENGTH:
+        raise ValidationError(f"{field} is too long.")
+    path = os.path.expanduser(text)
+    if not os.path.isabs(path):
+        raise ValidationError(f"{field} must be an absolute path, e.g. /Users/me/... or ~/...")
+    path = os.path.normpath(path)
+    if must_exist:
+        if not os.path.exists(path):
+            raise ValidationError(f"{field} does not exist: {path}")
+        if kind == "file" and not os.path.isfile(path):
+            raise ValidationError(f"{field} is not a file: {path}")
+    return path
+
+
+def ios_udid(value: Any) -> str:
+    text = str(value or "").strip()
+    if text and (text.startswith("-") or not _UDID_RE.fullmatch(text)):
+        raise ValidationError(f"Device UDID is not valid: {text!r}.")
+    return text
+
+
+def bundle_id(value: Any, *, field: str, default: str) -> str:
+    text = str(value or "").strip() or default
+    if not _BUNDLE_ID_RE.fullmatch(text):
+        raise ValidationError(f"{field} must be a bundle identifier such as com.example.Runner.xctrunner.")
+    return text
+
+
+def host_name(value: Any, *, field: str) -> str:
+    """An IP address or DNS name; '' when blank."""
+    text = str(value or "").strip()
+    if text and not _HOSTNAME_RE.fullmatch(text):
+        raise ValidationError(f"{field} must be an IP address or host name.")
+    return text
+
+
+def user_name(value: Any, *, field: str, default: str) -> str:
+    text = str(value or "").strip() or default
+    if not _USER_RE.fullmatch(text):
+        raise ValidationError(f"{field} is not a valid user name.")
+    return text
+
+
+def content_insets(value: Any, *, default: str) -> str:
+    text = str(value or "").strip() or default
+    if not _INSETS_RE.fullmatch(text):
+        raise ValidationError(
+            "Content insets must be four non-negative numbers: left,top,right,bottom (macOS points)."
+        )
+    return ",".join(part.strip() for part in text.split(","))
+
+
+def command_line(value: Any, *, field: str) -> str:
+    """A command prefix the bridge splits with shlex; '' when blank."""
+    import shlex
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    _no_control(text, field)
+    if len(text) > MAX_COMMAND_LENGTH or text.startswith("-"):
+        raise ValidationError(f"{field} is not a valid command.")
+    try:
+        parts = shlex.split(text)
+    except ValueError as exc:
+        raise ValidationError(f"{field} is not a valid command: {exc}.") from None
+    if not parts:
+        raise ValidationError(f"{field} is not a valid command.")
+    return text

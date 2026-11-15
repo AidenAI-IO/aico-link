@@ -8,6 +8,7 @@ from __future__ import annotations
 import http.client
 import json
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -16,12 +17,12 @@ from typing import Any
 
 import pytest
 
-from launcher import LABEL_INSTANCE
-from launcher.bridges import device_type_from_health
+from launcher import LABEL_INSTANCE, pyenv, validation
+from launcher.bridges import detect_guest_ip, device_type_from_health, parse_dhcp_leases
 from launcher.images import build_command
 from launcher.instances import Conflict, agent_container, choose_ports
 from launcher.server import COOKIE_NAME, Launcher, create_server
-from launcher.system import ADB_BRIDGE_MODULE, System
+from launcher.system import System
 
 
 class FakeSystem(System):
@@ -44,6 +45,14 @@ class FakeSystem(System):
         self.bind_host = "127.0.0.1"
         self.failing: set[str] = set()  # docker subcommands that fail
         self.env: dict[str, str] = {}
+        self.os = "darwin"
+        self.xcode = True
+        self.deps_installed = False
+        self.started: list[list[str]] = []
+        self.reachable: set[tuple[str, int]] = set()
+        self.usbmux = "[]"
+        self.missing_tools: set[str] = set()
+        self.posts: list[tuple[str, dict[str, str]]] = []
 
     def run(self, args, *, timeout=60, cwd=None, env=None):
         args = [str(arg) for arg in args]
@@ -56,6 +65,14 @@ class FakeSystem(System):
             return done(out="a" * 40 + "\n")
         if args[:2] == ["git", "status"]:
             return done(out="")
+        if args[0].endswith("/uv"):
+            return done(self._uv(args))
+        if args[0] in {"xcode-select", "xcrun"}:
+            return done(out="/usr/bin/swiftc\n") if self.xcode else done(1, err="no developer tools")
+        if args[0].endswith("/bin/python") and "-c" in args:  # pyenv import probe
+            return done() if self.deps_installed else done(1, err="ModuleNotFoundError")
+        if args[2:5] == ["pymobiledevice3", "usbmux", "list"]:
+            return done(out=self.usbmux)
         if args[0] != "docker":
             if args[-1] == "get-state":
                 return done(out="device\n")
@@ -95,11 +112,27 @@ class FakeSystem(System):
         return done()
 
     def run_logged(self, args, log_path, *, cwd=None, env=None, should_stop=None):
-        self.calls.append([str(arg) for arg in args])
+        args = [str(arg) for arg in args]
+        self.calls.append(args)
+        return self._uv(args) if args[0].endswith("/uv") else 0
+
+    def _uv(self, args: list[str]) -> int:
+        if args[1:2] == ["venv"]:  # uv venv --python 3.12 DIR
+            python = Path(args[-1]) / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.touch()
+        if args[1:3] == ["pip", "install"]:
+            self.deps_installed = True
         return 0
 
+    def platform(self) -> str:
+        return self.os
+
+    def tcp_reachable(self, host: str, port: int, timeout: float = 2.0) -> bool:
+        return (host, port) in self.reachable
+
     def which(self, name: str) -> str:
-        return f"/usr/bin/{name}"
+        return "" if name in self.missing_tools else f"/usr/bin/{name}"
 
     def http_status(self, url: str, timeout: float = 2.0) -> int:
         return 200 if self.agent_ready else 0
@@ -120,19 +153,25 @@ class FakeSystem(System):
     def bridge_bind_host(self) -> str:
         return self.bind_host
 
-    def start_adb_bridge(self, *, serial, port, host, adb_path, log_path) -> int:
+    def start_process(self, args, *, cwd, log_path, env=None) -> int:
+        args = [str(arg) for arg in args]
         pid = self.next_pid
         self.next_pid += 1
-        self.pids[pid] = f"python -m {ADB_BRIDGE_MODULE} --adb-serial {serial}"
-        self.events.append(f"adb-start {serial}")
+        self.pids[pid] = " ".join(args)
+        self.started.append(args)
+        self.events.append(f"bridge-start {pid}")
         return pid
 
     def pid_command(self, pid: int) -> str:
         return self.pids.get(pid, "")
 
-    def terminate(self, pid: int) -> None:
+    def terminate(self, pid: int, wait_sec: float = 5.0) -> None:
         self.events.append(f"terminate {pid}")
         self.pids.pop(pid, None)
+
+    def post_json(self, url, payload, *, headers=None, timeout=10.0) -> int:
+        self.posts.append((url, dict(headers or {})))
+        return 200
 
     def resolve_mobilegym_commit(self, repo_root: Path) -> str:
         return "b" * 40
@@ -360,7 +399,7 @@ def test_stop_stops_agent_before_bridge(app: Launcher, fake: FakeSystem):
     created = app.instances.create(body("Phone", "adb_android", {"serial": "emulator-5554"}))
     app.instances.start(created["id"])
     assert wait_settled(app, created["id"])["status"] == "running"
-    pid = app.store.instance(created["id"])["runtime"]["adb_pid"]
+    pid = app.store.instance(created["id"])["runtime"]["bridge_pid"]
     fake.events.clear()
 
     app.instances.stop(created["id"])
@@ -382,21 +421,37 @@ def test_stop_reports_docker_failures_instead_of_stopped(app: Launcher, fake: Fa
     assert agent_container(created["id"]) in fake.containers
 
 
-def test_stop_never_signals_a_recycled_pid(app: Launcher, fake: FakeSystem):
+@pytest.mark.parametrize(
+    "recycled",
+    ["/usr/bin/some-other-process", "python -u -m ios_device --port 1", "vim adbandroid.scripts.start_bridge.py"],
+)
+def test_stop_never_signals_a_recycled_pid(app: Launcher, fake: FakeSystem, recycled: str):
     created = app.instances.create(body("Phone", "adb_android", {"serial": "emulator-5554"}))
     app.instances.start(created["id"])
     wait_settled(app, created["id"])
-    pid = app.store.instance(created["id"])["runtime"]["adb_pid"]
-    fake.pids[pid] = "/usr/bin/some-other-process"
+    pid = app.store.instance(created["id"])["runtime"]["bridge_pid"]
+    fake.pids[pid] = recycled
 
     app.instances.stop(created["id"])
     wait_settled(app, created["id"])
     assert f"terminate {pid}" not in fake.events
 
 
-def test_same_adb_serial_cannot_run_twice(app: Launcher):
-    first = app.instances.create(body("One", "adb_android", {"serial": "emulator-5554"}))
-    second = app.instances.create(body("Two", "adb_android", {"serial": "emulator-5554"}))
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (("adb_android", {"serial": "emulator-5554"}), ("adb_android", {"serial": "emulator-5554"})),
+        (("ios_device", {"udid": "00008110-001A"}), ("ios_device", {"udid": "00008110-001A"})),
+        # The first instance picked the only connected iPhone at start.
+        (("ios_device", {}), ("ios_device", {"udid": "00008110-001A"})),
+        # Both drive this computer's real pointer and keyboard.
+        (("desktop", {"confirm_control": True}), ("iphone_mirroring", {})),
+    ],
+)
+def test_same_device_cannot_run_twice(app: Launcher, fake: FakeSystem, first, second):
+    fake.usbmux = json.dumps([{"UniqueDeviceID": "00008110-001A", "ConnectionType": "USB"}])
+    first = app.instances.create(body("One", *first))
+    second = app.instances.create(body("Two", *second))
     app.instances.start(first["id"])
     assert wait_settled(app, first["id"])["status"] == "running"
     with pytest.raises(Conflict, match="already used"):
@@ -480,3 +535,237 @@ def test_build_overrides_only_configured_sources(tmp_path: Path, build_settings,
     )
     args = {command[i + 1] for i, arg in enumerate(command) if arg == "--build-arg"}
     assert args == {"AICO_VERSION=t", f"AICO_COMMIT={'c' * 40}"} | expected_args
+
+
+# -- host-process bridges ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("bridge_type", "config", "os_name", "bind_host", "expected"),
+    [
+        ("desktop", {"confirm_control": True}, "darwin", "127.0.0.1",
+         {"python": "venv", "module": "desktop.scripts.start_bridge", "bind": "127.0.0.1", "route_flag": None,
+          "device": "macOS", "preset": None}),
+        # Linux: containers reach the host at the Docker gateway, a private non-loopback address.
+        ("desktop", {"confirm_control": True, "screenshot_command": "scrot -o"}, "linux", "172.17.0.1",
+         {"python": "venv", "module": "desktop.scripts.start_bridge", "bind": "172.17.0.1", "route_flag": None,
+          "device": "linux", "preset": None}),
+        ("iphone_mirroring", {}, "darwin", "127.0.0.1",
+         {"python": "launcher", "module": "iphone_mirroring", "bind": "127.0.0.1", "route_flag": "--task-id",
+          "device": "iOS", "preset": "iphone_mirroring"}),
+        ("ios_device", {"udid": "00008110-001A"}, "darwin", "127.0.0.1",
+         {"python": "venv", "module": "ios_device", "bind": "127.0.0.1", "route_flag": "--task-id",
+          "device": "iOS", "preset": "ios_device"}),
+        ("vphone", {"socket": "/vm/vphone.sock", "guest_ssh_host": "192.168.64.5"}, "darwin", "127.0.0.1",
+         {"python": "launcher", "module": "vphone.scripts.start_bridge", "bind": "127.0.0.1",
+          "route_flag": "--benchmark-task-id", "device": "iOS", "preset": None}),
+    ],
+)
+def test_host_bridges_start_with_route_python_and_bind_host(
+    app: Launcher, fake: FakeSystem, bridge_type, config, os_name, bind_host, expected
+):
+    fake.os = os_name
+    fake.bind_host = bind_host
+    fake.health = {"status": "ok", "platform": {"macOS": "mac", "linux": "linux", "iOS": "ios"}[expected["device"]]}
+    created = app.instances.create(body("Device", bridge_type, config))
+    app.instances.start(created["id"])
+    instance = wait_settled(app, created["id"])
+    assert instance["status"] == "running", instance["error"]
+
+    (argv,) = fake.started
+    if expected["python"] == "venv":
+        assert argv[0] == str(app.state_dir / "pyenv" / bridge_type / "bin" / "python")
+        assert any(call[1:3] == ["pip", "install"] for call in fake.calls), "missing dependencies are installed"
+    else:
+        assert argv[0] == sys.executable
+    assert argv[1:4] == ["-u", "-m", expected["module"]]
+    port = argv[argv.index("--bridge-port" if bridge_type == "desktop" else "--port") + 1]
+    assert fake.health_urls[-1] == f"http://{expected['bind']}:{port}"
+    route = f"launcher-{created['id']}"
+    if expected["route_flag"]:
+        assert argv[argv.index(expected["route_flag"]) + 1] == route
+    if bridge_type == "desktop":
+        assert argv[argv.index("--bridge-host") + 1] == expected["bind"]
+        assert ("--allow-private-bind" in argv) == (bind_host != "127.0.0.1")
+    env = env_of(docker_run(fake))
+    assert env["AICO_BENCHMARK_TASK_ID"] == route
+    assert env["AICO_ENVIRONMENT_BRIDGE_ENDPOINT"] == f"http://host.docker.internal:{port}"
+    assert env["AICO_DEVICE_TYPE"] == expected["device"]
+    assert env.get("AICO_QUICK_ACTIONS_PRESET") == expected["preset"]
+
+    # Bridges whose route lease lapses after 30 idle minutes get it claimed again.
+    app.instances.renew_routes()
+    renews = bridge_type in {"desktop", "iphone_mirroring", "ios_device"}
+    expected_posts = [(f"http://{expected['bind']}:{port}/api/setup", {"benchmark-task-id": route})]
+    assert fake.posts == (expected_posts if renews else [])
+
+
+def test_required_checkbox_must_be_confirmed(app: Launcher, fake: FakeSystem):
+    with pytest.raises(validation.ValidationError, match="Confirm"):
+        app.instances.create(body("Desk", "desktop", {"confirm_control": False}))
+    created = app.instances.create(body("Desk", "desktop", {"confirm_control": True}))
+    # A record saved without the confirmation (e.g. by an older launcher) does not start.
+    app.store.patch_instance(created["id"], bridge={"type": "desktop", "config": {"confirm_control": False}})
+    with pytest.raises(validation.ValidationError, match="Confirm"):
+        app.instances.start(created["id"])
+    assert not fake.started
+
+
+@pytest.mark.parametrize(
+    ("os_name", "xcode", "missing", "expected"),
+    [
+        ("darwin", True, {"adb"}, {"desktop", "iphone_mirroring", "ios_device", "vphone", "adb_android"}),
+        ("darwin", False, set(), {"desktop", "ios_device", "vphone", "adb_android"}),
+        ("linux", True, set(), {"desktop", "adb_android"}),
+        ("win32", True, set(), {"adb_android"}),
+    ],
+)
+def test_availability_comes_from_cached_host_facts(app: Launcher, fake: FakeSystem, os_name, xcode, missing, expected):
+    fake.os, fake.xcode, fake.missing_tools = os_name, xcode, missing
+    host_types = {"desktop", "iphone_mirroring", "ios_device", "vphone", "adb_android"}
+    for _ in range(2):
+        specs = {spec["type"]: spec for spec in app.state()["bridge_types"]}
+    assert {name for name in host_types if specs[name]["available"]} == expected
+    assert all(specs[name]["unavailable_reason"] for name in host_types - expected)
+    # Building /api/state never installs or probes, and asks xcrun at most once.
+    assert not any(call[0].endswith("uv") or "-m" in call for call in fake.calls)
+    assert sum(call[0] == "xcrun" for call in fake.calls) <= 1
+
+
+def test_bridge_action_endpoint(server, app: Launcher, fake: FakeSystem):
+    port, token = server
+    path = "/api/bridge-types/{}/actions/{}"
+    response, _ = request(port, "POST", path.format("desktop", "install_dependencies"), payload={"config": {}})
+    assert response.status == 401
+    response, _ = request(port, "POST", path.format("desktop", "install_dependencies"), payload={"config": {}},
+                          headers={**auth(port, token), "Origin": "http://evil.example"})
+    assert response.status == 403
+    for type_, name in (("nope", "install_dependencies"), ("desktop", "nope"), ("vphone", "install_dependencies")):
+        response, _ = request(port, "POST", path.format(type_, name), payload={"config": {}}, headers=auth(port, token))
+        assert response.status == 404
+    response, content = request(port, "POST", path.format("ios_device", "install_dependencies"),
+                                payload={"config": {"udid": "-rf"}}, headers=auth(port, token))
+    assert response.status == 400 and "UDID" in json.loads(content)["error"]
+
+    fake.missing_tools = {"uv"}
+    response, content = request(port, "POST", path.format("desktop", "install_dependencies"),
+                                payload={"config": {}}, headers=auth(port, token))
+    assert response.status == 200
+    result = json.loads(content)
+    assert result["ok"] is False and "Install uv" in result["message"]
+
+    fake.missing_tools = set()
+    messages = []
+    for _ in range(2):
+        response, content = request(port, "POST", path.format("desktop", "install_dependencies"),
+                                    payload={"config": {}}, headers=auth(port, token))
+        result = json.loads(content)
+        assert response.status == 200 and result["ok"] is True
+        assert set(result) == {"ok", "message", "checks", "output"}
+        messages.append(result["message"])
+    assert messages == ["Dependencies installed.", "Dependencies are already installed."]
+
+
+@pytest.mark.parametrize(
+    ("python_exists", "importable", "uv", "expected_steps"),
+    [
+        (True, True, True, []),  # reuse: no uv call at all
+        (True, False, True, ["pip"]),  # incomplete env: install into it
+        (False, False, True, ["venv", "pip"]),
+        (False, False, False, "uv"),
+    ],
+)
+def test_pyenv_reuses_or_installs(tmp_path: Path, fake: FakeSystem, python_exists, importable, uv, expected_steps):
+    env = pyenv.PythonEnv("demo", ("pillow>=10.2.0", "pymobiledevice3==11.52.1"))
+    if python_exists:
+        env.python(tmp_path).parent.mkdir(parents=True)
+        env.python(tmp_path).touch()
+    fake.deps_installed = importable
+    if not uv:
+        fake.missing_tools = {"uv"}
+    steps: list[str] = []
+
+    def run(args):
+        steps.append(args[1])
+        return fake.run_logged(args, tmp_path / "log"), ""
+
+    if expected_steps == "uv":
+        with pytest.raises(pyenv.PyEnvError, match="Install uv"):
+            pyenv.ensure(fake, env, tmp_path, run)
+        return
+    python, installed = pyenv.ensure(fake, env, tmp_path, run)
+    assert python == str(tmp_path / "pyenv" / "demo" / "bin" / "python")
+    assert steps == expected_steps and installed == bool(expected_steps)
+
+
+def test_pyenv_import_probe_checks_presence_and_exact_pins():
+    import importlib.metadata
+
+    pinned = importlib.metadata.version("pytest")
+
+    def probe(*requirements: str) -> int:
+        code = pyenv.PythonEnv("x", requirements).probe_code()
+        return subprocess.run([sys.executable, "-c", code], capture_output=True).returncode
+
+    assert probe("pytest>=1", f"pytest=={pinned}") == 0
+    assert probe("pytest==0.0.1") != 0
+    assert probe("surely-not-installed-package") != 0
+
+
+LEASES = """{
+\tname=iPhone
+\tip_address=192.168.64.3
+\tlease=0x69000001
+}
+{
+\tname=Linux
+\tip_address=192.168.64.9
+\tlease=0x6a000000
+}
+{
+\tip_address=192.168.64.7
+\tname=iPhone
+\tlease=0x69000005
+}
+"""
+
+
+def test_vphone_start_passes_the_values_the_launcher_resolved(
+    app: Launcher, fake: FakeSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    env_file = tmp_path / "vphone.env"
+    env_file.write_text("VPHONE_SOCKET=/vm/from-file.sock\nVPHONE_GUEST_SSH_PORT=2222\nVPHONE_GUEST_SSH_USER=mobile\n")
+    # The bridge would prefer these over the env file unless the launcher passes its values.
+    monkeypatch.setenv("VPHONE_ENV_FILE", str(tmp_path / "other.env"))
+    monkeypatch.setenv("VPHONE_SOCKET", "/vm/other.sock")
+    fake.health = {"status": "ok", "platform": "ios"}
+    # Blank port and user (the form default) fall back to the env file.
+    config = {"env_file": str(env_file), "guest_ssh_host": "192.168.64.5", "guest_ssh_port": "", "guest_ssh_user": ""}
+    created = app.instances.create(body("VM", "vphone", config))
+    app.instances.start(created["id"])
+    assert wait_settled(app, created["id"])["status"] == "running"
+
+    (argv,) = fake.started
+    flags = {argv[i]: argv[i + 1] for i in range(len(argv) - 1) if argv[i].startswith("--")}
+    assert flags["--socket"] == "/vm/from-file.sock"
+    assert flags["--env-file"] == str(env_file)
+    assert (flags["--guest-ssh-port"], flags["--guest-ssh-user"]) == ("2222", "mobile")
+
+
+def test_pyenv_wait_for_another_install_can_be_cancelled(tmp_path: Path, fake: FakeSystem):
+    env = pyenv.PythonEnv("busy", ("pillow",))
+    lock = pyenv._lock(env.directory(tmp_path))
+    with lock:  # an Install dependencies action holds the environment
+        with pytest.raises(pyenv.PyEnvCancelled):
+            pyenv.ensure(fake, env, tmp_path, lambda args: (0, ""), should_stop=lambda: True)
+
+
+def test_vphone_guest_ip_is_newest_reachable_iphone_lease(tmp_path: Path, fake: FakeSystem):
+    leases = tmp_path / "dhcpd_leases"
+    leases.write_text(LEASES)
+    assert parse_dhcp_leases(LEASES) == ["192.168.64.7", "192.168.64.3"]
+
+    assert detect_guest_ip(fake, 22222, leases)[0] == ""
+    fake.reachable = {("192.168.64.3", 22222)}  # the newest lease is stale
+    assert detect_guest_ip(fake, 22222, leases)[0] == "192.168.64.3"
+    assert detect_guest_ip(fake, 22222, tmp_path / "missing")[0] == ""

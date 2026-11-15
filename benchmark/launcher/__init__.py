@@ -1,7 +1,8 @@
 """Aico Launcher: a repository-local web UI that starts Aico Link Docker images.
 
 The launcher builds or selects an ``aico-link`` image, starts an environment
-bridge on the host (MobileGym, ADB Android, or a custom endpoint), and runs the
+bridge on the host (MobileGym, ADB Android, the host desktop, iPhone Mirroring,
+a USB iOS device, a vphone virtual iPhone, or a custom endpoint), and runs the
 image with Config Web and the Agent Web UI published on 127.0.0.1. It is a
 developer tool and is not published as a package.
 """

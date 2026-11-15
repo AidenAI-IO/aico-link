@@ -12,6 +12,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -19,16 +20,20 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from runner import environment as runner_environment
-from runner.adb_android_environment import (
-    pid_alive,
-    start_adb_bridge_process,
-    terminate_pid,
-)
+from runner.adb_android_environment import pid_alive, terminate_pid
+from runner.environment import append_log
 from runner.environment_endpoint import EnvironmentEndpoint
 
 from .net import PROXY_VARIABLES
 
-ADB_BRIDGE_MODULE = "adbandroid.scripts.start_bridge"
+
+def runs_module(command_line: str, module: str) -> bool:
+    """True when command_line is a ``python ... -m <module>`` invocation."""
+    tokens = command_line.split()
+    return bool(module) and any(
+        token == "-m" and index + 1 < len(tokens) and tokens[index + 1] == module
+        for index, token in enumerate(tokens)
+    )
 
 
 class System:
@@ -107,6 +112,10 @@ class System:
     def which(self, name: str) -> str:
         return shutil.which(name) or ""
 
+    def platform(self) -> str:
+        """sys.platform of the host: darwin, linux, or win32."""
+        return sys.platform
+
     # -- network ------------------------------------------------------------
 
     def http_status(self, url: str, timeout: float = 2.0) -> int:
@@ -115,6 +124,26 @@ class System:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         try:
             with opener.open(request, timeout=timeout) as response:
+                return int(response.status)
+        except urllib.error.HTTPError as exc:
+            return int(exc.code)
+        except Exception:
+            return 0
+
+    def post_json(
+        self, url: str, payload: Any, *, headers: Mapping[str, str] | None = None, timeout: float = 10.0
+    ) -> int:
+        """POST a JSON body to a local bridge; returns the HTTP status, or 0 when nothing answered."""
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", **dict(headers or {})},
+        )
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            with opener.open(request, timeout=timeout) as response:
+                response.read()
                 return int(response.status)
         except urllib.error.HTTPError as exc:
             return int(exc.code)
@@ -147,6 +176,13 @@ class System:
             return False
         return True
 
+    def tcp_reachable(self, host: str, port: int, timeout: float = 2.0) -> bool:
+        try:
+            with socket.create_connection((host, int(port)), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
     def free_port(self) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.bind(("127.0.0.1", 0))
@@ -158,16 +194,34 @@ class System:
 
     # -- processes ----------------------------------------------------------
 
-    def start_adb_bridge(
-        self, *, serial: str, port: int, host: str, adb_path: str, log_path: Path
+    def start_process(
+        self,
+        args: Sequence[str],
+        *,
+        cwd: Path,
+        log_path: Path,
+        env: Mapping[str, str] | None = None,
     ) -> int:
-        proc = start_adb_bridge_process(
-            serial=serial,
-            bridge_port=port,
-            log_path=log_path,
-            adb_path=adb_path,
-            bridge_host=host,
-        )
+        """Start a detached host process with stdout and stderr appended to log_path.
+
+        The process gets its own session, so it outlives the launcher and a
+        Ctrl+C in the launcher's terminal does not reach it.
+        """
+        args = [str(arg) for arg in args]
+        append_log(log_path, "$ " + " ".join(args))
+        popen_kwargs: dict[str, Any] = {}
+        if os.name == "posix":
+            popen_kwargs["start_new_session"] = True
+        with log_path.open("ab") as log:
+            proc = subprocess.Popen(
+                args,
+                cwd=str(cwd),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                env=dict(env) if env is not None else None,
+                **popen_kwargs,
+            )
         self._bridge_procs[proc.pid] = proc
         return int(proc.pid)
 
@@ -187,23 +241,25 @@ class System:
                 return proc_cmdline.read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
             except OSError:
                 return ""
-        result = self.run(["ps", "-o", "command=", "-p", str(pid)], timeout=5)
+        result = self.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], timeout=5)
         return result.stdout.strip() if result.returncode == 0 else ""
 
-    def is_adb_bridge(self, pid: int) -> bool:
-        return ADB_BRIDGE_MODULE in self.pid_command(pid)
+    def process_runs_module(self, pid: int, module: str) -> bool:
+        """True while pid is still a ``python -m <module>`` process (pids are recycled)."""
+        return runs_module(self.pid_command(pid), module)
 
-    def terminate(self, pid: int) -> None:
+    def terminate(self, pid: int, wait_sec: float = 5.0) -> None:
+        """SIGTERM pid, then SIGKILL it when it has not exited after wait_sec."""
         proc = self._bridge_procs.pop(pid, None)
         if proc is not None:
             proc.terminate()
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=wait_sec)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
             return
-        terminate_pid(pid)
+        terminate_pid(pid, wait_sec=wait_sec)
 
     # -- MobileGym ----------------------------------------------------------
 

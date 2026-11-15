@@ -42,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     port = int(server.server_address[1])
     app.instances.reconcile()
+    app.instances.start_route_keepalive()
     url = f"http://127.0.0.1:{port}/?token={token}"
     print("Aico Launcher is running.", flush=True)
     print(f"  Open: {url}", flush=True)

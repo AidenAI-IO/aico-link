@@ -22,9 +22,20 @@ use the [Benchmark workflow](../09-benchmark/README.md) instead.
 ## Aico Launcher
 
 The quickest way to try Aico is the repository-local Aico Launcher, a web UI
-that builds or selects an `aico-link` image, starts an environment bridge
-(none, MobileGym, Android through ADB, or a custom bridge), and runs the image
-with one click. From the repository root:
+that builds or selects an `aico-link` image, starts an environment bridge, and
+runs the image with one click. The bridge types are:
+
+- **No device**: chat only;
+- **MobileGym simulator**: a simulated Android phone in Docker;
+- **Android (ADB)**: a phone, emulator, or VM through `adb`;
+- **Host desktop**: this computer's screen, mouse, and keyboard (macOS and
+  Linux);
+- **iPhone Mirroring**: a real iPhone through macOS iPhone Mirroring;
+- **iOS device**: a real iPhone over USB through WebDriverAgent (macOS);
+- **Virtual iPhone**: a vphone-cli virtual iPhone (macOS);
+- **Custom bridge**: any Environment Bridge you already run.
+
+From the repository root:
 
 ```bash
 make launcher
@@ -33,8 +44,11 @@ make launcher
 Open the URL the launcher prints. It needs Docker and
 [`uv`](https://docs.astral.sh/uv/getting-started/installation/). See the
 [Aico Launcher guide](../../benchmark/launcher/README.md) for bridge
-prerequisites, state, security, and troubleshooting. The rest of this page
-describes the Compose sandbox and manual bridge setup.
+prerequisites, state, security, and troubleshooting. Keep the launcher running
+while a Host desktop, iPhone Mirroring, or iOS device instance runs: it renews
+their bridge routes, which those bridges otherwise release after 30 idle
+minutes. The rest of this page describes the Compose sandbox and manual bridge
+setup.
 
 ## Prerequisites
 
@@ -115,6 +129,7 @@ the image reads:
 | --- | --- | --- |
 | `AICO_ENABLE_TERMINAL` | `0` | `1` starts `ttyd` behind `/webtty/` on the Agent Web UI. The Compose sandbox sets it to `1`. |
 | `AICO_CLASSIC_VOICE` | `0` | Classic (speech-to-text) voice needs on-device RKNN models that the image lacks, so Classic mode is text-only in Docker. Realtime mode keeps text and browser voice: `localhost` is a secure context, so the browser microphone works without TLS. |
+| `AICO_QUICK_ACTIONS_PRESET` | empty | `ios_device` or `iphone_mirroring` installs that bundled iOS quick-actions preset as `/userdata/agent/quick_actions.json` before the Agent starts. The Aico Launcher sets it for the matching bridge types. An unmodified preset copy is replaced when the preset changes and removed when it is cleared; a `quick_actions.json` you edited is never overwritten. |
 
 Build arguments let you build through mirrors and stamp the build:
 

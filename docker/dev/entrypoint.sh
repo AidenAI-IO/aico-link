@@ -6,6 +6,7 @@ system_env="${AICO_SYSTEM_ENV:-/userdata/system/env}"
 agent_service="${AICO_AGENT_INIT_SCRIPT:-/usr/local/bin/aico-agent-service}"
 wifi_proxy_service="${AICO_WIFI_PROXY_INIT_SCRIPT:-/usr/local/bin/aico-wifi-proxy-service}"
 env_run_bin="${AICO_ENV_RUN_BIN:-/usr/local/bin/aico-env-run}"
+quick_actions_bin="${AICO_QUICK_ACTIONS_BIN:-/usr/local/bin/aico-quick-actions}"
 config_web_pid=""
 ttyd_pid=""
 
@@ -51,6 +52,12 @@ fi
 if [ ! -f /userdata/wpa_supplicant.conf ]; then
     : > /userdata/wpa_supplicant.conf
 fi
+
+# Install, replace, or remove the launcher-managed quick_actions.json for
+# AICO_QUICK_ACTIONS_PRESET before the Agent reads it at startup. A failure
+# here only leaves the Agent on its current quick actions.
+AICO_AGENT_DIR="$agent_dir" "$quick_actions_bin" ||
+    echo "aico-quick-actions failed; keeping the current quick actions" >&2
 
 shutdown() {
     trap - INT TERM EXIT

@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import shutil
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -25,6 +26,7 @@ from .bridges import (
     Cancelled,
     HostFacts,
     get_bridge,
+    route_id,
 )
 from .docker import Docker, DockerError
 from .net import host_proxy_args, no_proxy_value
@@ -36,6 +38,8 @@ DEFAULT_AGENT_WEB_PORT = 8080
 AGENT_READY_TIMEOUT_SEC = 180
 AGENT_STOP_TIMEOUT_SEC = 20
 ERROR_LOG_LINES = 40
+# Well under the 30-minute route lease of the desktop-style bridges.
+ROUTE_RENEW_INTERVAL_SEC = 5 * 60
 MAX_LOG_TAIL_LINES = 5000
 ACTIVE_STATUSES = {"starting", "running", "stopping"}
 EDITABLE_STATUSES = {"stopped", "error"}
@@ -121,7 +125,7 @@ class InstanceManager:
         self.health_check_interval = 3.0
         self.ready_timeout_sec = AGENT_READY_TIMEOUT_SEC
         self.poll_interval = 1.0
-        host.serials_in_use = self.serials_in_use
+        host.devices_in_use = self.devices_in_use
 
     # -- paths and logs -----------------------------------------------------
 
@@ -208,8 +212,7 @@ class InstanceManager:
         if bridge.planned:
             raise validation.ValidationError(f"{bridge.label} is not available yet.")
         config = bridge.normalize(bridge_body.get("config"))
-        if bridge.type == "adb_android":
-            config["serial"] = validation.adb_serial(config.get("serial"))
+        bridge.require_complete(config, self.host)
         ports_body = body.get("ports") or {}
         if not isinstance(ports_body, dict):
             raise validation.ValidationError("Ports must be an object.")
@@ -291,17 +294,26 @@ class InstanceManager:
         self.store.delete_instance(record["id"])
         shutil.rmtree(self.instance_dir(record["id"]), ignore_errors=True)
 
-    def serials_in_use(self, exclude: str = "") -> dict[str, str]:
-        """Map ADB serial -> instance name for instances that hold a device."""
+    def devices_in_use(self, exclude: str = "") -> dict[str, str]:
+        """Map device key -> instance name for active instances that hold a device.
+
+        The key comes from the started bridge (it may have picked the only
+        connected device) or, before that, from the saved config.
+        """
         used: dict[str, str] = {}
         for record in self.store.instances():
             if record["id"] == exclude or record.get("status") not in ACTIVE_STATUSES:
                 continue
-            bridge = record.get("bridge") or {}
-            if bridge.get("type") == "adb_android":
-                serial = (bridge.get("config") or {}).get("serial")
-                if serial:
-                    used[str(serial)] = record.get("name") or record["id"]
+            bridge_record = record.get("bridge") or {}
+            key = str((record.get("runtime") or {}).get("device_claim") or "")
+            if not key:
+                try:
+                    bridge = get_bridge(bridge_record.get("type"))
+                    key, _ = bridge.device_claim(dict(bridge_record.get("config") or {}))
+                except validation.ValidationError:
+                    key = ""
+            if key:
+                used[key] = record.get("name") or record["id"]
         return used
 
     # -- start --------------------------------------------------------------
@@ -314,7 +326,10 @@ class InstanceManager:
             worker = self._workers.get(record["id"])
             if worker is not None and worker.is_alive():
                 raise Conflict("The instance is still busy; try again in a moment.")
-            self._check_serial(record)
+            bridge = get_bridge((record.get("bridge") or {}).get("type"))
+            # Records saved by an older launcher may lack a confirmation.
+            bridge.require_complete(dict((record.get("bridge") or {}).get("config") or {}), self.host)
+            self._check_device(record)
             record = self.store.patch_instance(
                 record["id"], status="starting", step="Preparing", error="",
                 device_type="", bridge_endpoint="",
@@ -329,14 +344,12 @@ class InstanceManager:
             thread.start()
         return self.payload(record)
 
-    def _check_serial(self, record: dict[str, Any]) -> None:
-        bridge = record.get("bridge") or {}
-        if bridge.get("type") != "adb_android":
-            return
-        serial = (bridge.get("config") or {}).get("serial")
-        owner = self.serials_in_use(exclude=record["id"]).get(str(serial))
+    def _check_device(self, record: dict[str, Any]) -> None:
+        bridge_record = record.get("bridge") or {}
+        key, description = get_bridge(bridge_record.get("type")).device_claim(dict(bridge_record.get("config") or {}))
+        owner = self.devices_in_use(exclude=record["id"]).get(key) if key else None
         if owner:
-            raise Conflict(f"ADB device {serial} is already used by instance {owner!r}.")
+            raise Conflict(f"{description} is already used by instance {owner!r}.")
 
     def _step(self, instance_id: str, text: str) -> None:
         self.store.patch_instance(instance_id, step=text)
@@ -353,10 +366,12 @@ class InstanceManager:
             docker=self.docker,
             repo_root=self.repo_root,
             bridge_log=self.bridge_log(instance_id),
+            state_dir=self.state_dir,
             runtime=dict(record.get("runtime") or {}),
             step=lambda text: self._step(instance_id, text),
             save_runtime=lambda values: self.store.patch_instance(instance_id, runtime=values),
             cancelled=(cancel.is_set if cancel is not None else (lambda: False)),
+            in_use=lambda: self.devices_in_use(exclude=instance_id),
         )
 
     def _run_start(self, instance_id: str, cancel: threading.Event) -> None:
@@ -426,26 +441,11 @@ class InstanceManager:
         self._step(instance_id, "Checking ports")
         record = self._ensure_ports(record)
         bridge = get_bridge((record.get("bridge") or {}).get("type"))
-        if bridge.type == "adb_android":
-            # The configured adb counts, even when none is on PATH.
-            self._check_adb(str(((record.get("bridge") or {}).get("config") or {}).get("adb_path") or "adb"))
-        else:
-            available, reason = bridge.availability(self.host.refresh())
-            if not available:
-                raise RuntimeError(f"{bridge.label} is not available: {reason}")
-        self._check_serial(record)
+        available, reason = bridge.availability(self.host.refresh())
+        if not available:
+            raise RuntimeError(f"{bridge.label} is not available: {reason}")
+        self._check_device(record)
         return record
-
-    def _check_adb(self, adb_path: str) -> None:
-        path = os.path.expanduser(adb_path)
-        if os.sep in path or (os.altsep and os.altsep in path):
-            found = os.path.isfile(path) and os.access(path, os.X_OK)
-        else:
-            found = bool(self.system.which(path))
-        if not found:
-            raise RuntimeError(
-                f"adb was not found at {adb_path}. Install Android SDK Platform Tools or correct the adb path."
-            )
 
     def _ensure_ports(self, record: dict[str, Any]) -> dict[str, Any]:
         ports = dict(record.get("ports") or {})
@@ -476,17 +476,21 @@ class InstanceManager:
         instance_id = record["id"]
         ports = record["ports"]
         settings = self.store.settings()
-        route_id = f"launcher-{instance_id}"
+        route = route_id(instance_id)
         env: dict[str, str] = {
             "AICO_ENVIRONMENT_BRIDGE_ENDPOINT": endpoint,
-            "AICO_BENCHMARK_TASK_ID": route_id,
-            "AICO_BRIDGE_EPISODE_ID": route_id,
+            "AICO_BENCHMARK_TASK_ID": route,
+            "AICO_BRIDGE_EPISODE_ID": route,
             "AICO_PUBLIC_AGENT_WEB_PORT": str(ports["agent_web"]),
             "AICO_CONFIG_WEB_PORT": str(ports["config_web"]),
             "AICO_ENABLE_TERMINAL": "1" if record.get("enable_terminal") else "0",
         }
         if device_type:
             env["AICO_DEVICE_TYPE"] = device_type
+        preset = get_bridge((record.get("bridge") or {}).get("type")).quick_actions_preset
+        if preset:
+            # The image installs this quick-actions preset for the Agent (see docker/dev/entrypoint.sh).
+            env["AICO_QUICK_ACTIONS_PRESET"] = preset
         if settings.get("pass_host_proxy"):
             env.update(host_proxy_args(self.system.environ()))
         no_proxy = no_proxy_value(env.get("NO_PROXY") or env.get("no_proxy") or "")
@@ -648,6 +652,42 @@ class InstanceManager:
                         continue
                     self.log(record["id"], f"ERROR: {problem}")
                     self.store.patch_instance(record["id"], status="error", error=problem)
+
+    def renew_routes(self) -> None:
+        """Claim the bridge route of every running instance again.
+
+        The desktop-style bridges (Host desktop, iPhone Mirroring, iOS device)
+        drop a route after 30 minutes without requests, and the Agent does not
+        claim it again, so an idle instance would lose its device.
+        """
+        for record in self.store.instances():
+            if record.get("status") != "running":
+                continue
+            try:
+                bridge = get_bridge((record.get("bridge") or {}).get("type"))
+                failure = bridge.renew(record["id"], record.get("runtime") or {}, self.system)
+            except Exception as exc:  # noqa: BLE001 - one instance must not stop the others
+                failure = f"Renewing the bridge route failed: {exc}"
+            if failure:
+                self.log(record["id"], f"WARNING: {failure}")
+
+    def start_route_keepalive(self, interval_sec: float = ROUTE_RENEW_INTERVAL_SEC) -> threading.Thread:
+        """Run renew_routes() now and then every interval_sec on a daemon thread.
+
+        The first run covers instances whose lease lapsed while no launcher ran.
+        """
+
+        def loop() -> None:
+            while True:
+                try:
+                    self.renew_routes()
+                except Exception:  # noqa: BLE001 - keep the loop alive
+                    pass
+                time.sleep(interval_sec)
+
+        thread = threading.Thread(target=loop, name="launcher-route-keepalive", daemon=True)
+        thread.start()
+        return thread
 
     def _problem(self, record: dict[str, Any], containers: dict[str, dict[str, str]]) -> str:
         container = agent_container(record["id"])

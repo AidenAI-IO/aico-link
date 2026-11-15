@@ -40,6 +40,15 @@
     probeButton: $("probe-bridge"),
     probeSummary: $("probe-summary"),
     probeChecks: $("probe-checks"),
+    bridgeNotes: $("bridge-notes"),
+    bridgeActions: $("bridge-actions"),
+    actionResult: $("action-result"),
+    actionBadge: $("action-badge"),
+    actionSummary: $("action-summary"),
+    actionElapsed: $("action-elapsed"),
+    actionChecks: $("action-checks"),
+    actionOutput: $("action-output"),
+    actionOutputText: $("action-output-text"),
     portConfig: $("inst-port-config"),
     portAgent: $("inst-port-agent"),
     terminal: $("inst-terminal"),
@@ -347,6 +356,9 @@
     for (const field of fields) {
       const value = config[field.name];
       if (value === undefined || value === null || value === "" || typeof value === "boolean") continue;
+      // A stored 0 in a number field means "use the default" (for example the
+      // vphone guest SSH port), so it is not worth showing.
+      if (field.kind === "number" && Number(value) === 0) continue;
       if (field.name === "adb_path" && value === field.default) continue;
       parts.push(`${field.label || field.name}: ${value}`);
     }
@@ -548,6 +560,7 @@
     type: "",
     configs: {},       // type -> {fieldName: value}, so switching types keeps input
     probeOptions: {},  // type -> {fieldName: [{value, label}]}
+    actionResults: {}, // type -> {name, label, result}
     preselectImage: "",
   };
 
@@ -599,7 +612,11 @@
       input.addEventListener("change", () => {
         if (!input.checked) return;
         saveBridgeConfig();
+        delete form.actionResults[form.type];
         form.type = spec.type;
+        // A save error from the previous type (e.g. its unticked
+        // confirmation) no longer applies.
+        setFormError("");
         clearProbe();
         renderBridgeFields();
       });
@@ -641,8 +658,20 @@
       const common = { id, name: field.name, required: Boolean(field.required), "aria-describedby": help ? helpId : null };
 
       if (field.kind === "checkbox") {
-        const input = el("input", { ...common, type: "checkbox", checked: Boolean(value) });
-        return el("div", { class: "field" }, el("div", { class: "field-check" }, input, label), help);
+        const errorId = `${id}-error`;
+        const describedBy = [help ? helpId : "", field.required ? errorId : ""].filter(Boolean).join(" ") || null;
+        const input = el("input", { ...common, type: "checkbox", checked: Boolean(value), "aria-describedby": describedBy });
+        const error = field.required
+          ? el("p", { class: "field-error", id: errorId, hidden: true, text: "Check this box to continue." })
+          : null;
+        if (error) {
+          input.addEventListener("change", () => {
+            if (!input.checked) return;
+            input.removeAttribute("aria-invalid");
+            error.hidden = true;
+          });
+        }
+        return el("div", { class: "field" }, el("div", { class: "field-check" }, input, label), help, error);
       }
 
       if (field.kind === "select") {
@@ -679,7 +708,8 @@
         autocomplete: "off",
         placeholder: str(field.placeholder) || null,
       });
-      input.value = str(value);
+      // Show a stored 0 ("use the default") as blank so the placeholder shows.
+      input.value = isNumber && value !== "" && Number(value) === 0 ? "" : str(value);
       return el("div", { class: "field" }, label, input, help);
     });
 
@@ -688,21 +718,33 @@
       ui.bridgeFields.append(el("p", { class: "field-help", text: "This bridge type has nothing to configure." }));
     }
     ui.probeButton.disabled = !spec || !spec.available;
+    renderBridgeNotes(spec);
+    renderBridgeActions();
+    renderActionResult();
+  }
+
+  function renderBridgeNotes(spec) {
+    const notes = spec && Array.isArray(spec.notes) ? spec.notes.map(str).filter(Boolean) : [];
+    ui.bridgeNotes.replaceChildren(...notes.map((note) => el("li", { text: note })));
+    ui.bridgeNotes.hidden = !notes.length;
   }
 
   function readBridgeConfig() {
     const spec = currentSpec();
     const config = {};
     const missing = [];
+    const unconfirmed = [];
     const fields = spec && Array.isArray(spec.fields) ? spec.fields : [];
     for (const field of fields) {
       const input = $(fieldId(field.name));
       if (!input) continue;
-      input.removeAttribute("aria-invalid");
       if (field.kind === "checkbox") {
+        // Its change listener clears the invalid mark once it is checked.
         config[field.name] = input.checked;
+        if (field.required && !input.checked) unconfirmed.push({ field, input });
         continue;
       }
+      input.removeAttribute("aria-invalid");
       const raw = input.value.trim();
       if (!raw) {
         if (field.required) {
@@ -723,7 +765,17 @@
         config[field.name] = raw;
       }
     }
-    return { config, missing };
+    return { config, missing, unconfirmed };
+  }
+
+  // A required checkbox is a confirmation: only Save marks it, so Check and
+  // bridge actions stay usable before the user has confirmed.
+  function markUnconfirmed(unconfirmed) {
+    for (const { input } of unconfirmed) {
+      input.setAttribute("aria-invalid", "true");
+      const error = $(`${input.id}-error`);
+      if (error) error.hidden = false;
+    }
   }
 
   function saveBridgeConfig() {
@@ -756,6 +808,7 @@
     form.editingId = instance ? instance.id : null;
     form.configs = {};
     form.probeOptions = {};
+    form.actionResults = {};
     form.preselectImage = "";
     setFormError("");
     clearProbe();
@@ -833,8 +886,12 @@
     const spec = currentSpec();
     if (!spec) errors.push("Choose an environment bridge");
     else if (!spec.available) errors.push(`${spec.label} is not available: ${spec.unavailable_reason || "unavailable on this host"}`);
-    const { config, missing } = readBridgeConfig();
+    const { config, missing, unconfirmed } = readBridgeConfig();
     if (missing.length) errors.push(`Fill in ${missing.join(", ")}`);
+    if (unconfirmed.length) {
+      markUnconfirmed(unconfirmed);
+      errors.push(`Confirm ${unconfirmed.map(({ field }) => `"${str(field.label) || field.name}"`).join(", ")}`);
+    }
 
     const ports = {};
     const configPort = readPort(ui.portConfig, "Config Web port", errors);
@@ -864,6 +921,8 @@
     const { errors, body } = collectInstance();
     if (errors.length) {
       setFormError(`${errors.join(". ")}.`);
+      const invalid = ui.instanceForm.querySelector('[aria-invalid="true"]');
+      if (invalid) invalid.focus();
       return;
     }
     setFormError("");
@@ -896,6 +955,7 @@
   });
 
   ui.instanceDialog.addEventListener("close", () => {
+    clearInterval(elapsedTimer);
     form.editingId = null;
     ui.newInstance.focus();
   });
@@ -944,13 +1004,171 @@
     if (result.device_type) summary.push(`device type ${result.device_type}`);
     ui.probeSummary.textContent = summary.join(", ");
     ui.probeSummary.dataset.ok = String(Boolean(result.ok));
-    ui.probeChecks.replaceChildren(...checks.map((check) => el("li", { dataset: { ok: String(Boolean(check.ok)) } },
-      el("span", { class: "check-mark", text: check.ok ? "OK" : "Failed" }),
-      el("span", null,
-        el("strong", { text: str(check.name) }),
-        check.detail ? el("span", { class: "check-detail", text: ` ${check.detail}` }) : null))));
-    ui.probeChecks.hidden = !checks.length;
+    renderChecks(ui.probeChecks, checks);
   }
+
+  function renderChecks(list, checks) {
+    list.replaceChildren(...checks.map((check) => el("li", { dataset: { ok: String(Boolean(check && check.ok)) } },
+      el("span", { class: "check-mark", text: check && check.ok ? "OK" : "Failed" }),
+      el("span", null,
+        el("strong", { text: str(check && check.name) }),
+        check && check.detail ? el("span", { class: "check-detail", text: ` ${check.detail}` }) : null))));
+    list.hidden = !checks.length;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bridge actions
+  //
+  // Actions such as dependency installs can run for minutes. One action runs
+  // at a time; it outlives the dialog, and its result is reported in a toast
+  // when the dialog no longer shows its bridge type.
+
+  let runningAction = null; // {type, name, label, startedAt}
+  let elapsedTimer = 0;
+  let renderedActionEntry = null;
+
+  function bridgeActions(spec) {
+    return spec && Array.isArray(spec.actions)
+      ? spec.actions.filter((action) => action && typeof action.name === "string" && action.name)
+      : [];
+  }
+
+  function bridgeTypeLabel(type) {
+    return str((bridgeType(type) || {}).label) || type;
+  }
+
+  function waitingMessage() {
+    return `Waiting for ${runningAction.label} (${bridgeTypeLabel(runningAction.type)}) to finish.`;
+  }
+
+  function renderBridgeActions() {
+    const spec = currentSpec();
+    // Rebuilding the buttons would drop keyboard focus to <body>; remember
+    // which action had focus and move it to the new button afterwards.
+    const active = document.activeElement;
+    const focusedAction = active && active !== ui.bridgeActions && ui.bridgeActions.contains(active)
+      ? str(active.dataset.action)
+      : "";
+    const otherRunning = Boolean(runningAction && runningAction.type !== form.type);
+    const buttons = bridgeActions(spec).map((action) => {
+      const label = str(action.label) || action.name;
+      const busy = Boolean(runningAction && runningAction.type === form.type && runningAction.name === action.name);
+      return el("button", {
+        type: "button",
+        class: "btn",
+        text: busy ? `${label}…` : label,
+        title: otherRunning ? waitingMessage() : (str(action.help) || null),
+        "aria-busy": busy ? "true" : null,
+        // While another action runs the buttons stay focusable (aria-disabled
+        // plus the guard in runBridgeAction) so focus is not lost.
+        "aria-disabled": runningAction ? "true" : null,
+        disabled: !spec.available,
+        dataset: { action: action.name },
+        onclick: () => runBridgeAction(spec, action),
+      });
+    });
+    ui.bridgeActions.replaceChildren(...buttons);
+    if (focusedAction) {
+      const target = buttons.find((button) => button.dataset.action === focusedAction && !button.disabled);
+      (target || ui.probeButton).focus();
+    }
+  }
+
+  async function runBridgeAction(spec, action) {
+    if (runningAction) return;
+    const type = spec.type;
+    const label = str(action.label) || action.name;
+    const { config } = readBridgeConfig();
+    runningAction = { type, name: action.name, label, startedAt: Date.now() };
+    delete form.actionResults[type];
+    renderBridgeActions();
+    renderActionResult();
+    let result;
+    let failure = null;
+    try {
+      result = (await api("POST", `/api/bridge-types/${encodeURIComponent(type)}/actions/${encodeURIComponent(action.name)}`, { config })) || {};
+    } catch (error) {
+      failure = error;
+    }
+    runningAction = null;
+    if (failure && failure.status === 401) return;
+    const outcome = failure
+      ? { ok: false, message: failure.message, checks: [], output: "" }
+      : result;
+    const shown = ui.instanceDialog.open && form.type === type;
+    if (shown) {
+      form.actionResults[type] = { name: action.name, label, result: outcome };
+    } else {
+      const message = str(outcome.message) || (outcome.ok ? "Done." : "Failed.");
+      toast(`${label} (${str(spec.label) || type}): ${message}`, outcome.ok ? "ok" : "error", outcome.ok ? 6000 : 0);
+    }
+    if (ui.instanceDialog.open) {
+      renderBridgeActions();
+      renderActionResult();
+    }
+  }
+
+  function formatElapsed(ms) {
+    const seconds = Math.max(0, Math.floor(ms / 1000));
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  function renderActionResult() {
+    clearInterval(elapsedTimer);
+    const running = runningAction && runningAction.type === form.type ? runningAction : null;
+    const entry = form.actionResults[form.type];
+    // An action of another bridge type blocks this type's actions; say so
+    // instead of showing unexplained disabled buttons.
+    const waiting = !running && !entry && runningAction ? runningAction : null;
+    if (!running && !entry && !waiting) {
+      ui.actionResult.hidden = true;
+      return;
+    }
+    ui.actionResult.hidden = false;
+    if (running || waiting) {
+      ui.actionResult.dataset.state = "running";
+      ui.actionBadge.hidden = false;
+      ui.actionBadge.dataset.status = "running-build";
+      ui.actionBadge.textContent = running ? "Running" : "Busy";
+      ui.actionSummary.textContent = running
+        ? `${running.label}. This can take a few minutes.`
+        : `${waitingMessage()} Actions for this bridge type are available again afterwards.`;
+      const started = (running || waiting).startedAt;
+      const tick = () => { ui.actionElapsed.textContent = formatElapsed(Date.now() - started); };
+      tick();
+      elapsedTimer = setInterval(tick, 1000);
+      ui.actionChecks.hidden = true;
+      ui.actionChecks.replaceChildren();
+      ui.actionOutput.hidden = true;
+      return;
+    }
+    const result = entry.result || {};
+    const ok = Boolean(result.ok);
+    ui.actionResult.dataset.state = ok ? "ok" : "failed";
+    ui.actionBadge.hidden = false;
+    ui.actionBadge.dataset.status = ok ? "ok" : "failed";
+    ui.actionBadge.textContent = ok ? "Done" : "Failed";
+    const message = str(result.message);
+    ui.actionSummary.textContent = message ? `${entry.label}: ${message}` : entry.label;
+    ui.actionElapsed.textContent = "";
+    renderChecks(ui.actionChecks, Array.isArray(result.checks) ? result.checks : []);
+    const output = str(result.output);
+    ui.actionOutput.hidden = !output;
+    // Re-renders (for example after Check) keep the user's open/closed choice.
+    if (renderedActionEntry !== entry) {
+      renderedActionEntry = entry;
+      ui.actionOutputText.textContent = output;
+      ui.actionOutput.open = Boolean(output) && !ok;
+    }
+    scrollOutputToEnd();
+  }
+
+  function scrollOutputToEnd() {
+    const pre = ui.actionOutputText;
+    if (ui.actionOutput.open) pre.scrollTop = pre.scrollHeight;
+  }
+
+  ui.actionOutput.addEventListener("toggle", scrollOutputToEnd);
 
   // ---------------------------------------------------------------------------
   // Image builds

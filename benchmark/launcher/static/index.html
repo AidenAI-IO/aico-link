@@ -138,11 +138,25 @@
           <legend>Environment bridge</legend>
           <div id="bridge-types" class="bridge-types"></div>
           <div id="bridge-fields" class="bridge-fields"></div>
+          <ul id="bridge-notes" class="bridge-notes" aria-label="Setup notes" hidden></ul>
           <div class="probe-row">
             <button type="button" class="btn" id="probe-bridge">Check</button>
+            <span id="bridge-actions" class="bridge-actions"></span>
             <span id="probe-summary" class="probe-summary" role="status"></span>
           </div>
           <ul id="probe-checks" class="checks" hidden></ul>
+          <div id="action-result" class="action-result" hidden>
+            <div class="action-head">
+              <span id="action-badge" class="badge" hidden></span>
+              <p id="action-summary" class="action-summary" role="status"></p>
+              <span id="action-elapsed" class="action-elapsed" aria-hidden="true"></span>
+            </div>
+            <ul id="action-checks" class="checks" hidden></ul>
+            <details id="action-output" class="action-output" hidden>
+              <summary>Output</summary>
+              <pre id="action-output-text" class="log log-small" tabindex="0"></pre>
+            </details>
+          </div>
         </fieldset>
 
         <details class="group advanced">

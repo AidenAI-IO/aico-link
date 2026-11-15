@@ -139,8 +139,11 @@ COPY --from=runtime-tools-builder /out/rg /usr/bin/rg
 COPY --from=runtime-tools-builder /out/yq /usr/bin/yq
 COPY src/config_web/web/ /usr/share/aico/config-web/
 COPY src/agent/config/skills/ /usr/share/aico/skills/
+COPY benchmark/ios_device/quick_actions.json /usr/share/aico/quick-actions/ios_device.json
+COPY benchmark/iphone_mirroring/quick_actions.json /usr/share/aico/quick-actions/iphone_mirroring.json
 COPY docker/dev/agent.toml /opt/aico/defaults/agent.toml
 COPY docker/dev/aico-env-run /usr/local/bin/aico-env-run
+COPY docker/dev/aico-quick-actions /usr/local/bin/aico-quick-actions
 COPY docker/dev/aico-wifi-proxy-service /usr/local/bin/aico-wifi-proxy-service
 COPY docker/dev/agent-service.sh /usr/local/bin/aico-agent-service
 COPY docker/dev/entrypoint.sh /usr/local/bin/aico-docker-entrypoint
@@ -148,6 +151,7 @@ COPY docker/dev/entrypoint.sh /usr/local/bin/aico-docker-entrypoint
 RUN chmod 0755 \
         /usr/lib/aico/agent \
         /usr/local/bin/aico-env-run \
+        /usr/local/bin/aico-quick-actions \
         /usr/local/bin/aico-wifi-proxy-service \
         /usr/local/bin/aico-agent-service \
         /usr/local/bin/aico-docker-entrypoint \

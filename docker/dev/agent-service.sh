@@ -203,7 +203,11 @@ try:
     bridge_type = data.get("bridge_type")
     if bridge_type == "mobilegym" and isinstance(data.get("active_routes"), dict):
         print("active" if sys.argv[2] in data["active_routes"] else "missing")
-    elif bridge_type == "adb_android" and "active_task_id" in data:
+    elif bridge_type in {
+        "adb_android", "desktop", "iphone_mirroring", "ios_device", "vphone_ios",
+    } and "active_task_id" in data:
+        # Single-route bridges report the route they lease; an expired lease
+        # reads as empty, so a restart claims it again.
         active_task_id = str(data.get("active_task_id") or "")
         if active_task_id == sys.argv[2]:
             print("active")

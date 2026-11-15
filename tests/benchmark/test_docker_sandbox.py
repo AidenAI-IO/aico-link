@@ -302,6 +302,87 @@ class DockerSandboxContractTest(unittest.TestCase):
             entrypoint,
         )
 
+    def test_quick_actions_preset_only_manages_its_own_copy(self):
+        helper = REPO_ROOT / "docker/dev/aico-quick-actions"
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            preset_directory = temporary_path / "presets"
+            preset_directory.mkdir()
+            (preset_directory / "alpha.json").write_text('{"preset": "alpha"}\n')
+            (preset_directory / "beta.json").write_text('{"preset": "beta"}\n')
+            agent_directory = temporary_path / "agent"
+            target = agent_directory / "quick_actions.json"
+            marker = agent_directory / ".quick-actions-preset"
+            log_file = agent_directory / "log/agent.log"
+
+            def run(preset):
+                environment = os.environ.copy()
+                environment.pop("AICO_QUICK_ACTIONS_PRESET", None)
+                environment.update(
+                    {
+                        "AICO_AGENT_DIR": str(agent_directory),
+                        "AICO_QUICK_ACTIONS_DIR": str(preset_directory),
+                    }
+                )
+                if preset is not None:
+                    environment["AICO_QUICK_ACTIONS_PRESET"] = preset
+                completed = subprocess.run(
+                    ["sh", str(helper)],
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            def installed():
+                return target.read_text() if target.exists() else None
+
+            run(None)
+            self.assertIsNone(installed())
+
+            run("alpha")
+            self.assertEqual(installed(), '{"preset": "alpha"}\n')
+            run("beta")
+            self.assertEqual(installed(), '{"preset": "beta"}\n')
+
+            run("../presets/alpha")
+            run("missing")
+            self.assertEqual(installed(), '{"preset": "beta"}\n')
+            self.assertIn("quick_actions_preset_unknown", log_file.read_text())
+
+            run("")
+            self.assertIsNone(installed())
+            self.assertFalse(marker.exists())
+
+            # A crash between replacing the file and writing the marker leaves
+            # a bundled preset copy behind a stale or missing marker.
+            run("alpha")
+            target.write_text('{"preset": "beta"}\n')
+            (agent_directory / "quick_actions.json.tmp.1").write_text("partial")
+            run("beta")
+            self.assertEqual(installed(), '{"preset": "beta"}\n')
+            self.assertTrue(marker.read_text().startswith("beta "))
+            self.assertEqual(
+                sorted(path.name for path in agent_directory.glob("*.tmp.*")), []
+            )
+            marker.unlink()
+            run("")
+            self.assertIsNone(installed())
+
+            run("alpha")
+            target.write_text('{"custom": true}\n')
+            run("beta")
+            self.assertEqual(installed(), '{"custom": true}\n')
+            self.assertIn("quick_actions_preset_skipped", log_file.read_text())
+            run(None)
+            self.assertEqual(installed(), '{"custom": true}\n')
+
+            marker.unlink()
+            run("alpha")
+            self.assertEqual(installed(), '{"custom": true}\n')
+
     def test_agent_supervisor_truncates_the_persistent_log(self):
         service = REPO_ROOT / "docker/dev/agent-service.sh"
 

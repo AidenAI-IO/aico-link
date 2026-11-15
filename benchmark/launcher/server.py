@@ -67,7 +67,7 @@ class Launcher:
         self.system = system or System()
         self.store = Store(self.state_dir)
         self.docker = Docker(self.system)
-        self.host = HostFacts(self.system, self.docker, repo_root)
+        self.host = HostFacts(self.system, self.docker, repo_root, state_dir=self.state_dir)
         self.images = ImageManager(
             store=self.store, docker=self.docker, system=self.system,
             state_dir=self.state_dir, repo_root=repo_root,
@@ -107,7 +107,29 @@ class Launcher:
                 "device_type": "",
             }
         normalized = bridge.normalize(config)
-        return bridge.probe(normalized, self.host.refresh(force=True))
+        host = self.host.refresh(force=True)
+        available, reason = bridge.availability(host)
+        if not available:
+            return {"ok": False, "checks": [{"name": bridge.label, "ok": False, "detail": reason}],
+                    "options": {}, "device_type": ""}
+        return bridge.probe(normalized, host)
+
+    def run_action(self, type_: str, name: str, body: Any) -> dict[str, Any]:
+        """Run a bridge setup action synchronously (the server is threaded)."""
+        try:
+            bridge = get_bridge(type_)
+        except validation.ValidationError:
+            raise NotFound(f"Unknown bridge type: {type_!r}.") from None
+        if name not in {action["name"] for action in bridge.actions()}:
+            raise NotFound(f"{bridge.label} has no action {name!r}.")
+        host = self.host.refresh(force=True)
+        available, reason = bridge.availability(host)
+        if not available:
+            raise validation.ValidationError(f"{bridge.label} is not available: {reason}")
+        if body is not None and not isinstance(body, dict):
+            raise validation.ValidationError("Request body must be a JSON object.")
+        config = bridge.normalize((body or {}).get("config"))
+        return bridge.run_action(name, config, host)
 
 
 Route = tuple[str, "re.Pattern[str]", Callable[..., tuple[int, Any]]]
@@ -147,6 +169,11 @@ def make_handler(app: Launcher, token: str, port_getter: Callable[[], int]):
     def r_probe(h, m):
         return 200, app.probe(urllib.parse.unquote(m["type"]), body_of(h))
 
+    def r_action(h, m):
+        return 200, app.run_action(
+            urllib.parse.unquote(m["type"]), urllib.parse.unquote(m["name"]), body_of(h)
+        )
+
     def r_create(h, m):
         return 201, app.instances.create(body_of(h))
 
@@ -180,6 +207,7 @@ def make_handler(app: Launcher, token: str, port_getter: Callable[[], int]):
         ("POST", re.compile(r"^/api/images/build$"), r_build),
         ("GET", re.compile(r"^/api/builds/(?P<id>[^/]+)$"), r_get_build),
         ("POST", re.compile(r"^/api/bridge-types/(?P<type>[^/]+)/probe$"), r_probe),
+        ("POST", re.compile(r"^/api/bridge-types/(?P<type>[^/]+)/actions/(?P<name>[^/]+)$"), r_action),
         ("POST", re.compile(r"^/api/instances$"), r_create),
         ("PUT", re.compile(r"^/api/instances/(?P<id>[^/]+)$"), r_update),
         ("DELETE", re.compile(r"^/api/instances/(?P<id>[^/]+)$"), r_delete),
