@@ -57,12 +57,15 @@
                 </div>
             </div>
 
-            <div class="pending-steer hidden" id="pendingSteer">
+            <div class="pending-steer hidden" id="pendingSteer" role="status" aria-live="polite">
+                <svg class="pending-steer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12M13 7l5 5-5 5"/></svg>
                 <div class="pending-steer-copy">
-                    <div class="message-role">Pending steer</div>
+                    <span class="pending-steer-label">Steer queued · applies at the next step</span>
                     <div class="pending-steer-text" id="pendingSteerText"></div>
                 </div>
-                <button type="button" class="stop-run-btn" id="cancelSteerBtn" onclick="cancelPendingSteer()">Cancel</button>
+                <button type="button" class="pending-steer-cancel" id="cancelSteerBtn" onclick="cancelPendingSteer()" title="Cancel steer" aria-label="Cancel steer">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
+                </button>
             </div>
 
               <section class="voice-stage hidden" id="voiceStage" aria-live="polite">

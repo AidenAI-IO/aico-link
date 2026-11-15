@@ -116,14 +116,17 @@ type Server struct {
 	latestSpeech            latestTTSOutput
 	pendingSteers           map[string]pendingSteerMessage
 	steerSignals            map[string]chan struct{}
-	steersMu                sync.Mutex
-	eventBroadcaster        *EventBroadcaster
-	semanticEvents          *semanticEventBroadcaster
-	collaboration           *CollaborationRecorder
-	storageMonitor          *StorageMonitor
-	realtimeChatMu          sync.RWMutex
-	realtimeChatHandler     RealtimeChatHandler
-	realtimeVoice           realtimeVoiceController
+	// closedSteers holds runs past their last steer check. A steer sent then
+	// could no longer reach the model, so it is refused instead of dropped.
+	closedSteers        map[string]struct{}
+	steersMu            sync.Mutex
+	eventBroadcaster    *EventBroadcaster
+	semanticEvents      *semanticEventBroadcaster
+	collaboration       *CollaborationRecorder
+	storageMonitor      *StorageMonitor
+	realtimeChatMu      sync.RWMutex
+	realtimeChatHandler RealtimeChatHandler
+	realtimeVoice       realtimeVoiceController
 }
 
 // RealtimeEventSink returns the semantic v2 sink used by the HTTP observer
@@ -1134,7 +1137,7 @@ func (s *Server) handleChatSteer(w http.ResponseWriter, r *http.Request) {
 
 	steer, ok := s.setPendingSteer(requestID, message)
 	if !ok {
-		http.Error(w, "request_id is not running", http.StatusConflict)
+		http.Error(w, "request is not accepting steers", http.StatusConflict)
 		return
 	}
 	if s.logger != nil {
@@ -1451,14 +1454,17 @@ func (s *Server) setPendingSteer(requestID, content string) (pendingSteerMessage
 	if requestID == "" || s.activeRuns[requestID] == nil {
 		return pendingSteerMessage{}, false
 	}
+	s.steersMu.Lock()
+	defer s.steersMu.Unlock()
+	if _, closed := s.closedSteers[requestID]; closed {
+		return pendingSteerMessage{}, false
+	}
 	steer := pendingSteerMessage{
 		ID:        createSteerID(),
 		RequestID: requestID,
 		Content:   strings.TrimSpace(content),
 		Timestamp: time.Now(),
 	}
-	s.steersMu.Lock()
-	defer s.steersMu.Unlock()
 	if s.pendingSteers == nil {
 		s.pendingSteers = make(map[string]pendingSteerMessage)
 	}
@@ -1491,6 +1497,32 @@ func (s *Server) clearSteerState(requestID string) {
 	defer s.steersMu.Unlock()
 	delete(s.pendingSteers, requestID)
 	delete(s.steerSignals, requestID)
+	delete(s.closedSteers, requestID)
+}
+
+// consumeFinalPendingSteer is the run's last steer check: it consumes a
+// queued steer, or else stops accepting steers for the request.
+func (s *Server) consumeFinalPendingSteer(requestID string) (RunSteerMessage, bool) {
+	if steer, ok := s.consumePendingSteer(requestID); ok {
+		return steer, true
+	}
+	s.closeSteerAcceptance(requestID)
+	// A steer accepted between the two calls above is still delivered.
+	return s.consumePendingSteer(requestID)
+}
+
+// closeSteerAcceptance refuses further steers for a run whose agent loop has
+// returned or is about to; one still pending can no longer reach the model.
+func (s *Server) closeSteerAcceptance(requestID string) {
+	if requestID == "" {
+		return
+	}
+	s.steersMu.Lock()
+	defer s.steersMu.Unlock()
+	if s.closedSteers == nil {
+		s.closedSteers = make(map[string]struct{})
+	}
+	s.closedSteers[requestID] = struct{}{}
 }
 
 // consumePendingSteer removes the pending message and rearms its interrupt
@@ -1575,16 +1607,20 @@ func (s *Server) steerSignalChannel(requestID string) <-chan struct{} {
 
 func (s *Server) prepareRunSteerCallbacks(requestID string) (
 	func(context.Context) (RunSteerMessage, bool),
+	func(context.Context) (RunSteerMessage, bool),
 	func() <-chan struct{},
 ) {
 	s.resetSteerSignal(requestID)
 	provider := func(context.Context) (RunSteerMessage, bool) {
 		return s.consumePendingSteer(requestID)
 	}
+	finalProvider := func(context.Context) (RunSteerMessage, bool) {
+		return s.consumeFinalPendingSteer(requestID)
+	}
 	interrupt := func() <-chan struct{} {
 		return s.steerSignalChannel(requestID)
 	}
-	return provider, interrupt
+	return provider, finalProvider, interrupt
 }
 
 func createSteerID() string {
@@ -1596,10 +1632,11 @@ func createRequestID() string {
 }
 
 type chatRunSession struct {
-	ctx            context.Context
-	cleanup        func()
-	steerProvider  func(context.Context) (RunSteerMessage, bool)
-	steerInterrupt func() <-chan struct{}
+	ctx                context.Context
+	cleanup            func()
+	steerProvider      func(context.Context) (RunSteerMessage, bool)
+	finalSteerProvider func(context.Context) (RunSteerMessage, bool)
+	steerInterrupt     func() <-chan struct{}
 }
 
 // beginChatRun claims a request before publishing its input. Its cleanup may
@@ -1610,7 +1647,7 @@ func (s *Server) beginChatRun(req ChatRequest, input TurnInput, userMessage Mess
 		cancel()
 		return nil, false
 	}
-	steerProvider, steerInterrupt := s.prepareRunSteerCallbacks(req.RequestID)
+	steerProvider, finalSteerProvider, steerInterrupt := s.prepareRunSteerCallbacks(req.RequestID)
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
@@ -1623,7 +1660,7 @@ func (s *Server) beginChatRun(req ChatRequest, input TurnInput, userMessage Mess
 	if s.liveActivity != nil {
 		s.liveActivity.StartTask(req.RequestID, input.InputText, s.liveActivityPhoneID(req))
 	}
-	return &chatRunSession{ctx: ctx, cleanup: cleanup, steerProvider: steerProvider, steerInterrupt: steerInterrupt}, true
+	return &chatRunSession{ctx: ctx, cleanup: cleanup, steerProvider: steerProvider, finalSteerProvider: finalSteerProvider, steerInterrupt: steerInterrupt}, true
 }
 
 func (s *Server) newChatRunRequest(run *chatRunSession, input TurnInput, episodeID, requestID string, handler func(RunEvent)) RunRequest {
@@ -1639,6 +1676,7 @@ func (s *Server) newChatRunRequest(run *chatRunSession, input TurnInput, episode
 		StreamScope:             streamcontract.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: requestID, RunID: requestID},
 		AsyncEpisodeMaintenance: true,
 		SteerProvider:           run.steerProvider,
+		FinalSteerProvider:      run.finalSteerProvider,
 		SteerInterrupt:          run.steerInterrupt,
 	}
 }
@@ -1800,6 +1838,7 @@ func (s *Server) handleChatAsync(
 		}
 
 		result, err := s.runtime.Run(run.ctx, runReq)
+		s.closeSteerAcceptance(requestID)
 		if newStream != nil {
 			finalSpeechStreamed := speechWriter.FinalizeResponse()
 			closeErr := newStream.closeAndWait()
@@ -2177,6 +2216,8 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("Running runtime")
 	result, err := s.runtime.Run(ctx, runReq)
+	// Final speech can keep the run registered; no steer can reach it now.
+	s.closeSteerAcceptance(req.RequestID)
 	if newStream != nil {
 		finalSpeechStreamed := speechWriter.FinalizeResponse()
 		closeErr := newStream.closeAndWait()

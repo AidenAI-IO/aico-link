@@ -38,6 +38,19 @@ func TestBeginChatRunOwnsRequestAndSteerLifecycle(t *testing.T) {
 	default:
 	}
 
+	if _, ok := server.setPendingSteer(req.RequestID, "last word"); !ok {
+		t.Fatal("steer was refused before the final check")
+	}
+	if steer, ok := run.finalSteerProvider(run.ctx); !ok || steer.Content != "last word" {
+		t.Fatalf("final steer callback returned %+v, %t", steer, ok)
+	}
+	if _, ok := run.finalSteerProvider(run.ctx); ok {
+		t.Fatal("final steer callback returned a steer twice")
+	}
+	if _, ok := server.setPendingSteer(req.RequestID, "too late"); ok {
+		t.Fatal("steer was accepted after the run's final check")
+	}
+
 	run.cleanup()
 	run.cleanup()
 	if run.ctx.Err() != context.Canceled {
@@ -49,6 +62,9 @@ func TestBeginChatRunOwnsRequestAndSteerLifecycle(t *testing.T) {
 	reused, ok := server.beginChatRun(req, input, user)
 	if !ok {
 		t.Fatal("request ID could not be reused after cleanup")
+	}
+	if _, ok := server.setPendingSteer(req.RequestID, "fresh run"); !ok {
+		t.Fatal("a reused request ID kept the previous run's closed steer window")
 	}
 	reused.cleanup()
 }
@@ -68,7 +84,7 @@ func TestNewChatRunRequestKeepsSharedEventIdentity(t *testing.T) {
 	if req.StreamSink != server.semanticEvents || req.StreamScope != (stream.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: "request-2", RunID: "request-2"}) {
 		t.Fatalf("stream setup = sink %T, scope %+v", req.StreamSink, req.StreamScope)
 	}
-	if req.EventHandler == nil || req.SteerProvider == nil || req.SteerInterrupt == nil || !req.AsyncEpisodeMaintenance {
+	if req.EventHandler == nil || req.SteerProvider == nil || req.FinalSteerProvider == nil || req.SteerInterrupt == nil || !req.AsyncEpisodeMaintenance {
 		t.Fatal("run callbacks or maintenance setting missing")
 	}
 }

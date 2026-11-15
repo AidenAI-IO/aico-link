@@ -487,6 +487,22 @@ assert.equal(streamingAssistantDrafts[laterRunId].content, 'New draft',
     'late SSE text should not change a local NDJSON run after its request ID clears');
 
 renderHistory([]);
+const steerRunId = 'steer-run';
+let pendingSteerRenders = 0;
+global.renderPendingSteer = () => { pendingSteerRenders++; };
+addMessage({type: 'user', request_id: steerRunId, content: 'summarize'});
+handleChatStreamEvent({type: 'assistant_delta', request_id: steerRunId, delta: 'First answer.'});
+pendingSteer = {request_id: steerRunId, content: 'also list risks'};
+handleChatStreamEvent({type: 'message', message: {type: 'user', request_id: steerRunId, content: 'also list risks'}});
+assert.equal(pendingSteer, null, 'the published steer should clear the pending steer');
+assert.ok(pendingSteerRenders > 0, 'clearing the pending steer should re-render it');
+handleChatStreamEvent({type: 'assistant_delta', request_id: steerRunId, delta: 'Risks: none.'});
+handleChatStreamEvent({type: 'message', message: {type: 'assistant', request_id: steerRunId, content: 'Risks: none.'}});
+assert.deepEqual(Array.from(messagesDiv.children).map(node => node._message.content),
+    ['summarize', 'First answer.', 'also list risks', 'Risks: none.'],
+    'the reply to a steer should follow the steer, after the earlier answer');
+
+renderHistory([]);
 const externalRunId = 'external-ordering-run';
 handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: externalRunId,
     payload: {text: 'Before tool'}});
