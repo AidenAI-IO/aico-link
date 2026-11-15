@@ -1292,6 +1292,16 @@ details.tool-details summary {
     transition: opacity 180ms ease, transform 180ms ease, height 180ms ease;
 }
 .loading.active { height: 40px; opacity: 1; transform: none; }
+/* While the activity row is shown, fade the conversation's bottom edge into
+   it so text scrolling under the row's top edge does not end in a hard cut.
+   The extra padding lets the last message scroll clear of the fade. Voice
+   mode has its own, larger fade. */
+body:not(.voice-mode) .workspace-content:has(.loading.active) .conversation {
+    --activity-fade: 28px;
+    padding-bottom: var(--activity-fade);
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--activity-fade)), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--activity-fade)), transparent);
+}
 .activity {
     display: flex;
     align-items: center;
