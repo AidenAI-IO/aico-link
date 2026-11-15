@@ -399,6 +399,14 @@ func (t *WebScraperTool) scrape(ctx context.Context, targetURL string) (string, 
 		colly.Async(false),
 	)
 	c.WithTransport(newScrapeTransport(t.proxy))
+	// Requests sent through a proxy never reach the dial-time guard with the
+	// target host, so validate every redirect target here as well.
+	c.RedirectHandler = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return http.ErrUseLastResponse
+		}
+		return validateScrapeURL(req.URL.String())
+	}
 
 	if err := c.Limit(&colly.LimitRule{
 		DomainGlob:  "*",
@@ -554,10 +562,52 @@ func newScrapeTransport(proxy ProxyConfig) http.RoundTripper {
 	if baseDialContext == nil {
 		baseDialContext = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	}
+
+	// The transport dials the proxy through DialContext too, and operator
+	// proxies normally live on loopback or the LAN. Record the proxy addresses
+	// the transport selects so those dials skip the destination guard; the
+	// target host is still validated before each request.
+	var proxyAddrs sync.Map
+	if baseProxy := httpTransport.Proxy; baseProxy != nil {
+		httpTransport.Proxy = func(req *http.Request) (*url.URL, error) {
+			u, err := baseProxy(req)
+			if err == nil && u != nil {
+				if addr := canonicalProxyAddr(u); addr != "" {
+					proxyAddrs.Store(addr, struct{}{})
+				}
+			}
+			return u, err
+		}
+	}
 	httpTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if _, ok := proxyAddrs.Load(address); ok {
+			return baseDialContext(ctx, network, address)
+		}
 		return dialAllowedScrapeAddress(ctx, baseDialContext, network, address)
 	}
 	return httpTransport
+}
+
+// canonicalProxyAddr returns the host:port net/http dials for proxy URL u.
+func canonicalProxyAddr(u *url.URL) string {
+	host := u.Hostname()
+	if host == "" {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		case "socks5", "socks5h":
+			port = "1080"
+		default:
+			return ""
+		}
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func dialAllowedScrapeAddress(ctx context.Context, dialContext func(context.Context, string, string) (net.Conn, error), network, address string) (net.Conn, error) {

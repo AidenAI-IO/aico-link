@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -220,5 +221,37 @@ func TestWebScraperRejectsHostnamesRebindingToPrivateIPsAtDialTime(t *testing.T)
 	}
 	if got := ToolErrorFromContext(ctx); got == nil || got.Code != CodeToolExecutionFailed || got.Message != out {
 		t.Fatalf("ToolError = %+v, want tool_execution_failed with output message", got)
+	}
+}
+
+func TestWebScraperDialsLoopbackProxyForPublicTarget(t *testing.T) {
+	originalDelay := webScraperRequestDelay
+	webScraperRequestDelay = 0
+	defer func() { webScraperRequestDelay = originalDelay }()
+
+	original := lookupScrapeHostIPs
+	lookupScrapeHostIPs = func(host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+	defer func() { lookupScrapeHostIPs = original }()
+
+	var proxiedURL string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxiedURL = r.URL.String()
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<html><head><title>Proxied</title></head><body><p>hello</p></body></html>")
+	}))
+	defer proxy.Close()
+
+	ctx, _ := WithToolError(context.Background())
+	out, err := NewWebScraperTool(ProxyConfig{HTTPProxy: proxy.URL}).Call(ctx, `{"url":"http://public.example/"}`)
+	if err != nil {
+		t.Fatalf("Call returned error: %v", err)
+	}
+	if got := ToolErrorFromContext(ctx); got != nil {
+		t.Fatalf("ToolError = %+v, output = %q", got, out)
+	}
+	if proxiedURL != "http://public.example/" || !strings.Contains(out, "Page Title: Proxied") {
+		t.Fatalf("proxied URL = %q, output = %q", proxiedURL, out)
 	}
 }
