@@ -365,6 +365,9 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 	}
 	l.emitRoleOutputWithReasoning(ctx, contentResp)
 	if answer := l.touchPointerModeMismatchContentFinalAnswer(contentResp); answer != "" {
+		if resumed, err := l.resumeForFinalSteer(ctx, llmExecutor, policy); err != nil || resumed {
+			return "", iterationRestartBudget, err
+		}
 		if err := l.notices.stop("device_mode_mismatch", "Execution stopped because the touch mode appears incompatible with the connected device."); err != nil {
 			return "", iterationContinue, err
 		}
@@ -427,12 +430,8 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		// A steer queued while the answer was produced follows that answer in
 		// the context and continues this run; otherwise the steer window
 		// closes here so a later steer is refused instead of dropped.
-		if steer, hasPending, err := l.consumeAndPersistFinalSteer(ctx, llmExecutor); err != nil {
-			return "", iterationContinue, err
-		} else if hasPending {
-			policy.ResetForSteer()
-			logging.Infof("agent", "steer", "final answer followed by steer (length=%d), continuing run", len(steer.Content))
-			return "", iterationRestartBudget, nil
+		if resumed, err := l.resumeForFinalSteer(ctx, llmExecutor, policy); err != nil || resumed {
+			return "", iterationRestartBudget, err
 		}
 		if l.Recorder != nil {
 			l.Recorder.RecordDefaultFinish(answer)
@@ -604,6 +603,9 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		return "", iterationContinue, appendErr
 	}
 	if answer := l.touchPointerModeMismatchFinalAnswer(toolExecution.Step); answer != "" {
+		if resumed, err := l.resumeForFinalSteer(ctx, llmExecutor, policy); err != nil || resumed {
+			return "", iterationRestartBudget, err
+		}
 		if err := l.notices.stop("device_mode_mismatch", "Execution stopped because the touch mode appears incompatible with the connected device."); err != nil {
 			return "", iterationContinue, err
 		}
@@ -635,11 +637,8 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 	if isRunPausingTool(toolExecution.Call.Action.Tool) && !toolExecution.Result.IsError() {
 		// Pausing ends the run, so this is its last steer check: a steer
 		// queued now resumes the run instead of waiting behind the pause.
-		if _, hasPending, err := l.consumeAndPersistFinalSteer(ctx, llmExecutor); err != nil {
-			return "", iterationContinue, err
-		} else if hasPending {
-			policy.ResetForSteer()
-			return "", iterationRestartBudget, nil
+		if resumed, err := l.resumeForFinalSteer(ctx, llmExecutor, policy); err != nil || resumed {
+			return "", iterationRestartBudget, err
 		}
 		if err := l.contextManager.AppendMessage(messages.Message{
 			Role:    messages.MessageRoleNotice,
@@ -789,6 +788,20 @@ func (l *AgentLoop) consumeFinalSteer(ctx context.Context) (RunSteerMessage, boo
 		return l.FinalSteerProvider(ctx)
 	}
 	return l.checkPendingSteer(ctx)
+}
+
+// resumeForFinalSteer makes the final steer check before an iteration ends
+// the run. Every path that returns iterationDone must call it (stop decisions
+// do so through finishStopDecision): resumed means a steer was persisted and
+// the caller restarts the budget; otherwise steer acceptance is now closed.
+func (l *AgentLoop) resumeForFinalSteer(ctx context.Context, executor *executor.LLMExecutor, policy *TerminationPolicy) (bool, error) {
+	steer, hasPending, err := l.consumeAndPersistFinalSteer(ctx, executor)
+	if err != nil || !hasPending {
+		return false, err
+	}
+	policy.ResetForSteer()
+	logging.Infof("agent", "steer", "steer queued at run end (length=%d), continuing run", len(steer.Content))
+	return true, nil
 }
 
 func (l *AgentLoop) consumeAndPersistFinalSteer(ctx context.Context, executor *executor.LLMExecutor) (RunSteerMessage, bool, error) {
