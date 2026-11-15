@@ -567,7 +567,9 @@ func newScrapeTransport(proxy ProxyConfig) http.RoundTripper {
 	// The transport dials the proxy through DialContext too, and operator
 	// proxies normally live on loopback or the LAN. Record the proxy addresses
 	// the transport selects so those dials skip the destination guard; the
-	// target host is still validated before each request.
+	// target host is still validated before each request and redirect. The
+	// proxy resolves the target itself, so it is trusted to refuse private
+	// destinations (see docs/04-agent/configuration.md).
 	var proxyAddrs sync.Map
 	if baseProxy := httpTransport.Proxy; baseProxy != nil {
 		httpTransport.Proxy = func(req *http.Request) (*url.URL, error) {

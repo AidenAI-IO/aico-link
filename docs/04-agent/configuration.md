@@ -1380,6 +1380,15 @@ when the proxy is SOCKS5, and use the default private-network bypass list when
 a proxy URL is set without `NO_PROXY`. The Alibaba Cloud TTS adapter always
 connects directly.
 
+The `web_scraper` tool refuses targets that are, or resolve to, loopback,
+private, or link-local addresses, and checks every redirect the same way. When
+a proxy carries the request, the scraper checks the target name with the
+board's DNS, but the proxy resolves it again and connects on its own. The
+configured proxy is therefore trusted: the scraper may connect to it even on
+loopback or the LAN, and the proxy is responsible for refusing private,
+loopback, and link-local destinations if that protection is needed. The local
+proxy at `127.0.0.1:18080` and its upstreams do not filter destinations.
+
 Per-Wi-Fi policies are configured in the Config Web connection dialog and
 stored in `/userdata/system/wifi-proxies.json` with mode `0600`. Setting
 `AICO_WIFI_PROXY_ENABLED=0` in the system environment is an emergency bypass
