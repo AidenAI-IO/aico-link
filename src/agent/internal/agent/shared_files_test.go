@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -149,6 +150,66 @@ func TestSharedFilesUploadDownloadAndHistory(t *testing.T) {
 	projected, ok := webMessageFromContextMessage(restored, "backend")
 	if !ok || len(projected.Attachments) != 1 || projected.Attachments[0].DownloadURL != uploaded.DownloadURL {
 		t.Fatalf("history lost shared file: %+v", projected)
+	}
+}
+
+func TestChatImagesAreSavedAsSharedUploads(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AICO_SHARE_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "photo.png"), []byte("existing"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	png := []byte("png bytes")
+	input, history, err := (&Server{}).resolveRequestInput(ChatRequest{Message: "look", Attachments: []MessageAttachment{
+		{Kind: AttachmentKindImage, Name: "photo.png", MIMEType: "image/png", Data: base64.StdEncoding.EncodeToString(png)},
+		{Kind: AttachmentKindImage, Name: "../.hidden", MIMEType: "image/jpeg", Data: base64.StdEncoding.EncodeToString(png)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, attachment := range input.Attachments {
+		// The image still reaches the model as visual input, and its
+		// shared copy is a new file next to, not over, the existing one.
+		rel, err := sharedRelativePath(attachment.Path)
+		if err != nil || len(attachment.Data) == 0 || rel == "photo.png" || filepath.Ext(rel) == "" || strings.HasPrefix(rel, ".") {
+			t.Fatalf("attachment %d: %+v (%v)", i, attachment, err)
+		}
+		if data, _ := os.ReadFile(attachment.Path); string(data) != string(png) {
+			t.Fatalf("shared copy %s = %q", rel, data)
+		}
+		if history[i].DownloadURL != sharedURLPath(rel) {
+			t.Fatalf("history %d: %+v", i, history[i])
+		}
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "photo.png")); string(data) != "existing" {
+		t.Fatal("chat image replaced an existing shared file")
+	}
+	listing, _ := listSharedFiles("")
+	for _, attachment := range input.Attachments {
+		if source := sharedFileSourceByName(listing, filepath.Base(attachment.Path)); source != sharedByUser {
+			t.Fatalf("%s shared_by = %q", attachment.Path, source)
+		}
+	}
+	if !strings.Contains(userMessageFromInput(nil, input.InputText, input.Attachments).Content, input.Attachments[0].Path) {
+		t.Fatal("the model is not told where the shared copy is")
+	}
+}
+
+func TestSharedImageName(t *testing.T) {
+	for _, tc := range []struct{ name, mimeType, want string }{
+		{"diagram", "image/svg+xml", "diagram.svg"},
+		{"photo", "image/avif", "photo.avif"},
+		{"scan", "image/tiff", "scan.tiff"},
+		{"scan.TIF", "image/tiff", "scan.TIF"},
+		{"shot.jpeg", "image/png", "shot.jpeg"},
+		{"notes.txt", "image/jpeg; charset=binary", "notes.txt.jpg"},
+		{"mystery", "image/x-unknown", "mystery.png"},
+		{"../.hidden", "image/gif", "_.hidden.gif"},
+		{"", "image/webp", "image.webp"},
+	} {
+		if got := sharedImageName(tc.name, tc.mimeType); got != tc.want {
+			t.Errorf("sharedImageName(%q, %q) = %q, want %q", tc.name, tc.mimeType, got, tc.want)
+		}
 	}
 }
 
