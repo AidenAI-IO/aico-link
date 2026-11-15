@@ -915,7 +915,7 @@ func TestRuntimeRunWaitForWakeupDoesNotStream(t *testing.T) {
 	}
 }
 
-func TestRuntimeRunReportsControllerTimeInTurnState(t *testing.T) {
+func TestRuntimeRunReportsControllerTimeAndSharedFilesInTurnState(t *testing.T) {
 	originalNow := promptNow
 	promptNow = func() time.Time {
 		return time.Date(2026, time.June, 15, 8, 0, 0, 0, time.UTC)
@@ -931,6 +931,11 @@ func TestRuntimeRunReportsControllerTimeInTurnState(t *testing.T) {
 		NewSkillIndex(),
 	)
 
+	share := t.TempDir()
+	t.Setenv("AICO_SHARE_DIR", share)
+	if err := os.WriteFile(filepath.Join(share, "report.csv"), []byte("a,b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := runtime.Run(context.Background(), RunRequest{Input: "hello"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -943,6 +948,9 @@ func TestRuntimeRunReportsControllerTimeInTurnState(t *testing.T) {
 	}
 	if !runtimeModelCallContains(model.messages[0][1:], want) {
 		t.Fatalf("turn state missing %q", want)
+	}
+	if !runtimeModelCallContains(model.messages[0][1:], "shared_files: 1 in "+share+", newest first\n- "+filepath.Join(share, "report.csv")) {
+		t.Fatal("turn state missing the shared files list")
 	}
 }
 

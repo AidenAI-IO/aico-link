@@ -99,6 +99,21 @@ Oversized uploads return `413`; invalid multipart data or filenames return `400`
 storage failures return `503` or `507`. Filenames must not be hidden, contain
 path separators or control characters, or exceed 240 UTF-8 bytes.
 
+## How the Agent sees shared files
+
+The Agent reads and writes `/share` as an ordinary directory on the controller,
+through `shell` and Python; there is no dedicated file tool. An attached file
+reaches the model as its absolute path in the user message.
+
+Each user turn's state message also carries a `shared_files` entry that lists
+the 20 most recently modified files below `/share`, newest first, with size,
+`shared by user` or `shared by aico`, and modification time in the configured
+time zone. Hidden entries and symbolic links are skipped, as in listings. When
+more files exist, the entry says so and the Agent lists the directory with
+`shell`. The entry is omitted while `/share` holds no files. The realtime
+foreground does not receive it; device work that needs the files runs in the
+backend Agent.
+
 ## Generated outputs and other files
 
 The Agent is instructed to save downloadable outputs under `/share` and return
