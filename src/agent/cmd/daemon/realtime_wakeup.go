@@ -871,7 +871,7 @@ func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Run
 	if prompt := strings.TrimSpace(cfg.Prompt); prompt != "" {
 		instructionParts = append(instructionParts, prompt)
 	}
-	instructionParts = append(instructionParts, agent.ResponseLanguageGuidance(cfg.LocaleOrDefault()))
+	instructionParts = append(instructionParts, agent.RealtimeResponseLanguageGuidance(cfg.LocaleOrDefault()))
 	instructions := strings.TrimSpace(strings.Join(instructionParts, "\n\n"))
 	enableEmotion := cfg.VoiceModel.EnableSpeechEmotion
 	if enableEmotion == nil {

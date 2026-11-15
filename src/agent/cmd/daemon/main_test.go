@@ -317,6 +317,14 @@ func TestRealtimeSessionConfigIncludesConfiguredResponseLanguage(t *testing.T) {
 			if !strings.Contains(got.Instructions, "Always respond in "+tc.language) {
 				t.Fatalf("realtime instructions missing fixed response language: %q", got.Instructions)
 			}
+			// The realtime model speaks directly; a <tts> requirement belongs
+			// to the backend agent's text output only.
+			for _, useBackend := range []bool{true, false} {
+				cfg.VoiceModel.UseBackendAgent = useBackend
+				if got := realtimeProviderSessionConfig(cfg, nil).Instructions; strings.Contains(got, "<tts>") {
+					t.Fatalf("use_backend_agent=%t: realtime instructions require <tts>: %q", useBackend, got)
+				}
+			}
 		})
 	}
 }

@@ -81,6 +81,13 @@ func normalizeResponseLocale(locale string) string {
 }
 
 func responseLanguageGuidance(locale string) string {
+	return languageGuidance(locale, "This includes progress messages, final answers, and all text inside <tts>...</tts>.")
+}
+
+// languageGuidance builds the response-language rule. coverage names what the
+// rule applies to, in the output format of the agent reading it: the backend
+// writes <tts> blocks, while the realtime model speaks directly.
+func languageGuidance(locale, coverage string) string {
 	locale = normalizeResponseLocale(locale)
 	language := "Simplified Chinese"
 	if locale == localeEnglishUS {
@@ -88,17 +95,18 @@ func responseLanguageGuidance(locale string) string {
 	}
 	return strings.Join([]string{
 		"The configured response locale is " + locale + ".",
-		"Write all conversational assistant content in " + language + " from the first generated token. This includes progress messages, final answers, and all text inside <tts>...</tts>.",
+		"Write all conversational assistant content in " + language + " from the first generated token. " + coverage,
 		"Only use another language for content the user explicitly asks to translate, quote, draft, or generate. Keep any surrounding explanation in " + language + ".",
 		"Do not infer the response language from STT language, phone locale, screenshot language, proper nouns, or an isolated foreign-language phrase.",
 		"IMPORTANT: Always respond in " + language + ", regardless of the language used by the user, except when the user explicitly asks to translate, quote, draft, or generate content in another language.",
 	}, "\n")
 }
 
-// ResponseLanguageGuidance returns the shared response-language rule for
-// agent entry points that do not build a full RoleProfile, such as realtime.
-func ResponseLanguageGuidance(locale string) string {
-	return responseLanguageGuidance(locale)
+// RealtimeResponseLanguageGuidance returns the response-language rule for the
+// realtime voice model. It speaks directly and never writes <tts> blocks, so
+// the rule names its spoken replies instead.
+func RealtimeResponseLanguageGuidance(locale string) string {
+	return languageGuidance(locale, "This includes spoken replies, progress updates while tools run, and final answers.")
 }
 
 func combinedAgentInstruction(cfg AgentConfig) string {
