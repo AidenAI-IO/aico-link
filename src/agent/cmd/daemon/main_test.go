@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -326,6 +327,23 @@ func TestRealtimeSessionConfigIncludesConfiguredResponseLanguage(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The realtime model gets the same user profile section the backend system
+// prompt ends with, so saved preferences apply in voice replies too.
+func TestRealtimeSessionConfigEndsWithUserProfile(t *testing.T) {
+	configDir := t.TempDir()
+	memories := agent.NewMemoryManager(filepath.Join(configDir, "memory"))
+	runtime := agent.NewRuntimeWithDeps(agent.Config{ConfigDir: configDir}, nil, memories, agent.NewBuiltinToolSet(agent.HIDConfig{}, agent.AudioConfig{}, agent.SearchConfig{}, agent.ProxyConfig{}), agent.NewSkillIndex())
+	defer runtime.Close()
+	store := memories.EnsureLongTermStore(filepath.Join(configDir, "memory"))
+	if _, err := store.AddMemory(context.Background(), agent.MemoryItem{Type: "preference", Priority: 80, Confidence: 0.9, Content: "Prefers metric units.", EvidenceExcerpts: []string{"use metric"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := realtimeProviderSessionConfig(agent.Config{ConfigDir: configDir}, runtime).Instructions
+	if !strings.HasSuffix(got, "\n- (preference) Prefers metric units.") || !strings.Contains(got, "\n\n## User profile\n") {
+		t.Fatalf("realtime instructions do not end with the user profile:\n%s", got)
 	}
 }
 

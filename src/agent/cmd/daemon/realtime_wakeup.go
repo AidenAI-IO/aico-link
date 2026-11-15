@@ -873,6 +873,10 @@ func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Run
 	}
 	instructionParts = append(instructionParts, agent.RealtimeResponseLanguageGuidance(cfg.LocaleOrDefault()))
 	instructions := strings.TrimSpace(strings.Join(instructionParts, "\n\n"))
+	// The saved profile closes the instructions, as it closes the backend
+	// system prompt. Each provider session reads it when it opens, so a
+	// profile saved during a conversation applies from the next session.
+	instructions = agent.WithUserProfileSection(instructions, runtime.UserProfilePrompt(context.Background()))
 	enableEmotion := cfg.VoiceModel.EnableSpeechEmotion
 	if enableEmotion == nil {
 		v := true
@@ -1561,6 +1565,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	)
 	if err != nil {
 		return fmt.Errorf("initialize realtime user context: %w", err)
+	}
+	if err := agent.SyncUserProfileSection(userContext, sessionConfig.Instructions); err != nil {
+		logging.Warnf("agent", "realtime", "Refresh user profile in realtime user context failed: %v", err)
 	}
 
 	providerName := realtimeProviderType(cfg)

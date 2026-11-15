@@ -28,6 +28,21 @@ func withUserProfileSection(systemMessage, profile string) string {
 	return systemMessage + userProfileSectionHeader + profile
 }
 
+// WithUserProfileSection appends the user profile section to a prompt that
+// has none, such as the realtime voice instructions, using the same section the
+// backend system prompt carries.
+func WithUserProfileSection(prompt, profile string) string {
+	return withUserProfileSection(prompt, profile)
+}
+
+// SyncUserProfileSection makes the conversation's system message carry the
+// user profile section of prompt, the instructions a realtime session was
+// opened with. Prompts that differ only in that section compare equal, so
+// without this the stored record would keep an outdated profile.
+func SyncUserProfileSection(manager *contextmanager.ContextManager, prompt string) error {
+	return refreshUserProfileSection(manager, userProfileSection(prompt))
+}
+
 // userProfileSection returns the profile entries carried by systemMessage.
 func userProfileSection(systemMessage string) string {
 	if index := strings.Index(systemMessage, userProfileSectionHeader); index >= 0 {
