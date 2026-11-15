@@ -31,31 +31,16 @@ func newPromptTestContextManager(t *testing.T) *contextmanager.ContextManager {
 	return manager
 }
 
-func TestRolePromptsIncludeCurrentDate(t *testing.T) {
+// The date lives in each turn's state message, so the cached system prompt
+// stays identical from one day to the next.
+func TestRolePromptCarriesNoDate(t *testing.T) {
 	originalNow := promptNow
-	promptNow = func() time.Time {
-		return time.Date(2026, time.June, 1, 8, 0, 0, 0, time.FixedZone("CST", 8*60*60))
-	}
 	t.Cleanup(func() { promptNow = originalNow })
-
-	want := "Current date: 2026-06-01 (Monday, timezone: UTC)"
-	profile := testPromptProfile(AgentConfig{})
-	if !strings.Contains(profile.SystemPrompt, want) {
-		t.Fatalf("system prompt missing current date %q:\n%s", want, profile.SystemPrompt)
-	}
-}
-
-func TestRolePromptConvertsCurrentDateToConfiguredTimezone(t *testing.T) {
-	originalNow := promptNow
-	promptNow = func() time.Time {
-		return time.Date(2026, time.September, 14, 18, 30, 0, 0, time.UTC)
-	}
-	t.Cleanup(func() { promptNow = originalNow })
-
-	profile := testPromptProfile(AgentConfig{Locale: "en-US", Timezone: "Asia/Shanghai"})
-	want := "Current date: 2026-09-15 (Tuesday, timezone: Asia/Shanghai)"
-	if !strings.Contains(profile.SystemPrompt, want) {
-		t.Fatalf("system prompt missing timezone-aware date %q:\n%s", want, profile.SystemPrompt)
+	promptNow = func() time.Time { return time.Date(2026, time.June, 1, 8, 0, 0, 0, time.UTC) }
+	first := testPromptProfile(AgentConfig{}).SystemPrompt
+	promptNow = func() time.Time { return time.Date(2026, time.June, 2, 8, 0, 0, 0, time.UTC) }
+	if second := testPromptProfile(AgentConfig{}).SystemPrompt; second != first {
+		t.Fatal("system prompt changed with the date")
 	}
 }
 

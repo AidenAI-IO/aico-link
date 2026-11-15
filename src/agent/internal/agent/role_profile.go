@@ -38,7 +38,6 @@ func buildProfile(
 ) RoleProfile {
 	promptParts := []string{
 		agentIdentityPrompt,
-		currentDateContext(cfg.Locale, cfg.Timezone),
 		"",
 		"## Base instruction",
 		combinedAgentInstruction(cfg),

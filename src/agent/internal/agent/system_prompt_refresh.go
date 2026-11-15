@@ -10,8 +10,8 @@ import (
 // userProfileSectionHeader opens the section of the system message that lists
 // the user's saved profile, preference, and rule memories. The section is
 // always the last part of the system message so it can be replaced without
-// rebuilding the rest of the prompt, whose date and skills have their own
-// refresh paths.
+// rebuilding the rest of the prompt, whose skills have their own refresh
+// path.
 const userProfileSectionHeader = "\n\n## User profile\n" +
 	"The user saved these profile entries, preferences, and rules. Apply them whenever relevant without asking again. " +
 	"The user's words in this conversation take precedence. This list is partial: facts and sensitive memories are never listed here, so use recall_memory for anything else the user may have saved.\n"

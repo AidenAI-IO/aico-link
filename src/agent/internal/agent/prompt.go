@@ -18,10 +18,6 @@ type hostRuntimeInfo struct {
 	Architecture    string
 }
 
-func currentDateContext(locale, timezone string) string {
-	return formatCurrentDate(configuredTime(promptNow(), timezone), locale, timezone)
-}
-
 func hostRuntimeInfoContext() string {
 	infoFn := promptHostRuntimeInfo
 	if infoFn == nil {
@@ -71,19 +67,6 @@ func hostInfoValue(value string) string {
 		return "unknown"
 	}
 	return value
-}
-
-func formatCurrentDate(t time.Time, locale, timezone string) string {
-	timezone = strings.TrimSpace(timezone)
-	if timezone == "" {
-		timezone = defaultTimezone
-	}
-	if normalizeResponseLocale(locale) == localeEnglishUS {
-		weekdays := []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
-		return "Current date: " + t.Format("2006-01-02") + " (" + weekdays[t.Weekday()] + ", timezone: " + timezone + ")"
-	}
-	weekdays := []string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
-	return "Current date: " + t.Format("2006-01-02") + " (" + weekdays[t.Weekday()] + ", timezone: " + timezone + ")"
 }
 
 func normalizeResponseLocale(locale string) string {
@@ -160,7 +143,7 @@ func defaultAgentBehavior() string {
 		"- When invoking tools, begin the assistant content with the same single leading <tts>...</tts> block containing brief spoken progress, then add brief visible progress text before the tool call. Do not put speech or description arguments in tool inputs. Do not put the final answer in tool-call assistant content.",
 		"- Do not use JSON, final_answer fields, or \"Final Answer:\" wrappers for final responses.",
 		"- Most user input arrives as voice transcribed by STT and may contain homophone, near-sound, segmentation, or named-entity errors. Interpret commands by intent and context instead of matching transcript text literally. When searching the web, apps, contacts, settings, files, or page content, choose likely canonical keywords and try reasonable alternate terms rather than requiring exact transcript wording.",
-		"- The system prompt already includes the current date and weekday. Answer ordinary date or weekday questions from that context. When a precise clock time, timezone conversion, offset, timestamp, elapsed-time result, or verified calculation is required, use shell utilities on the Aico Link controller; do not treat controller-local results as target-device state unless that relationship is known.",
+		"- The state message on each user turn includes controller_time, the current controller date, time, and weekday in the configured time zone. Answer ordinary date, time, or weekday questions from the latest controller_time. When a precise clock time, timezone conversion, offset, timestamp, elapsed-time result, or verified calculation is required, use shell utilities on the Aico Link controller; do not treat controller-local results as target-device state unless that relationship is known.",
 		"- When an answer depends on saved long-term preferences, rules, procedures, facts, or screen content the user deliberately captured earlier, call recall_memory first; do not answer from general knowledge alone. Requests about something the user saw, saved, or noted down on screen — such as a tracking number, address, amount, or message — are screen memories: query recall_memory with types [\"screen_snapshot\"], adding topic keywords when the user gave any.",
 		"- Before saying you do not know, did not save, or cannot provide something the user asks you to recall about themselves, call recall_memory with topic tags from the question. Secrets the user asked you to keep, such as passwords, PINs, or card numbers, are saved as sensitive memories: they never appear in the user profile and are returned only by a recall_memory query about their topic, so their absence from your context is not evidence they were not saved. When recall returns the secret the user asked for, give it to them; never reveal the value of a different secret that merely matched the query, at most say that it exists.",
 		"- When the user corrects a saved preference, rule, or fact, recall the old memory before updating it. Pass its id and revision to save_memory as replaces_id and expected_revision; do not infer an update target from tags alone. If the target is ambiguous, ask which memory to change.",

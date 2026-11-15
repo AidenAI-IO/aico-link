@@ -915,7 +915,7 @@ func TestRuntimeRunWaitForWakeupDoesNotStream(t *testing.T) {
 	}
 }
 
-func TestRuntimeRunInjectsCurrentDateIntoPlannerPrompt(t *testing.T) {
+func TestRuntimeRunReportsControllerTimeInTurnState(t *testing.T) {
 	originalNow := promptNow
 	promptNow = func() time.Time {
 		return time.Date(2026, time.June, 15, 8, 0, 0, 0, time.UTC)
@@ -937,10 +937,12 @@ func TestRuntimeRunInjectsCurrentDateIntoPlannerPrompt(t *testing.T) {
 	if len(model.messages) == 0 || len(model.messages[0]) == 0 {
 		t.Fatalf("expected model to receive planner prompt")
 	}
-	systemPrompt := messageText(model.messages[0][:1])
-	want := "Current date: 2026-06-15 (Monday, timezone: UTC)"
-	if !strings.Contains(systemPrompt, want) {
-		t.Fatalf("planner system prompt missing current date %q:\n%s", want, systemPrompt)
+	want := "controller_time: 2026-06-15 08:00:00 +00:00 (Monday)"
+	if strings.Contains(messageText(model.messages[0][:1]), want) {
+		t.Fatal("system prompt carries the controller time")
+	}
+	if !runtimeModelCallContains(model.messages[0][1:], want) {
+		t.Fatalf("turn state missing %q", want)
 	}
 }
 

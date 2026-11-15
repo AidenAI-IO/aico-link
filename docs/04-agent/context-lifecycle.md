@@ -13,7 +13,8 @@ Each run is assembled from several layers. Some layers are persisted memory, whi
 | Layer | Source | Visibility | Persistence |
 | --- | --- | --- | --- |
 | Base instruction | built-in Agent instruction plus `agent.toml` `prompt` | Agent | configuration |
-| Runtime defaults | built-in prompt rules, current date, host runtime information | Agent | not persisted |
+| Runtime defaults | built-in prompt rules, host runtime information | Agent | not persisted |
+| Turn state | state message before each user turn: device type, `controller_time`, `controller_timezone`, screenshot | Agent | conversation history |
 | Skills | skill index plus active `SKILL.md` content | Agent | skill files and skill state |
 | Runtime context | `RunRequest.RuntimeContext`, for example phone bridge state | Agent | not persisted |
 | Tool catalog | resolved built-in tools plus skill tools | Agent can call | not persisted in memory |
