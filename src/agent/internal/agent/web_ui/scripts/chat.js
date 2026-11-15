@@ -565,13 +565,13 @@ function assistantStreamKey(value) {
     return value.request_id || value.episode_id || currentChatRequestId || '';
 }
 
-function closeClearMenu() {
-    const menu = document.getElementById('clearMenu');
+function closeTopbarMenu() {
+    const menu = document.getElementById('topbarMenu');
     if (menu) menu.removeAttribute('open');
 }
 
 async function clearSession() {
-    closeClearMenu();
+    closeTopbarMenu();
     if (!confirm('Clear the current session? This will remove the current conversation.')) return;
 
     try {
@@ -589,7 +589,7 @@ async function clearSession() {
 }
 
 async function clearSessionAndMemory() {
-    closeClearMenu();
+    closeTopbarMenu();
     if (!confirm('Clear the current session and permanently delete ALL memory, including long-term memories and the user profile?')) return;
 
     try {
