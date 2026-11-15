@@ -169,6 +169,20 @@ async function refreshDeviceScreen() {
     }
 }
 
+// Clicking the screen gives it the whole inspector column; clicking again
+// brings the other sections back.
+function setDeviceScreenExpanded(expanded) {
+    const inspector = document.getElementById('inspector');
+    const figure = document.getElementById('deviceScreen');
+    inspector.classList.toggle('screen-expanded', expanded);
+    figure.setAttribute('aria-pressed', String(expanded));
+    figure.title = expanded ? 'Shrink screen' : 'Enlarge screen';
+}
+
+function toggleDeviceScreenExpanded() {
+    setDeviceScreenExpanded(!document.getElementById('inspector').classList.contains('screen-expanded'));
+}
+
 // ---- Background tasks ----------------------------------------------------
 
 function taskStatusLabel(task) {
@@ -679,6 +693,13 @@ function trapDialogFocus(event) {
 // ---- Startup -------------------------------------------------------------
 
 function startInspector() {
+    const screen = document.getElementById('deviceScreen');
+    screen.addEventListener('click', toggleDeviceScreenExpanded);
+    screen.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggleDeviceScreenExpanded();
+    });
     document.getElementById('taskList').addEventListener('dragover', handleTaskDragOver);
     document.getElementById('taskModalClose').addEventListener('click', closeTaskModal);
     taskModalEl().addEventListener('click', event => {
@@ -691,8 +712,12 @@ function startInspector() {
     document.addEventListener('keydown', event => {
         if (event.key === 'Tab') trapDialogFocus(event);
         if (event.key !== 'Escape') return;
-        closeTaskModal();
-        closeFileModal();
+        if (!taskModalEl().classList.contains('hidden') || !fileModalEl().classList.contains('hidden')) {
+            closeTaskModal();
+            closeFileModal();
+        } else {
+            setDeviceScreenExpanded(false);
+        }
     });
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) refreshInspector();

@@ -871,8 +871,17 @@ func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Run
 	if prompt := strings.TrimSpace(cfg.Prompt); prompt != "" {
 		instructionParts = append(instructionParts, prompt)
 	}
-	instructionParts = append(instructionParts, agent.ResponseLanguageGuidance(cfg.LocaleOrDefault()))
+	instructionParts = append(instructionParts, agent.RealtimeResponseLanguageGuidance(cfg.LocaleOrDefault()))
 	instructions := strings.TrimSpace(strings.Join(instructionParts, "\n\n"))
+	// The saved profile closes the instructions, as it closes the backend
+	// system prompt. Each provider session reads it when it opens, so a
+	// profile saved during a conversation applies from the next session. A
+	// failed read keeps the section the stored user context already carries.
+	profile, profileErr := runtime.UserProfilePrompt(context.Background())
+	if profileErr != nil {
+		profile = runtime.StoredUserContextProfile()
+	}
+	instructions = agent.WithUserProfileSection(instructions, profile)
 	enableEmotion := cfg.VoiceModel.EnableSpeechEmotion
 	if enableEmotion == nil {
 		v := true
@@ -1021,6 +1030,9 @@ var realtimeDelegatedTools = []string{
 var realtimeBackendCommunicationRuntimeTools = map[string]struct{}{
 	realtimeRequestUserActionTool: {},
 	realtimeWaitForWakeupTool:     {},
+	// read_image returns an image the realtime protocol cannot attach; the
+	// realtime model would receive it as base64 text.
+	"read_image": {},
 }
 
 func realtimeVoiceToolDefinitions(cfg agent.Config, runtime *agent.Runtime) []realtimevoice.Tool {
@@ -1561,6 +1573,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	)
 	if err != nil {
 		return fmt.Errorf("initialize realtime user context: %w", err)
+	}
+	if err := agent.SyncUserProfileSection(userContext, sessionConfig.Instructions); err != nil {
+		logging.Warnf("agent", "realtime", "Refresh user profile in realtime user context failed: %v", err)
 	}
 
 	providerName := realtimeProviderType(cfg)
