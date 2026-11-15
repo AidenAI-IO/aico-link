@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -253,5 +254,21 @@ func TestWebScraperDialsLoopbackProxyForPublicTarget(t *testing.T) {
 	}
 	if proxiedURL != "http://public.example/" || !strings.Contains(out, "Page Title: Proxied") {
 		t.Fatalf("proxied URL = %q, output = %q", proxiedURL, out)
+	}
+}
+
+func TestCanonicalProxyAddrMatchesNetHTTPDialAddress(t *testing.T) {
+	for raw, want := range map[string]string{
+		"http://bücher.example:7890": "xn--bcher-kva.example:7890",
+		"http://192.168.1.2":         "192.168.1.2:80",
+		"socks5h://[::1]":            "[::1]:1080",
+	} {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := canonicalProxyAddr(u); got != want {
+			t.Errorf("canonicalProxyAddr(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

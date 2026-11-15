@@ -18,6 +18,7 @@ import (
 	"github.com/gocolly/colly"
 	"github.com/tmc/langchaingo/tools/duckduckgo"
 	"github.com/tmc/langchaingo/tools/wikipedia"
+	"golang.org/x/net/idna"
 )
 
 const defaultWebSearchMaxResults = 5
@@ -588,11 +589,15 @@ func newScrapeTransport(proxy ProxyConfig) http.RoundTripper {
 	return httpTransport
 }
 
-// canonicalProxyAddr returns the host:port net/http dials for proxy URL u.
+// canonicalProxyAddr returns the host:port net/http dials for proxy URL u,
+// mirroring net/http's canonicalAddr, including its IDNA conversion.
 func canonicalProxyAddr(u *url.URL) string {
 	host := u.Hostname()
 	if host == "" {
 		return ""
+	}
+	if ascii, err := idna.Lookup.ToASCII(host); err == nil {
+		host = ascii
 	}
 	port := u.Port()
 	if port == "" {
