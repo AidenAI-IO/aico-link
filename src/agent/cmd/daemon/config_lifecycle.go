@@ -290,6 +290,10 @@ func (c *inputLifecycle) startVoice(cfg agent.Config, dialog *agent.AudioDialog)
 				if recorder := c.server.CollaborationRecorder(); recorder != nil {
 					tasks.SetEventSink(recorder)
 				}
+				if c.server != nil {
+					c.server.SetAgentTasks(tasks)
+					defer c.server.SetAgentTasks(nil)
+				}
 			}
 			runRealtimeWakeupModeWithServer(cfg, shutdown, c.server, c.runtime, tasks, c.newVoiceWatcher, stop)
 		default:

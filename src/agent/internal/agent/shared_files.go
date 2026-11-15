@@ -38,6 +38,8 @@ type sharedFile struct {
 	MIMEType    string    `json:"mime_type,omitempty"`
 	DownloadURL string    `json:"download_url,omitempty"`
 	Modified    time.Time `json:"modified"`
+	// SharedBy is "user" for uploads and "aico" for files the Agent wrote.
+	SharedBy string `json:"shared_by,omitempty"`
 }
 
 func validSharedName(name string) bool {
@@ -296,9 +298,12 @@ func uploadSharedFileWithLimit(w http.ResponseWriter, r *http.Request, limit int
 		http.Error(w, "Cannot inspect upload", http.StatusInternalServerError)
 		return
 	}
+	recordSharedUpload(root, published)
+	item := sharedFileInfo(published, info)
+	item.SharedBy = sharedByUser
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, sharedFileInfo(published, info))
+	writeJSON(w, item)
 }
 
 // deleteSharedFile removes one regular file or one empty folder below the
@@ -333,6 +338,7 @@ func deleteSharedFile(w http.ResponseWriter, r *http.Request, rel string) {
 		}
 		return
 	}
+	forgetSharedUpload(root, rel)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -411,6 +417,9 @@ func listSharedFiles(rel string) ([]sharedFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	sharedUploadsMu.Lock()
+	uploads := readSharedUploads(root)
+	sharedUploadsMu.Unlock()
 	result := make([]sharedFile, 0, len(entries))
 	for _, entry := range entries {
 		if !validSharedName(entry.Name()) || entry.Type()&os.ModeSymlink != 0 {
@@ -420,7 +429,11 @@ func listSharedFiles(rel string) ([]sharedFile, error) {
 		if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
 			continue
 		}
-		result = append(result, sharedFileInfo(path.Join(rel, entry.Name()), info))
+		item := sharedFileInfo(path.Join(rel, entry.Name()), info)
+		if item.Kind == "file" {
+			item.SharedBy = sharedFileSource(uploads, path.Join(rel, entry.Name()))
+		}
+		result = append(result, item)
 	}
 	return result, nil
 }

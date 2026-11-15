@@ -35,7 +35,7 @@ In the firmware, it is installed by default to:
 - Single-agent execution loop with streamlined tool calling and response handling
 - Conversation memory persistence, session memory compaction; see [Session Memory Compaction](session-memory.md)
 - Device and Task Episode memory; see [Memory Plane](memory-plane.md)
-- Web UI: chat history, browser recording, attachments, Tool Lab, Skill Export
+- Web UI: chat history, browser recording, attachments, an inspector sidebar (connected device and screen, hardware resources, background tasks, shared files), Skill Export
 - iOS Live Activity / Dynamic Island task status; see [Live Activity / Dynamic Island](live-activity.md)
 - Device-side voice pipeline: VAD / STT / TTS; [Realtime Voice](realtime-voice.md)
 

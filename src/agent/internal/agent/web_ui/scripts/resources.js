@@ -115,6 +115,9 @@ function renderResources(snapshot) {
     renderResourceDisks(snapshot.disks || []);
     set('DiskDetails', (snapshot.disks || []).map(disk => disk.path + ': ' + resourceUsageText(disk.usage)).join('\n') || 'Unavailable');
     set('Status', 'Live · 1s');
+    const memory = resourceUsagePercent(snapshot.memory);
+    set('Summary', [cpu === null ? '' : 'CPU ' + resourcePercent(cpu),
+        memory === null ? '' : 'MEM ' + resourcePercent(memory)].filter(Boolean).join(' · '));
     previousResourceSnapshot = snapshot;
 }
 

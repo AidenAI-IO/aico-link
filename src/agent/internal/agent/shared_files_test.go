@@ -100,6 +100,36 @@ func TestSharedFilesUploadDownloadAndHistory(t *testing.T) {
 		t.Fatalf("range: %d %s", response.Code, response.Body)
 	}
 
+	if uploaded.SharedBy != sharedByUser {
+		t.Fatalf("upload source = %q, want user", uploaded.SharedBy)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agent-output.txt"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	listing, err := listSharedFiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := map[string]string{}
+	for _, entry := range listing {
+		sources[entry.Name] = entry.SharedBy
+	}
+	if sources[name] != sharedByUser || sources["agent-output.txt"] != sharedByAico || len(listing) != 5 {
+		t.Fatalf("listing sources = %v (manifest must stay hidden)", sources)
+	}
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/files?path="+url.QueryEscape(name), nil)
+	deleteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(deleteResponse, deleteRequest)
+	if deleteResponse.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d", deleteResponse.Code)
+	}
+	if err := os.WriteFile(uploaded.Path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if listing, _ = listSharedFiles(""); sharedFileSourceByName(listing, name) != sharedByAico {
+		t.Fatal("a file written after deleting an upload kept the user label")
+	}
+
 	input, history, err := (&Server{}).resolveRequestInput(ChatRequest{Attachments: []MessageAttachment{{Kind: "file", Path: uploaded.Path, Name: "forged", MIMEType: "image/png", Size: 999}}})
 	if err != nil {
 		t.Fatal(err)
@@ -524,4 +554,13 @@ func TestSharedFilesDeleteStaysInValidatedFolder(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(dir, "moved", "report.pdf")); !os.IsNotExist(err) {
 		t.Fatalf("validated file still exists: %v", err)
 	}
+}
+
+func sharedFileSourceByName(files []sharedFile, name string) string {
+	for _, file := range files {
+		if file.Name == name {
+			return file.SharedBy
+		}
+	}
+	return ""
 }

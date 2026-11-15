@@ -191,6 +191,30 @@ persisting it, the manager discards that stale result and immediately runs the
 latest complete goal again. This closes the race between a direct final answer
 and an update arriving after the agent loop's last steer check.
 
+## Queue order and the Web UI
+
+Waiting tasks run one at a time in queue order. A task resumed after a user
+action, or after a goal update reaches it while it waits, joins the end of the
+queue. The queue holds at most 64 waiting tasks; `create_agent_task` reports a
+full queue as an error.
+
+The Web UI inspector lists unfinished background tasks and can cancel,
+reorder, and inspect them through these endpoints:
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/agent-tasks` | `{"enabled": bool, "tasks": [...]}`: unfinished tasks, started work first, then waiting work in run order. `enabled` is false outside Realtime mode or when the backend agent is off. |
+| `GET /api/agent-tasks/{id}` | `{"task": ..., "timeline": {"steps": [...], "omitted": n}}` for one task. |
+| `DELETE /api/agent-tasks/{id}` | Cancels the task, with the same rules as `cancel_agent_task`. |
+| `PUT /api/agent-tasks/order` | `{"task_ids": [...]}` sets the order of queued tasks. The list must name exactly the tasks queued now; otherwise the request answers `409` and nothing changes. |
+
+The timeline is an observer view, not the backend context. It keeps the 40 most
+recent steps per task: status changes, tool calls (updated in place by their
+result), and assistant messages, each detail cut to 400 characters. Output of
+tools that read private phone data (clipboard, calendar, contacts,
+notifications) is left out. Timelines are kept in memory for unfinished tasks
+and the 16 most recently finished ones, and are lost when the daemon restarts.
+
 ## Backend interruption context
 
 Backend execution writes persisted `notice` messages when a run stops early,

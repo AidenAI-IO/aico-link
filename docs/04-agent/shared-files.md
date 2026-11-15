@@ -111,7 +111,11 @@ is available immediately without registration. Subdirectories are supported.
 `GET /api/files?path=outputs` lists the direct children of `/share/outputs`;
 omitting `path` lists the root. `/share/` provides a browser directory listing.
 Hidden files, symbolic links, special files, and paths outside the shared root
-are excluded. Downloads use attachment disposition, support HEAD and byte ranges,
+are excluded. Each file entry carries `shared_by`: `user` for files uploaded
+through `POST /api/files`, and `aico` for everything else, such as Agent outputs.
+Uploads are recorded in the hidden `/share/.uploads.json`; deleting a file
+through the API drops its record. Files uploaded before this record existed are
+reported as `aico`. Downloads use attachment disposition, support HEAD and byte ranges,
 and do not execute HTML or SVG as same-origin content.
 
 The Web composer has an **Add file** control. Download cards
