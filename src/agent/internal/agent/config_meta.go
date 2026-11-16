@@ -330,7 +330,7 @@ func ConfigMeta() ConfigMetadata {
 						Default:         defaultModelTemperature, Nullable: true},
 					{Key: "max_response_tokens", Label: "Maximum response tokens", Widget: WidgetNumber,
 						Placeholder: "0 = provider default",
-						Help:        "Maximum number of tokens allowed in one model response. 0 sends no limit, so the provider default applies; native Anthropic, which requires a limit, uses the model output limit instead.",
+						Help:        "Maximum number of tokens allowed in one model response. 0 sends no limit, so the provider default applies; native Anthropic, which requires a limit, uses the model output limit instead (8192 when unknown).",
 						Default:     defaults.Model.MaxResponseTokens},
 					{Key: "log_raw_http", Label: "Raw HTTP logging", Widget: WidgetBoolean,
 						Help:    "Write raw model HTTP requests and responses to the Agent log directory. Enable only while troubleshooting.",
