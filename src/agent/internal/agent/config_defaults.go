@@ -36,9 +36,10 @@ const (
 	defaultModelProvider                     = "openrouter"
 	defaultModelName                         = "bytedance-seed/seed-2.0-lite"
 	defaultModelTemperature                  = 0.2
-	// 8192 leaves room for hidden reasoning tokens while keeping a bounded
-	// default cost ceiling for both text and Classic STT voice replies.
-	defaultModelMaxResponseTokens = 8192
+	// 0 sends no output limit, so each provider applies its model default
+	// (native Anthropic, which requires max_tokens, uses the model's advertised
+	// output limit instead).
+	defaultModelMaxResponseTokens = 0
 	// minReasoningBudgetTokens is Anthropic's documented floor for
 	// thinking.budget_tokens; other budget-style APIs are at or below it.
 	minReasoningBudgetTokens               = 1024
