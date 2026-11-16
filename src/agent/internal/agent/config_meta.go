@@ -734,7 +734,11 @@ func ConfigMeta() ConfigMetadata {
 				Name: "decision",
 				Fields: []FieldMeta{
 					{Key: "provider", Label: "Decision model provider", Widget: WidgetSelect,
-						Enum:    []EnumOption{{Value: DecisionProviderTypeSafe, Label: "TypeSafe Jev"}, {Value: DecisionProviderOpenAI, Label: "OpenAI Luna"}},
+						Enum: []EnumOption{
+							{Value: DecisionProviderTypeSafe, Label: "TypeSafe Jev"},
+							{Value: DecisionProviderOpenAI, Label: "OpenAI Luna"},
+							{Value: DecisionProviderGemini, Label: "Gemini Decision 1"},
+						},
 						Default: defaults.Decision.ProviderOrDefault()},
 					{Key: "enabled", Label: "Enable decision model", Widget: WidgetBoolean, Default: false,
 						Help: "Fixed workflow checks ask the decision model and the main model at once; confident decision-model answers are used. Requires an API key."},

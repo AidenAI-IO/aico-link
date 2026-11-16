@@ -791,7 +791,8 @@ An optional decision model that answers fixed-choice questions (choice, yes/no,
 box in an image) inside deterministic workflows. It is separate from the main
 model: it never plans or generates text. It is off by default; turning it on
 requires `api_key`. When it is off every decision stays with the main model.
-Two providers are supported:
+One provider is active at a time; its key is independent of the main model key.
+Three providers are supported:
 
 - `typesafe`: TypeSafe's System One API (Jev). Answers choice, yes/no and box
   questions, so it can also locate tap targets.
@@ -799,14 +800,17 @@ Two providers are supported:
   and yes/no (predicate) questions but has no box answer, so the tap-target
   decisions (`app_search`, `paste_menu`, the Android search field) always stay
   with the main model.
+- `gemini`: Google's Gemini Decisions API (`gemini-decision-1`). Answers
+  choice, yes/no, and score questions but has no box answer, so the same
+  tap-target decisions stay with the main model.
 
 | Field            | Default                      | Description                                                                   |
 | ---------------- | ---------------------------- | ----------------------------------------------------------------------------- |
 | `enabled`        | `false`                      | Turns the decision model on. Requires `api_key`.                              |
-| `provider`       | `typesafe`                   | `typesafe` (TypeSafe Jev) or `openai` (OpenAI Luna).                          |
+| `provider`       | `typesafe`                   | `typesafe` (TypeSafe Jev), `openai` (OpenAI Luna), or `gemini` (Gemini Decision 1). |
 | `api_key`        | empty                        | Provider API key. Config Web treats it as write-only and reports `has_api_key`. |
-| `base_url`       | provider default             | Provider endpoint; must be an absolute `http(s)` URL. Defaults to `https://api.typesafe.ai/v1` or `https://api.openai.com/v1`. |
-| `model`          | provider default             | Decision model name. Defaults to `jev-preview` (Jev 1.14, which box questions need) or `gpt-6-luna`. |
+| `base_url`       | provider default             | Provider endpoint; must be an absolute `http(s)` URL. Defaults to `https://api.typesafe.ai/v1`, `https://api.openai.com/v1`, or `https://generativelanguage.googleapis.com/v1beta`. |
+| `model`          | provider default             | Decision model name. Defaults to `jev-preview` (Jev 1.14, which box questions need), `gpt-6-luna`, or `gemini-decision-1`. |
 | `min_confidence` | `0.8`                        | Answers below this confidence (0 to 1) are handed back to the main model. A yes/no answer counts as confident at `p >= min_confidence` or `p <= 1 - min_confidence`. `0` selects the default. |
 
 ```toml
@@ -896,8 +900,8 @@ request recalls nothing. The memory texts offered are sent to the decision
 model provider.
 
 The TypeSafe API is region-restricted (HTTP 451 outside supported regions);
-the Agent reaches both providers through the same proxy environment it uses for
-other model providers.
+the Agent reaches every decision provider through the same proxy environment it
+uses for other model providers.
 
 In Config Web, **Models** lists the main model and the decision model. The
 decision model page edits the switch, the provider, the key and the minimum

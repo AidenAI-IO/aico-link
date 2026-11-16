@@ -150,6 +150,8 @@ export const DECISION_PROVIDERS = [
     help: msg('model.decision_provider_typesafe_help', '在 typesafe.ai 获取 API Key')},
   {value: 'openai', label: msg('model.decision_provider_openai', 'OpenAI Luna'),
     help: msg('model.decision_provider_openai_help', '使用 OpenAI 的 Decisions API；它不能定位点击位置，这类判断仍交给主模型')},
+  {value: 'gemini', label: msg('model.decision_provider_gemini', 'Gemini Decision 1'),
+    help: msg('model.decision_provider_gemini_help', '使用 Google Gemini Decisions API；它不能定位点击位置，这类判断仍交给主模型。在 aistudio.google.com/apikey 获取 API Key')},
 ];
 
 function decisionProvider(value) {

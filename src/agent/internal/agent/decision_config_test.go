@@ -45,6 +45,7 @@ func TestConfigValidateDecisionModel(t *testing.T) {
 		{name: "enabled without key", decision: DecisionModelConfig{Enabled: true}, field: "decision.api_key"},
 		{name: "unknown provider", decision: DecisionModelConfig{Provider: "other"}, field: "decision.provider"},
 		{name: "openai provider", decision: DecisionModelConfig{Provider: "OpenAI", APIKey: "sk"}},
+		{name: "gemini provider", decision: DecisionModelConfig{Provider: "Gemini", APIKey: "AIza"}},
 		{name: "confidence above one", decision: DecisionModelConfig{MinConfidence: 1.5}, field: "decision.min_confidence"},
 		{name: "negative confidence", decision: DecisionModelConfig{MinConfidence: -0.1}, field: "decision.min_confidence"},
 		{name: "NaN confidence", decision: DecisionModelConfig{MinConfidence: math.NaN()}, field: "decision.min_confidence"},
@@ -103,7 +104,11 @@ func TestDecisionModelDefaultsFollowProvider(t *testing.T) {
 	if cfg.BaseURLOrDefault() != defaultOpenAIBaseURL || cfg.ModelOrDefault() != defaultOpenAIModel {
 		t.Fatalf("openai defaults = %s %s", cfg.BaseURLOrDefault(), cfg.ModelOrDefault())
 	}
-	cfg.BaseURL, cfg.Model = "https://proxy.example/v1", "gpt-6-luna-2026-10-06"
+	cfg = DecisionModelConfig{Provider: DecisionProviderGemini}
+	if cfg.BaseURLOrDefault() != defaultGeminiBaseURL || cfg.ModelOrDefault() != defaultGeminiModel {
+		t.Fatalf("gemini defaults = %s %s", cfg.BaseURLOrDefault(), cfg.ModelOrDefault())
+	}
+	cfg.BaseURL, cfg.Model = "https://proxy.example/v1beta", "gemini-decision-1-preview"
 	if cfg.BaseURLOrDefault() != cfg.BaseURL || cfg.ModelOrDefault() != cfg.Model {
 		t.Fatal("explicit base_url/model must win over provider defaults")
 	}
