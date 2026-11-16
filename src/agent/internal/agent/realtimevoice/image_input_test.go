@@ -2,7 +2,6 @@ package realtimevoice
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -40,8 +39,15 @@ func TestImageWirePayloads(t *testing.T) {
 	if want := `[{"text":"screen","type":"input_text"},{"image_url":"data:image/jpeg;base64,anBlZw==","type":"input_image"}]`; string(openAI) != want {
 		t.Fatalf("openai image content = %s, want %s", openAI, want)
 	}
-	replayed, _ := json.Marshal(openAIContextItemPayload(ContextItem{Type: "message", Role: "user", Content: "hi", Images: []Image{image}}, ""))
-	if !strings.Contains(string(replayed), `"input_image"`) {
-		t.Fatalf("replayed user message = %s, want its image", replayed)
+	// A replayed message whose text is only its image caption keeps the
+	// caption and sends no empty text part.
+	captionOnly := ContextItem{Type: "message", Role: "user", Images: []Image{image}}
+	replayed, _ := json.Marshal(openAIContextItemPayload(captionOnly, ""))
+	if want := `{"content":[{"text":"screen","type":"input_text"},{"image_url":"data:image/jpeg;base64,anBlZw==","type":"input_image"}],"role":"user","type":"message"}`; string(replayed) != want {
+		t.Fatalf("replayed openai message = %s, want %s", replayed, want)
+	}
+	geminiReplay, _ := json.Marshal(geminiMessageParts(captionOnly))
+	if want := `[{"text":"screen"},{"inlineData":{"data":"anBlZw==","mimeType":"image/jpeg"}}]`; string(geminiReplay) != want {
+		t.Fatalf("replayed gemini turn = %s, want %s", geminiReplay, want)
 	}
 }

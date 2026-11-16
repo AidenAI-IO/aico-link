@@ -557,13 +557,9 @@ func (s *geminiSession) ReplayContext(ctx context.Context, items []ContextItem) 
 			if item.Role == "assistant" || item.Role == "model" {
 				role = "model"
 			}
-			parts := []map[string]any{{"text": item.Content}}
-			for _, image := range item.Images {
-				parts = append(parts, geminiInlineDataPart(image))
-			}
 			turns = append(turns, map[string]any{
 				"role":  role,
-				"parts": parts,
+				"parts": geminiMessageParts(item),
 			})
 		case "function_call":
 			args := any(map[string]any{})
@@ -593,6 +589,22 @@ func (s *geminiSession) ReplayContext(ctx context.Context, items []ContextItem) 
 	return s.writeJSON(ctx, map[string]any{"clientContent": map[string]any{
 		"turns": turns, "turnComplete": false,
 	}})
+}
+
+// geminiMessageParts replays a message as text followed by its images, each
+// after its caption, sending no empty text part.
+func geminiMessageParts(item ContextItem) []map[string]any {
+	parts := make([]map[string]any, 0, 1+2*len(item.Images))
+	if item.Content != "" || len(item.Images) == 0 {
+		parts = append(parts, map[string]any{"text": item.Content})
+	}
+	for _, image := range item.Images {
+		if caption := strings.TrimSpace(image.Caption); caption != "" {
+			parts = append(parts, map[string]any{"text": caption})
+		}
+		parts = append(parts, geminiInlineDataPart(image))
+	}
+	return parts
 }
 
 func waitGeminiReady(ctx context.Context, s *geminiSession) error {

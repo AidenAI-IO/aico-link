@@ -316,7 +316,10 @@ func openAIContextItemPayload(item ContextItem, protocol string) map[string]any 
 		payload["content"] = []map[string]string{{"type": "text", "text": item.Content}}
 	}
 	if item.Type == "message" && item.Role == "user" && len(item.Images) > 0 {
-		content, _ := payload["content"].([]map[string]string)
+		var content []map[string]string
+		if item.Content != "" {
+			content, _ = payload["content"].([]map[string]string)
+		}
 		payload["content"] = append(content, openAIImageContent(item.Images)...)
 	}
 	return payload
