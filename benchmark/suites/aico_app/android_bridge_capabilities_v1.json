@@ -188,7 +188,8 @@
       "foreground_app_id": "link.aico.app",
       "category": "device_operation",
       "description_for_judge": "Open an SMS draft via Phone Bridge and enter multiline Unicode text using enter_text. Never send the draft. Harness checks App write evidence and exact editable field text.",
-      "prompt": "Open an empty SMS draft to +12025550147 using open_url with sms:+12025550147. If a draft from a previous benchmark exists, clear only its composer text first. In the visible message composer, use enter_text to enter exactly these two lines, preserving the newline, accented character and emoji:\nBridge café input ✅\nLine 2: 100% & #42\nLeave the message draft visible. Do not send it, press Send, or manually stage the clipboard.",
+      "android_bridge_fixture": "sms_draft",
+      "prompt": "Open an empty SMS draft to +12025550147 using open_url with sms:+12025550147. In the visible message composer, use enter_text to enter exactly these two lines, preserving the newline, accented character and emoji:\nBridge café input ✅\nLine 2: 100% & #42\nLeave the message draft visible. Do not send it, press Send, or manually stage the clipboard.",
       "android_bridge_input_text": "Bridge café input ✅\nLine 2: 100% & #42",
       "rubric": [
         {"id": "draft_entered", "check": "The SMS composer contains both exact lines, including the newline, accented character, emoji, percent sign and punctuation."},

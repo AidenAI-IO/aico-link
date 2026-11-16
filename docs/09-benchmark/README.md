@@ -691,9 +691,13 @@ the foreground. It runs with a rooted Android emulator and one Agent worker, che
 Phone Bridge connection per task, and covers clipboard round trips, semantic
 app and URL opening, calendar create/query/delete, contacts create/query/update,
 local notifications, and single-line and multiline Unicode text entry. The
-write tasks use reserved fixtures (`AidenBridgeBenchmark` local calendar and
-`AidenBridgeBenchmarkContact` contact). The runner removes only those fixtures
-before and after each write task, including failures. Calendar/contact write
+write tasks use reserved fixtures (`AidenBridgeBenchmark` local calendar,
+`AidenBridgeBenchmarkContact` contact, and the Messages draft for
+`+12025550147`). The runner removes only those fixtures before and after each
+write task, including failures. Per-task ADB setup only returns the emulator
+to the home screen, and Messages restores a saved draft on the next open, so
+the SMS draft fixture opens that recipient with a sentinel body and clears it.
+Calendar/contact write
 permissions are granted on the CI emulator. Text-entry tasks require both a new clipboard-write
 diagnostic event from the App and the exact text in a non-Bridge Android input
 field; its evidence is included in `results.jsonl` and the local
