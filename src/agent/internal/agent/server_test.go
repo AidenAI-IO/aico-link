@@ -5289,3 +5289,105 @@ func startDeviceVoiceForTest(t *testing.T, server *Server) {
 	voice := server.ClaimRealtimeVoiceSession(Config{}, RealtimeAudioRouteDevice)
 	t.Cleanup(func() { server.EndRealtimeVoiceSession(voice, "") })
 }
+
+func TestServerHandleChatActiveReportsLatestRun(t *testing.T) {
+	server := &Server{activeRuns: make(map[string]context.CancelFunc)}
+	get := func() ChatActiveResponse {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		server.handleChatActive(rec, httptest.NewRequest(http.MethodGet, "/api/chat/active", nil))
+		var resp ChatActiveResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return resp
+	}
+
+	if resp := get(); resp.Status != "idle" || resp.RequestID != "" {
+		t.Fatalf("idle response = %+v", resp)
+	}
+	server.registerActiveRun("req-old", func() {})
+	server.registerActiveRun("req-new", func() {})
+	server.activeRunStartedAt["req-old"] = time.Now().Add(-time.Minute)
+	if resp := get(); resp.Status != "running" || resp.RequestID != "req-new" || !resp.Steerable || resp.Steer != nil {
+		t.Fatalf("running response = %+v, want steerable req-new", resp)
+	}
+	server.setPendingSteer("req-new", "change direction")
+	if resp := get(); resp.Steer == nil || resp.Steer.Content != "change direction" {
+		t.Fatalf("response with queued steer = %+v", resp)
+	}
+	// A run that refuses steers, such as a realtime run, is not offered as steerable.
+	server.closeSteerAcceptance("req-new")
+	if resp := get(); resp.RequestID != "req-new" || resp.Steerable {
+		t.Fatalf("response after steers close = %+v, want unsteerable req-new", resp)
+	}
+	server.unregisterActiveRun("req-new")
+	if resp := get(); resp.RequestID != "req-old" || resp.ElapsedMS < time.Minute.Milliseconds() {
+		t.Fatalf("remaining response = %+v, want req-old with its elapsed time", resp)
+	}
+	// A run speaking its final reply stays registered but is no longer busy.
+	server.settleActiveRun("req-old")
+	if resp := get(); resp.Status != "idle" {
+		t.Fatalf("response after the loop settles = %+v", resp)
+	}
+	if !server.cancelActiveRun("req-old") {
+		t.Fatal("settled run is no longer cancelable")
+	}
+	server.unregisterActiveRun("req-old")
+}
+
+func TestServerRunWithoutSteersIsNeverSteerable(t *testing.T) {
+	server := &Server{
+		activeRuns:         make(map[string]context.CancelFunc),
+		terminatedRequests: make(map[string]struct{}),
+	}
+	for i := 0; i < 200; i++ {
+		requestID := fmt.Sprintf("req-realtime-%d", i)
+		var wg sync.WaitGroup
+		var accepted, reportedSteerable atomic.Bool
+		stop := make(chan struct{})
+		wg.Add(2)
+		// Steers and status reads race the run's registration and removal.
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, ok := server.setPendingSteer(requestID, "change direction"); ok {
+					accepted.Store(true)
+				}
+				runtime.Gosched()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if resp := server.activeRunSnapshot(); resp.RequestID == requestID && resp.Steerable {
+					reportedSteerable.Store(true)
+				}
+				runtime.Gosched()
+			}
+		}()
+		if !server.registerActiveRunWithoutSteers(requestID, func() {}) {
+			t.Fatalf("registerActiveRunWithoutSteers(%q) failed", requestID)
+		}
+		runtime.Gosched()
+		server.unregisterActiveRun(requestID)
+		close(stop)
+		wg.Wait()
+		if accepted.Load() {
+			t.Fatalf("steer accepted for run %q registered without steers", requestID)
+		}
+		if reportedSteerable.Load() {
+			t.Fatalf("run %q registered without steers was reported steerable", requestID)
+		}
+	}
+}

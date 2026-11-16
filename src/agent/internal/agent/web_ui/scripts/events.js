@@ -367,6 +367,8 @@ function handleSemanticEvent(event) {
                     }
                 }
             }
+            // Clear a run indicator this page restored without waiting for the poll.
+            if (externalActiveRequestId) refreshCurrentLiveActivity();
             refreshHistoryFromContext();
             return;
         default:
