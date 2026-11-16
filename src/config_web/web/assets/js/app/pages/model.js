@@ -362,7 +362,7 @@ export async function mainModelPage(context) {
             parse.optionalRange(0, 2), msg('model.temperature_invalid', '请输入 0 到 2 之间的数，或留空'),
             {placeholder: msg('model.auto', '自动')}),
           effortRow(),
-          numberRow('max_response_tokens', msg('model.max_response_tokens', '最大响应 Token 数'), msg('model.max_response_tokens_help', '0 表示不设上限，使用提供商默认值'),
+          numberRow('max_response_tokens', msg('model.max_response_tokens', '最大响应 Token 数'), msg('model.max_response_tokens_help', '0 表示不设上限，使用提供商默认值（原生 Anthropic 使用模型输出上限）'),
             parse.integer(0), msg('model.integer_invalid', '请输入 0 或正整数'), {inputmode: 'numeric'}),
         ],
       }),

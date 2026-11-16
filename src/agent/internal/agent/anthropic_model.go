@@ -294,7 +294,7 @@ func (m *anthropicModel) generateContent(ctx context.Context, messages []llms.Me
 		request.ToolChoice = disableAnthropicParallelToolUse(request.ToolChoice)
 	}
 	if request.MaxTokens <= 0 {
-		request.MaxTokens = m.defaultMaxTokens()
+		request.MaxTokens = m.defaultMaxTokens(request.Model)
 	}
 	if m.temperature != nil {
 		request.Temperature = m.temperature
@@ -522,11 +522,18 @@ func (m *anthropicModel) reasoningModelSpec() model.ModelSpec {
 }
 
 // defaultMaxTokens fills Anthropic's required max_tokens when no response
-// limit is configured: the model's advertised output limit, or a conservative
-// fallback when that limit is unknown.
-func (m *anthropicModel) defaultMaxTokens() int {
-	if maxOutput := m.reasoningModelSpec().MaxOutput; maxOutput > 0 {
-		return maxOutput
+// limit is configured: the requested model's advertised output limit, or a
+// conservative fallback when that limit is unknown. A per-call model override
+// is resolved from the registry rather than the configured model's spec.
+func (m *anthropicModel) defaultMaxTokens(requestModel string) int {
+	if requestModel == "" || strings.EqualFold(requestModel, m.model) {
+		if maxOutput := m.reasoningModelSpec().MaxOutput; maxOutput > 0 {
+			return maxOutput
+		}
+		return anthropicFallbackMaxTokens
+	}
+	if spec, ok := LookupModelSpec("anthropic", requestModel); ok && spec.MaxOutput > 0 {
+		return spec.MaxOutput
 	}
 	return anthropicFallbackMaxTokens
 }

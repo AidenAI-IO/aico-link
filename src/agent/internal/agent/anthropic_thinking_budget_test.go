@@ -77,17 +77,25 @@ func TestAnthropicModelKeepsMaxTokensAboveEffortFloor(t *testing.T) {
 
 func TestAnthropicModelDefaultsMaxTokensWhenUnset(t *testing.T) {
 	for _, tt := range []struct {
-		model string
-		want  int
+		name     string
+		model    string
+		override string
+		want     int
 	}{
-		{model: "claude-opus-5", want: 128_000},
-		{model: "unregistered-claude", want: anthropicFallbackMaxTokens},
+		{name: "registered", model: "claude-opus-5", want: 128_000},
+		{name: "unregistered", model: "unregistered-claude", want: anthropicFallbackMaxTokens},
+		{name: "per-call override", model: "claude-opus-5", override: "claude-haiku-4-5", want: 64_000},
+		{name: "unregistered override", model: "claude-opus-5", override: "unregistered-claude", want: anthropicFallbackMaxTokens},
 	} {
-		t.Run(tt.model, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			server, captured := newAnthropicThinkingProbe(t, anthropicThinkingProbeOK)
 			m := newAnthropicModel(server.URL, tt.model, "tok", server.Client())
+			var options []llms.CallOption
+			if tt.override != "" {
+				options = append(options, llms.WithModel(tt.override))
+			}
 			if _, err := m.GenerateContent(context.Background(),
-				[]llms.MessageContent{llms.TextParts(llms.ChatMessageTypeHuman, "hi")}); err != nil {
+				[]llms.MessageContent{llms.TextParts(llms.ChatMessageTypeHuman, "hi")}, options...); err != nil {
 				t.Fatalf("GenerateContent() error = %v", err)
 			}
 			if got := (*captured)[0].MaxTokens; got != tt.want {
