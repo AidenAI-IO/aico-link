@@ -28,7 +28,7 @@ func (s *Server) handleRealtimeChatAsync(w http.ResponseWriter, req ChatRequest,
 	s.pendingResultsMu.Unlock()
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	if !s.registerActiveRun(requestID, cancel) {
+	if !s.registerActiveRunWithoutSteers(requestID, cancel) {
 		cancel()
 		s.pendingResultsMu.Lock()
 		delete(s.pendingResults, requestID)
@@ -36,9 +36,6 @@ func (s *Server) handleRealtimeChatAsync(w http.ResponseWriter, req ChatRequest,
 		http.Error(w, "request_id already in use", http.StatusConflict)
 		return
 	}
-	// The realtime bridge has no steer path, so refuse steers instead of
-	// accepting and dropping them.
-	s.closeSteerAcceptance(requestID)
 	s.publishMessage(userMsg)
 	if s.liveActivity != nil {
 		s.liveActivity.StartTask(requestID, input.InputText, s.liveActivityPhoneID(req))
@@ -161,7 +158,7 @@ func (s *Server) handleRealtimeChatStream(w http.ResponseWriter, r *http.Request
 	episodeID := s.runtime.NewEpisodeID()
 	userMessage := messageFromTurnInput(input, episodeID, req.RequestID, nil, time.Now())
 	runCtx, cancel := context.WithCancel(context.Background())
-	if !s.registerActiveRun(req.RequestID, cancel) {
+	if !s.registerActiveRunWithoutSteers(req.RequestID, cancel) {
 		cancel()
 		http.Error(w, "request_id already in use", http.StatusConflict)
 		return
@@ -170,9 +167,6 @@ func (s *Server) handleRealtimeChatStream(w http.ResponseWriter, r *http.Request
 		s.unregisterActiveRun(req.RequestID)
 		cancel()
 	}()
-	// The realtime bridge has no steer path, so refuse steers instead of
-	// accepting and dropping them.
-	s.closeSteerAcceptance(req.RequestID)
 	s.publishMessage(userMessage)
 	if s.liveActivity != nil {
 		s.liveActivity.StartTask(req.RequestID, input.InputText, s.liveActivityPhoneID(req))

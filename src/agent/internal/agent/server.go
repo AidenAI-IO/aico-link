@@ -1182,6 +1182,17 @@ func (s *Server) handleChatSteerCancel(w http.ResponseWriter, r *http.Request) {
 // registerActiveRun atomically claims a request ID and clears any marker left
 // by its previous lifecycle. It rejects registration while the server closes.
 func (s *Server) registerActiveRun(requestID string, cancel context.CancelFunc) bool {
+	return s.registerRun(requestID, cancel, true)
+}
+
+// registerActiveRunWithoutSteers registers a run that has no steer input,
+// such as a realtime bridge run. It refuses steers from the moment the run is
+// visible, so no steer is accepted and then dropped.
+func (s *Server) registerActiveRunWithoutSteers(requestID string, cancel context.CancelFunc) bool {
+	return s.registerRun(requestID, cancel, false)
+}
+
+func (s *Server) registerRun(requestID string, cancel context.CancelFunc, acceptSteers bool) bool {
 	if s == nil || s.closing.Load() {
 		return false
 	}
@@ -1208,6 +1219,12 @@ func (s *Server) registerActiveRun(requestID string, cancel context.CancelFunc) 
 		s.activeRunStartedAt = make(map[string]time.Time)
 	}
 	s.activeRunStartedAt[requestID] = time.Now()
+	if !acceptSteers {
+		// Same activeRunsMu-then-steersMu order as setPendingSteer.
+		s.steersMu.Lock()
+		s.closeSteerAcceptanceLocked(requestID)
+		s.steersMu.Unlock()
+	}
 	s.deleteRequestTerminationLocked(requestID)
 	return true
 }

@@ -5335,3 +5335,50 @@ func TestServerHandleChatActiveReportsLatestRun(t *testing.T) {
 	}
 	server.unregisterActiveRun("req-old")
 }
+
+func TestServerRegisterActiveRunWithoutSteersNeverAcceptsSteer(t *testing.T) {
+	server := &Server{
+		activeRuns:         make(map[string]context.CancelFunc),
+		terminatedRequests: make(map[string]struct{}),
+	}
+	for i := 0; i < 200; i++ {
+		requestID := fmt.Sprintf("req-realtime-%d", i)
+		var wg sync.WaitGroup
+		var accepted atomic.Bool
+		stop := make(chan struct{})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, ok := server.setPendingSteer(requestID, "change direction"); ok {
+					accepted.Store(true)
+					return
+				}
+				runtime.Gosched()
+			}
+		}()
+		if !server.registerActiveRunWithoutSteers(requestID, func() {}) {
+			t.Fatalf("registerActiveRunWithoutSteers(%q) failed", requestID)
+		}
+		rec := httptest.NewRecorder()
+		server.handleChatActive(rec, httptest.NewRequest(http.MethodGet, "/api/chat/active", nil))
+		var resp ChatActiveResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		close(stop)
+		wg.Wait()
+		if accepted.Load() {
+			t.Fatalf("steer accepted for run %q registered without steers", requestID)
+		}
+		if resp.RequestID != requestID || resp.Steerable {
+			t.Fatalf("active response = %+v, want unsteerable %q", resp, requestID)
+		}
+		server.unregisterActiveRun(requestID)
+	}
+}
