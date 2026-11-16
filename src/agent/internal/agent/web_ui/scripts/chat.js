@@ -168,6 +168,8 @@ async function submitSteerMessage() {
         restoreSteerDraft(requestId, message, localSteer);
         showErrorToast('Steer failed', err);
     } finally {
+        // A status read started while the steer was in flight may predate it.
+        externalActiveGeneration++;
         pendingSteerSubmitting = false;
         setComposerState(!!activeChatRequestId());
     }
@@ -299,12 +301,22 @@ async function refreshCurrentLiveActivityOnce() {
 }
 
 // Each check returns the active run, null when there is none, or undefined
-// when it could not be read.
+// when it could not be read, including a read that outlasts its deadline so a
+// stalled request cannot hold up later refreshes.
+const activeRunReadTimeoutMs = 5000;
+
+function fetchActiveRunStatus(url) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), activeRunReadTimeoutMs);
+    return fetch(url, {cache: 'no-store', signal: controller.signal})
+        .then(res => res.ok ? res.json() : undefined)
+        .finally(() => clearTimeout(timeout));
+}
+
 async function fetchActiveChatRun() {
     try {
-        const res = await fetch('/api/chat/active');
-        if (!res.ok) return undefined;
-        const data = await res.json();
+        const data = await fetchActiveRunStatus('/api/chat/active');
+        if (data === undefined) return undefined;
         if (data.status !== 'running' || !data.request_id) return null;
         return {
             requestId: data.request_id,
@@ -323,9 +335,8 @@ async function fetchActiveChatRun() {
 // A running state counts only when includeRunning is set.
 async function fetchActiveLiveActivity(includeRunning) {
     try {
-        const res = await fetch('/api/live-activity/current');
-        if (!res.ok) return undefined;
-        const data = await res.json();
+        const data = await fetchActiveRunStatus('/api/live-activity/current');
+        if (data === undefined) return undefined;
         const state = data.live_activity;
         const isActive = data.status === 'ok' && state &&
             (state.status === 'needs_app' || (includeRunning && state.status === 'running'));
@@ -428,6 +439,9 @@ async function cancelPendingSteer() {
             pendingSteer = previous;
             renderPendingSteer();
         }
+    } finally {
+        // A status read started while the cancel was in flight may predate it.
+        externalActiveGeneration++;
     }
 }
 
