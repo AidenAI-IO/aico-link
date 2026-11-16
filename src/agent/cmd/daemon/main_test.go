@@ -969,17 +969,27 @@ func TestRealtimeNoticePersistsAsNoticeInUserContext(t *testing.T) {
 
 func TestRecentRealtimeContextMessagesKeepsLatestTenUserTurns(t *testing.T) {
 	var all []messages.Message
+	// Each turn's state comes before its user message; a tool image's state
+	// follows the tool result. The turn keeps its own state at the cutoff.
 	for i := 1; i <= 12; i++ {
 		all = append(all,
+			messages.Message{Role: messages.MessageRoleState, Content: fmt.Sprintf("turn-state-%d", i)},
 			messages.Message{Role: messages.MessageRoleUser, Content: fmt.Sprintf("user-%d", i)},
 			messages.Message{Role: messages.MessageRoleToolCall, ToolCalls: []messages.ToolCall{{ID: fmt.Sprintf("call-%d", i)}}},
 			messages.Message{Role: messages.MessageRoleToolResult, ToolResults: []messages.ToolResult{{ToolCallID: fmt.Sprintf("call-%d", i)}}},
+			messages.Message{Role: messages.MessageRoleState, Content: fmt.Sprintf("tool-state-%d", i)},
 			messages.Message{Role: messages.MessageRoleAssistant, Content: fmt.Sprintf("assistant-%d", i)},
 		)
 	}
 	got := recentRealtimeContextMessages(all, 10)
-	if len(got) != 40 || got[0].Content != "user-3" || got[len(got)-1].Content != "assistant-12" {
+	if len(got) != 60 || got[0].Content != "turn-state-3" || got[1].Content != "user-3" || got[len(got)-1].Content != "assistant-12" {
 		t.Fatalf("recent messages = %+v", got)
+	}
+	// A tool state is not taken for the next turn's state at the cutoff.
+	withoutAssistant := append([]messages.Message(nil), all[:5]...)
+	withoutAssistant = append(withoutAssistant, all[7:]...)
+	if got := recentRealtimeContextMessages(withoutAssistant, 11); got[0].Content != "user-2" {
+		t.Fatalf("cutoff after a tool state starts at %+v", got[0])
 	}
 	for i := 0; i < len(got); i++ {
 		if got[i].Role != messages.MessageRoleToolCall {

@@ -3663,6 +3663,16 @@ func recentRealtimeContextMessages(all []messages.Message, maxTurns int) []messa
 		}
 		seen++
 	}
+	// A user turn's state message is stored before the user message, so it
+	// starts the turn with it. State that follows a tool result belongs to
+	// that earlier turn and is left out with it.
+	first := start
+	for first > 0 && all[first-1].Role == messages.MessageRoleState {
+		first--
+	}
+	if first == 0 || all[first-1].Role != messages.MessageRoleToolResult {
+		start = first
+	}
 	return all[start:]
 }
 
