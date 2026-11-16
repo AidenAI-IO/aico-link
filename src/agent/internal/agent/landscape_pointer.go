@@ -72,8 +72,11 @@ type landscapePointerCorrector struct {
 
 	mu           sync.Mutex
 	deviceTypeFn func() string
-	last         landscapePointerDecision
-	dragTurn     pointerTurn
+	// heldFn reports how the companion app last saw the phone held, read
+	// from gravity; "" when unknown.
+	heldFn   func() (string, time.Time)
+	last     landscapePointerDecision
+	dragTurn pointerTurn
 	// enumerated is the orientation the gadget was last enumerated in, as
 	// seen by this process; unknown until the first pointer action.
 	enumerated screenOrientation
@@ -101,6 +104,7 @@ func (o screenOrientation) String() string {
 type landscapePointerDecision struct {
 	turn   pointerTurn
 	region image.Rectangle
+	held   string
 	at     time.Time
 }
 
@@ -143,6 +147,31 @@ func (c *landscapePointerCorrector) setDeviceTypeFunc(fn func() string) {
 	c.mu.Lock()
 	c.deviceTypeFn = fn
 	c.mu.Unlock()
+}
+
+// setDeviceOrientationFunc sets where the physical phone orientation comes
+// from. A turn decision is only reused while the phone stays held the same
+// way, since turning the phone can change how iOS maps the pointer.
+func (c *landscapePointerCorrector) setDeviceOrientationFunc(fn func() (string, time.Time)) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.heldFn = fn
+	c.mu.Unlock()
+}
+
+// held returns the last reported physical orientation, or "" when the app
+// has not reported one.
+func (c *landscapePointerCorrector) held() string {
+	c.mu.Lock()
+	fn := c.heldFn
+	c.mu.Unlock()
+	if fn == nil {
+		return ""
+	}
+	orientation, _ := fn()
+	return orientation
 }
 
 func (c *landscapePointerCorrector) targetsIOS() bool {
@@ -206,12 +235,23 @@ func (c *landscapePointerCorrector) ensureEnumeratedOrientation(ctx context.Cont
 		logging.Warnf("agent", "landscape_pointer", "pointer re-enumeration after %s to %s turn failed: %v", previous, current, err)
 		return
 	}
+	c.noteReenumerated()
+	logging.Infof("agent", "landscape_pointer", "re-enumerated USB pointer after %s to %s turn in %dms", previous, current, time.Since(started).Milliseconds())
+}
+
+// noteReenumerated records that the pointer was just detached and reattached,
+// by this corrector or by a modified-keyboard profile switch, so the host
+// now bounds it for the current orientation.
+func (c *landscapePointerCorrector) noteReenumerated() {
+	if c == nil {
+		return
+	}
+	current := c.currentOrientation()
 	c.mu.Lock()
 	c.enumerated = current
 	// A new enumeration may map the pointer differently.
 	c.last = landscapePointerDecision{}
 	c.mu.Unlock()
-	logging.Infof("agent", "landscape_pointer", "re-enumerated USB pointer after %s to %s turn in %dms", previous, current, time.Since(started).Milliseconds())
 }
 
 // landscapeRegion returns the phone screen inside the frame when it is known
@@ -225,20 +265,42 @@ func (c *landscapePointerCorrector) landscapeRegion() (image.Rectangle, int, int
 	return image.Rect(active.X, active.Y, active.X+active.Width, active.Y+active.Height), width, height, true
 }
 
-// recentTurn returns an earlier decision for the same screen area when the
-// current check cannot decide; without one the points are sent as is.
+// recentTurn returns an earlier decision for the same screen area and the
+// same physical orientation when the current check cannot decide; without one
+// the points are sent as is.
 func (c *landscapePointerCorrector) recentTurn(region image.Rectangle) pointerTurn {
+	held := c.held()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.last.region == region && !c.last.at.IsZero() && time.Since(c.last.at) < landscapePointerProbeReuseFor {
+	if c.last.region == region && c.last.held == held && !c.last.at.IsZero() && time.Since(c.last.at) < landscapePointerProbeReuseFor {
 		return c.last.turn
 	}
 	return 0
 }
 
-func (c *landscapePointerCorrector) remember(turn pointerTurn, region image.Rectangle) {
+// heldLandscapeTurn returns the last decided turn without a new check when the
+// companion app reports the phone held in landscape and nothing changed since
+// that decision. With the phone held in landscape the interface follows
+// gravity, also across app switches, so the turn stays put. A phone held
+// upright or flat with a landscape picture means an app forced landscape,
+// which another app can force the other way, so those are checked every time.
+func (c *landscapePointerCorrector) heldLandscapeTurn(region image.Rectangle) (pointerTurn, bool) {
+	held := c.held()
+	if held != "landscape_left" && held != "landscape_right" {
+		return 0, false
+	}
 	c.mu.Lock()
-	c.last = landscapePointerDecision{turn: turn, region: region, at: time.Now()}
+	defer c.mu.Unlock()
+	if c.last.region != region || c.last.held != held || c.last.at.IsZero() || time.Since(c.last.at) >= landscapePointerProbeReuseFor {
+		return 0, false
+	}
+	return c.last.turn, true
+}
+
+func (c *landscapePointerCorrector) remember(turn pointerTurn, region image.Rectangle) {
+	held := c.held()
+	c.mu.Lock()
+	c.last = landscapePointerDecision{turn: turn, region: region, held: held, at: time.Now()}
 	c.mu.Unlock()
 }
 
@@ -266,23 +328,18 @@ func (c *landscapePointerCorrector) probe(ctx context.Context, inner mnk.Provide
 	if !ok {
 		return 0
 	}
+	if turn, ok := c.heldLandscapeTurn(region); ok {
+		return turn
+	}
 	short := min(region.Dx(), region.Dy())
 	radius := max(4, int(float64(short)*landscapePointerProbeRadiusFraction+0.5))
-	var candidates [pointerTurns]image.Point
-	for turn := range pointerTurn(pointerTurns) {
-		lx, ly := turn.land(x, y)
-		candidates[turn] = landscapeFramePoint(region, lx, ly)
-	}
-	park := landscapeParkPoint(x, y, landscapePointerProbeParkDistance)
-	var parked [pointerTurns]image.Point
-	for turn := range pointerTurn(pointerTurns) {
-		px, py := turn.land(park.X, park.Y)
-		parked[turn] = landscapeFramePoint(region, px, py)
-	}
+	candidates, parked, park := landscapeProbeLayout(region, x, y)
 	if !pointsApart(candidates[:], candidates[:], 2*radius) || !pointsApart(candidates[:], parked[:], 2*radius) {
-		// The target is near the centre: the turned positions overlap, and
-		// every turn reaches nearly the same spot.
-		return c.recentTurn(region)
+		// A point near the centre lands nearly in the same spot under every
+		// turn, but the rest of a swipe or sequence does not, so the check
+		// runs on a fixed point away from the centre instead.
+		x, y = landscapePointerProbeFallback.X, landscapePointerProbeFallback.Y
+		candidates, parked, park = landscapeProbeLayout(region, x, y)
 	}
 	var changed [pointerTurns]float64
 	for attempt := 1; attempt <= landscapePointerProbeAttempts; attempt++ {
@@ -294,7 +351,7 @@ func (c *landscapePointerCorrector) probe(ctx context.Context, inner mnk.Provide
 		best, decided := pickPointerTurn(changed)
 		if decided {
 			c.remember(best, region)
-			logging.Infof("agent", "landscape_pointer", "pointer %s at (%.0f,%.0f): changed=%.3f", best, x, y, changed)
+			logging.Infof("agent", "landscape_pointer", "pointer %s at (%.0f,%.0f) held=%q: changed=%.3f", best, x, y, c.held(), changed)
 			return best
 		}
 		for _, fraction := range changed {
@@ -316,7 +373,12 @@ func (c *landscapePointerCorrector) probe(ctx context.Context, inner mnk.Provide
 	// orientation changed under the same active area.
 	turn := c.recentTurn(region)
 	if screenBusy(changed) {
+		// The busy screen rejected the earlier decision as well; a later
+		// undecided check must not bring it back.
 		turn = 0
+		c.mu.Lock()
+		c.last = landscapePointerDecision{}
+		c.mu.Unlock()
 	}
 	logging.Infof("agent", "landscape_pointer", "pointer check undecided at (%.0f,%.0f): changed=%.3f; using %s", x, y, changed, turn)
 	return turn
@@ -393,6 +455,25 @@ func screenBusy(changed [pointerTurns]float64) bool {
 		}
 	}
 	return count > 1
+}
+
+// landscapePointerProbeFallback stands in for a call whose first point is too
+// close to the centre to tell the turns apart.
+var landscapePointerProbeFallback = mnk.Point{X: 250, Y: 250}
+
+// landscapeProbeLayout returns where (x, y) and its park point land in the
+// frame under each turn, and the park point itself.
+func landscapeProbeLayout(region image.Rectangle, x, y float64) (candidates, parked [pointerTurns]image.Point, park mnk.Point) {
+	for turn := range pointerTurn(pointerTurns) {
+		lx, ly := turn.land(x, y)
+		candidates[turn] = landscapeFramePoint(region, lx, ly)
+	}
+	park = landscapeParkPoint(x, y, landscapePointerProbeParkDistance)
+	for turn := range pointerTurn(pointerTurns) {
+		px, py := turn.land(park.X, park.Y)
+		parked[turn] = landscapeFramePoint(region, px, py)
+	}
+	return candidates, parked, park
 }
 
 // pointsApart reports whether every point of a is at least distance pixels

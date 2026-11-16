@@ -30,6 +30,8 @@ type ToolSet struct {
 	// model config is read live by all of them.
 	decider              *decisionAdvisor
 	iosKeyboardIsolation *iosKeyboardIsolationController
+	// landscape corrects the iOS landscape pointer; nil without one.
+	landscape *landscapePointerCorrector
 	// Environment bridges own the target device and cannot toggle the local
 	// board's USB gadget profile, so bridge input bypasses local iOS isolation.
 	iosKeyboardIsolationOptional bool
@@ -219,6 +221,9 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 			reenumerate = iosKeyboardIsolation.reenumeratePointer
 		}
 		landscape = newLandscapePointerCorrector(frameCapture, screen, reenumerate)
+		if iosKeyboardIsolation != nil && landscape != nil {
+			iosKeyboardIsolation.onPointerReattached = landscape.noteReenumerated
+		}
 	}
 	touchGesture := &TouchGestureTool{
 		mnkProvider:    mnkProvider,
@@ -247,9 +252,9 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	}
 	tools := map[string]langtools.Tool{
 		"keyboard_tap":           newPostActionStableScreenshotTool(keyboardTap, waitStable, screenshot, postActionScreenshotDelay, screenStable),
-		"mouse_move":             newPostActionStableScreenshotTool(&MouseMoveTool{mnkProvider: mnkProvider, landscape: landscape}, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack),
+		"mouse_move":             newPostActionStableScreenshotTool(&MouseMoveTool{mnkProvider: mnkProvider, landscape: landscape}, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack).withTurnedScreenGuard(screen),
 		"mouse_scroll":           newPostActionStableScreenshotTool(&MouseScrollTool{mnkProvider: mnkProvider}, waitStable, screenshot, postActionScreenshotDelay, screenStable),
-		"touch_gesture":          newPostActionStableScreenshotTool(touchGesture, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack),
+		"touch_gesture":          newPostActionStableScreenshotTool(touchGesture, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack).withTurnedScreenGuard(screen),
 		"quick_action":           newPostActionStableScreenshotTool(quickAction, waitStable, screenshot, postActionScreenshotDelay, screenStable),
 		"screenshot":             screenshot,
 		"wait_for_stable_screen": waitStable,
@@ -280,6 +285,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		textInputHW:                  textInputHW,
 		decider:                      decider,
 		iosKeyboardIsolation:         iosKeyboardIsolation,
+		landscape:                    landscape,
 		iosKeyboardIsolationOptional: toolOptions.disableIOSKeyboardIsolation,
 		skillInstallClient:           newSkillInstallHTTPClient(proxyCfg),
 	}

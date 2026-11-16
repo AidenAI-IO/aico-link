@@ -49,6 +49,10 @@ type iosKeyboardIsolationController struct {
 	extraKeysDev        hidDeviceCloser
 	run                 iosKeyboardIsolationCommand
 	notifyReenumeration func(context.Context) error
+	// onPointerReattached runs after a restore puts the pointer back, so
+	// whoever tracks which orientation the pointer was enumerated in stays
+	// current; nil means nobody does.
+	onPointerReattached func()
 	gateOnce            sync.Once
 	gate                chan struct{}
 	needsRestore        bool
@@ -163,6 +167,9 @@ func (c *iosKeyboardIsolationController) ensureNormalProfileLocked() error {
 }
 
 func (c *iosKeyboardIsolationController) recordRestoreResult(err error) {
+	if err == nil && c.onPointerReattached != nil {
+		c.onPointerReattached()
+	}
 	c.needsRestore = err != nil
 	c.lastRestoreErr = err
 	if err != nil {

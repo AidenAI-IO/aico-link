@@ -186,8 +186,17 @@ through the inverse of the turn found. A `drag_release` reuses the turn found by
 its `drag_start` so the held contact is not moved. When the check cannot decide
 (for example a target near the screen centre, where the four places overlap),
 a decision from the last two minutes on the same active area is reused;
-otherwise the points are sent unchanged. Portrait screens, other device types,
-and the touchscreen pointer mode are not checked.
+otherwise the points are sent unchanged. When the companion app reports
+`phone_orientation`, an earlier decision is reused only while the phone is held
+the same way. While it reports the phone held in landscape (`landscape_left` or
+`landscape_right`), the interface follows gravity, so a decision from the last two
+minutes on the same active area is reused without moving the pointer again. A
+phone held upright or flat with a landscape picture means an app forced
+landscape, and is checked on every call. Separately, a `touch_gesture` or
+`mouse_move` is not sent when the screen turned between portrait and landscape
+after the screenshot the model chose its coordinates on; the tool returns the
+current screenshot so the model can choose the target again. Portrait screens, other device types, and the touchscreen pointer
+mode are not checked.
 
 The Agent's ADB input backend executes standard swipes as one continuous
 DOWN/MOVE/UP program using `sendevent`, with `input motionevent` as a fallback.

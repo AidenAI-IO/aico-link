@@ -205,3 +205,12 @@ func (m *MockProvider) DragReleaseCalls() []MockMove {
 	copy(out, m.dragReleases)
 	return out
 }
+
+func (m *MockProvider) SwipeCalls() []MockSwipe {
+	if m == nil {
+		return nil
+	}
+	out := make([]MockSwipe, len(m.swipes))
+	copy(out, m.swipes)
+	return out
+}
