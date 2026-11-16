@@ -888,6 +888,14 @@ func TestRealtimeVisualToolResultHandlesImages(t *testing.T) {
 		t.Fatalf("output = %q, want caption and placeholder without image data", result.output)
 	}
 
+	// Without action_output the tool content is the observation itself; it
+	// still must not carry the image data.
+	bare := &fakeRealtimeVisualTool{fakeRealtimeTool{name: "screenshot",
+		output: `{"width":120,"height":80,"format":"jpeg","size":10,"data":"` + encoded + `"}`}}
+	if observation, ok := agent.SplitVisualToolOutput(bare, bare.output); !ok || strings.Contains(observation.ToolContent(), encoded) {
+		t.Fatalf("tool content = %q, want no image data", observation.ToolContent())
+	}
+
 	sender := &recordingToolResultSender{}
 	if err := sendRealtimeToolResult(context.Background(), sender, nil, result); err != nil {
 		t.Fatal(err)
@@ -918,12 +926,21 @@ func TestRealtimeVisualToolResultHandlesImages(t *testing.T) {
 		t.Fatalf("state message = %+v, want stored image attachment", got[3])
 	}
 
+	// A state message that does not follow a tool result is replayed as a
+	// message of its own.
+	if err := manager.AppendMessages([]messages.Message{
+		{Role: messages.MessageRoleAssistant, Content: "done"},
+		{Role: messages.MessageRoleState, Content: "app_connected: true"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	for _, imageInput := range []bool{false, true} {
 		replayer := &recordingContextReplayer{}
 		if err := replayRealtimeContext(context.Background(), replayer, manager, imageInput); err != nil {
 			t.Fatal(err)
 		}
-		if len(replayer.items) != 2 || replayer.items[1].Type != "function_call_output" {
+		if len(replayer.items) != 4 || replayer.items[1].Type != "function_call_output" ||
+			replayer.items[3].Role != "user" || !strings.Contains(replayer.items[3].Content, "app_connected: true") {
 			t.Fatalf("imageInput=%t replayed = %+v", imageInput, replayer.items)
 		}
 		output := replayer.items[1]

@@ -55,7 +55,9 @@ func SplitVisualToolOutput(tool langtools.Tool, output string) (VisualToolObserv
 	if len(followups) == 0 {
 		return VisualToolObservation{}, false
 	}
-	return VisualToolObservation{toolContent: content, followups: followups}, true
+	// Without action_output the tool content is the whole observation; its
+	// image travels in the state message, so drop the data here.
+	return VisualToolObservation{toolContent: stripScreenshotData(content), followups: followups}, true
 }
 
 // ToolContent is the tool result the backend loop stores: the tool's text

@@ -21,6 +21,7 @@ import (
 	"aico-agent/internal/agenttask"
 	"aico-agent/internal/logging"
 	streamcontract "aico-agent/internal/stream"
+	"aico-agent/internal/util"
 
 	"github.com/google/uuid"
 	langtools "github.com/tmc/langchaingo/tools"
@@ -3515,6 +3516,7 @@ func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextRep
 		return nil
 	}
 	recent := recentRealtimeContextMessages(manager.MessageListDump().Messages, realtimeContextReplayTurns)
+	toolStates := realtimeToolStateMessages(recent)
 	// Only the latest image is replayed: earlier screens are stale, and
 	// replaying every one would grow each restored context.
 	latestImage := -1
@@ -3532,10 +3534,15 @@ func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextRep
 			continue
 		}
 		if message.Role == messages.MessageRoleState {
-			// A state message follows the tool result whose image it
-			// carries, and is replayed with that result.
-			if n := len(items); n > 0 && items[n-1].Type == "function_call_output" {
-				appendRealtimeReplayedState(&items[n-1], manager, message, imageInput, i == latestImage)
+			text, images := replayedRealtimeState(manager, message, imageInput, i == latestImage)
+			if toolStates[i] {
+				// A state message that follows a tool result carries that
+				// result's image and is replayed with it.
+				item := &items[len(items)-1]
+				item.Output = strings.TrimSpace(item.Output + "\n" + text)
+				item.Images = append(item.Images, images...)
+			} else if text != "" || len(images) > 0 {
+				items = append(items, realtimevoice.ContextItem{Type: "message", Role: "user", Content: text, Images: images})
 			}
 			continue
 		}
@@ -3563,6 +3570,25 @@ func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextRep
 	return session.ReplayContext(ctx, items)
 }
 
+// realtimeToolStateMessages marks the state messages that follow a tool
+// result, directly or after another such state message.
+func realtimeToolStateMessages(recent []messages.Message) map[int]bool {
+	marked := make(map[int]bool)
+	afterToolResult := false
+	for i, message := range recent {
+		switch message.Role {
+		case messages.MessageRoleSystem:
+		case messages.MessageRoleToolResult:
+			afterToolResult = len(message.ToolResults) > 0
+		case messages.MessageRoleState:
+			marked[i] = afterToolResult
+		default:
+			afterToolResult = false
+		}
+	}
+	return marked
+}
+
 func realtimeStateHasImage(message messages.Message) bool {
 	for _, attachment := range message.Attachments {
 		if strings.HasPrefix(strings.ToLower(attachment.MIMEType), "image/") {
@@ -3572,16 +3598,16 @@ func realtimeStateHasImage(message messages.Message) bool {
 	return false
 }
 
-// appendRealtimeReplayedState restores a tool result's state message into the
-// replayed result: with its images for the latest image of a model that
-// accepts images, otherwise as its caption with a placeholder for each image.
-func appendRealtimeReplayedState(item *realtimevoice.ContextItem, manager *contextmanager.ContextManager, state messages.Message, imageInput, latest bool) {
+// replayedRealtimeState restores a state message for replay: its images for
+// the latest image of a model that accepts images, otherwise its caption with
+// a placeholder for each image.
+func replayedRealtimeState(manager *contextmanager.ContextManager, state messages.Message, imageInput, latest bool) (string, []realtimevoice.Image) {
 	caption := strings.TrimSpace(state.Content)
 	if !realtimeStateHasImage(state) {
-		if caption != "" {
-			item.Output = strings.TrimSpace(item.Output + "\n" + caption)
+		if caption == "" {
+			return "", nil
 		}
-		return
+		return util.STag("state", caption), nil
 	}
 	if imageInput && latest {
 		var images []realtimevoice.Image
@@ -3591,21 +3617,20 @@ func appendRealtimeReplayedState(item *realtimevoice.ContextItem, manager *conte
 			}
 			data, err := manager.ReadAttachment(filepath.Base(attachment.FilePath))
 			if err != nil || len(data) == 0 {
-				logging.Warnf("agent", "realtime", "Replay omitted a stored tool image: %v", err)
+				logging.Warnf("agent", "realtime", "Replay omitted a stored image: %v", err)
 				continue
 			}
 			images = append(images, realtimevoice.Image{Caption: caption, MIMEType: attachment.MIMEType, Data: data})
 		}
 		if len(images) > 0 {
-			item.Images = append(item.Images, images...)
-			return
+			return "", images
 		}
 	}
 	reason := agent.ImageOmittedModelUnsupported
 	if imageInput {
 		reason = agent.ImageOmittedNotReplayed
 	}
-	item.Output = agent.ToolResultWithOmittedImages(item.Output, []string{caption}, reason)
+	return agent.ToolResultWithOmittedImages("", []string{caption}, reason), nil
 }
 
 func recentRealtimeContextMessages(all []messages.Message, maxTurns int) []messages.Message {
