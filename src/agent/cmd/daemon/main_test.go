@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -859,7 +860,7 @@ func TestRealtimeToolCallAndResultPersistInUserContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := realtimevoice.Event{Kind: realtimevoice.EventToolCall, CallID: "call_1", Name: realtimeCreateTaskTool, Arguments: `{"task":"打开微信"}`}
-	if err := appendRealtimeToolExecution(manager, call, `{"id":"task_1","status":"queued"}`); err != nil {
+	if err := appendRealtimeToolExecution(manager, call, `{"id":"task_1","status":"queued"}`, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := manager.MessageListDump().Messages
@@ -868,6 +869,70 @@ func TestRealtimeToolCallAndResultPersistInUserContext(t *testing.T) {
 	}
 	if got[1].ToolCalls[0].Name != realtimeCreateTaskTool || got[2].ToolResults[0].ToolCallID != "call_1" {
 		t.Fatalf("tool messages = %+v", got[1:])
+	}
+}
+
+// A visual tool's image never reaches the provider or the user context as
+// base64: the context stores it as the backend loop does, a model without
+// image input gets a placeholder, and one with image input gets the image.
+func TestRealtimeVisualToolResultHandlesImages(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString([]byte("jpeg-bytes"))
+	tool := &fakeRealtimeVisualTool{fakeRealtimeTool{name: "screenshot",
+		output: `{"action_output":"ok","width":120,"height":80,"format":"jpeg","size":10,"data":"` + encoded + `"}`}}
+	executor := realtimeVoiceToolExecutor{delegated: map[string]langtools.Tool{"screenshot": tool}, now: time.Now}
+	call := realtimevoice.Event{Kind: realtimevoice.EventToolCall, CallID: "call_1", Name: "screenshot", Arguments: `{}`}
+
+	result := executor.result(context.Background(), call)
+	if result.visual == nil || strings.Contains(result.output, encoded) ||
+		!strings.Contains(result.output, "Screenshot size: 120x80 px") || !strings.Contains(result.output, "[Image omitted: "+agent.ImageOmittedModelUnsupported) {
+		t.Fatalf("output = %q, want caption and placeholder without image data", result.output)
+	}
+
+	sender := &recordingToolResultSender{}
+	if err := sendRealtimeToolResult(context.Background(), sender, nil, result); err != nil {
+		t.Fatal(err)
+	}
+	if sender.output != result.output || sender.images != nil {
+		t.Fatalf("text-only send = %+v", sender)
+	}
+	if err := sendRealtimeToolResult(context.Background(), sender, sender, result); err != nil {
+		t.Fatal(err)
+	}
+	if sender.output != "ok" || len(sender.images) != 1 || string(sender.images[0].Data) != "jpeg-bytes" ||
+		!strings.Contains(sender.images[0].Caption, "Screenshot size: 120x80 px") {
+		t.Fatalf("image send = %+v, want backend tool content and captioned image", sender)
+	}
+
+	manager, err := contextmanager.NewContextManager(t.TempDir(), "system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := appendRealtimeToolExecution(manager, call, result.output, result.visual); err != nil {
+		t.Fatal(err)
+	}
+	got := manager.MessageListDump().Messages
+	if len(got) != 4 || got[2].ToolResults[0].Content != "ok" || got[3].Role != messages.MessageRoleState {
+		t.Fatalf("messages = %+v", got)
+	}
+	if len(got[3].Attachments) != 1 || got[3].Attachments[0].MIMEType != "image/jpeg" || strings.Contains(got[3].Content, encoded) {
+		t.Fatalf("state message = %+v, want stored image attachment", got[3])
+	}
+
+	for _, imageInput := range []bool{false, true} {
+		replayer := &recordingContextReplayer{}
+		if err := replayRealtimeContext(context.Background(), replayer, manager, imageInput); err != nil {
+			t.Fatal(err)
+		}
+		if len(replayer.items) != 2 || replayer.items[1].Type != "function_call_output" {
+			t.Fatalf("imageInput=%t replayed = %+v", imageInput, replayer.items)
+		}
+		output := replayer.items[1]
+		if imageInput && (len(output.Images) != 1 || string(output.Images[0].Data) != "jpeg-bytes" || output.Output != "ok") {
+			t.Fatalf("image replay = %+v", output)
+		}
+		if !imageInput && (output.Images != nil || !strings.Contains(output.Output, "[Image omitted: ")) {
+			t.Fatalf("text replay = %+v", output)
+		}
 	}
 }
 
@@ -1004,6 +1069,32 @@ func (t *fakeRealtimeTool) Description() string { return "fake recall" }
 func (t *fakeRealtimeTool) Call(_ context.Context, input string) (string, error) {
 	t.input = input
 	return t.output, nil
+}
+
+type fakeRealtimeVisualTool struct{ fakeRealtimeTool }
+
+func (t *fakeRealtimeVisualTool) ReturnsVisualObservation() bool { return true }
+
+type recordingToolResultSender struct {
+	output string
+	images []realtimevoice.Image
+}
+
+func (r *recordingToolResultSender) SendToolResult(_ context.Context, _ string, output string) error {
+	r.output, r.images = output, nil
+	return nil
+}
+
+func (r *recordingToolResultSender) SendToolResultWithImages(_ context.Context, _ string, output string, images []realtimevoice.Image) error {
+	r.output, r.images = output, images
+	return nil
+}
+
+type recordingContextReplayer struct{ items []realtimevoice.ContextItem }
+
+func (r *recordingContextReplayer) ReplayContext(_ context.Context, items []realtimevoice.ContextItem) error {
+	r.items = append(r.items, items...)
+	return nil
 }
 
 func floatPtr(value float64) *float64 { return &value }

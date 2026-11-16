@@ -86,6 +86,7 @@ type Conversation struct {
 	ResponseInterrupter            ResponseInterrupter
 	InterruptionAckTimeoutProvider InterruptionAckTimeoutProvider
 	ToolResultSender               ToolResultSender
+	ImageToolResultSender          ImageToolResultSender
 	ResponseContinuer              ResponseContinuer
 	TextSession                    TextSession
 	ContextReplayer                ContextReplayer
@@ -136,6 +137,7 @@ func newConversation(managed *managedSession, raw Session) *Conversation {
 	conversation.ResponseInterrupter, _ = raw.(ResponseInterrupter)
 	conversation.InterruptionAckTimeoutProvider, _ = raw.(InterruptionAckTimeoutProvider)
 	conversation.ToolResultSender, _ = raw.(ToolResultSender)
+	conversation.ImageToolResultSender, _ = raw.(ImageToolResultSender)
 	conversation.ResponseContinuer, _ = raw.(ResponseContinuer)
 	conversation.TextSession, _ = raw.(TextSession)
 	conversation.ContextReplayer, _ = raw.(ContextReplayer)

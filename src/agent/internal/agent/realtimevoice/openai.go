@@ -256,14 +256,54 @@ type openAISession struct {
 
 func (s *openAISession) ReplayContext(ctx context.Context, items []ContextItem) error {
 	for _, item := range items {
+		images := item.Images
+		if item.Type == "message" && item.Role == "user" {
+			// A user message carries its images in its own content.
+			images = nil
+		}
 		if err := s.writeJSON(ctx, map[string]any{
 			"type": "conversation.item.create",
 			"item": openAIContextItemPayload(item, s.realtimeProtocol),
 		}); err != nil {
 			return err
 		}
+		if err := s.sendImages(ctx, images); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// SendToolResultWithImages returns a tool result followed by a user message
+// with its images: function_call_output carries only a string, so the images
+// follow it as input_image content, as the backend sends them in a state
+// message after the tool result.
+func (s *openAISession) SendToolResultWithImages(ctx context.Context, id, output string, images []Image) error {
+	if err := s.SendToolResult(ctx, id, output); err != nil {
+		return err
+	}
+	return s.sendImages(ctx, images)
+}
+
+func (s *openAISession) sendImages(ctx context.Context, images []Image) error {
+	if len(images) == 0 {
+		return nil
+	}
+	return s.writeJSON(ctx, map[string]any{
+		"type": "conversation.item.create",
+		"item": map[string]any{"type": "message", "role": "user", "content": openAIImageContent(images)},
+	})
+}
+
+func openAIImageContent(images []Image) []map[string]string {
+	content := make([]map[string]string, 0, 2*len(images))
+	for _, image := range images {
+		if caption := strings.TrimSpace(image.Caption); caption != "" {
+			content = append(content, map[string]string{"type": "input_text", "text": caption})
+		}
+		content = append(content, map[string]string{"type": "input_image", "image_url": image.dataURL()})
+	}
+	return content
 }
 
 func openAIContextItemPayload(item ContextItem, protocol string) map[string]any {
@@ -274,6 +314,10 @@ func openAIContextItemPayload(item ContextItem, protocol string) map[string]any 
 		// Legacy/Beta-compatible gateways such as MixRoute still reject
 		// output_text and require the original text content type.
 		payload["content"] = []map[string]string{{"type": "text", "text": item.Content}}
+	}
+	if item.Type == "message" && item.Role == "user" && len(item.Images) > 0 {
+		content, _ := payload["content"].([]map[string]string)
+		payload["content"] = append(content, openAIImageContent(item.Images)...)
 	}
 	return payload
 }

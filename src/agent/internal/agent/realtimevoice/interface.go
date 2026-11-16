@@ -276,8 +276,11 @@ type ContextReplayer interface {
 }
 
 type ContextItem struct {
-	Role      string
-	Content   string
+	Role    string
+	Content string
+	// Images go with a user message, after Content, for a session whose
+	// model SupportsImageInput reports. Other adapters ignore them.
+	Images    []Image
 	Type      string
 	CallID    string
 	Name      string
