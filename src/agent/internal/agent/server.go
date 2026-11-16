@@ -108,6 +108,7 @@ type Server struct {
 	pendingResults          map[string]*chatPendingResult
 	pendingResultsMu        sync.Mutex
 	activeRuns              map[string]context.CancelFunc
+	activeRunStartedAt      map[string]time.Time
 	activeRunsMu            sync.Mutex
 	terminatedRequests      map[string]struct{}
 	terminatedRequestsMu    sync.RWMutex
@@ -580,6 +581,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chat/steer", s.handleChatSteer)
 	mux.HandleFunc("/api/chat/steer/cancel", s.handleChatSteerCancel)
 	mux.HandleFunc("/api/chat/result", s.handleChatResult)
+	mux.HandleFunc("/api/chat/active", s.handleChatActive)
 	if s.httpsAuthority != nil {
 		mux.HandleFunc(localtls.AuthorityPath, s.httpsAuthority.ServeAuthority)
 	}
@@ -1180,6 +1182,17 @@ func (s *Server) handleChatSteerCancel(w http.ResponseWriter, r *http.Request) {
 // registerActiveRun atomically claims a request ID and clears any marker left
 // by its previous lifecycle. It rejects registration while the server closes.
 func (s *Server) registerActiveRun(requestID string, cancel context.CancelFunc) bool {
+	return s.registerRun(requestID, cancel, true)
+}
+
+// registerActiveRunWithoutSteers registers a run that has no steer input,
+// such as a realtime bridge run. It refuses steers from the moment the run is
+// visible, so no steer is accepted and then dropped.
+func (s *Server) registerActiveRunWithoutSteers(requestID string, cancel context.CancelFunc) bool {
+	return s.registerRun(requestID, cancel, false)
+}
+
+func (s *Server) registerRun(requestID string, cancel context.CancelFunc, acceptSteers bool) bool {
 	if s == nil || s.closing.Load() {
 		return false
 	}
@@ -1202,6 +1215,16 @@ func (s *Server) registerActiveRun(requestID string, cancel context.CancelFunc) 
 		return false
 	}
 	s.activeRuns[requestID] = cancel
+	if s.activeRunStartedAt == nil {
+		s.activeRunStartedAt = make(map[string]time.Time)
+	}
+	s.activeRunStartedAt[requestID] = time.Now()
+	if !acceptSteers {
+		// Same activeRunsMu-then-steersMu order as setPendingSteer.
+		s.steersMu.Lock()
+		s.closeSteerAcceptanceLocked(requestID)
+		s.steersMu.Unlock()
+	}
 	s.deleteRequestTerminationLocked(requestID)
 	return true
 }
@@ -1217,6 +1240,7 @@ func (s *Server) unregisterActiveRun(requestID string) {
 	// reuses this request ID never sees or loses the old run's steer state.
 	s.activeRunsMu.Lock()
 	delete(s.activeRuns, requestID)
+	delete(s.activeRunStartedAt, requestID)
 	s.steersMu.Lock()
 	delete(s.pendingSteers, requestID)
 	delete(s.steerSignals, requestID)
@@ -1224,6 +1248,67 @@ func (s *Server) unregisterActiveRun(requestID string) {
 	s.steersMu.Unlock()
 	s.activeRunsMu.Unlock()
 	s.clearRequestTerminationIfInactive(requestID)
+}
+
+// settleActiveRun marks a run's agent loop as finished while the run stays
+// registered, for example during its final speech, so Stop still reaches it.
+func (s *Server) settleActiveRun(requestID string) {
+	s.activeRunsMu.Lock()
+	delete(s.activeRunStartedAt, requestID)
+	s.activeRunsMu.Unlock()
+}
+
+// activeRunSnapshot reports the most recently started run whose agent loop
+// has not finished, with its steer state. Both locks are held together, in
+// the order unregisterActiveRun uses, so a run being removed is reported
+// either still running with its steer state or not at all.
+func (s *Server) activeRunSnapshot() ChatActiveResponse {
+	s.activeRunsMu.Lock()
+	defer s.activeRunsMu.Unlock()
+	var requestID string
+	var startedAt time.Time
+	for id, at := range s.activeRunStartedAt {
+		if requestID == "" || at.After(startedAt) {
+			requestID, startedAt = id, at
+		}
+	}
+	if requestID == "" {
+		return ChatActiveResponse{Status: "idle"}
+	}
+	resp := ChatActiveResponse{Status: "running", RequestID: requestID}
+	if !startedAt.IsZero() {
+		resp.ElapsedMS = time.Since(startedAt).Milliseconds()
+	}
+	// A steer queued before a reload stays visible on the reloaded page.
+	s.steersMu.Lock()
+	defer s.steersMu.Unlock()
+	_, closed := s.closedSteers[requestID]
+	resp.Steerable = !closed
+	if steer, ok := s.pendingSteers[requestID]; ok {
+		resp.Steer = &steer
+	}
+	return resp
+}
+
+type ChatActiveResponse struct {
+	Status    string               `json:"status"`
+	RequestID string               `json:"request_id,omitempty"`
+	ElapsedMS int64                `json:"elapsed_ms,omitempty"`
+	Steerable bool                 `json:"steerable,omitempty"`
+	Steer     *pendingSteerMessage `json:"steer,omitempty"`
+}
+
+// handleChatActive lets a page that did not start the current run, such as one
+// reloaded mid-run, find it, show its progress, and steer it. Elapsed time is relative so
+// a browser clock that differs from the board's does not skew the timer.
+func (s *Server) handleChatActive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp := s.activeRunSnapshot()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // cancelActiveRun marks an active request before invoking its cancellation
@@ -1848,6 +1933,7 @@ func (s *Server) handleChatAsync(
 		}
 
 		result, err := s.runtime.Run(run.ctx, runReq)
+		s.settleActiveRun(requestID)
 		s.closeSteerAcceptance(requestID)
 		if newStream != nil {
 			finalSpeechStreamed := speechWriter.FinalizeResponse()
@@ -2226,6 +2312,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("Running runtime")
 	result, err := s.runtime.Run(ctx, runReq)
+	s.settleActiveRun(req.RequestID)
 	// Final speech can keep the run registered; no steer can reach it now.
 	s.closeSteerAcceptance(req.RequestID)
 	if newStream != nil {

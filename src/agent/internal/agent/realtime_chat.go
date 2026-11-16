@@ -28,7 +28,7 @@ func (s *Server) handleRealtimeChatAsync(w http.ResponseWriter, req ChatRequest,
 	s.pendingResultsMu.Unlock()
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	if !s.registerActiveRun(requestID, cancel) {
+	if !s.registerActiveRunWithoutSteers(requestID, cancel) {
 		cancel()
 		s.pendingResultsMu.Lock()
 		delete(s.pendingResults, requestID)
@@ -158,7 +158,7 @@ func (s *Server) handleRealtimeChatStream(w http.ResponseWriter, r *http.Request
 	episodeID := s.runtime.NewEpisodeID()
 	userMessage := messageFromTurnInput(input, episodeID, req.RequestID, nil, time.Now())
 	runCtx, cancel := context.WithCancel(context.Background())
-	if !s.registerActiveRun(req.RequestID, cancel) {
+	if !s.registerActiveRunWithoutSteers(req.RequestID, cancel) {
 		cancel()
 		http.Error(w, "request_id already in use", http.StatusConflict)
 		return

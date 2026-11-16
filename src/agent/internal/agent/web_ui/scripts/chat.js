@@ -20,7 +20,7 @@ async function sendMessage(options) {
         return mode === 'voice' ? startRealtimeVoice() : endRealtimeVoice();
     }
     if (sendBtn.disabled) return;
-    if (currentChatRequestId) {
+    if (steerableRequestId()) {
         await submitSteerMessage();
         return;
     }
@@ -37,6 +37,8 @@ async function sendMessage(options) {
     currentChatRequestId = createRequestId();
     rememberNDJSONOwnedRequest(currentChatRequestId);
     externalActiveRequestId = '';
+    externalActiveSteerable = false;
+    externalActiveGeneration++;
     currentChatAbortController = new AbortController();
     currentChatCancelRequested = false;
     currentChatStartedAt = Date.now();
@@ -112,7 +114,7 @@ async function sendMessage(options) {
 }
 
 async function submitSteerMessage() {
-    if (!currentChatRequestId || pendingSteerSubmitting) return;
+    if (!steerableRequestId() || pendingSteerSubmitting) return;
 
     const message = inputEl.value.trim();
     if (!message) return;
@@ -121,7 +123,9 @@ async function submitSteerMessage() {
         return;
     }
 
-    const requestId = currentChatRequestId;
+    const requestId = steerableRequestId();
+    // A refresh read before this steer would clear it from the page.
+    externalActiveGeneration++;
     const localSteer = {
         id: 'local-' + createRequestId(),
         request_id: requestId,
@@ -164,15 +168,25 @@ async function submitSteerMessage() {
         restoreSteerDraft(requestId, message, localSteer);
         showErrorToast('Steer failed', err);
     } finally {
+        // A status read started while the steer was in flight may predate it.
+        externalActiveGeneration++;
         pendingSteerSubmitting = false;
-        setComposerState(!!currentChatRequestId);
+        setComposerState(!!activeChatRequestId());
+        refreshRestoredRunAfterSteerRequest();
     }
+}
+
+// Status reads are ignored while a steer request is in flight; read a
+// restored run's state again once it ends instead of waiting for the poll.
+function refreshRestoredRunAfterSteerRequest() {
+    if (!currentChatRequestId && externalActiveRequestId) refreshCurrentLiveActivity();
 }
 
 function restoreSteerDraft(requestId, message, localSteer) {
     // The run may have ended while the steer was in flight; the text still
     // belongs in the composer then, but never in a different run's.
-    const sameOrNoRun = !currentChatRequestId || currentChatRequestId === requestId;
+    const currentRequestId = steerableRequestId();
+    const sameOrNoRun = !currentRequestId || currentRequestId === requestId;
     if (sameOrNoRun && !inputEl.value.trim()) {
         inputEl.value = message;
         autoResizeInput();
@@ -205,6 +219,11 @@ function createRequestId() {
 
 function activeChatRequestId() {
     return currentChatRequestId || externalActiveRequestId || '';
+}
+
+// The run that typed messages steer: this page's own, or one it restored.
+function steerableRequestId() {
+    return currentChatRequestId || (externalActiveSteerable ? externalActiveRequestId : '');
 }
 
 function markStopRunPointer(event) {
@@ -240,18 +259,102 @@ function armStopRun() {
     }, 3100);
 }
 
+// A run this page did not start (another tab, voice, or a run that was
+// already going when the page loaded or reloaded) still shows its progress.
+// One refresh runs at a time. A request made meanwhile, such as the 2 s poll
+// on a slow link or a terminal event, runs once after it, so a slow board
+// still gets its reads applied.
 async function refreshCurrentLiveActivity() {
-    if (currentChatRequestId) return;
+    if (externalActiveRefreshInFlight) {
+        externalActiveRefreshQueued = true;
+        return;
+    }
+    externalActiveRefreshInFlight = true;
     try {
-        const res = await fetch('/api/live-activity/current');
-        if (!res.ok) return;
-        const data = await res.json();
+        do {
+            externalActiveRefreshQueued = false;
+            await refreshCurrentLiveActivityOnce();
+        } while (externalActiveRefreshQueued);
+    } finally {
+        externalActiveRefreshInFlight = false;
+    }
+}
+
+async function refreshCurrentLiveActivityOnce() {
+    if (currentChatRequestId) return;
+    const generation = externalActiveGeneration;
+    const chatRun = await fetchActiveChatRun();
+    let active = chatRun;
+    if (!active) {
+        // While the chat check answers idle, a running Live Activity is only a
+        // run finishing its speech; one waiting on the phone still counts.
+        const liveActivity = await fetchActiveLiveActivity(chatRun === undefined);
+        // Keep the current state when neither check reached the board.
+        if (chatRun === undefined && liveActivity === undefined) return;
+        active = liveActivity || null;
+    }
+    // A steer, a stop, or a run this page started meanwhile supersedes this read.
+    // A steer request in flight owns the pending steer card until it ends.
+    if (currentChatRequestId || generation !== externalActiveGeneration ||
+        pendingSteerSubmitting || pendingSteerCanceling) return;
+    const requestId = active ? active.requestId : '';
+    if (requestId !== externalActiveRequestId) {
+        // Restart the timer from the run's own start, not from this page's.
+        setActivityRunning(false);
+        externalActiveStartedAt = active ? active.startedAt : 0;
+    }
+    externalActiveRequestId = requestId;
+    externalActiveSteerable = !!(active && active.steerable);
+    pendingSteer = externalActiveSteerable ? active.steer : null;
+    setComposerState(!!activeChatRequestId());
+}
+
+// Each check returns the active run, null when there is none, or undefined
+// when it could not be read, including a read that outlasts its deadline so a
+// stalled request cannot hold up later refreshes.
+const activeRunReadTimeoutMs = 5000;
+
+function fetchActiveRunStatus(url) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), activeRunReadTimeoutMs);
+    return fetch(url, {cache: 'no-store', signal: controller.signal})
+        .then(res => res.ok ? res.json() : undefined)
+        .finally(() => clearTimeout(timeout));
+}
+
+async function fetchActiveChatRun() {
+    try {
+        const data = await fetchActiveRunStatus('/api/chat/active');
+        if (data === undefined) return undefined;
+        if (data.status !== 'running' || !data.request_id) return null;
+        return {
+            requestId: data.request_id,
+            startedAt: Date.now() - Math.max(0, Number(data.elapsed_ms) || 0),
+            steerable: data.steerable === true,
+            steer: data.steer || null
+        };
+    } catch (err) {
+        console.warn('Failed to refresh active chat run:', err);
+        return undefined;
+    }
+}
+
+// Live Activity also covers a finished run that waits for the user on the
+// phone. It is reachable only over USB and when Live Activity is enabled.
+// A running state counts only when includeRunning is set.
+async function fetchActiveLiveActivity(includeRunning) {
+    try {
+        const data = await fetchActiveRunStatus('/api/live-activity/current');
+        if (data === undefined) return undefined;
         const state = data.live_activity;
-        const isActive = data.status === 'ok' && state && (state.status === 'running' || state.status === 'needs_app');
-        externalActiveRequestId = isActive ? state.request_id : '';
-        setComposerState(!!activeChatRequestId());
+        const isActive = data.status === 'ok' && state &&
+            (state.status === 'needs_app' || (includeRunning && state.status === 'running'));
+        if (!isActive || !state.request_id) return null;
+        const startedAt = Date.parse(state.started_at);
+        return {requestId: state.request_id, startedAt: Number.isFinite(startedAt) ? Math.min(startedAt, Date.now()) : Date.now()};
     } catch (err) {
         console.warn('Failed to refresh current live activity:', err);
+        return undefined;
     }
 }
 
@@ -308,14 +411,20 @@ async function cancelCurrentRun(event) {
         console.error('Failed to cancel chat request:', err);
         showErrorToast('Stop failed', err);
     }).finally(function() {
-        if (externalActiveRequestId === requestId) externalActiveRequestId = '';
+        if (externalActiveRequestId === requestId) {
+            externalActiveRequestId = '';
+            externalActiveSteerable = false;
+            externalActiveGeneration++;
+        }
         setComposerState(!!activeChatRequestId());
     });
 }
 
 async function cancelPendingSteer() {
-    if (!currentChatRequestId || !pendingSteer) return;
-    const requestId = currentChatRequestId;
+    if (!steerableRequestId() || !pendingSteer) return;
+    const requestId = steerableRequestId();
+    externalActiveGeneration++;
+    pendingSteerCanceling = true;
     const previous = pendingSteer;
     pendingSteer = null;
     renderPendingSteer();
@@ -336,10 +445,15 @@ async function cancelPendingSteer() {
     } catch (err) {
         console.error('Failed to cancel steer:', err);
         showErrorToast('Cancel failed', err);
-        if (currentChatRequestId === requestId) {
+        if (steerableRequestId() === requestId) {
             pendingSteer = previous;
             renderPendingSteer();
         }
+    } finally {
+        // A status read started while the cancel was in flight may predate it.
+        externalActiveGeneration++;
+        pendingSteerCanceling = false;
+        refreshRestoredRunAfterSteerRequest();
     }
 }
 
