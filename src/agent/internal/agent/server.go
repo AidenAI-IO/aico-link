@@ -1258,19 +1258,36 @@ func (s *Server) settleActiveRun(requestID string) {
 	s.activeRunsMu.Unlock()
 }
 
-// latestActiveRun reports the most recently started run whose agent loop has
-// not finished.
-func (s *Server) latestActiveRun() (string, time.Time, bool) {
+// activeRunSnapshot reports the most recently started run whose agent loop
+// has not finished, with its steer state. Both locks are held together, in
+// the order unregisterActiveRun uses, so a run being removed is reported
+// either still running with its steer state or not at all.
+func (s *Server) activeRunSnapshot() ChatActiveResponse {
 	s.activeRunsMu.Lock()
 	defer s.activeRunsMu.Unlock()
-	var latestID string
-	var latestAt time.Time
-	for requestID, startedAt := range s.activeRunStartedAt {
-		if latestID == "" || startedAt.After(latestAt) {
-			latestID, latestAt = requestID, startedAt
+	var requestID string
+	var startedAt time.Time
+	for id, at := range s.activeRunStartedAt {
+		if requestID == "" || at.After(startedAt) {
+			requestID, startedAt = id, at
 		}
 	}
-	return latestID, latestAt, latestID != ""
+	if requestID == "" {
+		return ChatActiveResponse{Status: "idle"}
+	}
+	resp := ChatActiveResponse{Status: "running", RequestID: requestID}
+	if !startedAt.IsZero() {
+		resp.ElapsedMS = time.Since(startedAt).Milliseconds()
+	}
+	// A steer queued before a reload stays visible on the reloaded page.
+	s.steersMu.Lock()
+	defer s.steersMu.Unlock()
+	_, closed := s.closedSteers[requestID]
+	resp.Steerable = !closed
+	if steer, ok := s.pendingSteers[requestID]; ok {
+		resp.Steer = &steer
+	}
+	return resp
 }
 
 type ChatActiveResponse struct {
@@ -1289,21 +1306,7 @@ func (s *Server) handleChatActive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	resp := ChatActiveResponse{Status: "idle"}
-	if requestID, startedAt, ok := s.latestActiveRun(); ok {
-		resp = ChatActiveResponse{Status: "running", RequestID: requestID}
-		if !startedAt.IsZero() {
-			resp.ElapsedMS = time.Since(startedAt).Milliseconds()
-		}
-		// A steer queued before a reload stays visible on the reloaded page.
-		s.steersMu.Lock()
-		_, closed := s.closedSteers[requestID]
-		resp.Steerable = !closed
-		if steer, ok := s.pendingSteers[requestID]; ok {
-			resp.Steer = &steer
-		}
-		s.steersMu.Unlock()
-	}
+	resp := s.activeRunSnapshot()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }

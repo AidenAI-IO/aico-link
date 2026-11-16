@@ -48,6 +48,7 @@ let stopRunArmedUntil = 0;
 let stopRunArmTimer = null;
 let pendingSteer = null;
 let pendingSteerSubmitting = false;
+let pendingSteerCanceling = false;
 let eventSource = null;
 let renderedMessageKeys = new Set();
 let renderedMessageNodes = new Map();

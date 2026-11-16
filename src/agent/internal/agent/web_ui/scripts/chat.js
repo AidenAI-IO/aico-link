@@ -172,7 +172,14 @@ async function submitSteerMessage() {
         externalActiveGeneration++;
         pendingSteerSubmitting = false;
         setComposerState(!!activeChatRequestId());
+        refreshRestoredRunAfterSteerRequest();
     }
+}
+
+// Status reads are ignored while a steer request is in flight; read a
+// restored run's state again once it ends instead of waiting for the poll.
+function refreshRestoredRunAfterSteerRequest() {
+    if (!currentChatRequestId && externalActiveRequestId) refreshCurrentLiveActivity();
 }
 
 function restoreSteerDraft(requestId, message, localSteer) {
@@ -287,7 +294,9 @@ async function refreshCurrentLiveActivityOnce() {
         active = liveActivity || null;
     }
     // A steer, a stop, or a run this page started meanwhile supersedes this read.
-    if (currentChatRequestId || generation !== externalActiveGeneration || pendingSteerSubmitting) return;
+    // A steer request in flight owns the pending steer card until it ends.
+    if (currentChatRequestId || generation !== externalActiveGeneration ||
+        pendingSteerSubmitting || pendingSteerCanceling) return;
     const requestId = active ? active.requestId : '';
     if (requestId !== externalActiveRequestId) {
         // Restart the timer from the run's own start, not from this page's.
@@ -415,6 +424,7 @@ async function cancelPendingSteer() {
     if (!steerableRequestId() || !pendingSteer) return;
     const requestId = steerableRequestId();
     externalActiveGeneration++;
+    pendingSteerCanceling = true;
     const previous = pendingSteer;
     pendingSteer = null;
     renderPendingSteer();
@@ -442,6 +452,8 @@ async function cancelPendingSteer() {
     } finally {
         // A status read started while the cancel was in flight may predate it.
         externalActiveGeneration++;
+        pendingSteerCanceling = false;
+        refreshRestoredRunAfterSteerRequest();
     }
 }
 

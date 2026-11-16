@@ -5336,7 +5336,7 @@ func TestServerHandleChatActiveReportsLatestRun(t *testing.T) {
 	server.unregisterActiveRun("req-old")
 }
 
-func TestServerRegisterActiveRunWithoutSteersNeverAcceptsSteer(t *testing.T) {
+func TestServerRunWithoutSteersIsNeverSteerable(t *testing.T) {
 	server := &Server{
 		activeRuns:         make(map[string]context.CancelFunc),
 		terminatedRequests: make(map[string]struct{}),
@@ -5344,9 +5344,10 @@ func TestServerRegisterActiveRunWithoutSteersNeverAcceptsSteer(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		requestID := fmt.Sprintf("req-realtime-%d", i)
 		var wg sync.WaitGroup
-		var accepted atomic.Bool
+		var accepted, reportedSteerable atomic.Bool
 		stop := make(chan struct{})
-		wg.Add(1)
+		wg.Add(2)
+		// Steers and status reads race the run's registration and removal.
 		go func() {
 			defer wg.Done()
 			for {
@@ -5357,7 +5358,20 @@ func TestServerRegisterActiveRunWithoutSteersNeverAcceptsSteer(t *testing.T) {
 				}
 				if _, ok := server.setPendingSteer(requestID, "change direction"); ok {
 					accepted.Store(true)
+				}
+				runtime.Gosched()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
 					return
+				default:
+				}
+				if resp := server.activeRunSnapshot(); resp.RequestID == requestID && resp.Steerable {
+					reportedSteerable.Store(true)
 				}
 				runtime.Gosched()
 			}
@@ -5365,20 +5379,15 @@ func TestServerRegisterActiveRunWithoutSteersNeverAcceptsSteer(t *testing.T) {
 		if !server.registerActiveRunWithoutSteers(requestID, func() {}) {
 			t.Fatalf("registerActiveRunWithoutSteers(%q) failed", requestID)
 		}
-		rec := httptest.NewRecorder()
-		server.handleChatActive(rec, httptest.NewRequest(http.MethodGet, "/api/chat/active", nil))
-		var resp ChatActiveResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("decode response: %v", err)
-		}
+		runtime.Gosched()
+		server.unregisterActiveRun(requestID)
 		close(stop)
 		wg.Wait()
 		if accepted.Load() {
 			t.Fatalf("steer accepted for run %q registered without steers", requestID)
 		}
-		if resp.RequestID != requestID || resp.Steerable {
-			t.Fatalf("active response = %+v, want unsteerable %q", resp, requestID)
+		if reportedSteerable.Load() {
+			t.Fatalf("run %q registered without steers was reported steerable", requestID)
 		}
-		server.unregisterActiveRun(requestID)
 	}
 }
