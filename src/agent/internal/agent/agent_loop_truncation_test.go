@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"aico-agent/internal/agent/messages"
@@ -111,17 +112,58 @@ func TestAgentLoopTruncatedReasoningStopsWithNoticeAndKeepsHistoryReplayable(t *
 	}
 }
 
-func TestAgentLoopEmptyTurnIsNotPersisted(t *testing.T) {
-	model := &interruptTestModel{generate: func(context.Context, []llms.MessageContent) (*llms.ContentResponse, error) {
-		return reasoningOnlyResponse("stop"), nil
-	}}
-	loop := newInterruptTestLoop(t, model)
-
-	if _, err := loop.Run(context.Background(), "task"); !errors.Is(err, agents.ErrAgentNoReturn) {
-		t.Fatalf("error = %v, want ErrAgentNoReturn", err)
+// An empty stop turn is retried once with a notice; a second consecutive empty
+// turn fails the run with an error that names the provider's report of it.
+func TestAgentLoopRetriesEmptyTurnOnceAndNeverPersistsIt(t *testing.T) {
+	cases := []struct {
+		name       string
+		emptyTurns int
+		wantAnswer string
+	}{
+		{"recovers_after_one_empty_turn", 1, "done"},
+		{"fails_after_two_empty_turns", 2, ""},
 	}
-	requireInterruptNotices(t, loop.contextManager, "execution_error")
-	requireNoEmptyAssistantTurns(t, messages.ConvertMessageList(loop.contextManager.CloneMessageList()))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			model := &interruptTestModel{generate: func(_ context.Context, input []llms.MessageContent) (*llms.ContentResponse, error) {
+				calls++
+				requireNoEmptyAssistantTurns(t, input)
+				if calls > 1 && !runtimeModelCallContains(input, emptyModelTurnRetryNotice) {
+					t.Fatal("retry did not receive the empty-turn notice")
+				}
+				if calls <= tc.emptyTurns {
+					response := reasoningOnlyResponse("stop")
+					response.Choices[0].GenerationInfo = map[string]any{"completion_tokens": 128}
+					return response, nil
+				}
+				return contentResponse("done"), nil
+			}}
+			loop := newInterruptTestLoop(t, model)
+
+			answer, err := loop.Run(context.Background(), "task")
+			if tc.wantAnswer != "" {
+				if err != nil || answer != tc.wantAnswer {
+					t.Fatalf("Run() = %q, %v; want %q", answer, err, tc.wantAnswer)
+				}
+			} else {
+				if !errors.Is(err, agents.ErrAgentNoReturn) {
+					t.Fatalf("error = %v, want ErrAgentNoReturn", err)
+				}
+				for _, want := range []string{"empty turn", `finish_reason="stop"`, "completion_tokens=128"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("error = %q, want it to contain %q", err, want)
+					}
+				}
+				requireInterruptNotices(t, loop.contextManager, "execution_error")
+			}
+			// Both cases end on the second call: a recovery or the failed retry.
+			if calls != 2 {
+				t.Fatalf("model calls = %d, want 2", calls)
+			}
+			requireNoEmptyAssistantTurns(t, messages.ConvertMessageList(loop.contextManager.CloneMessageList()))
+		})
+	}
 }
 
 type roleOutputRecorder struct {
