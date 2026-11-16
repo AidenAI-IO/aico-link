@@ -119,7 +119,7 @@
       "foreground_app_id": "link.aico.app",
       "category": "single_step",
       "description_for_judge": "Send an immediate local notification through Phone Bridge, report its ID, and verify its visible title and body in Android's notification shade.",
-      "prompt": "Send an immediate silent local notification through the connected phone's Bridge, with title AIDEN_BRIDGE_CI_NOTIFICATION and body Android bridge notification verified. Then use quick_action with action=notification_center to open the notification shade. Confirm the title and body are visible and report the returned notification ID.",
+      "prompt": "Send an immediate silent local notification through the connected phone's Bridge, with title \"AIDEN_BRIDGE_CI_NOTIFICATION\" and body \"Android bridge notification verified\" (the quotes are not part of the text). Then use quick_action with action=notification_center to open the notification shade. Confirm the title and body are visible and report the returned notification ID.",
       "rubric": [
         {"id": "notification_bridge_send", "check": "bridge_notification sends the exact title and body with sound=false and returns a successful structured result."},
         {"id": "notification_id_reported", "check": "The response reports the notification_id returned by the Bridge app."},
@@ -143,7 +143,7 @@
       "category": "multi_step",
       "android_bridge_fixture": "calendar",
       "description_for_judge": "Create a calendar event, read back its fields, delete that returned event ID, and confirm its absence through the real Bridge app.",
-      "prompt": "This emulator task is pre-authorized to create and delete one test event. Through Bridge only, create AidenBridgeBenchmarkEvent from 2037-11-18T10:00:00+08:00 to 2037-11-18T10:30:00+08:00, location Lab 42, notes Calendar verification. Query using exactly from=2037-11-18T00:00:00+08:00 and to=2037-11-19T00:00:00+08:00, and verify the created event's ID, title, times, location and notes. Delete only the event ID returned by this create, query the same exact range again and confirm that ID is absent. Do not operate the calendar UI.",
+      "prompt": "This emulator task is pre-authorized to create and delete one test event. Through Bridge only, create AidenBridgeBenchmarkEvent from 2037-11-18T10:00:00+08:00 to 2037-11-18T10:30:00+08:00, location \"Lab 42\", notes \"Calendar verification\" (the quotes are not part of the values). Query using exactly from=2037-11-18T00:00:00+08:00 and to=2037-11-19T00:00:00+08:00, and verify the created event's ID, title, times, location and notes. Delete only the event ID returned by this create, query the same exact range again and confirm that ID is absent. Do not operate the calendar UI.",
       "rubric": [
         {"id": "created_event_read_back", "check": "The created event is returned by query with matching ID, title, equivalent timestamps, location and notes."},
         {"id": "created_event_deleted", "check": "Only the event created by this task is deleted and the final query confirms its ID is absent. Permission and provider errors do not count as success."}
