@@ -1471,36 +1471,84 @@ body:not(.voice-mode) .workspace-content:has(.loading.active) .conversation {
     .activity-label { -webkit-text-fill-color: currentColor; background: none; }
 }
 
+/* A queued steer reads as the next user turn waiting above the composer:
+   aligned with the composer column, quiet, and dismissible in one click. */
 .pending-steer {
-    margin: 0 18px 8px;
+    width: min(calc(100% - 36px), 980px);
+    margin: 0 auto 8px;
     display: flex;
     align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 11px 12px;
-    border-radius: 14px;
-    border: 1px solid rgba(183, 107, 47, 0.2);
-    background: rgba(255, 248, 239, 0.9);
-    box-shadow: var(--shadow-soft);
+    gap: 10px;
+    padding: 8px 8px 8px 12px;
+    border-radius: 12px;
+    border: 1px dashed var(--user-bubble-line, var(--line));
+    background: var(--user-bubble);
+    color: var(--text);
 }
 
 .pending-steer.hidden {
     display: none;
 }
 
+.pending-steer-icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
 .pending-steer-copy {
+    flex: 1;
     min-width: 0;
     display: grid;
-    gap: 4px;
+    gap: 2px;
+}
+
+.pending-steer-label {
+    color: var(--muted);
+    font-size: 12px;
 }
 
 .pending-steer-text {
-    color: var(--text);
-    font-size: 0.88rem;
+    font-size: 0.9rem;
     line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 }
+
+.pending-steer-cancel {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+}
+.pending-steer-cancel svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+}
+.pending-steer-cancel:hover:not(:disabled),
+.pending-steer-cancel:focus-visible { background: var(--surface-soft); color: var(--text); }
+.pending-steer-cancel:disabled { opacity: 0.45; cursor: not-allowed; }
 
 @media (max-width: 1100px) {
     /* Stack the inspector under the conversation on narrow screens. */
@@ -1617,7 +1665,6 @@ button, textarea, select, .tool-block {
 .composer-shell:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(138,180,255,.18); }
 .episode-link { border-radius: 5px; background: var(--panel-strong); color: var(--muted-strong); border-color: var(--line); }
 .episode-link:hover { border-color: var(--accent); color: var(--accent); }
-.pending-steer { border-radius: 6px; background: #29221b; border-color: #6f4e2d; box-shadow: none; }
 
 /* Conversation: assistant replies read as plain text, user turns as compact
    right-aligned bubbles; context markers and tool runs stay one quiet line. */
@@ -2162,7 +2209,6 @@ body { background: #f5f5f7; color: var(--text); }
 .tool-block { color: var(--text); }
 .composer-shell { background: #fff; }
 .episode-link { background: #fff; }
-.pending-steer { background: #fff8e9; border-color: #e1c78c; }
 .danger-btn { background: #fff7f5; border-color: #e0b0aa; color: #a0382a; }
 }
 

@@ -3942,46 +3942,6 @@ func TestRuntimeRunOpenRouterStreamsWhenWriterIsProvided(t *testing.T) {
 	}
 }
 
-func TestRuntimeRunDoesNotCallFinalSteerProviderForDirectFinalAnswer(t *testing.T) {
-	model := &scriptedModel{
-		responses:    roleDirectResponses("final answer"),
-		streamChunks: [][]string{{}},
-	}
-	runtime := NewRuntimeWithDeps(
-		withTestConfigDir(t, Config{
-			Model:           ModelConfig{Provider: "fake"},
-			Instruction:     "Answer directly.",
-			ForceSimpleLoop: true,
-		}),
-		&testModelResolver{model: model},
-		NewMemoryManager(""),
-		NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
-		NewSkillIndex(),
-	)
-
-	var finalSteerCalls int32
-	var stream bytes.Buffer
-	result, err := runtime.Run(context.Background(), RunRequest{
-		Input:        "hello",
-		StreamWriter: &stream,
-		FinalSteerProvider: func(ctx context.Context) (RunSteerMessage, bool) {
-			atomic.AddInt32(&finalSteerCalls, 1)
-			return RunSteerMessage{}, false
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if result.Output != "final answer" {
-		t.Fatalf("Output = %q, want final answer", result.Output)
-	}
-	if finalSteerCalls != 0 {
-		t.Fatalf("FinalSteerProvider calls = %d, want 0 for context-manager loop", finalSteerCalls)
-	}
-	if stream.String() != "" {
-		t.Fatalf("stream = %q, want empty", stream.String())
-	}
-}
 func TestRuntimeRunStreamsToolCapableCallsWhenWriterIsProvided(t *testing.T) {
 	toolSpeech := "我先读取当前音量。"
 	model := &scriptedModel{
