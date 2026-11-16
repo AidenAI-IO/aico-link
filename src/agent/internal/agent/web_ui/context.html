@@ -4,11 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Context · Aico</title>
+  <script src="/web-ui/scripts/theme.js"></script>
   <style>
-    :root { color-scheme: dark; --bg:#101113; --panel:#17181b; --panel2:#1d1f23; --line:#303238; --text:#e8e8e8; --muted:#8f9299; --blue:#8ab4ff; --purple:#c7a5ff; --green:#9bd6a8; --orange:#e8b47a; }
+    :root { color-scheme: dark; --bg:#101113; --bg-glow:#20232b; --panel:#17181b; --panel2:#1d1f23; --chip:#25272c; --header:rgba(16,17,19,.88); --line:#303238; --text:#e8e8e8; --muted:#8f9299; --blue:#8ab4ff; --purple:#c7a5ff; --green:#9bd6a8; --orange:#e8b47a; --dialog-shadow:#000b; --scrollbar-thumb:rgba(255,255,255,.16); --scrollbar-thumb-hover:rgba(255,255,255,.28); }
+    :root[data-theme="light"] { color-scheme: light; --bg:#f5f5f7; --bg-glow:#f5f5f7; --panel:#ffffff; --panel2:#fbfbfc; --chip:#f0f1f3; --header:rgba(251,251,252,.92); --line:#d9dadd; --text:#2c2d31; --muted:#73767e; --blue:#2867c7; --purple:#6b4fc8; --green:#267044; --orange:#8b5d12; --dialog-shadow:rgba(38,41,48,.18); --scrollbar-thumb:rgba(38,41,48,.2); --scrollbar-thumb-hover:rgba(38,41,48,.34); }
+    ::-webkit-scrollbar { width:10px; height:10px; }
+    ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background:transparent; }
+    ::-webkit-scrollbar-thumb { border:3px solid transparent; border-radius:999px; background:var(--scrollbar-thumb) padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background-color:var(--scrollbar-thumb-hover); }
+    @supports not selector(::-webkit-scrollbar) { * { scrollbar-width:thin; scrollbar-color:var(--scrollbar-thumb) transparent; } }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; background:radial-gradient(circle at 20% 0%,#20232b 0,#101113 42%); color:var(--text); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    header { height:64px; display:flex; align-items:center; gap:14px; padding:0 24px; border-bottom:1px solid var(--line); background:rgba(16,17,19,.88); }
+    body { margin:0; min-height:100vh; background:radial-gradient(circle at 20% 0%,var(--bg-glow) 0,var(--bg) 42%); color:var(--text); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    header { height:64px; display:flex; align-items:center; gap:14px; padding:0 24px; border-bottom:1px solid var(--line); background:var(--header); }
     .mark { width:10px; height:10px; border-radius:50%; background:var(--blue); box-shadow:0 0 16px var(--blue); }
     h1 { margin:0; font:600 16px/1 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.02em; }
     .spacer { flex:1; }
@@ -28,9 +35,9 @@
     .user .message[data-role="user"] .role { color:var(--blue); } .message[data-role="assistant"] .role { color:var(--green); } .message[data-role="tool_call"] .role { color:var(--orange); } .message[data-role="tool_result"] .role { color:var(--purple); }
     .empty, .error { color:var(--muted); font:13px ui-monospace,SFMono-Regular,Menlo,monospace; }
     .attachments { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
-    .attachment { width:34px; height:30px; border:1px solid var(--line); border-radius:5px; background:#25272c; color:var(--blue); cursor:pointer; font-size:16px; }
+    .attachment { width:34px; height:30px; border:1px solid var(--line); border-radius:5px; background:var(--chip); color:var(--blue); cursor:pointer; font-size:16px; }
     .attachment:hover { border-color:var(--blue); }
-    dialog { width:min(900px,92vw); max-height:90vh; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--text); box-shadow:0 24px 80px #000b; }
+    dialog { width:min(900px,92vw); max-height:90vh; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--text); box-shadow:0 24px 80px var(--dialog-shadow); }
     dialog::backdrop { background:#0009; backdrop-filter:blur(4px); }
     .modal-head { display:flex; align-items:center; gap:12px; padding:14px 18px; border-bottom:1px solid var(--line); }
     .modal-head strong { font:13px ui-monospace,SFMono-Regular,Menlo,monospace; }
