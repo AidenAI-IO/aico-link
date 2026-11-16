@@ -148,27 +148,57 @@ async function submitSteerMessage() {
                 message: message
             })
         });
+        if (res.status === 409) {
+            // The run is past its last steer check and is finishing.
+            restoreSteerDraft(requestId, message, localSteer);
+            showToast('The run is finishing. Send this after it ends.', {kind: 'info'});
+            return;
+        }
         if (!res.ok) {
             throw new Error(await res.text() || 'Failed to queue steer.');
         }
         const data = await res.json();
-        if (data.steer) {
+        // The run may already have taken the steer and streamed it back.
+        if (data.steer && pendingSteer === localSteer) {
             pendingSteer = data.steer;
             renderPendingSteer();
         }
     } catch (err) {
         console.error('Failed to queue steer:', err);
-        if (steerableRequestId() === requestId) {
-            inputEl.value = message;
-            autoResizeInput();
-        }
-        pendingSteer = null;
-        renderPendingSteer();
+        restoreSteerDraft(requestId, message, localSteer);
         showErrorToast('Steer failed', err);
     } finally {
         pendingSteerSubmitting = false;
         setComposerState(!!activeChatRequestId());
     }
+}
+
+function restoreSteerDraft(requestId, message, localSteer) {
+    // The run may have ended while the steer was in flight; the text still
+    // belongs in the composer then, but never in a different run's.
+    const currentRequestId = steerableRequestId();
+    const sameOrNoRun = !currentRequestId || currentRequestId === requestId;
+    if (sameOrNoRun && !inputEl.value.trim()) {
+        inputEl.value = message;
+        autoResizeInput();
+    }
+    if (pendingSteer === localSteer) {
+        pendingSteer = null;
+        renderPendingSteer();
+    }
+}
+
+// The server publishes a consumed steer as the run's user message. Text
+// streamed before it is a finished reply; seal it so the reply to the steer
+// starts below the steer instead of extending the earlier text.
+function settlePendingSteer(message) {
+    if (message.type !== 'user') return;
+    sealAssistantDraft(message);
+    if (!pendingSteer) return;
+    if (message.request_id && message.request_id !== pendingSteer.request_id) return;
+    if ((message.content || '').trim() !== (pendingSteer.content || '').trim()) return;
+    pendingSteer = null;
+    renderPendingSteer();
 }
 
 function createRequestId() {
@@ -364,6 +394,10 @@ async function cancelPendingSteer() {
         if (!res.ok) {
             throw new Error(await res.text() || 'Failed to cancel steer.');
         }
+        const data = await res.json();
+        if (data.status !== 'canceled') {
+            showToast('The steer was already delivered.', {kind: 'info'});
+        }
     } catch (err) {
         console.error('Failed to cancel steer:', err);
         showErrorToast('Cancel failed', err);
@@ -465,10 +499,7 @@ function handleChatStreamEvent(event) {
         return false;
     }
     if (event.type === 'message' && event.message) {
-        if (event.message.type === 'steer') {
-            pendingSteer = null;
-            renderPendingSteer();
-        }
+        settlePendingSteer(event.message);
         if (event.message.type === 'tool_call') {
             retireAssistantDraft(event.message);
         }
@@ -575,6 +606,18 @@ function retireAssistantDraft(event) {
         removeRenderedMessage(draftKey);
     }
     if (text) addMessage(text);
+}
+
+function sealAssistantDraft(boundary) {
+    const key = assistantStreamKey(boundary);
+    const draft = key && streamingAssistantDrafts[key];
+    if (!draft) return;
+    const draftKey = messageIdentity(draft);
+    const sealed = Object.assign({}, draft, {tool_text_key: messageIdentity(boundary)});
+    assistantTextReveal.rekey(draftKey, messageIdentity(sealed));
+    delete streamingAssistantDrafts[key];
+    removeRenderedMessage(draftKey);
+    addMessage(sealed);
 }
 
 function removeRenderedMessage(messageKey) {

@@ -947,7 +947,9 @@ func TestAudioDialogCountsPartialStreamingPlaybackAsStreamedWhenCloseFails(t *te
 	}
 }
 
-func TestAudioDialogRunAgentTurnQueuesButDoesNotConsumeSteer(t *testing.T) {
+// A steer queued while the final answer is generated continues the run after
+// that answer; once the run returns, steers are refused.
+func TestAudioDialogRunAgentTurnAppliesSteerQueuedDuringFinalAnswer(t *testing.T) {
 	firstCallStarted := make(chan struct{})
 	releaseFirstCall := make(chan struct{})
 	model := &blockingFirstCallModel{
@@ -1008,8 +1010,8 @@ func TestAudioDialogRunAgentTurnQueuesButDoesNotConsumeSteer(t *testing.T) {
 	if runResult.err != nil {
 		t.Fatalf("RunAgentTurn() error = %v", runResult.err)
 	}
-	if runResult.result.Output != "first answer" {
-		t.Fatalf("Output = %q, want first answer", runResult.result.Output)
+	if runResult.result.Output != "steered answer" {
+		t.Fatalf("Output = %q, want steered answer", runResult.result.Output)
 	}
 	if dialog.QueueSteer(TurnInput{InputText: "too late"}) {
 		t.Fatal("QueueSteer returned true after voice run completed")
