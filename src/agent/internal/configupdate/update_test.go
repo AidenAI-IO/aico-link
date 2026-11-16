@@ -940,6 +940,16 @@ func TestUpdateConfigFileSwitchesDecisionProviderAndClearsKey(t *testing.T) {
 	if text := string(data); strings.Contains(text, "ts-secret") || strings.Contains(text, "ts.example") || strings.Contains(text, "jev-1.14.0") {
 		t.Fatalf("old provider settings survived the switch:\n%s", text)
 	}
+
+	result, err = NewService().Update(path, []byte(`{"config":{"decision":{"provider":"gemini","api_key":"","enabled":false,"base_url":null,"model":null}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = result.Config.Decision
+	if got.Provider != "gemini" || got.HasAPIKey || got.Enabled ||
+		got.BaseURL != "https://generativelanguage.googleapis.com/v1beta" || got.Model != "gemini-decision-1" {
+		t.Fatalf("decision after gemini switch = %+v", got)
+	}
 }
 
 func TestUpdateConfigFileRejectsEnablingDecisionModelWithoutKey(t *testing.T) {

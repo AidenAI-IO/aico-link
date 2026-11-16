@@ -14,12 +14,18 @@ const (
 	// DecisionProviderOpenAI is OpenAI's Decisions API (GPT-6 Luna). It has
 	// no box questions, so tap-point decisions stay with the main model.
 	DecisionProviderOpenAI = "openai"
+	// DecisionProviderGemini is Google's Gemini Decisions API
+	// (gemini-decision-1). Like OpenAI Luna it has no box questions, so
+	// tap-point decisions stay with the main model.
+	DecisionProviderGemini = "gemini"
 
 	defaultTypeSafeBaseURL = "https://api.typesafe.ai/v1"
 	// jev-preview tracks Jev 1.14, the first release that answers box questions.
 	defaultTypeSafeModel = "jev-preview"
 	defaultOpenAIBaseURL = "https://api.openai.com/v1"
 	defaultOpenAIModel   = "gpt-6-luna"
+	defaultGeminiBaseURL = "https://generativelanguage.googleapis.com/v1beta"
+	defaultGeminiModel   = "gemini-decision-1"
 
 	defaultDecisionMinConfidence = 0.8
 )
@@ -45,12 +51,12 @@ const (
 	DecisionOpStepGate = "step_gate"
 )
 
-// DecisionModelConfig configures the optional decision model (TypeSafe Jev or
-// OpenAI Luna): a classifier that answers fixed-choice questions (choice,
-// yes/no, score) inside deterministic workflows, such as reading the input
-// method state or confirming that an app opened. It is off by default and
-// needs an API key to be turned on; when off, or when an answer falls below
-// MinConfidence, callers keep using the main model.
+// DecisionModelConfig configures the optional decision model (TypeSafe Jev,
+// OpenAI Luna, or Gemini Decision 1): a classifier that answers fixed-choice
+// questions (choice, yes/no, score) inside deterministic workflows, such as
+// reading the input method state or confirming that an app opened. It is off
+// by default and needs an API key to be turned on; when off, or when an answer
+// falls below MinConfidence, callers keep using the main model.
 type DecisionModelConfig struct {
 	Enabled       bool    `toml:"enabled"`
 	Provider      string  `toml:"provider,omitempty"`
@@ -78,20 +84,28 @@ func (c DecisionModelConfig) BaseURLOrDefault() string {
 	if baseURL := strings.TrimSpace(c.BaseURL); baseURL != "" {
 		return baseURL
 	}
-	if c.ProviderOrDefault() == DecisionProviderOpenAI {
+	switch c.ProviderOrDefault() {
+	case DecisionProviderOpenAI:
 		return defaultOpenAIBaseURL
+	case DecisionProviderGemini:
+		return defaultGeminiBaseURL
+	default:
+		return defaultTypeSafeBaseURL
 	}
-	return defaultTypeSafeBaseURL
 }
 
 func (c DecisionModelConfig) ModelOrDefault() string {
 	if model := strings.TrimSpace(c.Model); model != "" {
 		return model
 	}
-	if c.ProviderOrDefault() == DecisionProviderOpenAI {
+	switch c.ProviderOrDefault() {
+	case DecisionProviderOpenAI:
 		return defaultOpenAIModel
+	case DecisionProviderGemini:
+		return defaultGeminiModel
+	default:
+		return defaultTypeSafeModel
 	}
-	return defaultTypeSafeModel
 }
 
 // MinConfidenceOrDefault returns the confidence below which a decision is
@@ -104,8 +118,10 @@ func (c DecisionModelConfig) MinConfidenceOrDefault() float64 {
 }
 
 func (c DecisionModelConfig) validate() error {
-	if provider := c.ProviderOrDefault(); provider != DecisionProviderTypeSafe && provider != DecisionProviderOpenAI {
-		return fmt.Errorf("invalid decision.provider: %s (expected %s or %s)", c.Provider, DecisionProviderTypeSafe, DecisionProviderOpenAI)
+	switch provider := c.ProviderOrDefault(); provider {
+	case DecisionProviderTypeSafe, DecisionProviderOpenAI, DecisionProviderGemini:
+	default:
+		return fmt.Errorf("invalid decision.provider: %s (expected %s, %s, or %s)", c.Provider, DecisionProviderTypeSafe, DecisionProviderOpenAI, DecisionProviderGemini)
 	}
 	if math.IsNaN(c.MinConfidence) || c.MinConfidence < 0 || c.MinConfidence > 1 {
 		return fmt.Errorf("decision.min_confidence must be between 0 and 1, got %g", c.MinConfidence)
