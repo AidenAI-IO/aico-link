@@ -2266,7 +2266,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			stream.Write(ChatStreamEvent{Type: "message", Message: &errorMessage})
 		}
 		if s.logger != nil {
-			s.logger.Error("Agent run failed: %v", err)
+			s.logger.Error("Agent run failed: request_id=%s error=%v", req.RequestID, err)
 		}
 		if !result.SpeechStreamed && s.chatAudioEnabled() && s.canSpeakFinalText() {
 			prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})

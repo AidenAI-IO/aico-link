@@ -420,7 +420,8 @@ textarea:focus-visible {
 .task-modal-card { width: min(720px, 100%); }
 
 .file-modal-card { width: min(960px, 100%); max-height: min(88vh, 900px); }
-.file-modal-heading { min-width: 0; }
+.file-modal-heading { flex: 1 1 auto; min-width: 0; }
+.file-modal-back { flex: 0 0 auto; }
 .file-modal-heading strong { display: block; overflow-wrap: anywhere; }
 .file-modal-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 
@@ -490,6 +491,13 @@ textarea:focus-visible {
 }
 
 .file-preview-message { color: var(--muted); font-size: 0.86rem; }
+
+/* A folder lists its entries across the whole body, from the top. */
+.file-folder-list {
+    justify-self: stretch;
+    align-self: start;
+    padding: 0 8px;
+}
 .task-modal-body { gap: 14px; }
 .task-modal-section .message-role { margin-bottom: 6px; }
 .task-modal-action { padding: 8px 10px; border-radius: var(--radius-md); background: var(--tool-call); }
@@ -618,6 +626,11 @@ textarea:focus-visible {
     display: flex;
     align-items: center;
     gap: 10px;
+    margin: -4px -8px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    color: inherit;
+    text-decoration: none;
 }
 
 .brand-dot {
@@ -640,69 +653,112 @@ textarea:focus-visible {
 .topbar-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
 }
 
-.workspace-links,
-.session-actions {
-    display: flex;
+.topbar-title:hover,
+.topbar-title:focus-visible {
+    background: var(--surface-soft);
+    outline: none;
+}
+
+.topbar-icon-btn {
+    display: inline-flex;
     align-items: center;
-    gap: 6px;
-}
-
-.session-actions {
-    padding-left: 8px;
-    border-left: 1px solid var(--line);
-}
-
-.clear-menu {
-    position: relative;
-}
-
-.clear-menu > summary {
-    gap: 6px;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 7px;
+    color: var(--muted-strong);
+    cursor: pointer;
     list-style: none;
     user-select: none;
+    transition: background 120ms ease, color 120ms ease;
 }
 
-.clear-menu > summary::-webkit-details-marker {
+.topbar-icon-btn::-webkit-details-marker {
     display: none;
 }
 
-.clear-menu-items {
+.topbar-icon-btn:hover,
+.topbar-icon-btn:focus-visible,
+.topbar-menu[open] > .topbar-icon-btn {
+    background: var(--surface-soft);
+    color: var(--text);
+    outline: none;
+}
+
+.topbar-icon-btn svg,
+.topbar-menu-items svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.topbar-menu {
+    position: relative;
+}
+
+.topbar-menu-items {
     position: absolute;
     z-index: 20;
     top: calc(100% + 6px);
     right: 0;
     display: grid;
-    min-width: 220px;
-    padding: 5px;
+    min-width: 230px;
+    padding: 6px;
     border: 1px solid var(--line);
-    border-radius: var(--radius-md);
+    border-radius: 12px;
     background: var(--panel);
     box-shadow: var(--shadow-soft);
 }
 
-.clear-menu-items button {
+.topbar-menu-items a,
+.topbar-menu-items button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     width: 100%;
-    padding: 9px 10px;
+    padding: 8px 10px;
     border: 0;
-    border-radius: 4px;
+    border-radius: 7px;
     background: transparent;
     color: var(--text);
-    font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+    font: inherit;
+    font-size: 0.86rem;
     text-align: left;
+    text-decoration: none;
     cursor: pointer;
 }
 
-.clear-menu-items button:hover,
-.clear-menu-items button:focus-visible {
+.topbar-menu-items svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    color: var(--muted-strong);
+}
+
+.topbar-menu-items a:hover,
+.topbar-menu-items a:focus-visible,
+.topbar-menu-items button:hover,
+.topbar-menu-items button:focus-visible {
     background: var(--surface-soft);
     outline: none;
 }
 
-.clear-menu-items .danger-btn {
+.topbar-menu-items .danger,
+.topbar-menu-items .danger svg {
     color: var(--tool-error-text);
+}
+
+.topbar-menu-items hr {
+    margin: 5px 4px;
+    border: 0;
+    border-top: 1px solid var(--line);
 }
 
 .danger-btn {
@@ -2157,9 +2213,7 @@ body { background: #f5f5f7; color: var(--text); }
 }
 
 @media (max-width: 860px) {
-    .topbar { align-items: flex-start; flex-direction: column; padding: 14px 16px; }
-    .topbar-actions { width: 100%; justify-content: space-between; flex-wrap: wrap; }
-    .workspace-links, .session-actions { flex-wrap: wrap; }
+    .topbar { padding: 0 16px; }
 }
 
 /* Realtime voice mode. The same presentation serves device and browser audio.
