@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -859,7 +860,7 @@ func TestRealtimeToolCallAndResultPersistInUserContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := realtimevoice.Event{Kind: realtimevoice.EventToolCall, CallID: "call_1", Name: realtimeCreateTaskTool, Arguments: `{"task":"打开微信"}`}
-	if err := appendRealtimeToolExecution(manager, call, `{"id":"task_1","status":"queued"}`); err != nil {
+	if err := appendRealtimeToolExecution(manager, call, `{"id":"task_1","status":"queued"}`, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := manager.MessageListDump().Messages
@@ -868,6 +869,87 @@ func TestRealtimeToolCallAndResultPersistInUserContext(t *testing.T) {
 	}
 	if got[1].ToolCalls[0].Name != realtimeCreateTaskTool || got[2].ToolResults[0].ToolCallID != "call_1" {
 		t.Fatalf("tool messages = %+v", got[1:])
+	}
+}
+
+// A visual tool's image never reaches the provider or the user context as
+// base64: the context stores it as the backend loop does, a model without
+// image input gets a placeholder, and one with image input gets the image.
+func TestRealtimeVisualToolResultHandlesImages(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString([]byte("jpeg-bytes"))
+	tool := &fakeRealtimeVisualTool{fakeRealtimeTool{name: "screenshot",
+		output: `{"action_output":"ok","width":120,"height":80,"format":"jpeg","size":10,"data":"` + encoded + `"}`}}
+	executor := realtimeVoiceToolExecutor{delegated: map[string]langtools.Tool{"screenshot": tool}, now: time.Now}
+	call := realtimevoice.Event{Kind: realtimevoice.EventToolCall, CallID: "call_1", Name: "screenshot", Arguments: `{}`}
+
+	result := executor.result(context.Background(), call)
+	if result.visual == nil || strings.Contains(result.output, encoded) ||
+		!strings.Contains(result.output, "Screenshot size: 120x80 px") || !strings.Contains(result.output, "[Image omitted: "+agent.ImageOmittedModelUnsupported) {
+		t.Fatalf("output = %q, want caption and placeholder without image data", result.output)
+	}
+
+	// Without action_output the tool content is the observation itself; it
+	// still must not carry the image data.
+	bare := &fakeRealtimeVisualTool{fakeRealtimeTool{name: "screenshot",
+		output: `{"width":120,"height":80,"format":"jpeg","size":10,"data":"` + encoded + `"}`}}
+	if observation, ok := agent.SplitVisualToolOutput(bare, bare.output); !ok || strings.Contains(observation.ToolContent(), encoded) {
+		t.Fatalf("tool content = %q, want no image data", observation.ToolContent())
+	}
+
+	sender := &recordingToolResultSender{}
+	if err := sendRealtimeToolResult(context.Background(), sender, nil, result); err != nil {
+		t.Fatal(err)
+	}
+	if sender.output != result.output || sender.images != nil {
+		t.Fatalf("text-only send = %+v", sender)
+	}
+	if err := sendRealtimeToolResult(context.Background(), sender, sender, result); err != nil {
+		t.Fatal(err)
+	}
+	if sender.output != "ok" || len(sender.images) != 1 || string(sender.images[0].Data) != "jpeg-bytes" ||
+		!strings.Contains(sender.images[0].Caption, "Screenshot size: 120x80 px") {
+		t.Fatalf("image send = %+v, want backend tool content and captioned image", sender)
+	}
+
+	manager, err := contextmanager.NewContextManager(t.TempDir(), "system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := appendRealtimeToolExecution(manager, call, result.output, result.visual); err != nil {
+		t.Fatal(err)
+	}
+	got := manager.MessageListDump().Messages
+	if len(got) != 4 || got[2].ToolResults[0].Content != "ok" || got[3].Role != messages.MessageRoleState {
+		t.Fatalf("messages = %+v", got)
+	}
+	if len(got[3].Attachments) != 1 || got[3].Attachments[0].MIMEType != "image/jpeg" || strings.Contains(got[3].Content, encoded) {
+		t.Fatalf("state message = %+v, want stored image attachment", got[3])
+	}
+
+	// A state message that does not follow a tool result is replayed as a
+	// message of its own.
+	if err := manager.AppendMessages([]messages.Message{
+		{Role: messages.MessageRoleAssistant, Content: "done"},
+		{Role: messages.MessageRoleState, Content: "app_connected: true"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, imageInput := range []bool{false, true} {
+		replayer := &recordingContextReplayer{}
+		if err := replayRealtimeContext(context.Background(), replayer, manager, imageInput); err != nil {
+			t.Fatal(err)
+		}
+		if len(replayer.items) != 4 || replayer.items[1].Type != "function_call_output" ||
+			replayer.items[3].Role != "user" || !strings.Contains(replayer.items[3].Content, "app_connected: true") {
+			t.Fatalf("imageInput=%t replayed = %+v", imageInput, replayer.items)
+		}
+		output := replayer.items[1]
+		if imageInput && (len(output.Images) != 1 || string(output.Images[0].Data) != "jpeg-bytes" || output.Output != "ok") {
+			t.Fatalf("image replay = %+v", output)
+		}
+		if !imageInput && (output.Images != nil || !strings.Contains(output.Output, "[Image omitted: ")) {
+			t.Fatalf("text replay = %+v", output)
+		}
 	}
 }
 
@@ -887,17 +969,27 @@ func TestRealtimeNoticePersistsAsNoticeInUserContext(t *testing.T) {
 
 func TestRecentRealtimeContextMessagesKeepsLatestTenUserTurns(t *testing.T) {
 	var all []messages.Message
+	// Each turn's state comes before its user message; a tool image's state
+	// follows the tool result. The turn keeps its own state at the cutoff.
 	for i := 1; i <= 12; i++ {
 		all = append(all,
+			messages.Message{Role: messages.MessageRoleState, Content: fmt.Sprintf("turn-state-%d", i)},
 			messages.Message{Role: messages.MessageRoleUser, Content: fmt.Sprintf("user-%d", i)},
 			messages.Message{Role: messages.MessageRoleToolCall, ToolCalls: []messages.ToolCall{{ID: fmt.Sprintf("call-%d", i)}}},
 			messages.Message{Role: messages.MessageRoleToolResult, ToolResults: []messages.ToolResult{{ToolCallID: fmt.Sprintf("call-%d", i)}}},
+			messages.Message{Role: messages.MessageRoleState, Content: fmt.Sprintf("tool-state-%d", i)},
 			messages.Message{Role: messages.MessageRoleAssistant, Content: fmt.Sprintf("assistant-%d", i)},
 		)
 	}
 	got := recentRealtimeContextMessages(all, 10)
-	if len(got) != 40 || got[0].Content != "user-3" || got[len(got)-1].Content != "assistant-12" {
+	if len(got) != 60 || got[0].Content != "turn-state-3" || got[1].Content != "user-3" || got[len(got)-1].Content != "assistant-12" {
 		t.Fatalf("recent messages = %+v", got)
+	}
+	// A tool state is not taken for the next turn's state at the cutoff.
+	withoutAssistant := append([]messages.Message(nil), all[:5]...)
+	withoutAssistant = append(withoutAssistant, all[7:]...)
+	if got := recentRealtimeContextMessages(withoutAssistant, 11); got[0].Content != "user-2" {
+		t.Fatalf("cutoff after a tool state starts at %+v", got[0])
 	}
 	for i := 0; i < len(got); i++ {
 		if got[i].Role != messages.MessageRoleToolCall {
@@ -1004,6 +1096,32 @@ func (t *fakeRealtimeTool) Description() string { return "fake recall" }
 func (t *fakeRealtimeTool) Call(_ context.Context, input string) (string, error) {
 	t.input = input
 	return t.output, nil
+}
+
+type fakeRealtimeVisualTool struct{ fakeRealtimeTool }
+
+func (t *fakeRealtimeVisualTool) ReturnsVisualObservation() bool { return true }
+
+type recordingToolResultSender struct {
+	output string
+	images []realtimevoice.Image
+}
+
+func (r *recordingToolResultSender) SendToolResult(_ context.Context, _ string, output string) error {
+	r.output, r.images = output, nil
+	return nil
+}
+
+func (r *recordingToolResultSender) SendToolResultWithImages(_ context.Context, _ string, output string, images []realtimevoice.Image) error {
+	r.output, r.images = output, images
+	return nil
+}
+
+type recordingContextReplayer struct{ items []realtimevoice.ContextItem }
+
+func (r *recordingContextReplayer) ReplayContext(_ context.Context, items []realtimevoice.ContextItem) error {
+	r.items = append(r.items, items...)
+	return nil
 }
 
 func floatPtr(value float64) *float64 { return &value }

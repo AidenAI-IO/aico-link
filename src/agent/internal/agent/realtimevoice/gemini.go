@@ -468,27 +468,60 @@ func (s *geminiSession) SendAudio(ctx context.Context, pcm []byte) error {
 	}})
 }
 func (s *geminiSession) SendToolResult(ctx context.Context, id, output string) error {
-	response := any(output)
-	var decoded any
-	if json.Unmarshal([]byte(output), &decoded) == nil {
-		response = decoded
-	}
+	return s.SendToolResultWithImages(ctx, id, output, nil)
+}
+
+// SendToolResultWithImages returns a tool result whose images ride in the
+// function response's inlineData parts, which Gemini 3 Live models read with
+// the result.
+func (s *geminiSession) SendToolResultWithImages(ctx context.Context, id, output string, images []Image) error {
 	s.toolMu.Lock()
 	name := s.toolNames[id]
 	s.toolMu.Unlock()
-	responseBody := map[string]any{"result": response}
+	functionResponse := geminiFunctionResponse(id, name, output, images)
 	if s.extendedThinking {
 		// NON_BLOCKING tools need scheduling; INTERRUPT surfaces the result immediately.
-		responseBody["scheduling"] = "INTERRUPT"
-	}
-	functionResponse := map[string]any{"id": id, "response": responseBody}
-	if name != "" {
-		functionResponse["name"] = name
+		functionResponse["response"].(map[string]any)["scheduling"] = "INTERRUPT"
 	}
 	return s.writeJSON(ctx, map[string]any{"toolResponse": map[string]any{
 		"functionResponses": []map[string]any{functionResponse},
 	}})
 }
+
+func geminiFunctionResponse(id, name, output string, images []Image) map[string]any {
+	result := any(output)
+	var decoded any
+	if json.Unmarshal([]byte(output), &decoded) == nil {
+		result = decoded
+	}
+	responseBody := map[string]any{"result": result}
+	functionResponse := map[string]any{"id": id, "response": responseBody}
+	if name != "" {
+		functionResponse["name"] = name
+	}
+	if len(images) > 0 {
+		captions := make([]string, 0, len(images))
+		parts := make([]map[string]any, 0, len(images))
+		for _, image := range images {
+			if caption := strings.TrimSpace(image.Caption); caption != "" {
+				captions = append(captions, caption)
+			}
+			parts = append(parts, geminiInlineDataPart(image))
+		}
+		if len(captions) > 0 {
+			responseBody["image_caption"] = strings.Join(captions, "\n")
+		}
+		functionResponse["parts"] = parts
+	}
+	return functionResponse
+}
+
+func geminiInlineDataPart(image Image) map[string]any {
+	return map[string]any{"inlineData": map[string]string{
+		"mimeType": image.mimeType(), "data": base64.StdEncoding.EncodeToString(image.Data),
+	}}
+}
+
 func (s *geminiSession) SendText(ctx context.Context, text string) error {
 	return s.writeJSON(ctx, map[string]any{"clientContent": map[string]any{
 		"turns":        []map[string]any{{"role": "user", "parts": []map[string]string{{"text": text}}}},
@@ -526,7 +559,7 @@ func (s *geminiSession) ReplayContext(ctx context.Context, items []ContextItem) 
 			}
 			turns = append(turns, map[string]any{
 				"role":  role,
-				"parts": []map[string]any{{"text": item.Content}},
+				"parts": geminiMessageParts(item),
 			})
 		case "function_call":
 			args := any(map[string]any{})
@@ -543,16 +576,11 @@ func (s *geminiSession) ReplayContext(ctx context.Context, items []ContextItem) 
 				}}},
 			})
 		case "function_call_output":
-			output := any(item.Output)
-			var decoded any
-			if json.Unmarshal([]byte(item.Output), &decoded) == nil {
-				output = decoded
-			}
 			turns = append(turns, map[string]any{
 				"role": "user",
-				"parts": []map[string]any{{"functionResponse": map[string]any{
-					"id": item.CallID, "name": toolNames[item.CallID], "response": map[string]any{"result": output},
-				}}},
+				"parts": []map[string]any{{"functionResponse": geminiFunctionResponse(
+					item.CallID, toolNames[item.CallID], item.Output, item.Images,
+				)}},
 			})
 		default:
 			return fmt.Errorf("gemini live: cannot replay context item type %q", item.Type)
@@ -561,6 +589,22 @@ func (s *geminiSession) ReplayContext(ctx context.Context, items []ContextItem) 
 	return s.writeJSON(ctx, map[string]any{"clientContent": map[string]any{
 		"turns": turns, "turnComplete": false,
 	}})
+}
+
+// geminiMessageParts replays a message as text followed by its images, each
+// after its caption, sending no empty text part.
+func geminiMessageParts(item ContextItem) []map[string]any {
+	parts := make([]map[string]any, 0, 1+2*len(item.Images))
+	if item.Content != "" || len(item.Images) == 0 {
+		parts = append(parts, map[string]any{"text": item.Content})
+	}
+	for _, image := range item.Images {
+		if caption := strings.TrimSpace(image.Caption); caption != "" {
+			parts = append(parts, map[string]any{"text": caption})
+		}
+		parts = append(parts, geminiInlineDataPart(image))
+	}
+	return parts
 }
 
 func waitGeminiReady(ctx context.Context, s *geminiSession) error {
