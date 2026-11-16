@@ -32,6 +32,9 @@ const (
 	anthropicDaemonRawSSELimit       = 128 * 1024
 	anthropicRawHTTPRawSSELimit      = 4 * 1024 * 1024
 	anthropicEmptyEndTurnMessage     = "end_turn response has no text or tool_use content"
+	// anthropicFallbackMaxTokens is the required max_tokens value used when
+	// neither the configuration nor the model metadata provides a limit.
+	anthropicFallbackMaxTokens = 8192
 )
 
 type anthropicModel struct {
@@ -291,7 +294,7 @@ func (m *anthropicModel) generateContent(ctx context.Context, messages []llms.Me
 		request.ToolChoice = disableAnthropicParallelToolUse(request.ToolChoice)
 	}
 	if request.MaxTokens <= 0 {
-		request.MaxTokens = 2048
+		request.MaxTokens = m.defaultMaxTokens()
 	}
 	if m.temperature != nil {
 		request.Temperature = m.temperature
@@ -516,6 +519,16 @@ func (m *anthropicModel) reasoningModelSpec() model.ModelSpec {
 		}
 	}
 	return m.modelSpec
+}
+
+// defaultMaxTokens fills Anthropic's required max_tokens when no response
+// limit is configured: the model's advertised output limit, or a conservative
+// fallback when that limit is unknown.
+func (m *anthropicModel) defaultMaxTokens() int {
+	if maxOutput := m.reasoningModelSpec().MaxOutput; maxOutput > 0 {
+		return maxOutput
+	}
+	return anthropicFallbackMaxTokens
 }
 
 func (m *anthropicModel) reasoningSpecValue() *model.ReasoningSpec {

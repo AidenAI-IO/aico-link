@@ -75,6 +75,28 @@ func TestAnthropicModelKeepsMaxTokensAboveEffortFloor(t *testing.T) {
 	}
 }
 
+func TestAnthropicModelDefaultsMaxTokensWhenUnset(t *testing.T) {
+	for _, tt := range []struct {
+		model string
+		want  int
+	}{
+		{model: "claude-opus-5", want: 128_000},
+		{model: "unregistered-claude", want: anthropicFallbackMaxTokens},
+	} {
+		t.Run(tt.model, func(t *testing.T) {
+			server, captured := newAnthropicThinkingProbe(t, anthropicThinkingProbeOK)
+			m := newAnthropicModel(server.URL, tt.model, "tok", server.Client())
+			if _, err := m.GenerateContent(context.Background(),
+				[]llms.MessageContent{llms.TextParts(llms.ChatMessageTypeHuman, "hi")}); err != nil {
+				t.Fatalf("GenerateContent() error = %v", err)
+			}
+			if got := (*captured)[0].MaxTokens; got != tt.want {
+				t.Fatalf("max_tokens = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAnthropicModelOmitsDerivedBudgetWhenMinimumDoesNotFit(t *testing.T) {
 	server, captured := newAnthropicThinkingProbe(t, anthropicThinkingProbeOK)
 

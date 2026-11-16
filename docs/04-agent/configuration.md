@@ -285,7 +285,7 @@ device_type = "iOS"
 provider = "openrouter-main"
 model = "bytedance-seed/seed-2.0-lite"
 temperature = 0.2
-max_response_tokens = 8192
+# max_response_tokens = 0  # 0 = provider default
 # OpenRouter supports stateless Responses only. This keeps ContextManager
 # history local and omits store and previous_response_id from every request.
 # api_mode = "responses"
@@ -342,7 +342,7 @@ provider = "gemini-main"
 model = "gemini-3.8-flash"
 api_mode = "interactions"  # or "interactions_stateful"
 reasoning_effort = "low"  # gemini-3.8-flash: low/medium/high
-max_response_tokens = 8192
+# max_response_tokens = 0  # 0 = provider default
 # Optional model metadata overrides
 # context_window = 1048576
 # model_max_output_tokens = 65536
@@ -535,7 +535,7 @@ button in both modes.
 | `voice_tool_call_speech`        | `true`                                                      | Whether to asynchronously read the `content` of a tool-call event; this content comes only from the assistant content in the same LLM tool-call response, and stays silent when absent |
 | `voice_progress_speech_enabled` | `true`                                                      | Whether to announce a short progress message when a todo item enters `in_progress`; todo state is still sent to the UI/trace                                                           |
 
-Classic STT Agent turns use the main model's `max_response_tokens` output limit; there is no separate voice output-token setting. After upgrading, any existing `voice_max_response_tokens` key is ignored, so set `model_settings.model.max_response_tokens` if you need to control the voice output limit. Voice replies should still be kept short through the voice instructions rather than a second token cap.
+Classic STT Agent turns use the main model's `max_response_tokens` output limit; there is no separate voice output-token setting. After upgrading, any existing `voice_max_response_tokens` key is ignored, so set `model_settings.model.max_response_tokens` if you need to control the voice output limit (by default no limit is sent). Voice replies should still be kept short through the voice instructions rather than a second token cap.
 
 The model pointed to by `vad_model_path` must first be converted from the Silero ONNX to RV1106 RKNN on a PC using `silero-vad/convert_silero_vad_to_rknn.py`, then placed at the corresponding path on the device. The CPU backend requires `silero_vad_6_2_lstm_decoder_weights.bin` to include the Conv1d encoder extension, which can be generated from the TorchScript file shipped with the repo using `silero-vad/export_silero_vad_v6_2_weights.py`.
 When `vad_helper_path` is still the built-in default, switching `vad_backend` automatically switches the helper; only when set to a custom path does it run that custom path.
@@ -660,7 +660,7 @@ built. When a section is named exactly like a provider type, the section wins.
 | `temperature`             | Sampling temperature. When unset, the default is model-dependent. Kimi K3 uses its required value, Gemini 3 models use Google's documented default of `1.0`, and other non-Gemini providers fall back to `0.2`. Native Gemini models without a registered default omit `generation_config.temperature` so Google can choose the model default. An explicit value normally takes precedence and is forwarded to Gemini; Google warns that lowering Gemini 3 temperature from `1.0` may cause looping or degraded performance on complex reasoning and math. DeepSeek thinking mode does not use temperature, so Aico omits it whenever `reasoning_effort` is not `none`. |
 | `reasoning_effort`        | Reasoning effort. Unset is auto. Native Anthropic maps supported effort values to adaptive thinking `output_config.effort` and preserves signed thinking blocks across tool-call turns. Gemini maps the shared model-specific effort values to native Interactions `generation_config.thinking_level`; Gemini 3.8/3.7 and Gemini 2.5 accept `low`, `medium`, or `high`. `minimal` is supported by OpenRouter, Volcengine Ark, and selected Gemini 3 models. `none` is supported by OpenRouter, OpenAI, Kimi, DeepSeek, Ollama, and the fake provider, but not by native Anthropic, Ark, or Gemini Interactions. DeepSeek defaults to `none` for faster device interactions; explicit `low`, `high`, or `max` enables thinking with `reasoning_content` replay. Other models may also pin a lighter default in `model_specs.go`; an explicit value always wins. |
 | `reasoning_budget_tokens` | Optional exact reasoning-token budget for models that expose a numeric budget. `0` uses the model default or effort preset. It is currently translated only to Anthropic's native `thinking.budget_tokens` field. |
-| `max_response_tokens`     | Maximum output tokens passed to the model on request                                                                                                                                                                                                 |
+| `max_response_tokens`     | Maximum output tokens passed to the model on request. Default `0` sends no limit, so the provider applies its model default; native Anthropic, which requires `max_tokens`, uses the model's advertised output limit (or `8192` when unknown). |
 | `context_window`          | Optional total context window override in tokens. Unset or `0` uses provider metadata for OpenRouter/Ollama when available, then the built-in registry, then memory fallback.                                                                        |
 | `model_max_output_tokens` | Optional advertised max output override in tokens. Unset or `0` uses provider metadata when fetched, then the built-in registry.                                                                                                                     |
 
