@@ -970,14 +970,12 @@ def _cmd_run_auto_agent_setup_inner(
         f"environment={display_environment_url}",
         flush=True,
     )
-    # Tasks that leave the companion App in the background can reach Phone
-    # Bridge only through its FGS poller, which needs a board-like network.
-    background_bridge = bool(bridge_serial) and any(
-        not unit.skip_reason and unit.task.foreground_app_id != ANDROID_BRIDGE_PACKAGE
-        for unit in units
-    )
+    # The companion App connects to the board only after binding to a USB or
+    # Ethernet network that routes to the board subnet, whether it runs in the
+    # foreground or through its background FGS poller.
+    bridge_tasks = bool(bridge_serial) and any(not unit.skip_reason for unit in units)
     board_network = (
-        emulator_board_network(bridge_serial) if background_bridge else nullcontext()
+        emulator_board_network(bridge_serial) if bridge_tasks else nullcontext()
     )
     with board_network, concurrent.futures.ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f"bench-cli-{run_id}") as executor:
         future_to_unit = {

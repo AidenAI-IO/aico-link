@@ -1392,7 +1392,7 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
     assert bridge_actions == {
         "none": [],
         "background": ["board_network", ("wait", {"require_background_bridge": True})],
-        "foreground": ["foreground"],
+        "foreground": ["board_network", "foreground"],
     }[bridge_mode]
     manifest = json.loads((tmp_path / "runs/auto-run/manifest.json").read_text())
     assert manifest["execution_environment"] == ("adb" if bridge_mode == "none" else "adb_aidenbridge")
