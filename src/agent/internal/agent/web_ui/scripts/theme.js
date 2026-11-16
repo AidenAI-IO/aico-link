@@ -5,6 +5,8 @@
     const STORAGE_KEY = 'aico.webui.theme';
     const root = document.documentElement;
     const systemLight = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+    // A choice made on this page, kept even when localStorage is unavailable.
+    let pageChoice = '';
 
     function storedTheme() {
         try {
@@ -30,11 +32,15 @@
         }
     }
 
-    apply(storedTheme() || systemTheme());
+    function chosenTheme() {
+        return pageChoice || storedTheme();
+    }
+
+    apply(chosenTheme() || systemTheme());
 
     if (systemLight) {
         const follow = function() {
-            if (!storedTheme()) apply(systemTheme());
+            if (!chosenTheme()) apply(systemTheme());
         };
         if (systemLight.addEventListener) systemLight.addEventListener('change', follow);
         else if (systemLight.addListener) systemLight.addListener(follow);
@@ -42,11 +48,14 @@
 
     // Keep other open tabs in step with a choice made here.
     window.addEventListener('storage', function(event) {
-        if (event.key === STORAGE_KEY) apply(storedTheme() || systemTheme());
+        if (event.key !== STORAGE_KEY) return;
+        pageChoice = '';
+        apply(storedTheme() || systemTheme());
     });
 
     window.toggleTheme = function() {
         const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+        pageChoice = next;
         try {
             localStorage.setItem(STORAGE_KEY, next);
         } catch (_) {
