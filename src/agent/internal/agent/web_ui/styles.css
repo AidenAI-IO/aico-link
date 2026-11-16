@@ -1629,8 +1629,17 @@ body:not(.voice-mode) .workspace-content:has(.loading.active) .conversation {
     --tool-error-text: #f18a8a;
     --speech-accent: #b59cff;
     --user-bubble-line: #34373e;
+    --body-glow: #20232b;
+    --app-bg: #121316;
+    --topbar-bg: rgba(16, 17, 19, 0.94);
+    --tool-block-text: #d6d8de;
+    --focus-ring: rgba(138, 180, 255, 0.18);
+    --media-bg: #000;
+    --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.26);
     --shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
     --shadow-soft: 0 10px 28px rgba(0, 0, 0, 0.2);
+    --shadow-popover: 0 18px 48px rgba(0, 0, 0, 0.35);
     --radius-xl: 8px;
     --radius-lg: 7px;
     --radius-md: 5px;
@@ -1638,7 +1647,7 @@ body:not(.voice-mode) .workspace-content:has(.loading.active) .conversation {
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: radial-gradient(circle at 20% 0%, #20232b 0, #101113 42%);
+    background: radial-gradient(circle at 20% 0%, var(--body-glow) 0, var(--bg) 42%);
     color: var(--text);
 }
 
@@ -1646,23 +1655,23 @@ button, textarea, select, .tool-block {
     border-radius: 5px;
 }
 
-.app-shell { background: #121316; }
+.app-shell { background: var(--app-bg); }
 .inspector { background: var(--panel); }
 .main-panel { border-radius: 0; border: 0; background: var(--panel); box-shadow: none; backdrop-filter: none; }
-.topbar { min-height: 64px; padding: 0 20px; background: rgba(16,17,19,.94); border-color: var(--line); }
+.topbar { min-height: 64px; padding: 0 20px; background: var(--topbar-bg); border-color: var(--line); }
 .topbar h1 { font: 600 16px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .02em; }
 .new-chat-btn { border-radius: 5px; padding: 7px 11px; background: var(--panel-strong); color: var(--text); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .new-chat-btn:hover, .new-chat-btn:focus-visible { box-shadow: none; transform: none; border-color: var(--accent); color: var(--accent); }
 /* The run activity row sits on .workspace-content between the conversation
    and composer; keep all three the same colour so it shows no band. */
-.workspace-content { background: #121316; }
-.conversation { padding: 10px 18px 0; background: #121316; }
+.workspace-content { background: var(--app-bg); }
+.conversation { padding: 10px 18px 0; background: var(--app-bg); }
 .tool-section-label, .tool-meta-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
-.tool-block { border-color: var(--line); background: var(--surface-code); color: #d6d8de; }
+.tool-block { border-color: var(--line); background: var(--surface-code); color: var(--tool-block-text); }
 .tool-meta-item, .episode-panel, .episode-event, .attachment-card, .draft-attachment { border-radius: 5px; background: var(--surface-soft); border-color: var(--line); }
-.composer { padding: 10px 18px 18px; background: #121316; }
+.composer { padding: 10px 18px 18px; background: var(--app-bg); }
 .composer-shell { border-radius: 24px; padding: 14px 14px 12px 18px; background: var(--panel); border-color: var(--line); box-shadow: none; }
-.composer-shell:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(138,180,255,.18); }
+.composer-shell:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--focus-ring); }
 .episode-link { border-radius: 5px; background: var(--panel-strong); color: var(--muted-strong); border-color: var(--line); }
 .episode-link:hover { border-color: var(--accent); color: var(--accent); }
 
@@ -2007,7 +2016,7 @@ img.zoomable { cursor: zoom-in; }
     border: 1px solid var(--line);
     border-radius: 10px;
     background: var(--panel-strong);
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-popover);
     overflow: hidden;
     pointer-events: none;
     opacity: 0;
@@ -2015,7 +2024,7 @@ img.zoomable { cursor: zoom-in; }
     transition: opacity 120ms ease, transform 120ms ease;
 }
 .thumb-preview.visible { opacity: 1; transform: none; }
-.thumb-preview img { display: block; width: 100%; max-height: 280px; object-fit: contain; background: #000; }
+.thumb-preview img { display: block; width: 100%; max-height: 280px; object-fit: contain; background: var(--media-bg); }
 .thumb-preview-caption {
     display: flex;
     justify-content: space-between;
@@ -2037,7 +2046,7 @@ img.zoomable { cursor: zoom-in; }
     border: 1px solid var(--line);
     border-radius: 10px;
     background: var(--panel-strong);
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-popover);
     overflow: hidden;
     pointer-events: none;
     opacity: 0;
@@ -2048,7 +2057,7 @@ img.zoomable { cursor: zoom-in; }
 .shared-link-preview.visible { opacity: 1; visibility: visible; transform: none; transition-delay: 0s; }
 .shared-link-preview-media[hidden] { display: none; }
 .shared-link-preview-media { display: grid; place-items: center; max-height: 220px; overflow: hidden; background: var(--surface-code); }
-.shared-link-preview-media img { display: block; width: 100%; max-height: 220px; object-fit: contain; background: #000; }
+.shared-link-preview-media img { display: block; width: 100%; max-height: 220px; object-fit: contain; background: var(--media-bg); }
 .shared-link-preview-html-viewport { width: 100%; height: 200px; overflow: hidden; background: #fff; }
 /* Lay the page out at desktop width, then scale it down to the card. */
 .shared-link-preview-html { width: 1280px; height: 800px; border: 0; transform: scale(0.25); transform-origin: 0 0; pointer-events: none; }
@@ -2170,9 +2179,9 @@ img.zoomable { cursor: zoom-in; }
     .tool-entry-detail.has-attachments { grid-template-columns: 1fr; }
 }
 
-/* Zed light palette. */
-@media (prefers-color-scheme: light) {
-:root {
+/* Zed light palette, selected with <html data-theme="light"> by
+   scripts/theme.js (saved choice, else the system preference). */
+:root[data-theme="light"] {
     color-scheme: light;
     --bg: #f5f5f7;
     --panel: #ffffff;
@@ -2195,22 +2204,25 @@ img.zoomable { cursor: zoom-in; }
     --tool-error-text: #a0382a;
     --speech-accent: #6b4fc8;
     --user-bubble-line: #d8e3f7;
+    --body-glow: #f5f5f7;
+    --app-bg: #f7f7f8;
+    --topbar-bg: #fbfbfc;
+    --tool-block-text: var(--text);
+    --focus-ring: rgba(40, 103, 199, 0.16);
+    --media-bg: #eceef1;
+    --scrollbar-thumb: rgba(38, 41, 48, 0.18);
+    --scrollbar-thumb-hover: rgba(38, 41, 48, 0.32);
     --shadow: 0 18px 45px rgba(38, 41, 48, 0.1);
     --shadow-soft: 0 8px 20px rgba(38, 41, 48, 0.06);
+    --shadow-popover: 0 14px 36px rgba(38, 41, 48, 0.16);
 }
 
-body { background: #f5f5f7; color: var(--text); }
-.app-shell { background: #f7f7f8; }
-.main-panel { background: var(--panel); }
-.inspector { background: #fff; }
-.topbar { background: #fbfbfc; }
-.workspace-content, .conversation, .composer { background: #f7f7f8; }
-.new-chat-btn { background: #fff; color: var(--muted-strong); }
-.tool-block { color: var(--text); }
-.composer-shell { background: #fff; }
-.episode-link { background: #fff; }
-.danger-btn { background: #fff7f5; border-color: #e0b0aa; color: #a0382a; }
-}
+:root[data-theme="light"] .inspector,
+:root[data-theme="light"] .new-chat-btn,
+:root[data-theme="light"] .composer-shell,
+:root[data-theme="light"] .episode-link { background: var(--panel); }
+:root[data-theme="light"] .new-chat-btn { color: var(--muted-strong); }
+:root[data-theme="light"] .danger-btn { background: #fff7f5; border-color: #e0b0aa; color: #a0382a; }
 
 @media (max-width: 860px) {
     .topbar { padding: 0 16px; }
@@ -2487,4 +2499,61 @@ body.voice-mode .conversation {
 
 @media (prefers-reduced-motion: reduce) {
     .toast { animation: none; }
+}
+
+/* Theme switch: show the theme it switches to. */
+.theme-toggle {
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+.theme-toggle .theme-icon-moon,
+:root[data-theme="light"] .theme-toggle .theme-icon-sun {
+    display: none;
+}
+
+:root[data-theme="light"] .theme-toggle .theme-icon-moon {
+    display: block;
+}
+
+/* Scrollbars: a thin rounded thumb on a transparent track, coloured from the
+   active theme. The inset border keeps the thumb clear of panel edges. The
+   conversation keeps its hidden scrollbar. Chromium ignores ::-webkit-scrollbar
+   once scrollbar-color is set, so the standard properties are only applied
+   where the pseudo-elements are unsupported (Firefox). */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: var(--scrollbar-thumb) padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+}
+
+/* Keep the inspector thumb clear of the card's rounded corners. */
+.inspector::-webkit-scrollbar-track {
+    margin: 14px 0;
+}
+
+::-webkit-scrollbar-thumb:active {
+    background-color: var(--muted);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--scrollbar-thumb) transparent;
+    }
 }
