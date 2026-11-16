@@ -13,16 +13,11 @@ type mcpTokenRequest struct {
 	Name string `json:"name"`
 }
 
-// mcpTokenManager reports whether r may list, create, or revoke MCP access
-// tokens: a USB client, or a LAN client signed in with the device password.
-// A token itself never grants this; it only reaches /mcp on the Agent.
-func (s *Server) mcpTokenManager(r *http.Request) bool {
-	return s.lanAccessRequestFromUSB(r) || lanaccess.IsAuthenticated(r)
-}
-
+// A token itself never lets a client manage tokens; it only reaches /mcp on
+// the Agent.
 func (s *Server) handleMCPTokensList(w http.ResponseWriter, r *http.Request) {
-	if !s.mcpTokenManager(r) {
-		writeJSONError(w, http.StatusForbidden, "MCP access tokens can be managed only over USB or after signing in")
+	if !s.securityManager(r) {
+		writeJSONError(w, http.StatusForbidden, "sign in to manage MCP access tokens")
 		return
 	}
 	tokens, err := s.lanAccess.MCPTokens()
@@ -36,17 +31,16 @@ func (s *Server) handleMCPTokensList(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":         true,
-		"tokens":     tokens,
-		"max_tokens": lanaccess.MaxMCPTokens,
+		"ok":     true,
+		"tokens": tokens,
 	})
 }
 
 // handleMCPTokenCreate returns the new token's secret once. It is not stored
 // and cannot be shown again.
 func (s *Server) handleMCPTokenCreate(w http.ResponseWriter, r *http.Request) {
-	if !s.mcpTokenManager(r) {
-		writeJSONError(w, http.StatusForbidden, "MCP access tokens can be managed only over USB or after signing in")
+	if !s.securityManager(r) {
+		writeJSONError(w, http.StatusForbidden, "sign in to manage MCP access tokens")
 		return
 	}
 	if !sameOrigin(r) {
@@ -59,7 +53,7 @@ func (s *Server) handleMCPTokenCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	token, secret, err := s.lanAccess.CreateMCPToken(request.Name, time.Now())
 	switch {
-	case errors.Is(err, lanaccess.ErrMCPTokenName), errors.Is(err, lanaccess.ErrMCPTokenLimit):
+	case errors.Is(err, lanaccess.ErrMCPTokenName), errors.Is(err, lanaccess.ErrMCPTokenStoreFull):
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	case err != nil:
@@ -73,8 +67,8 @@ func (s *Server) handleMCPTokenCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMCPTokenRevoke(w http.ResponseWriter, r *http.Request, id string) {
-	if !s.mcpTokenManager(r) {
-		writeJSONError(w, http.StatusForbidden, "MCP access tokens can be managed only over USB or after signing in")
+	if !s.securityManager(r) {
+		writeJSONError(w, http.StatusForbidden, "sign in to manage MCP access tokens")
 		return
 	}
 	if !sameOrigin(r) {

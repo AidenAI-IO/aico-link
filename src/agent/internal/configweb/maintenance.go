@@ -234,7 +234,7 @@ func hashToken(value string) [sha256.Size]byte { return sha256.Sum256([]byte(val
 
 func (s *maintenanceSessionStore) create(r *http.Request) (token, csrf string, expires time.Time, err error) {
 	if !isMaintenanceClient(r, s.address, s.network) {
-		return "", "", time.Time{}, &backupAPIError{Code: "usb_required", Status: http.StatusForbidden, Message: "connect through the USB ECM link or sign in on the LAN"}
+		return "", "", time.Time{}, &backupAPIError{Code: "usb_required", Status: http.StatusForbidden, Message: "connect through the USB ECM link or sign in"}
 	}
 	if !sameOrigin(r) {
 		return "", "", time.Time{}, &backupAPIError{Code: "cross_origin_rejected", Status: http.StatusForbidden, Message: "cross-origin maintenance request rejected"}
@@ -349,12 +349,14 @@ func (s *maintenanceSessionStore) revokeJobToken(jobID string) {
 	s.mu.Unlock()
 }
 
-// isMaintenanceClient reports whether r may use backup and restore: a USB
-// client, or a LAN client the LAN guard admitted with a device-password
-// session. Anything else, including any LAN request on a board without the
-// guard, stays refused.
+// isMaintenanceClient reports whether r may use backup and restore: a client
+// the guard admitted (with a session, or because no device password is set),
+// or a USB client on a board without the guard. Anything else, including any
+// LAN request on a board without the guard, stays refused. With the guard
+// on, a USB request without a session never gets here while a password is
+// set.
 func isMaintenanceClient(r *http.Request, address net.IP, network *net.IPNet) bool {
-	return isUSBRequest(r, address, network) || (r != nil && lanaccess.IsAuthenticated(r))
+	return isUSBRequest(r, address, network) || (r != nil && lanaccess.IsAdmitted(r))
 }
 
 func isUSBRequest(r *http.Request, address net.IP, network *net.IPNet) bool {

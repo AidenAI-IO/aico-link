@@ -20,6 +20,7 @@ import (
 	"aico-agent/internal/configweb"
 	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/logging"
+	streamcontract "aico-agent/internal/stream"
 	"aico-agent/internal/wifiproxy"
 )
 
@@ -40,6 +41,11 @@ const (
 )
 
 var voiceTurnCancelWaitTimeout = 2 * time.Second
+
+// maxCapturedFallbackSamples bounds the raw audio a listen keeps for the case
+// where VAD never closes an utterance: 6 s at 16 kHz.
+const maxCapturedFallbackSamples = 16000 * 6
+
 var wakeupDebounceNow = time.Now
 
 func main() {
@@ -92,6 +98,7 @@ func main() {
 		lanAccessFile             = flag.String("lan-access-file", lanaccess.DefaultEnabledPath, "LAN access marker used by -lan-guard")
 		usbInterface              = flag.String("usb-interface", "usb0", "USB link interface trusted by -lan-guard")
 		usbAddress                = flag.String("usb-address", "192.168.42.1", "Board address on the USB link trusted by -lan-guard")
+		classicVoice              = flag.Bool("classic-voice", true, "Allow Classic (stt) voice conversations; false keeps the stt input mode text only and never starts the VAD")
 	)
 	flag.Parse()
 	environmentPath := os.Getenv("AICO_SYSTEM_ENV")
@@ -239,6 +246,10 @@ func main() {
 	}
 	defer server.Close()
 	inputs := newInputLifecycle(runtime, server)
+	if !*classicVoice {
+		inputs.classicVoiceDisabled = true
+		logging.Infof("agent", "startup", "Classic voice disabled by -classic-voice=false: the stt input mode is text only; realtime is unaffected")
+	}
 	if err := inputs.Start(cfg); err != nil {
 		logging.Errorf("agent", "input", "startup failed: %v", err)
 		exitCode = 1
@@ -339,6 +350,13 @@ type audioDialogRunner interface {
 	VADFrameSamples() int
 	VADSpeaking() bool
 	VADLastFrameSpeech() bool
+	// SetVoiceSession attaches the Web UI voice conversation the session
+	// serves, or detaches it with nil.
+	SetVoiceSession(voice *agent.RealtimeVoiceSession)
+	// VoiceSession is the attached conversation, or nil; its methods are
+	// safe to call on nil.
+	VoiceSession() *agent.RealtimeVoiceSession
+	ReportVoiceActivity(kind streamcontract.EventKind)
 }
 
 type wakeupWatcher interface {
@@ -485,13 +503,31 @@ type voiceTurnResult struct {
 	// requeueWakeup is set when an MCU wakeup closed a wait_for_wakeup turn.
 	// That wakeup already meant "start again"; re-signal so the outer loop
 	// opens the next session without requiring a second wakeup.
-	requeueWakeup   bool
-	exit            bool
+	requeueWakeup bool
+	exit          bool
+	// ended is set when the Web UI ended the conversation during the turn.
+	ended           bool
 	nextTurn        *pendingVoiceTurn
 	followUpContext agent.VoiceTurnContext
 }
 
+// classicVoiceControl is the Web UI voice mode as the Classic loop uses it:
+// it publishes each conversation and lets a browser start one with its own
+// microphone and speaker. *agent.Server implements it.
+type classicVoiceControl interface {
+	SetRealtimeVoiceActivation(activate func())
+	ClaimRealtimeVoiceSession(cfg agent.Config, requested agent.RealtimeAudioRoute) *agent.RealtimeVoiceSession
+	EndRealtimeVoiceSession(session *agent.RealtimeVoiceSession, reason string)
+}
+
 func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
+	runWakeupModeWithVoice(cfg, dialog, runtime, nil, sigChan, newWatcher, reload...)
+}
+
+// runWakeupModeWithVoice runs the Classic wakeup loop. With voice set, the
+// continuous session mode publishes its conversations to the Web UI and also
+// opens one when a browser starts voice, using that browser's audio.
+func runWakeupModeWithVoice(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, voice classicVoiceControl, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
 	// Classic final UX is a Realtime-like continuous session. Single-turn STT
 	// remains available only when voice_followup_enabled is explicitly false.
 	if cfg.InputModeOrDefault() == "stt" && !cfg.VoiceFollowupEnabledOrDefault() {
@@ -506,8 +542,17 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 	logging.Infof("agent", "ready", "Starting MCU wakeup listener...")
 
 	events := make(chan voiceEvent, 1)
+	// webStarts wakes the idle loop for a browser voice start. It is separate
+	// from events, which a running session reads as a wakeup interrupt.
+	webStarts := make(chan struct{}, 1)
 
 	watchers, err := startWakeupWatchers(newWatcher, func() {
+		if browserVoice(dialog) {
+			// The conversation uses a browser's audio; a wake word must
+			// neither cut its reply short nor open the board microphone.
+			logging.Infof("agent", "wakeup", "Wakeup ignored: a browser voice session is running")
+			return
+		}
 		dialog.InterruptOutput()
 		signalVoiceWakeupEvent(events)
 	})
@@ -516,6 +561,15 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		return
 	}
 	defer stopWakeupWatchers(watchers)
+	if voice != nil {
+		voice.SetRealtimeVoiceActivation(func() {
+			select {
+			case webStarts <- struct{}{}:
+			default:
+			}
+		})
+		defer voice.SetRealtimeVoiceActivation(nil)
+	}
 
 	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 
@@ -523,6 +577,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		if reloadRequested(reload) {
 			return
 		}
+		requested := agent.RealtimeAudioRouteDevice
 		select {
 		case <-reloadStop(reload):
 			return
@@ -531,13 +586,69 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 			return
 		case <-events:
 			logging.Infof("agent", "wakeup", "MCU wakeup triggered, opening voice session...")
-			if exit := runVoiceSession(cfg, dialog, runtime, sigChan, events); exit {
-				logging.Infof("agent", "exit", "Stopped.")
-				return
-			}
-			logging.Infof("agent", "ready", "Waiting for wakeup event...")
+		case <-webStarts:
+			requested = ""
 		}
+		if exit := runClassicConversation(cfg, dialog, runtime, voice, sigChan, events, requested, reloadStop(reload)); exit {
+			logging.Infof("agent", "exit", "Stopped.")
+			return
+		}
+		logging.Infof("agent", "ready", "Waiting for wakeup event...")
 	}
+}
+
+// browserVoice reports whether the dialog serves a conversation whose audio
+// a browser carries. Such a conversation lasts until the user ends it, as in
+// realtime voice mode: listen timeouts and the turn cap do not apply.
+func browserVoice(dialog audioDialogRunner) bool {
+	voice := dialog.VoiceSession()
+	return voice != nil && voice.Route() == agent.RealtimeAudioRouteWeb
+}
+
+// runClassicConversation runs one continuous Classic voice session. Without
+// voice control it always uses the device. With it, a browser waiting to
+// start wins, and requested names the route the activation asked for: the
+// device for a wake word, or "" for a browser start alone, which opens
+// nothing once the browser has withdrawn.
+func runClassicConversation(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, voice classicVoiceControl, sigChan chan os.Signal, events chan voiceEvent, requested agent.RealtimeAudioRoute, reload <-chan struct{}) bool {
+	if voice == nil {
+		if requested != agent.RealtimeAudioRouteDevice {
+			return false
+		}
+		return runVoiceSession(cfg, dialog, runtime, sigChan, events)
+	}
+	session := voice.ClaimRealtimeVoiceSession(cfg, requested)
+	if session == nil {
+		logging.Infof("agent", "session", "Voice start was withdrawn before the session began; staying in standby")
+		return false
+	}
+	if session.Route() == agent.RealtimeAudioRouteWeb {
+		logging.Infof("agent", "session", "Browser voice start, opening voice session with browser audio...")
+		// A wakeup queued before the browser started belongs to no session;
+		// left queued it would end this one as soon as it starts listening.
+		drainWakeupsWhileListening(events)
+	}
+	// A configuration reload ends the conversation instead of waiting for
+	// it: a browser conversation has no listen timeout.
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-reload:
+			session.RequestStop()
+		case <-finished:
+		}
+	}()
+	dialog.SetVoiceSession(session)
+	session.MarkReady()
+	dialog.ReportVoiceActivity(streamcontract.EventSessionReady)
+	defer func() {
+		// The Web UI learns the end from its status poll; session.closed
+		// would clear its streaming drafts.
+		dialog.SetVoiceSession(nil)
+		voice.EndRealtimeVoiceSession(session, "")
+	}()
+	return runVoiceSession(cfg, dialog, runtime, sigChan, events)
 }
 
 func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
@@ -781,7 +892,7 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 			nextTurn = nil
 			playReadyCue = false
 		} else {
-			if maxTurns > 0 && turns >= maxTurns {
+			if maxTurns > 0 && turns >= maxTurns && !browserVoice(dialog) {
 				logging.Infof("agent", "session", "max turns reached (%d), closing voice session", maxTurns)
 				return false
 			}
@@ -789,6 +900,9 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 			timeout := cfg.VoiceFollowupTimeoutOrDefault()
 			if firstTurn {
 				timeout = cfg.VoiceFirstTurnTimeoutOrDefault()
+			}
+			if browserVoice(dialog) {
+				timeout = 0
 			}
 
 			var exit bool
@@ -849,6 +963,10 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 		result := runVoiceTurnWithInputContext(cfg, dialog, runtime, input, utterance, sigChan, events, turnContext, interruptOnWakeup)
 		if result.exit {
 			return true
+		}
+		if result.ended {
+			logging.Infof("agent", "session", "voice session ended from the Web UI")
+			return false
 		}
 		firstTurn = false
 		if result.waitForWakeupRequested {
@@ -926,6 +1044,13 @@ func runVoiceTurnWithInputContext(cfg agent.Config, dialog audioDialogRunner, ru
 	// speech so speaker echo does not count but near-field talk still can.
 	thinkBargeInArmedAt := time.Now().Add(1200 * time.Millisecond)
 	ttsWasActive := dialog.TTSOutputActive()
+	stopRequested := dialog.VoiceSession().StopRequested()
+	muteChanged := dialog.VoiceSession().MuteChanged()
+	dialog.ReportVoiceActivity(streamcontract.EventTurnCommitted)
+	// A discontinuity returns the orb to idle. response.terminal would also
+	// clear every streaming draft in the Web UI, including the reply to a
+	// message typed during this turn.
+	defer dialog.ReportVoiceActivity(streamcontract.EventStreamDiscontinuity)
 
 thinking:
 	for {
@@ -934,6 +1059,18 @@ thinking:
 			cancel()
 			_ = waitForTurnCancellation(dialog, resultCh)
 			return voiceTurnResult{exit: true}
+		case <-stopRequested:
+			dialog.InterruptOutput()
+			cancel()
+			_ = waitForTurnCancellation(dialog, resultCh)
+			return voiceTurnResult{ended: true}
+		case <-muteChanged:
+			// Later speech plays as silence; stop what is already queued.
+			// The turn itself keeps running.
+			if dialog.VoiceSession().SpeakerMuted() {
+				logging.Infof("agent", "session", "speaker muted, dropping queued reply audio")
+				dialog.InterruptOutput()
+			}
 		case <-events:
 			if interruptOnWakeup {
 				logging.Infof("agent", "interrupt", "MCU wakeup during active turn, immediately canceling")
@@ -970,6 +1107,7 @@ thinking:
 				thinkPendingByte = false
 				thinkSpeechFrames = 0
 				if ttsActive {
+					dialog.ReportVoiceActivity(streamcontract.EventResponseStarted)
 					// Brief ignore for TTS start transient; keep short so the
 					// user can force-stop playback almost immediately.
 					thinkBargeInArmedAt = time.Now().Add(250 * time.Millisecond)
@@ -1018,6 +1156,7 @@ thinking:
 	dialog.ResetVAD()
 	speakCtx, cancelSpeak := context.WithCancel(context.Background())
 	speakCh := make(chan error, 1)
+	dialog.ReportVoiceActivity(streamcontract.EventResponseStarted)
 	go func() {
 		speakCh <- dialog.SpeakFinal(speakCtx, prepared.Text, nil)
 	}()
@@ -1036,6 +1175,21 @@ speaking:
 			cancelSpeak()
 			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, waitForSpeakCancel(speakCh))
 			return voiceTurnResult{exit: true}
+		case <-stopRequested:
+			dialog.InterruptOutput()
+			cancelSpeak()
+			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, waitForSpeakCancel(speakCh))
+			return voiceTurnResult{ended: true}
+		case <-muteChanged:
+			if dialog.VoiceSession().SpeakerMuted() {
+				// The reply was not heard; report it undelivered and move on
+				// to listening, as after a finished reply.
+				logging.Infof("agent", "session", "speaker muted, dropping queued reply audio")
+				dialog.InterruptOutput()
+				cancelSpeak()
+				runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, waitForSpeakCancel(speakCh))
+				break speaking
+			}
 		case <-events:
 			if interruptOnWakeup {
 				logging.Infof("agent", "interrupt", "wakeup received during speaking, stopping playback")
@@ -1374,6 +1528,7 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 	nextVADLogAt := startedAt.Add(time.Second)
 	hasVADState := false
 	speechDetected := false
+	stopRequested := dialog.VoiceSession().StopRequested()
 
 	for {
 		select {
@@ -1381,6 +1536,9 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 			return nil, true
 		case <-events:
 			return endListenOnWakeup(dialog, vadPending, captured, speechDetected)
+		case <-stopRequested:
+			logging.Infof("agent", "listen", "voice session ended from the Web UI")
+			return nil, false
 		default:
 		}
 
@@ -1393,9 +1551,8 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 					logging.Infof("agent", "listen", "Flushing %d samples after VAD timeout", len(utterance))
 					return utterance, false
 				}
-				const maxTimeoutSamples = 16000 * 6 // 6s @ 16kHz
-				if len(captured) > maxTimeoutSamples {
-					captured = captured[len(captured)-maxTimeoutSamples:]
+				if len(captured) > maxCapturedFallbackSamples {
+					captured = captured[len(captured)-maxCapturedFallbackSamples:]
 				}
 				logging.Infof("agent", "listen", "Returning %d buffered samples after VAD timeout", len(captured))
 				return captured, false
@@ -1417,6 +1574,11 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 			return nil, true
 		case <-events:
 			return endListenOnWakeup(dialog, vadPending, captured, speechDetected)
+		case <-stopRequested:
+			// End arrived while the read was waiting; this chunk must not
+			// complete an utterance and start a turn.
+			logging.Infof("agent", "listen", "voice session ended from the Web UI")
+			return nil, false
 		default:
 		}
 
@@ -1437,6 +1599,12 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 		agent.AppendPCM16Samples(chunk.PCM, &vadPending, &hasPendingByte, &pendingByte)
 		if len(vadPending) > pendingStart {
 			captured = append(captured, vadPending[pendingStart:]...)
+			// Without a listen timeout (a browser session) a quiet session
+			// would grow this fallback buffer without limit. Only the newest
+			// window is ever used, so keep just that.
+			if len(captured) > 2*maxCapturedFallbackSamples {
+				captured = append(captured[:0], captured[len(captured)-maxCapturedFallbackSamples:]...)
+			}
 		}
 
 		consumed := 0
@@ -1452,6 +1620,7 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 				pendingByte = 0
 				break
 			}
+			wasSpeech := speechDetected
 			if dialog.VADSpeaking() {
 				speechDetected = true
 			}
@@ -1465,6 +1634,9 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 					logging.Debugf("agent", "daemon", "%s", formatVADDebugLog(state))
 					nextVADLogAt = time.Now().Add(time.Second)
 				}
+			}
+			if speechDetected && !wasSpeech {
+				dialog.ReportVoiceActivity(streamcontract.EventSpeechStarted)
 			}
 			if utterance != nil {
 				select {

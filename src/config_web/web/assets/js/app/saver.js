@@ -164,6 +164,11 @@ export function createSaver(context, options) {
       return 'saved';
     } catch (error) {
       if (sequence.get(key) !== current) return 'superseded';
+      if (context.localAgent && error.persisted) {
+        saved(error);
+        toast(msg('local.saved_unapplied', '已保存到本机，尚未应用到 Agent'));
+        return 'saved';
+      }
       toastError(error);
       return 'failed';
     }

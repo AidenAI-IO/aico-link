@@ -235,17 +235,19 @@ func (p *HTTPProvider) sendRequest(ctx context.Context, req MNKRequest) error {
 
 // MNKRequest represents an MNK operation request
 type MNKRequest struct {
-	KeyboardText *KeyboardTextParams `json:"keyboard_text,omitempty"`
-	Operation    string              `json:"operation"`
-	Click        *ClickParams        `json:"click,omitempty"`
-	DoubleClick  *DoubleClickParams  `json:"double_click,omitempty"`
-	Swipe        *SwipeParams        `json:"swipe,omitempty"`
-	DragStart    *DragPointParams    `json:"drag_start,omitempty"`
-	DragRelease  *DragPointParams    `json:"drag_release,omitempty"`
-	Keypress     *KeypressParams     `json:"keypress,omitempty"`
-	Move         *MoveParams         `json:"move,omitempty"`
-	Scroll       *ScrollParams       `json:"scroll,omitempty"`
-	TouchActions []TouchAction       `json:"touch_actions,omitempty"`
+	SystemAction *SystemActionParams  `json:"system_action,omitempty"`
+	InsertText   *TextInsertionParams `json:"insert_text,omitempty"`
+	KeyboardText *KeyboardTextParams  `json:"keyboard_text,omitempty"`
+	Operation    string               `json:"operation"`
+	Click        *ClickParams         `json:"click,omitempty"`
+	DoubleClick  *DoubleClickParams   `json:"double_click,omitempty"`
+	Swipe        *SwipeParams         `json:"swipe,omitempty"`
+	DragStart    *DragPointParams     `json:"drag_start,omitempty"`
+	DragRelease  *DragPointParams     `json:"drag_release,omitempty"`
+	Keypress     *KeypressParams      `json:"keypress,omitempty"`
+	Move         *MoveParams          `json:"move,omitempty"`
+	Scroll       *ScrollParams        `json:"scroll,omitempty"`
+	TouchActions []TouchAction        `json:"touch_actions,omitempty"`
 }
 
 // ClickParams parameters for click operation
@@ -278,6 +280,15 @@ type DragPointParams struct {
 	X      float64 `json:"x"`
 	Y      float64 `json:"y"`
 	Button string  `json:"button,omitempty"`
+}
+
+type TextInsertionParams struct {
+	Text    string `json:"text"`
+	Replace bool   `json:"replace,omitempty"`
+}
+
+type SystemActionParams struct {
+	Action string `json:"action"`
 }
 
 type KeyboardTextParams struct {

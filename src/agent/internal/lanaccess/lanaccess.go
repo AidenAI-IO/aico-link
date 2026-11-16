@@ -1,14 +1,21 @@
-// Package lanaccess controls whether the board's developer services can be
-// reached from networks other than the USB link.
+// Package lanaccess guards the board's services with two independent
+// settings: the LAN access switch and the device password.
 //
-// Requests that arrive on the USB ECM link (through a socket bound to the USB
-// interface) or from the board itself are always trusted: only someone with
-// the cable, or a process already on the board, can make them. Every other
-// request, such as one from Wi-Fi, is refused until LAN access is turned on
-// over USB. Turning it on requires a device password, which becomes the
-// password of the aico login account used by the terminal and SSH. While it is
-// on, LAN clients sign in with that password to get a session token (see
-// auth.go).
+//   - The LAN access switch decides who can reach the services at all. While
+//     it is off, only the USB ECM link (a socket bound to the USB interface)
+//     and the board itself are answered; while it is on, LAN clients such as
+//     those on Wi-Fi are answered too.
+//   - The device password decides whether a client must sign in. With no
+//     password, every client that can reach the services is admitted. With
+//     one, every client except the board itself needs a session token,
+//     whether it arrives over the LAN or over USB. A LAN client signs in with
+//     the password; a USB client is paired silently, because holding the
+//     cable proves ownership (see auth.go).
+//
+// The password is also the password of the aico login account used by the
+// terminal and SSH. Without one the account is locked: nobody can log in to
+// a shell until the owner sets a password. Clearing the password returns to
+// that state and leaves the switch alone.
 package lanaccess
 
 import (
@@ -37,7 +44,7 @@ const (
 )
 
 const (
-	MinPasswordLength = 8
+	MinPasswordLength = 6
 	// bcrypt ignores everything after 72 bytes; reject longer input instead
 	// of silently truncating it.
 	MaxPasswordLength = 72
@@ -47,7 +54,6 @@ const (
 var (
 	ErrPasswordTooShort = fmt.Errorf("password must be at least %d characters", MinPasswordLength)
 	ErrPasswordTooLong  = fmt.Errorf("password must be at most %d bytes", MaxPasswordLength)
-	ErrPasswordRequired = errors.New("set a device password before turning on LAN access")
 )
 
 // State is the LAN access switch, the device password hash, and the session
@@ -61,6 +67,44 @@ type State struct {
 
 	secretMu sync.Mutex
 	mcpMu    sync.Mutex
+
+	// limiter counts wrong device passwords per client address, for sign-in
+	// and for the current-password checks of password changes alike.
+	limiterOnce sync.Once
+	limiter     *loginLimiter
+}
+
+func (s *State) passwordLimiter() *loginLimiter {
+	s.limiterOnce.Do(func() { s.limiter = newLoginLimiter() })
+	return s.limiter
+}
+
+// ErrTooManyAttempts is returned by VerifyCurrentPassword while the client is
+// locked out after repeated wrong passwords.
+type ErrTooManyAttempts struct{ RetryAfter time.Duration }
+
+func (e ErrTooManyAttempts) Error() string { return "too many wrong passwords; try again later" }
+
+// VerifyCurrentPassword checks a current password for a change that needs it,
+// with the same per-client lockout as sign-in, so a stolen session cannot
+// guess the password to replace or clear it. With no password set it accepts
+// anything.
+func (s *State) VerifyCurrentPassword(r *http.Request, password string) (bool, error) {
+	if !s.PasswordSet() {
+		return true, nil
+	}
+	limiter := s.passwordLimiter()
+	client := clientKey(r)
+	now := time.Now()
+	if wait := limiter.retryAfter(client, now); wait > 0 {
+		return false, ErrTooManyAttempts{RetryAfter: wait}
+	}
+	if !s.CheckPassword(password) {
+		limiter.fail(client, now)
+		return false, nil
+	}
+	limiter.succeed(client)
+	return true, nil
 }
 
 // NewState uses the default path for each empty argument. MCP access tokens
@@ -90,39 +134,46 @@ func (s *State) Enabled() bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-// PasswordSet reports whether a device password hash is stored.
+// PasswordSet reports whether a device password is stored, and so whether
+// clients must sign in. Only a missing or empty file means no password; a
+// file that cannot be read counts as set, so a damaged userdata fails closed.
 func (s *State) PasswordSet() bool {
 	data, err := os.ReadFile(s.PasswordPath)
-	return err == nil && strings.TrimSpace(string(data)) != ""
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	return err != nil || strings.TrimSpace(string(data)) != ""
 }
 
-// SetEnabled turns LAN access on or off. Turning it on requires a stored
-// device password. Turning it off keeps the password but signs every LAN
-// client out. Turning it on revokes sessions again before the switch flips,
-// so a token that survived a failed revocation while off can never sign in
-// once it is back on; if that revocation fails, LAN access stays off.
+// SetEnabled turns LAN access on or off. It does not touch the password or
+// sessions: the switch only decides whether LAN clients are answered.
 func (s *State) SetEnabled(enabled bool) error {
 	if !enabled {
 		if err := os.Remove(s.EnabledPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		return s.revokeSessions()
-	}
-	if !s.PasswordSet() {
-		return ErrPasswordRequired
-	}
-	if !s.Enabled() {
-		if err := s.revokeSessions(); err != nil {
-			return err
-		}
+		return nil
 	}
 	return writeFileAtomic(s.EnabledPath, []byte("1\n"))
 }
 
+// ClearPassword removes the device password, as if none had ever been set,
+// and revokes every session. The LAN access switch and MCP access tokens are
+// separate settings and are kept.
+func (s *State) ClearPassword() error {
+	if err := s.revokeSessions(); err != nil {
+		return err
+	}
+	if err := os.Remove(s.PasswordPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // SetPassword stores the bcrypt hash of a new device password and signs
-// every LAN client out. Sessions are revoked before the password changes, so
-// a failure can never leave the new password in place with sessions signed
-// under the old one.
+// every client out, over the LAN and over USB alike. Sessions are revoked
+// before the password changes, so a failure can never leave the new password
+// in place with sessions signed under the old one.
 func (s *State) SetPassword(password string) error {
 	hash, err := HashPassword(password)
 	if err != nil {
@@ -187,59 +238,64 @@ func writeFileAtomic(path string, data []byte) error {
 	return os.Rename(tmpName, path)
 }
 
-type trustedConnContextKey struct{}
+type usbConnContextKey struct{}
 
-type authenticatedContextKey struct{}
+type admittedContextKey struct{}
 
-// IsAuthenticated reports whether Guard admitted r as a LAN client that
-// signed in with the device password. USB and on-board requests are trusted
-// instead and report false here; see IsTrusted.
-func IsAuthenticated(r *http.Request) bool {
-	authenticated, _ := r.Context().Value(authenticatedContextKey{}).(bool)
-	return authenticated
+// IsAdmitted reports whether Guard admitted r as a client: it carried a valid
+// session, or no device password is set. Requests from the board itself are
+// served without this mark; see IsLocal.
+func IsAdmitted(r *http.Request) bool {
+	admitted, _ := r.Context().Value(admittedContextKey{}).(bool)
+	return admitted
 }
 
-type trustedListener struct{ net.Listener }
+type usbListener struct{ net.Listener }
 
-type trustedConn struct{ net.Conn }
+type usbConn struct{ net.Conn }
 
-func (l trustedListener) Accept() (net.Conn, error) {
+func (l usbListener) Accept() (net.Conn, error) {
 	conn, err := l.Listener.Accept()
 	if err != nil {
 		return nil, err
 	}
-	return trustedConn{conn}, nil
+	return usbConn{conn}, nil
 }
 
-// TrustListener wraps a listener whose connections can only come from the USB
+// USBListener wraps a listener whose connections can only come from the USB
 // link, such as one bound with SO_BINDTODEVICE.
-func TrustListener(listener net.Listener) net.Listener { return trustedListener{listener} }
+func USBListener(listener net.Listener) net.Listener { return usbListener{listener} }
 
 // ConnContext is an http.Server ConnContext hook that records whether the
-// connection came from a TrustListener.
+// connection came from a USBListener.
 func ConnContext(ctx context.Context, conn net.Conn) context.Context {
-	// An HTTPS server hands over its TLS wrapper; the trust marker is on the
+	// An HTTPS server hands over its TLS wrapper; the USB marker is on the
 	// connection underneath.
 	if tlsConn, ok := conn.(*tls.Conn); ok {
 		conn = tlsConn.NetConn()
 	}
-	_, trusted := conn.(trustedConn)
-	return WithTrusted(ctx, trusted)
+	_, usb := conn.(usbConn)
+	return WithUSB(ctx, usb)
 }
 
-// WithTrusted records the ingress trust decision on a context.
-func WithTrusted(ctx context.Context, trusted bool) context.Context {
-	return context.WithValue(ctx, trustedConnContextKey{}, trusted)
+// WithUSB records whether a connection arrived on the USB link.
+func WithUSB(ctx context.Context, usb bool) context.Context {
+	return context.WithValue(ctx, usbConnContextKey{}, usb)
 }
 
-// IsTrusted reports whether a request came through a trusted listener or from
-// the board itself. Linux drops packets that arrive on a real interface with
-// a loopback or local source address, so neither can be forged from the
-// network.
-func IsTrusted(r *http.Request) bool {
-	if trusted, _ := r.Context().Value(trustedConnContextKey{}).(bool); trusted {
-		return true
-	}
+// IsUSB reports whether a request arrived on the USB link. Such a request
+// always reaches the services and may pair for a session, but it still needs
+// that session while a device password is set.
+func IsUSB(r *http.Request) bool {
+	usb, _ := r.Context().Value(usbConnContextKey{}).(bool)
+	return usb
+}
+
+// IsLocal reports whether a request came from the board itself, which is
+// always served without credentials. Linux drops packets that arrive on a
+// real interface with a loopback or local source address, so neither can be
+// forged from the network.
+func IsLocal(r *http.Request) bool {
 	remote, ok := addrIP(r.RemoteAddr)
 	if !ok {
 		return false
@@ -275,47 +331,49 @@ const disabledPage = `<!doctype html><html><head><meta charset="utf-8"><meta nam
 	`<p>Connect over USB and turn it on in Settings &gt; Advanced &gt; LAN access.</p>` +
 	`<p>请通过 USB 连接设备，在 设置 &gt; 高级设置 &gt; 局域网访问 中开启。</p></body></html>`
 
-// Guard admits requests from the USB link and the board itself. Other
-// requests are refused while LAN access is off; while it is on they need a
-// session token from the login endpoints, which Guard serves itself. MCP is
-// the exception: /mcp needs an MCP access token from every client and nothing
-// else, so it works over Wi-Fi with LAN access off (see serveMCP). Browser requests made on behalf of another site are refused
-// first, wherever they come from (see CrossSiteReason).
+// Guard applies the two settings to every request. Browser requests made on
+// behalf of another site are refused first, wherever they come from (see
+// CrossSiteReason). Then:
+//
+//   - /mcp needs an MCP access token from every client and nothing else, so
+//     it works over Wi-Fi with LAN access off (see serveMCP).
+//   - LAN requests are refused while LAN access is off.
+//   - The board itself is served without credentials.
+//   - Everyone else is admitted when no device password is set, and needs a
+//     session token when one is. Guard serves the login and pairing
+//     endpoints itself.
 func Guard(state *State, next http.Handler) http.Handler {
-	auth := &authHandler{state: state, limiter: newLoginLimiter(), now: time.Now}
+	auth := &authHandler{state: state, limiter: state.passwordLimiter(), now: time.Now}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if reason := CrossSiteReason(r); reason != "" {
 			rejectCrossSite(w, reason)
 			return
 		}
-		trusted := IsTrusted(r)
-		enabled := state.Enabled()
 		if r.URL.Path == MCPPath {
 			serveMCP(state, w, r, next)
 			return
 		}
-		switch {
-		case isAuthPath(r.URL.Path) && (trusted || enabled):
-			auth.serveLogin(w, r)
-			return
-		case trusted:
-			next.ServeHTTP(w, r)
-			return
-		case enabled:
-			if sessionValid(state, w, r, auth.now()) {
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authenticatedContextKey{}, true)))
-				return
-			}
-			rejectUnauthenticated(w, r)
+		local := IsLocal(r)
+		if !local && !IsUSB(r) && !state.Enabled() {
+			rejectLANDisabled(w, r)
 			return
 		}
-		rejectLANDisabled(w, r)
+		switch {
+		case isAuthPath(r.URL.Path):
+			auth.serveLogin(w, r)
+		case local:
+			next.ServeHTTP(w, r)
+		case !state.PasswordSet() || sessionValid(state, w, r, auth.now()):
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), admittedContextKey{}, true)))
+		default:
+			rejectUnauthenticated(w, r)
+		}
 	})
 }
 
 // serveMCP admits /mcp requests that carry an MCP access token, from any
-// client, whether LAN access is on or off. Creating a token, which needs USB
-// or a signed-in session, is the user's consent to MCP; the token reaches
+// client, whether LAN access is on or off. Creating a token, which needs an
+// admitted client, is the user's consent to MCP; the token reaches
 // nothing but /mcp. A session token does not count, and neither does arriving
 // over USB or from the board.
 func serveMCP(state *State, w http.ResponseWriter, r *http.Request, next http.Handler) {

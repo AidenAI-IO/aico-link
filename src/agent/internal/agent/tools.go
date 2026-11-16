@@ -216,6 +216,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		confirmTargets: newTapSequenceConfirmer(decider),
 	}
 	quickAction := &QuickActionTool{keyboard: keyboardTap, touch: touchGesture, iosKeyboardIsolation: iosKeyboardIsolation, decider: decider, screenshot: screenshot}
+	quickAction.systemActions, _ = mnkProvider.(mnk.SystemActionProvider)
 	textInputHW := &textInputHardwareDeps{
 		pointerMode:  hidCfg.PointerModeOrDefault(),
 		touchGesture: touchGesture,
@@ -224,6 +225,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		quickAction:  quickAction,
 		screenshot:   screenshot,
 	}
+	textInputHW.textInsertion, _ = mnkProvider.(mnk.TextInsertionProvider)
 
 	// A touchscreen has no pointer; an absolute mouse leaves one on screen.
 	var pointerTrack *pointerTracker
@@ -248,6 +250,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		"web_search":  NewWebSearchTool(searchCfg, proxyCfg),
 		"wikipedia":   NewWikipediaTool(proxyCfg),
 		"web_scraper": NewWebScraperTool(proxyCfg),
+		toolReadImage: NewReadImageTool(),
 	}
 	if toolOptions.waitForWakeupController != nil {
 		tools[toolWaitForWakeup] = NewWaitForWakeupTool(toolOptions.waitForWakeupController)

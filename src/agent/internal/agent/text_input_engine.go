@@ -15,13 +15,14 @@ import (
 )
 
 type textInputHardwareDeps struct {
-	pointerMode  string
-	deviceTypeFn func() string
-	touchGesture langtools.Tool
-	keyboardTap  langtools.Tool
-	keyboardText langtools.Tool
-	quickAction  langtools.Tool
-	screenshot   langtools.Tool
+	textInsertion mnk.TextInsertionProvider
+	pointerMode   string
+	deviceTypeFn  func() string
+	touchGesture  langtools.Tool
+	keyboardTap   langtools.Tool
+	keyboardText  langtools.Tool
+	quickAction   langtools.Tool
+	screenshot    langtools.Tool
 }
 
 func normalizeTextInputPlatform(platform string) string {
@@ -68,14 +69,16 @@ type textInputEngine struct {
 }
 
 type textInputArgs struct {
-	Text             string         `json:"text"`
-	Focus            focusPointArgs `json:"focus"`
-	CurrentIMEPart   string         `json:"-"`
-	VerifyTextSuffix bool           `json:"-"`
-	ReplaceField     bool           `json:"-"`
+	Text             string            `json:"text"`
+	Focus            focusPointArgs    `json:"focus"`
+	CurrentIMEPart   string            `json:"-"`
+	VerifyTextSuffix bool              `json:"-"`
+	ReplaceField     bool              `json:"-"`
+	InsertionBefore  *screenshotResult `json:"-"`
 }
 
 type textInputResult struct {
+	TextMayBeInserted bool   `json:"-"`
 	OK                bool   `json:"ok"`
 	Committed         bool   `json:"committed"`
 	FieldText         string `json:"field_text,omitempty"`
@@ -652,6 +655,7 @@ func (e *textInputEngine) analyzeScreen(ctx context.Context, platform string, ar
 		Platform:        platform,
 		TargetText:      args.Text,
 		MatchTextSuffix: args.VerifyTextSuffix,
+		InsertionBefore: args.InsertionBefore,
 		Focus:           args.Focus,
 		Segments:        segments,
 	}

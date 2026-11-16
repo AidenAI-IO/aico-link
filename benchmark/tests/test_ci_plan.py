@@ -376,11 +376,10 @@ def test_ci_rejects_a_run_without_generated_reports(tmp_path: Path) -> None:
     ]
 
 
-@pytest.mark.parametrize("error_status,expected_exit", [("judge_error", 1), ("timeout", 0)])
-def test_ci_flags_unscored_judge_errors_but_accepts_task_timeout(
+@pytest.mark.parametrize("error_status", ["judge_error", "timeout"])
+def test_ci_allows_complete_run_with_judge_error_or_timeout(
     tmp_path: Path,
     error_status: str,
-    expected_exit: int,
 ) -> None:
     manifest = tmp_path / "manifest.json"
     totals = {
@@ -407,8 +406,12 @@ def test_ci_flags_unscored_judge_errors_but_accepts_task_timeout(
     )
     _write_generated_reports(tmp_path)
 
-    assert _effective_exit_code(1, manifest) == expected_exit
-    assert _incomplete_run_reasons(1, manifest) == (["judge_errors=1"] if expected_exit else [])
+    assert _effective_exit_code(1, manifest) == 0
+    assert _incomplete_run_reasons(1, manifest) == []
+
+    (tmp_path / "report.html").unlink()
+    assert _effective_exit_code(1, manifest) == 1
+    assert _incomplete_run_reasons(1, manifest) == ["report_missing"]
 
 
 def test_ci_flags_invalid_start_state_without_conflating_agent_failures(tmp_path: Path) -> None:

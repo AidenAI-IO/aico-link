@@ -703,7 +703,7 @@ func syncBackupRoots(userdata, sd string, includeSD bool) error {
 		if err != nil {
 			return err
 		}
-		err = unix.Syncfs(fd)
+		err = syncFilesystem(fd)
 		_ = unix.Close(fd)
 		if err != nil {
 			return err

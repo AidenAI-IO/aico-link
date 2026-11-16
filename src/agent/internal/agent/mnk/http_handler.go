@@ -29,6 +29,31 @@ func NewHTTPHandler(provider Provider, textProvider ...TextProvider) *HTTPHandle
 // ServeHTTP handles HTTP requests for MNK operations
 // POST /api/providers/mnk
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		supported := false
+		if provider, ok := h.provider.(TextInsertionProvider); ok {
+			var err error
+			supported, err = provider.SupportsTextInsertion(r.Context())
+			if err != nil {
+				h.writeError(w, http.StatusBadGateway, "text insertion capability unavailable")
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		caps := map[string]any{"insert_text": supported}
+		if provider, ok := h.provider.(SystemActionProvider); ok {
+			home, err := provider.SupportsSystemAction(r.Context(), "home")
+			if err != nil {
+				h.writeError(w, http.StatusBadGateway, "system action capability unavailable")
+				return
+			}
+			if home {
+				caps["system_actions"] = []string{"home"}
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"capabilities": caps})
+		return
+	}
 	// Only accept POST requests
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -74,6 +99,42 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		execErr = h.handleKeypress(reqCtx, req.Keypress)
 	case "keyboard_text":
 		execErr = h.handleKeyboardText(reqCtx, req.KeyboardText)
+	case "insert_text":
+		if req.InsertText == nil {
+			execErr = InvalidArguments("insert_text params required")
+		} else if execErr = ValidateInsertionText(req.InsertText.Text); execErr == nil {
+			provider, ok := h.provider.(TextInsertionProvider)
+			if !ok {
+				execErr = ModuleUnavailable("native text insertion is not supported by this provider")
+			} else {
+				var supported bool
+				supported, execErr = provider.SupportsTextInsertion(reqCtx)
+				if execErr == nil && !supported {
+					execErr = ModuleUnavailable("native text insertion is not supported by this provider")
+				}
+				if execErr == nil {
+					execErr = provider.InsertText(reqCtx, req.InsertText.Text, req.InsertText.Replace)
+				}
+			}
+		}
+	case "system_action":
+		if req.SystemAction == nil {
+			execErr = InvalidArguments("system_action params required")
+		} else if execErr = ValidateSystemAction(req.SystemAction.Action); execErr == nil {
+			provider, ok := h.provider.(SystemActionProvider)
+			if !ok {
+				execErr = ModuleUnavailable("native system actions are not supported by this provider")
+			} else {
+				var supported bool
+				supported, execErr = provider.SupportsSystemAction(reqCtx, req.SystemAction.Action)
+				if execErr == nil && !supported {
+					execErr = ModuleUnavailable("native system action is not supported by this provider")
+				}
+				if execErr == nil {
+					execErr = provider.SystemAction(reqCtx, req.SystemAction.Action)
+				}
+			}
+		}
 	case "move":
 		execErr = h.handleMove(reqCtx, req.Move)
 	case "scroll":

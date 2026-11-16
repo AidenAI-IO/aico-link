@@ -247,12 +247,11 @@ export async function mcpPage(context) {
       action: 'revoke-mcp-token',
       onPress: busy ? undefined : () => revoke(token),
     })));
-    const full = tokens.length >= (state.max_tokens || 20);
     rows.push(row({
       label: msg('mcp.create', '创建令牌'),
       labelTone: 'accent',
       action: 'create-mcp-token',
-      onPress: busy ? undefined : () => (full ? toast(msg('mcp.limit', '令牌数量已达上限，请先撤销一个')) : askName()),
+      onPress: busy ? undefined : askName,
     }));
     return group({
       rows,

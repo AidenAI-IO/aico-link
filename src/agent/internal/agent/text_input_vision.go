@@ -17,6 +17,7 @@ type textInputScreenAnalysisRequest struct {
 	Platform               string
 	TargetText             string
 	MatchTextSuffix        bool
+	InsertionBefore        *screenshotResult
 	CandidateTargetText    string
 	CandidateCommittedText string
 	Focus                  focusPointArgs
@@ -89,13 +90,22 @@ func newDecidingTextInputVision(models model.Model, decider *decisionAdvisor) te
 }
 
 func (v *llmTextInputVision) AnalyzeScreen(ctx context.Context, screenshot screenshotResult, req textInputScreenAnalysisRequest) (textInputScreenAnalysis, error) {
+	if req.InsertionBefore != nil {
+		// The decision model's single-frame question cannot verify a change at
+		// the original caret/selection. Compare both frames on the main model.
+		return v.analyzeScreenLLM(ctx, screenshot, req)
+	}
 	analysis, _, err := decide(ctx, v.decider, v.screenAnalysisDecision(screenshot, req))
 	return analysis, err
 }
 
 func (v *llmTextInputVision) analyzeScreenLLM(ctx context.Context, screenshot screenshotResult, req textInputScreenAnalysisRequest) (textInputScreenAnalysis, error) {
 	prompt := buildTextInputAnalysisPrompt(req)
-	raw, err := v.visionDecisionJSON(ctx, "screen_analysis", prompt, []string{"observed_mode", "target_matched", "composition_pending"}, screenshot)
+	frames := []screenshotResult{screenshot}
+	if req.InsertionBefore != nil {
+		frames = []screenshotResult{*req.InsertionBefore, screenshot}
+	}
+	raw, err := v.visionDecisionJSON(ctx, "screen_analysis", prompt, []string{"observed_mode", "target_matched", "composition_pending"}, frames...)
 	if err != nil {
 		return textInputScreenAnalysis{}, err
 	}
@@ -447,6 +457,10 @@ func buildTextInputAnalysisPrompt(req textInputScreenAnalysisRequest) string {
 	if req.MatchTextSuffix {
 		verificationScope = "committed-suffix"
 		targetMatchRule = "target_matched: judge only whether the committed text at the END of the focused field matches Target text exactly. Ignore any committed text before that suffix because it may have existed before this operation or been entered by earlier parts. Return false if the target suffix is missing, incomplete, reordered, or followed by extra committed text"
+	}
+	if req.InsertionBefore != nil {
+		verificationScope = "insertion-at-original-caret"
+		targetMatchRule = "target_matched: compare the two screenshots in order: BEFORE insertion, then AFTER insertion. Return true only when Target text was inserted once at the caret or replaced the selection visible in BEFORE, with the pre-existing committed prefix and suffix preserved. Existing text after the insertion is expected and does not need to end with Target text. Merely finding Target text that was already present is insufficient. Return false if the insertion point or change cannot be verified, or if text was lost, duplicated, or changed elsewhere"
 	}
 	return strings.TrimSpace(fmt.Sprintf(`Analyze this device screenshot for text-input automation.
 Platform: %q

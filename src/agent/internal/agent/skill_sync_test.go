@@ -379,3 +379,91 @@ func TestRestoreBundledSkill(t *testing.T) {
 		t.Fatalf("expected restore effective_hash to match origin_hash")
 	}
 }
+
+func TestSyncBundledSkills_SupportFiles(t *testing.T) {
+	configDir := t.TempDir()
+	bundledDir := t.TempDir()
+	userDir := filepath.Join(configDir, "skills", "alpha")
+	writeFile := func(dir, rel, content string) {
+		t.Helper()
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readUser := func(rel string) (string, bool) {
+		data, err := os.ReadFile(filepath.Join(userDir, filepath.FromSlash(rel)))
+		if os.IsNotExist(err) {
+			return "", false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data), true
+	}
+	sync := func() {
+		t.Helper()
+		if _, err := SyncBundledSkills(context.Background(), SkillSyncOptions{ConfigDir: configDir, BundledSkillsDir: bundledDir, Quiet: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeSKILL(t, bundledDir, "alpha", testSkillA)
+	bundledSkill := filepath.Join(bundledDir, "alpha")
+	writeFile(bundledSkill, "references/guide.md", "guide v1")
+	writeFile(bundledSkill, "scripts/tool.py", "tool v1")
+	writeFile(bundledSkill, "references/dropped.md", "dropped v1")
+	writeFile(bundledSkill, "references/edited.md", "edited v1")
+	writeFile(bundledSkill, "references/deleted.md", "deleted v1")
+	sync()
+	for rel, want := range map[string]string{"references/guide.md": "guide v1", "scripts/tool.py": "tool v1", "references/dropped.md": "dropped v1"} {
+		if got, _ := readUser(rel); got != want {
+			t.Fatalf("first sync %s = %q, want %q", rel, got, want)
+		}
+	}
+
+	writeFile(userDir, "references/edited.md", "user edit")
+	if err := os.Remove(filepath.Join(userDir, "references", "deleted.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(bundledSkill, "references/guide.md", "guide v2")
+	writeFile(bundledSkill, "references/edited.md", "edited v2")
+	writeFile(bundledSkill, "references/deleted.md", "deleted v2")
+	writeFile(bundledSkill, "assets/new.txt", "new v1")
+	if err := os.Remove(filepath.Join(bundledSkill, "references", "dropped.md")); err != nil {
+		t.Fatal(err)
+	}
+	sync()
+
+	cases := []struct {
+		rel    string
+		want   string
+		exists bool
+	}{
+		{"references/guide.md", "guide v2", true},
+		{"scripts/tool.py", "tool v1", true},
+		{"assets/new.txt", "new v1", true},
+		{"references/edited.md", "user edit", true},
+		{"references/deleted.md", "", false},
+		{"references/dropped.md", "", false},
+	}
+	for _, tc := range cases {
+		got, exists := readUser(tc.rel)
+		if exists != tc.exists || got != tc.want {
+			t.Fatalf("second sync %s = %q (exists=%t), want %q (exists=%t)", tc.rel, got, exists, tc.want, tc.exists)
+		}
+	}
+
+	if err := RestoreBundledSkill(configDir, bundledDir, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readUser("references/edited.md"); got != "edited v2" {
+		t.Fatalf("restore edited.md = %q, want bundled copy", got)
+	}
+	if got, _ := readUser("references/deleted.md"); got != "deleted v2" {
+		t.Fatalf("restore deleted.md = %q, want bundled copy", got)
+	}
+}

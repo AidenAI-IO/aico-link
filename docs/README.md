@@ -11,9 +11,12 @@ AI Agent that runs on it. The official website is [aico.link](https://aico.link)
 
 ## Start Here
 
+- [Local Agent with a Real Phone](01-getting-started/local-agent-real-phone.md):
+  run the Agent directly on macOS/Linux with Android ADB, or on a Mac with a
+  real iPhone through iPhone Mirroring. Start here for interactive phone experiments.
 - [Try Aico on PC](01-getting-started/try-aico-on-pc.md) with Config Web,
   Agent Web, and optional environment-bridge control without a development board.
-- Follow the [Newcomer Quickstart](01-getting-started/quickstart.md) for a physical device.
+- Follow the [Newcomer Quickstart](01-getting-started/quickstart.md) for an Aico Link development board.
 - Review [Hardware & Wiring](01-getting-started/hardware.md) before powering a self-assembled device.
 - Set up the [Build Environment](01-getting-started/build.md), then [deploy to the device](01-getting-started/deployment.md).
 - Use [Troubleshooting](07-operations/troubleshooting.md) when a service or peripheral is not working as expected.

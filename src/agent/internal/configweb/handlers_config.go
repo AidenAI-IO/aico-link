@@ -29,6 +29,10 @@ func (s *Server) handleConfigTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	section := strings.TrimSpace(request.Section)
+	if s.options.LocalAgent && section != "model" && section != "decision" {
+		writeJSONError(w, http.StatusBadRequest, "only model tests are available for a local Agent")
+		return
+	}
 	if section == "" {
 		writeJSONError(w, http.StatusBadRequest, "missing 'section' field")
 		return
@@ -311,6 +315,9 @@ func validateHTTPURL(value string) (string, error) {
 }
 
 func (s *Server) agentCommandEnvironment() ([]string, error) {
+	if s.options.LocalAgent {
+		return os.Environ(), nil
+	}
 	data, err := readFileLimited(s.options.SystemEnvPath, maxSystemEnvSize)
 	if err != nil {
 		if os.IsNotExist(err) {

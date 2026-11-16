@@ -9,7 +9,7 @@
 
 import {connectedSsid, storageStatus, voiceMode} from './data.js';
 import {shortVersion} from './ota-progress.js';
-import {PRIMARY_ITEMS, SECONDARY_ITEMS} from './nav-items.js';
+import {LOCAL_ITEMS, PRIMARY_ITEMS, SECONDARY_ITEMS} from './nav-items.js';
 import {group, row, screen} from '../ui/list.js';
 import {msg} from '../ui/text.js';
 
@@ -69,8 +69,9 @@ function entryRow(item, snapshot, navigate, currentPath) {
  * @param {string} [currentPath] - path used to highlight the active entry.
  * @returns {Node}
  */
-export function settingsList(snapshot, navigate, currentPath = '') {
+export function settingsList(snapshot, navigate, currentPath = '', localAgent = false) {
   const build = item => entryRow(item, snapshot, navigate, currentPath);
+  if (localAgent) return screen([group({rows: LOCAL_ITEMS.map(build)})]);
   return screen([
     group({rows: PRIMARY_ITEMS.map(build)}),
     group({rows: SECONDARY_ITEMS.map(build)}),

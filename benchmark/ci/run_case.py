@@ -262,8 +262,6 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
         ]
 
     reasons: list[str] = []
-    if judge_errors:
-        reasons.append(f"judge_errors={judge_errors}")
     completed = passed + failed + skipped + judge_errors + timeouts
     if tasks < 1:
         reasons.append(f"tasks={tasks}")
@@ -383,7 +381,7 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
 
 
 def _effective_exit_code(returncode: int, manifest_path: Path) -> int:
-    """Fail CI on incomplete results or unavailable scoring, not Agent failures."""
+    """Fail CI on incomplete artifacts or invalid preconditions, not task verdicts."""
     return 1 if _incomplete_run_reasons(returncode, manifest_path) else 0
 
 

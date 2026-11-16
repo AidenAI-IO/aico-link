@@ -77,6 +77,7 @@ test('resources render actual utilization, rates, totals and unavailable metrics
     h.context.renderResources(sample({sampled_at_ms: 3000, cpu: {total: 300, idle: 100},
         wifi: [{name: 'wlan0', index: 3, ips: ['192.168.1.12'], rx_bytes: 5120, tx_bytes: 4096}]}));
     assert.equal(h.text('CPU'), '75%');
+    assert.equal(h.text('Summary'), 'CPU 75% · MEM 50%');
     assert.equal(h.text('RX'), '2.0 KiB/s');
     assert.equal(h.text('TX'), '1.0 KiB/s');
     h.context.renderResources(sample({sampled_at_ms: 4000, battery: null, cpu: null,

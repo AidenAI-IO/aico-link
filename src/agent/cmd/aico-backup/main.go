@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"strconv"
 	"strings"
@@ -82,7 +83,11 @@ func run(args []string, out, errOut io.Writer) error {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 30 * time.Second
-	c := &client{baseURL: baseURL, http: &http.Client{Transport: transport}, jsonOut: jsonFlag, verbose: errOut}
+	// The jar keeps the session cookie from pairing: the maintenance and job
+	// tokens travel as the bearer, so the board's guard reads the session
+	// from the cookie.
+	jar, _ := cookiejar.New(nil)
+	c := &client{baseURL: baseURL, http: &http.Client{Transport: transport, Jar: jar}, jsonOut: jsonFlag, verbose: errOut}
 	switch args[0] {
 	case "inspect":
 		if len(args) != 2 {
@@ -515,6 +520,14 @@ func (c *client) deleteRestoreJob(jobID string) error {
 
 func (c *client) openSession() error {
 	payload, err := c.requestWithClient(http.MethodPost, "/maintenance/sessions", map[string]any{}, "aico-backup-cli/1")
+	var apiErr *apiError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusUnauthorized && apiErr.Code == "login_required" {
+		// A device password is set. Over USB the board pairs without it.
+		if _, pairErr := c.requestWithClient(http.MethodPost, "/auth/pair", nil, "aico-backup-cli/1"); pairErr != nil {
+			return fmt.Errorf("the board needs a session and pairing failed (pairing works only over USB): %w", pairErr)
+		}
+		payload, err = c.requestWithClient(http.MethodPost, "/maintenance/sessions", map[string]any{}, "aico-backup-cli/1")
+	}
 	if err != nil {
 		return err
 	}

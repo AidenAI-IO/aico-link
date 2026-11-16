@@ -71,7 +71,7 @@ func TestWebRealtimeVoiceSessionCarriesBrowserAudio(t *testing.T) {
 		t.Fatalf("status = %+v, want a connecting web session", status)
 	}
 
-	voice := s.ClaimRealtimeVoiceSession(Config{}, false)
+	voice := s.ClaimRealtimeVoiceSession(Config{}, "")
 	if voice == nil || voice.Route() != RealtimeAudioRouteWeb {
 		t.Fatalf("claimed %+v, want the browser session", voice)
 	}
@@ -162,13 +162,13 @@ func TestWithdrawnWebRealtimeVoiceStartOpensNoSession(t *testing.T) {
 	conn.Close(websocket.StatusNormalClosure, "")
 	waitWebVoice(t, ctx, "the start to be withdrawn", func() bool { return !s.RealtimeVoicePending() })
 
-	if voice := s.ClaimRealtimeVoiceSession(Config{}, false); voice != nil {
+	if voice := s.ClaimRealtimeVoiceSession(Config{}, ""); voice != nil {
 		t.Fatalf("claimed a %s session for a withdrawn browser start", voice.Route())
 	}
 	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
 		t.Fatalf("status = %+v, want idle", status)
 	}
-	if voice := s.ClaimRealtimeVoiceSession(Config{}, true); voice == nil || voice.Route() != RealtimeAudioRouteDevice {
+	if voice := s.ClaimRealtimeVoiceSession(Config{}, RealtimeAudioRouteDevice); voice == nil || voice.Route() != RealtimeAudioRouteDevice {
 		t.Fatalf("device activation after a withdrawn browser start claimed %+v, want a device session", voice)
 	}
 }
@@ -183,7 +183,7 @@ func TestClosedWebRealtimeVoiceStartDoesNotFallBackToDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	web.shutdown("") // Disconnected; releaseWebRealtimeVoice has not run yet.
-	if voice := s.ClaimRealtimeVoiceSession(Config{}, false); voice != nil {
+	if voice := s.ClaimRealtimeVoiceSession(Config{}, ""); voice != nil {
 		t.Fatalf("claimed a %s session for a closed browser endpoint", voice.Route())
 	}
 }
@@ -194,7 +194,7 @@ func TestClosedWebRealtimeVoiceStartDoesNotFallBackToDevice(t *testing.T) {
 func TestStoppedRealtimeVoiceSessionYieldsToNewBrowserStart(t *testing.T) {
 	s := &Server{}
 	s.SetRealtimeVoiceActivation(func() {})
-	voice := s.ClaimRealtimeVoiceSession(Config{}, true)
+	voice := s.ClaimRealtimeVoiceSession(Config{}, RealtimeAudioRouteDevice)
 	if status := s.RealtimeVoiceStatus(); status.State != "connecting" || status.Route != RealtimeAudioRouteDevice {
 		t.Fatalf("status = %+v, want a connecting device session", status)
 	}
@@ -216,7 +216,7 @@ func TestStoppedRealtimeVoiceSessionYieldsToNewBrowserStart(t *testing.T) {
 	}
 	// The old session's teardown must not take the new start with it.
 	s.EndRealtimeVoiceSession(voice, "")
-	if next := s.ClaimRealtimeVoiceSession(Config{}, false); next == nil || next.Route() != RealtimeAudioRouteWeb {
+	if next := s.ClaimRealtimeVoiceSession(Config{}, ""); next == nil || next.Route() != RealtimeAudioRouteWeb {
 		t.Fatalf("claimed %+v, want the new browser session", next)
 	}
 }
@@ -229,7 +229,7 @@ func TestStalledBrowserDoesNotBlockRealtimePlayback(t *testing.T) {
 	s.SetRealtimeVoiceActivation(func() {})
 	ctx, _ := dialWebVoice(t, s) // Never read from: the browser has stalled.
 	waitWebVoice(t, ctx, "the queued start", s.RealtimeVoicePending)
-	voice := s.ClaimRealtimeVoiceSession(Config{}, false)
+	voice := s.ClaimRealtimeVoiceSession(Config{}, "")
 	if voice == nil {
 		t.Fatal("browser session was not claimed")
 	}
@@ -335,5 +335,40 @@ func TestWebRealtimePlaybackDrainWaitsForUnsentSpeech(t *testing.T) {
 		WaitForPlaybackDrain(context.Context) error
 	}).WaitForPlaybackDrain(context.Background()); err == nil {
 		t.Fatal("a drain reported speech submitted after the endpoint closed as played")
+	}
+}
+
+// A text session, opened for a typed chat request, is not voice mode: the
+// Web UI sees idle and cannot stop or mute it, and a browser voice start ends
+// it and queues instead of being refused as busy.
+func TestTextRealtimeSessionYieldsToBrowserVoice(t *testing.T) {
+	s := &Server{}
+	s.SetRealtimeVoiceActivation(func() {})
+	text := s.ClaimRealtimeVoiceSession(Config{}, RealtimeAudioRouteText)
+	if text == nil || text.Route() != RealtimeAudioRouteText {
+		t.Fatalf("claimed %+v, want a text session", text)
+	}
+	if text.Audio().Recording() != nil || text.Audio().Playback() != nil {
+		t.Fatal("a text session has an audio backend")
+	}
+	if status := s.RealtimeVoiceStatus(); status.State != "idle" {
+		t.Fatalf("status = %+v, want idle during a text session", status)
+	}
+	if s.setRealtimeVoiceMuted(boolPtr(true), nil) {
+		t.Fatal("a text session accepted a mute")
+	}
+	s.stopRealtimeVoice()
+	if text.Stopped() {
+		t.Fatal("the voice End button stopped a text session")
+	}
+
+	ctx, _ := dialWebVoice(t, s)
+	waitWebVoice(t, ctx, "the browser start to queue", s.RealtimeVoicePending)
+	if !text.Stopped() {
+		t.Fatal("a browser voice start did not end the text session")
+	}
+	s.EndRealtimeVoiceSession(text, "")
+	if next := s.ClaimRealtimeVoiceSession(Config{}, RealtimeAudioRouteText); next == nil || next.Route() != RealtimeAudioRouteWeb {
+		t.Fatalf("claimed %+v, want the browser session", next)
 	}
 }

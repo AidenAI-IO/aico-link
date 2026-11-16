@@ -13,6 +13,8 @@ type apiEndpoint int
 
 const (
 	apiUnknown apiEndpoint = iota
+	apiIPhoneMirroring
+	apiIPhoneMirroringReconnect
 	apiDeviceSnapshot
 	apiConfigGet
 	apiConfigSchema
@@ -67,6 +69,7 @@ const (
 	apiRestoreApply
 	apiLANAccessGet
 	apiLANAccessPut
+	apiPasswordClear
 	apiMCPTokensGet
 	apiMCPTokensCreate
 	apiMCPTokenRevoke
@@ -84,6 +87,8 @@ type apiRoute struct {
 }
 
 var apiRoutes = []apiRoute{
+	{apiIPhoneMirroring, routeVariant{http.MethodGet, apiPrefix + "/device/iphone-mirroring"}},
+	{apiIPhoneMirroringReconnect, routeVariant{http.MethodPost, apiPrefix + "/device/iphone-mirroring/reconnect"}},
 	{apiUSBInternetGet, routeVariant{http.MethodGet, apiPrefix + "/network/usb-internet"}},
 	{apiUSBInternetPut, routeVariant{http.MethodPut, apiPrefix + "/network/usb-internet"}},
 	{apiUSBInternetSessionPut, routeVariant{http.MethodPut, apiPrefix + "/network/usb-internet/session"}},
@@ -132,6 +137,7 @@ var apiRoutes = []apiRoute{
 	{apiRestoreJobs, routeVariant{http.MethodPost, apiPrefix + "/restore/jobs"}},
 	{apiLANAccessGet, routeVariant{http.MethodGet, apiPrefix + "/security/lan-access"}},
 	{apiLANAccessPut, routeVariant{http.MethodPut, apiPrefix + "/security/lan-access"}},
+	{apiPasswordClear, routeVariant{http.MethodDelete, apiPrefix + "/security/password"}},
 	{apiMCPTokensGet, routeVariant{http.MethodGet, apiPrefix + "/security/mcp-tokens"}},
 	{apiMCPTokensCreate, routeVariant{http.MethodPost, apiPrefix + "/security/mcp-tokens"}},
 }
@@ -218,6 +224,15 @@ func matchAPIRequest(r *http.Request) apiMatch {
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	match := matchAPIRequest(r)
+	if s.options.LocalAgent {
+		if !s.allowLocalRequest(w, r) {
+			return
+		}
+		if !localAgentEndpoint(match.endpoint) {
+			writeJSONError(w, http.StatusNotFound, "not available for a local Agent")
+			return
+		}
+	}
 	if match.endpoint == apiUnknown {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
@@ -229,6 +244,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	s.startDeferredRestartIfIdle()
 	w.Header().Set("X-Aico-API-Version", "1")
 	switch match.endpoint {
+	case apiIPhoneMirroring, apiIPhoneMirroringReconnect:
+		s.handleLocalIPhoneMirroring(w, r)
 	case apiUSBInternetGet, apiUSBInternetPut, apiUSBInternetSessionPut, apiUSBInternetSessionDelete:
 		s.handleUSBInternet(w, r)
 	case apiDeviceSnapshot:
@@ -339,6 +356,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleLANAccessStatus(w, r)
 	case apiLANAccessPut:
 		s.handleLANAccessUpdate(w, r)
+	case apiPasswordClear:
+		s.handleClearPassword(w, r)
 	case apiMCPTokensGet:
 		s.handleMCPTokensList(w, r)
 	case apiMCPTokensCreate:
@@ -356,7 +375,7 @@ func endpointConflictsWithMaintenance(endpoint apiEndpoint) bool {
 		apiWiFiRegionUpdate,
 		apiSystemEnvironmentPut, apiSystemEnvironmentApply, apiOTAUpdate,
 		apiDeviceReboot, apiAgentRestart, apiUSBReenumerate, apiLLMLogImport,
-		apiLANAccessPut, apiUSBInternetPut:
+		apiLANAccessPut, apiPasswordClear, apiUSBInternetPut:
 		return true
 	default:
 		return false

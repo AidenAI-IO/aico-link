@@ -105,7 +105,7 @@ func playPromptSound(ctx context.Context, audio tts.AudioServiceBackend, kind pr
 }
 
 func startPromptPlayback(audio tts.AudioServiceBackend, format tts.AudioFormat, once bool) (uint64, error) {
-	if service, ok := audio.(*audioBackend); ok && service.c != nil {
+	if service, ok := unwrapVoiceSessionPlayback(audio).(*audioBackend); ok && service.c != nil {
 		serviceFormat := AudioFormat{
 			SampleRate: uint32(format.SampleRate),
 			Channels:   uint32(format.Channels),
@@ -128,7 +128,7 @@ func startPromptPlayback(audio tts.AudioServiceBackend, format tts.AudioFormat, 
 }
 
 func waitPromptPlayback(ctx context.Context, audio tts.AudioServiceBackend) error {
-	if service, ok := audio.(*audioBackend); ok && service.c != nil {
+	if service, ok := unwrapVoiceSessionPlayback(audio).(*audioBackend); ok && service.c != nil {
 		waitCtx, cancel := context.WithTimeout(ctx, promptSoundDrainTimeout)
 		defer cancel()
 		if err := waitForPlaybackDrain(waitCtx, service.c, promptSoundDrainTimeout); err != nil {

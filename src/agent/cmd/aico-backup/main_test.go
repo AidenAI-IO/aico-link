@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -75,5 +76,36 @@ func TestArchiveDownloadHasNoWholeRequestTimeout(t *testing.T) {
 	}
 	if string(data) != "archive" {
 		t.Fatalf("body = %q", data)
+	}
+}
+
+// With a device password set, the board answers 401 until the CLI pairs over
+// USB; the session cookie from pairing then admits the maintenance session.
+func TestOpenSessionPairsWhenTheBoardNeedsASession(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/auth/pair":
+			http.SetCookie(w, &http.Cookie{Name: "aico_session", Value: "paired", Path: "/"})
+			_, _ = w.Write([]byte(`{"ok":true,"token":"paired"}`))
+		case "/api/maintenance/sessions":
+			if cookie, err := r.Cookie("aico_session"); err != nil || cookie.Value != "paired" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"ok":false,"error":"login_required"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"token":"maintenance","csrf_token":"csrf"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{baseURL: server.URL + "/api", http: &http.Client{Jar: jar}}
+	if err := c.openSession(); err != nil {
+		t.Fatal(err)
+	}
+	if c.token != "maintenance" {
+		t.Fatalf("token = %q", c.token)
 	}
 }

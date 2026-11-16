@@ -14,6 +14,7 @@ import (
 	"aico-agent/internal/agent/model"
 	"aico-agent/internal/agent/screen"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/util"
 
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/callbacks"
@@ -36,6 +37,51 @@ var errModelOutputTruncated = errors.New("model output truncated before a reply 
 // nor tool_calls, which would fail every later request in the conversation.
 func isEmptyModelTurn(choice llms.ContentChoice) bool {
 	return strings.TrimSpace(choice.Content) == "" && len(choice.ToolCalls) == 0 && choice.FuncCall == nil
+}
+
+// maxEmptyModelTurnRetries bounds how many consecutive empty model turns one
+// run retries before failing. Some providers occasionally end a turn with
+// finish_reason=stop and no text or tool call; asking again usually recovers.
+const maxEmptyModelTurnRetries = 1
+
+const emptyModelTurnRetryNotice = "Your previous response was empty: it contained no text and no tool call. Continue the current task from the latest observation: call the next tool, or give the final answer if the task is complete."
+
+// runIterationState carries per-run recovery bookkeeping across iterations.
+type runIterationState struct {
+	contextOverflowRecoveryUsed bool
+	emptyTurnRetries            int
+}
+
+// noReturnError wraps agents.ErrAgentNoReturn with which case produced it and
+// the model's own report of the turn, so a failed run says why it stopped.
+func noReturnError(reason string, choice *llms.ContentChoice, iteration int) error {
+	return fmt.Errorf("%w: %s (%s iteration=%d)", agents.ErrAgentNoReturn, reason, describeModelTurn(choice), iteration)
+}
+
+// describeModelTurn summarizes the provider-reported shape of a model turn for
+// logs and errors.
+func describeModelTurn(choice *llms.ContentChoice) string {
+	if choice == nil {
+		return "choice=nil"
+	}
+	parts := []string{fmt.Sprintf("finish_reason=%q", strings.TrimSpace(choice.StopReason))}
+	if native, ok := choice.GenerationInfo["llm_native_finish_reason"].(string); ok && native != "" {
+		parts = append(parts, fmt.Sprintf("native_finish_reason=%q", native))
+	}
+	for _, key := range []string{"completion_tokens", "reasoning_tokens"} {
+		if value, ok := util.UsageMetricInt(choice.GenerationInfo[key]); ok {
+			parts = append(parts, fmt.Sprintf("%s=%d", key, value))
+		}
+	}
+	parts = append(parts,
+		fmt.Sprintf("content_chars=%d", len(strings.TrimSpace(choice.Content))),
+		fmt.Sprintf("reasoning_chars=%d", len(choice.ReasoningContent)),
+		fmt.Sprintf("tool_calls=%d", len(choice.ToolCalls)),
+	)
+	if id, ok := choice.GenerationInfo["llm_response_id"].(string); ok && id != "" {
+		parts = append(parts, "response_id="+id)
+	}
+	return strings.Join(parts, " ")
 }
 
 // absorbTruncatedThinkingBlock moves a trailing unclosed thinking block into
@@ -71,14 +117,19 @@ const (
 )
 
 type AgentLoop struct {
-	Model                      model.Model
-	Profile                    RoleProfile
-	SteerRecorder              steerConversationRecorder
-	CallbacksHandler           callbacks.Handler
-	MaxIterations              int
-	Recorder                   *EpisodeRecorder
-	SteerInterrupt             func() <-chan struct{}
-	SteerProvider              func(context.Context) (RunSteerMessage, bool)
+	Model            model.Model
+	Profile          RoleProfile
+	SteerRecorder    steerConversationRecorder
+	CallbacksHandler callbacks.Handler
+	MaxIterations    int
+	Recorder         *EpisodeRecorder
+	SteerInterrupt   func() <-chan struct{}
+	SteerProvider    func(context.Context) (RunSteerMessage, bool)
+	// FinalSteerProvider is consulted when the loop is about to return. It
+	// either consumes a queued steer or closes the request's steer window, so
+	// no instruction is accepted after the last check. Without it the loop
+	// falls back to SteerProvider.
+	FinalSteerProvider         func(context.Context) (RunSteerMessage, bool)
 	SteerWaiter                func(context.Context) (RunSteerMessage, bool, error)
 	TerminationPolicy          *TerminationPolicy
 	DevicePlatform             string
@@ -148,7 +199,7 @@ func (l *AgentLoop) Run(ctx context.Context, input string, options ...chains.Cha
 		toolExecutionHooks = l.toolExecutionHookFactory()
 	}
 	policy := l.loopGuardPolicy()
-	contextOverflowRecoveryUsed := false
+	state := &runIterationState{}
 
 restartBudget:
 	for {
@@ -166,7 +217,7 @@ restartBudget:
 				}
 				continue restartBudget
 			}
-			answer, outcome, err := l.runIteration(ctx, i+1, callOptions, llmExecutor, parser, toolSpecs, toolExecutionHooks, policy, &contextOverflowRecoveryUsed)
+			answer, outcome, err := l.runIteration(ctx, i+1, callOptions, llmExecutor, parser, toolSpecs, toolExecutionHooks, policy, state)
 			if err != nil {
 				return "", err
 			}
@@ -201,7 +252,7 @@ func (l *AgentLoop) loopGuardPolicy() *TerminationPolicy {
 func (l *AgentLoop) stopWithSteerCheck(ctx context.Context, executor *executor.LLMExecutor, policy *TerminationPolicy, decision TerminationDecision) (string, bool, error) {
 	// Check for pending steer before terminating (except for external cancellation)
 	if decision.Reason != StopReasonExternal {
-		if _, hasPending, err := l.consumeAndPersistSteer(ctx, executor); err != nil {
+		if _, hasPending, err := l.consumeAndPersistFinalSteer(ctx, executor); err != nil {
 			return "", false, err
 		} else if hasPending {
 			policy.ResetForSteer()
@@ -212,7 +263,7 @@ func (l *AgentLoop) stopWithSteerCheck(ctx context.Context, executor *executor.L
 	return answer, true, err
 }
 
-func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions []llms.CallOption, llmExecutor *executor.LLMExecutor, parser *FunctionAgent, toolSpecs *ToolSpecs, toolExecutionHooks toolExecutionHookHandler, policy *TerminationPolicy, contextOverflowRecoveryUsed *bool) (string, iterationOutcome, error) {
+func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions []llms.CallOption, llmExecutor *executor.LLMExecutor, parser *FunctionAgent, toolSpecs *ToolSpecs, toolExecutionHooks toolExecutionHookHandler, policy *TerminationPolicy, state *runIterationState) (string, iterationOutcome, error) {
 	iterationStartTime := time.Now()
 	toolCallsInIteration := 0
 	if l.Recorder != nil {
@@ -293,8 +344,8 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		if ctx.Err() != nil {
 			return "", iterationContinue, ctx.Err()
 		}
-		if contextOverflowRecoveryUsed != nil && !*contextOverflowRecoveryUsed && isProviderContextExceededError(err) && l.ContextOverflowRecovery != nil {
-			*contextOverflowRecoveryUsed = true
+		if !state.contextOverflowRecoveryUsed && isProviderContextExceededError(err) && l.ContextOverflowRecovery != nil {
+			state.contextOverflowRecoveryUsed = true
 			newManager, compacted, recoveryErr := l.ContextOverflowRecovery(ctx, llmExecutor.ContextManager())
 			if recoveryErr != nil {
 				return "", iterationContinue, fmt.Errorf("compact context after provider context overflow: %w", recoveryErr)
@@ -360,6 +411,9 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 	}
 	l.emitRoleOutputWithReasoning(ctx, contentResp)
 	if answer := l.touchPointerModeMismatchContentFinalAnswer(contentResp); answer != "" {
+		if resumed, err := l.resumeForFinalSteer(ctx, llmExecutor, policy); err != nil || resumed {
+			return "", iterationRestartBudget, err
+		}
 		if err := l.notices.stop("device_mode_mismatch", "Execution stopped because the touch mode appears incompatible with the connected device."); err != nil {
 			return "", iterationContinue, err
 		}
@@ -376,11 +430,24 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 			if err := l.notices.stop("output_truncated", "The model used its whole output token budget, mostly on reasoning, and was cut off before giving a reply or action; task completion is not confirmed. Plan in shorter steps and act sooner when resuming."); err != nil {
 				return "", iterationContinue, err
 			}
-			return "", iterationContinue, fmt.Errorf("%w: finish_reason=%s reasoning_chars=%d",
-				errModelOutputTruncated, strings.TrimSpace(choice.StopReason), len(choice.ReasoningContent))
+			return "", iterationContinue, fmt.Errorf("%w: %s iteration=%d",
+				errModelOutputTruncated, describeModelTurn(choice), iteration)
 		}
-		return "", iterationContinue, agents.ErrAgentNoReturn
+		if state.emptyTurnRetries < maxEmptyModelTurnRetries {
+			state.emptyTurnRetries++
+			logging.Warnf("agent", "agent_loop", "empty model turn; retrying (%d/%d): %s iteration=%d",
+				state.emptyTurnRetries, maxEmptyModelTurnRetries, describeModelTurn(choice), iteration)
+			// The empty turn itself never enters history (see isEmptyModelTurn);
+			// the notice changes the request so the retry is not a replay.
+			if err := l.contextManager.AppendMessage(messages.Message{Role: messages.MessageRoleNotice, Content: emptyModelTurnRetryNotice}); err != nil {
+				return "", iterationContinue, err
+			}
+			return "", iterationContinue, nil
+		}
+		return "", iterationContinue, noReturnError(
+			fmt.Sprintf("model returned an empty turn after %d retries", state.emptyTurnRetries), choice, iteration)
 	}
+	state.emptyTurnRetries = 0
 
 	actions, finish, err := parser.ParseOutput(contentResp)
 	if errors.Is(err, agents.ErrUnableToParseOutput) {
@@ -411,15 +478,19 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		return "", iterationContinue, err
 	}
 	if finish != nil {
-		// Don't check steer after finish - let this turn complete normally.
-		// Steer will be processed as a new turn.
 		answer, _ := finish.ReturnValues[agentLoopOutputKey].(string)
 		answer = strings.TrimSpace(answer)
 		if answer == "" {
-			return "", iterationContinue, agents.ErrAgentNoReturn
+			return "", iterationContinue, noReturnError("model finished with an empty answer", contentResp.Choices[0], iteration)
 		}
 		if err := llmExecutor.AppendMessage(messages.ConvertChoiceToContextManagerMessage(*contentResp.Choices[0])); err != nil {
 			return "", iterationContinue, err
+		}
+		// A steer queued while the answer was produced follows that answer in
+		// the context and continues this run; otherwise the steer window
+		// closes here so a later steer is refused instead of dropped.
+		if resumed, err := l.resumeForFinalSteer(ctx, llmExecutor, policy); err != nil || resumed {
+			return "", iterationRestartBudget, err
 		}
 		if l.Recorder != nil {
 			l.Recorder.RecordDefaultFinish(answer)
@@ -428,7 +499,7 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		return answer, iterationDone, err
 	}
 	if len(actions) == 0 {
-		return "", iterationContinue, agents.ErrAgentNoReturn
+		return "", iterationContinue, noReturnError("parser returned neither an action nor a finish", contentResp.Choices[0], iteration)
 	}
 
 	// Problem 4: Check for pending steer after LLM returns actions (before tool execution)
@@ -591,6 +662,9 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		return "", iterationContinue, appendErr
 	}
 	if answer := l.touchPointerModeMismatchFinalAnswer(toolExecution.Step); answer != "" {
+		if resumed, err := l.resumeForFinalSteer(ctx, llmExecutor, policy); err != nil || resumed {
+			return "", iterationRestartBudget, err
+		}
 		if err := l.notices.stop("device_mode_mismatch", "Execution stopped because the touch mode appears incompatible with the connected device."); err != nil {
 			return "", iterationContinue, err
 		}
@@ -620,6 +694,11 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 	}
 
 	if isRunPausingTool(toolExecution.Call.Action.Tool) && !toolExecution.Result.IsError() {
+		// Pausing ends the run, so this is its last steer check: a steer
+		// queued now resumes the run instead of waiting behind the pause.
+		if resumed, err := l.resumeForFinalSteer(ctx, llmExecutor, policy); err != nil || resumed {
+			return "", iterationRestartBudget, err
+		}
 		if err := l.contextManager.AppendMessage(messages.Message{
 			Role:    messages.MessageRoleNotice,
 			Content: fmt.Sprintf("Pause [%s]: Execution is intentionally paused. This is not confirmation that the task is complete. Continue when the requested user action or wakeup input arrives.", toolExecution.Call.Action.Tool),
@@ -698,8 +777,8 @@ func (l *AgentLoop) finishStopDecision(ctx context.Context, policy *TerminationP
 	// instead of wrapping it as final answer. Apply to all termination reasons except
 	// external cancellation (where the context is already done and steer is irrelevant).
 	if decision.Reason != StopReasonExternal {
-		// Note: executor is not available here, but consumeAndPersistSteer handles nil executor
-		if _, hasPending, err := l.consumeAndPersistSteer(ctx, nil); err != nil {
+		// Note: executor is not available here, but persistSteer handles nil executor
+		if _, hasPending, err := l.consumeAndPersistFinalSteer(ctx, nil); err != nil {
 			return "", iterationContinue, err
 		} else if hasPending {
 			policy.ResetForSteer()
@@ -757,6 +836,42 @@ func (l *AgentLoop) checkPendingSteer(ctx context.Context) (RunSteerMessage, boo
 		return RunSteerMessage{}, false
 	}
 	return l.SteerProvider(ctx)
+}
+
+// consumeFinalSteer is the steer check made right before the loop returns.
+func (l *AgentLoop) consumeFinalSteer(ctx context.Context) (RunSteerMessage, bool) {
+	if l == nil || ctx.Err() != nil {
+		return RunSteerMessage{}, false
+	}
+	if l.FinalSteerProvider != nil {
+		return l.FinalSteerProvider(ctx)
+	}
+	return l.checkPendingSteer(ctx)
+}
+
+// resumeForFinalSteer makes the final steer check before an iteration ends
+// the run. Every path that returns iterationDone must call it (stop decisions
+// do so through finishStopDecision): resumed means a steer was persisted and
+// the caller restarts the budget; otherwise steer acceptance is now closed.
+func (l *AgentLoop) resumeForFinalSteer(ctx context.Context, executor *executor.LLMExecutor, policy *TerminationPolicy) (bool, error) {
+	steer, hasPending, err := l.consumeAndPersistFinalSteer(ctx, executor)
+	if err != nil || !hasPending {
+		return false, err
+	}
+	policy.ResetForSteer()
+	logging.Infof("agent", "steer", "steer queued at run end (length=%d), continuing run", len(steer.Content))
+	return true, nil
+}
+
+func (l *AgentLoop) consumeAndPersistFinalSteer(ctx context.Context, executor *executor.LLMExecutor) (RunSteerMessage, bool, error) {
+	steer, hasPending := l.consumeFinalSteer(ctx)
+	if !hasPending {
+		return RunSteerMessage{}, false, nil
+	}
+	if err := l.persistSteer(ctx, executor, steer); err != nil {
+		return steer, false, err
+	}
+	return steer, true, nil
 }
 
 // consumeAndPersistSteer checks for pending steer, and if found, executes the

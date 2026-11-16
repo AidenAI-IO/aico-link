@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-profile="local">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>Aico 本机 Agent 设置</title>
+  <link rel="stylesheet" href="/assets/css/tokens.css">
+  <link rel="stylesheet" href="/assets/css/base.css">
+  <link rel="stylesheet" href="/assets/css/layout.css">
+  <link rel="stylesheet" href="/assets/css/ds.css">
+</head>
+<body>
+  <div id="app"></div>
+
+  <script type="module">
+    import {boot} from '/assets/js/app/shell.js';
+
+    boot('app', {localAgent: true}).catch(error => {
+      console.error('[settings] failed to start', error);
+      const host = document.getElementById('app');
+      if (host) host.textContent = '设置加载失败';
+    });
+  </script>
+</body>
+</html>

@@ -86,6 +86,12 @@ func TestAskSendsTypedQuestionsWithImagesHeader(t *testing.T) {
 	if _, err := resp.Answer("open", TypeChoice); err == nil {
 		t.Fatal("expected a type mismatch error")
 	}
+	for _, p := range []float64{-0.1, 1.1} {
+		bad := Response{Answers: map[string]Answer{"open": {Type: TypeNoul, Noul: &p}}}
+		if _, err := bad.Answer("open", TypeNoul); err == nil {
+			t.Fatalf("noul %g accepted, want an out-of-range error", p)
+		}
+	}
 }
 
 func TestAskRetriesOverloadAndReportsOtherErrors(t *testing.T) {

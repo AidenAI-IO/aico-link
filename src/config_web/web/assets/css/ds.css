@@ -55,6 +55,13 @@
   color: var(--color-ink-secondary);
 }
 
+/* Platform instructions use the card's full width, including on narrow phones. */
+.ds-usb-internet-help {
+  padding-top: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
 /* ---- Rows ---------------------------------------------------------------- */
 
 .ds-row {

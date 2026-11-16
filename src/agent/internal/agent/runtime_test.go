@@ -915,7 +915,7 @@ func TestRuntimeRunWaitForWakeupDoesNotStream(t *testing.T) {
 	}
 }
 
-func TestRuntimeRunInjectsCurrentDateIntoPlannerPrompt(t *testing.T) {
+func TestRuntimeRunReportsControllerTimeAndSharedFilesInTurnState(t *testing.T) {
 	originalNow := promptNow
 	promptNow = func() time.Time {
 		return time.Date(2026, time.June, 15, 8, 0, 0, 0, time.UTC)
@@ -931,16 +931,26 @@ func TestRuntimeRunInjectsCurrentDateIntoPlannerPrompt(t *testing.T) {
 		NewSkillIndex(),
 	)
 
+	share := t.TempDir()
+	t.Setenv("AICO_SHARE_DIR", share)
+	if err := os.WriteFile(filepath.Join(share, "report.csv"), []byte("a,b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := runtime.Run(context.Background(), RunRequest{Input: "hello"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if len(model.messages) == 0 || len(model.messages[0]) == 0 {
 		t.Fatalf("expected model to receive planner prompt")
 	}
-	systemPrompt := messageText(model.messages[0][:1])
-	want := "Current date: 2026-06-15 (Monday, timezone: UTC)"
-	if !strings.Contains(systemPrompt, want) {
-		t.Fatalf("planner system prompt missing current date %q:\n%s", want, systemPrompt)
+	want := "controller_time: 2026-06-15 08:00:00 +00:00 (Monday)"
+	if strings.Contains(messageText(model.messages[0][:1]), want) {
+		t.Fatal("system prompt carries the controller time")
+	}
+	if !runtimeModelCallContains(model.messages[0][1:], want) {
+		t.Fatalf("turn state missing %q", want)
+	}
+	if !runtimeModelCallContains(model.messages[0][1:], "shared_files: 1 in "+share+", newest first\n- "+filepath.Join(share, "report.csv")) {
+		t.Fatal("turn state missing the shared files list")
 	}
 }
 
@@ -3932,46 +3942,6 @@ func TestRuntimeRunOpenRouterStreamsWhenWriterIsProvided(t *testing.T) {
 	}
 }
 
-func TestRuntimeRunDoesNotCallFinalSteerProviderForDirectFinalAnswer(t *testing.T) {
-	model := &scriptedModel{
-		responses:    roleDirectResponses("final answer"),
-		streamChunks: [][]string{{}},
-	}
-	runtime := NewRuntimeWithDeps(
-		withTestConfigDir(t, Config{
-			Model:           ModelConfig{Provider: "fake"},
-			Instruction:     "Answer directly.",
-			ForceSimpleLoop: true,
-		}),
-		&testModelResolver{model: model},
-		NewMemoryManager(""),
-		NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
-		NewSkillIndex(),
-	)
-
-	var finalSteerCalls int32
-	var stream bytes.Buffer
-	result, err := runtime.Run(context.Background(), RunRequest{
-		Input:        "hello",
-		StreamWriter: &stream,
-		FinalSteerProvider: func(ctx context.Context) (RunSteerMessage, bool) {
-			atomic.AddInt32(&finalSteerCalls, 1)
-			return RunSteerMessage{}, false
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if result.Output != "final answer" {
-		t.Fatalf("Output = %q, want final answer", result.Output)
-	}
-	if finalSteerCalls != 0 {
-		t.Fatalf("FinalSteerProvider calls = %d, want 0 for context-manager loop", finalSteerCalls)
-	}
-	if stream.String() != "" {
-		t.Fatalf("stream = %q, want empty", stream.String())
-	}
-}
 func TestRuntimeRunStreamsToolCapableCallsWhenWriterIsProvided(t *testing.T) {
 	toolSpeech := "我先读取当前音量。"
 	model := &scriptedModel{

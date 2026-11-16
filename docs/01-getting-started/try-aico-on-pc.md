@@ -6,6 +6,10 @@ description: Run and develop Aico locally without a development board.
 
 # Try Aico on PC
 
+For a native Agent running directly on your computer with a real Android phone
+or iPhone, start with [Local Agent with a Real Phone](local-agent-real-phone.md).
+That guide provides the complete Config Web and phone-bridge startup sequence.
+
 The Docker sandbox is the fastest way to run Aico without a Luckfox
 board. It starts the same configuration and Agent web experiences used during
 device development, while keeping configuration and Agent state in a Docker
@@ -14,6 +18,37 @@ named volume.
 Use this workflow for interactive development, configuration checks, and Agent
 testing. For repeatable task suites, parallel environments, scoring, and reports,
 use the [Benchmark workflow](../09-benchmark/README.md) instead.
+
+## Aico Launcher
+
+The quickest way to try Aico is the repository-local Aico Launcher, a web UI
+that builds or selects an `aico-link` image, starts an environment bridge, and
+runs the image with one click. The bridge types are:
+
+- **No device**: chat only;
+- **MobileGym simulator**: a simulated Android phone in Docker;
+- **Android (ADB)**: a phone, emulator, or VM through `adb`;
+- **Host desktop**: this computer's screen, mouse, and keyboard (macOS and
+  Linux);
+- **iPhone Mirroring**: a real iPhone through macOS iPhone Mirroring;
+- **iOS device**: a real iPhone over USB through WebDriverAgent (macOS);
+- **Virtual iPhone**: a vphone-cli virtual iPhone (macOS);
+- **Custom bridge**: any Environment Bridge you already run.
+
+From the repository root:
+
+```bash
+make launcher
+```
+
+Open the URL the launcher prints. It needs Docker and
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/). See the
+[Aico Launcher guide](../../benchmark/launcher/README.md) for bridge
+prerequisites, state, security, and troubleshooting. Keep the launcher running
+while a Host desktop, iPhone Mirroring, or iOS device instance runs: it renews
+their bridge routes, which those bridges otherwise release after 30 idle
+minutes. The rest of this page describes the Compose sandbox and manual bridge
+setup.
 
 ## Prerequisites
 
@@ -81,6 +116,94 @@ image and replace the running container.
 
 Starting the sandbox preserves the `aico-data` volume. Use `make sandbox-logs`
 to follow the Agent logs and `make sandbox-stop` to stop the sandbox.
+
+### Image Runtime and Build Options
+
+The sandbox and the Aico Launcher use the same image, built from
+`docker/dev/Dockerfile` natively for `linux/amd64` or `linux/arm64`. It serves
+Config Web on container port 80 and the Agent Web UI on 8080 over plain HTTP;
+publish them on `127.0.0.1` only. Besides the bridge variables described below,
+the image reads:
+
+| Variable | Image default | Effect |
+| --- | --- | --- |
+| `AICO_ENABLE_TERMINAL` | `0` | `1` starts `ttyd` behind `/webtty/` on the Agent Web UI. The Compose sandbox sets it to `1`. |
+| `AICO_CLASSIC_VOICE` | `0` | Classic (speech-to-text) voice needs on-device RKNN models that the image lacks, so Classic mode is text-only in Docker. Realtime mode keeps text and browser voice: `localhost` is a secure context, so the browser microphone works without TLS. |
+| `AICO_QUICK_ACTIONS_PRESET` | empty | `ios_device` or `iphone_mirroring` installs that bundled iOS quick-actions preset as `/userdata/agent/quick_actions.json` before the Agent starts. The Aico Launcher sets it for the matching bridge types. An unmodified preset copy is replaced when the preset changes and removed when it is cleared; a `quick_actions.json` you edited is never overwritten. |
+
+Build arguments let you build through mirrors and stamp the build:
+
+| Build argument | Default | Purpose |
+| --- | --- | --- |
+| `BASE_IMAGE` | the pinned `debian:trixie-slim@sha256:...` | Base for every stage, for example a registry mirror such as `docker.1ms.run/library/debian:trixie-slim@sha256:<same digest>` |
+| `GO_DOWNLOAD_BASE` | `https://go.dev/dl` | Go toolchain download location, for example `https://golang.google.cn/dl` |
+| `GOPROXY` | Go's default | Go module proxy for `go mod download`, for example `https://goproxy.cn,direct` |
+| `AICO_VERSION` | `dev` | Version stamped into the Agent and the `org.opencontainers.image.version` label |
+| `AICO_COMMIT` | `unknown` | Commit stamped into the Agent and the `org.opencontainers.image.revision` label |
+
+For example:
+
+```bash
+docker build -f docker/dev/Dockerfile \
+  --build-arg GO_DOWNLOAD_BASE=https://golang.google.cn/dl \
+  --build-arg AICO_VERSION=local \
+  --build-arg AICO_COMMIT="$(git rev-parse HEAD)" \
+  -t aico-link:local .
+```
+
+The Compose sandbox forwards `AICO_DOCKER_BASE_IMAGE`, `AICO_GO_DOWNLOAD_BASE`,
+`AICO_VERSION`, and `AICO_COMMIT` from your shell to these build arguments. The
+Aico Launcher sets them from its Settings panel and the current checkout, and
+passes your shell's `GOPROXY` through when it is set.
+
+The Dockerfile requires BuildKit, which Docker Desktop and Docker Engine with
+the `docker-buildx` plugin use by default; `DOCKER_BUILDKIT=0` is not
+supported.
+
+On Apple Silicon the sandbox now runs as native `arm64` rather than emulated
+`amd64`. Python user packages with native code only load on the architecture
+that installed them, so the entrypoint records the architecture in
+`/userdata/agent/python/.aico-arch` and moves that directory aside when the
+architecture changes. A nonempty directory without the marker (from a volume
+created before the marker existed) has an unknown architecture, so it is moved
+aside as `/userdata/agent/python.unknown.<timestamp>`. Reinstall the Python
+packages your Agent skills need after the switch, then delete the old
+directory once you no longer need it.
+
+## Configure a Native Local Agent
+
+For an Agent running directly on macOS or Linux, use Config Web's host profile.
+Build the native binary, then start the portal from the repository root:
+
+```bash
+(cd src/agent && go build -o /absolute/path/to/agent ./cmd/daemon)
+```
+
+```bash
+/absolute/path/to/agent config-web --local-agent \
+  --config /absolute/path/to/agent-data/agent.toml \
+  --web-root "$PWD/src/config_web/web" \
+  --agent-url http://127.0.0.1:8080
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Use the same `agent.toml`
+as the running daemon's `-dir`. `--local-agent` defaults to port 8000 and only
+accepts a loopback bind. `--port` and `--agent-url` support other local ports.
+The command inherits the host process environment, including explicit proxy
+settings; it does not load the board's system environment or Wi-Fi proxy.
+
+The host profile provides model providers and credential tests, the main and
+decision models, prompts and context limits, web search, language, time zone,
+and Agent/model logs. API keys remain write-only. Both the API and navigation
+exclude board Wi-Fi, GPIO, voice hardware, storage maintenance, firmware, and
+system-service controls. Device type and environment bridge connections remain
+launch arguments; the overview reports the running Agent's actual target type.
+
+Saves preserve other configuration sections and request a live reload. The
+status bar distinguishes saved, pending, applied, and failed configuration.
+When the Agent is offline, configuration can still be saved; start it with the
+same data directory to load the saved values. The portal does not start or
+restart the daemon. Existing board and Docker sandbox profiles are unchanged.
 
 ## Connect an Environment Bridge
 
@@ -215,6 +338,16 @@ The environment bridge is the control boundary: the sandbox does not gain direct
 access to an arbitrary virtual machine merely because the VM is running. For the
 project's virtual iPhone workflow, use `AICO_DEVICE_TYPE=iOS` and see the
 [vphone CLI setup guide](../09-benchmark/vphone-cli-setup-guide-en.md).
+
+### Real iPhone Through macOS iPhone Mirroring
+
+The experimental [iPhone Mirroring bridge](../../benchmark/iphone_mirroring/README.md)
+lets a native Mac Agent use the real iPhone already connected to Apple's
+iPhone Mirroring app. It captures the phone window and maps Agent coordinates
+to that window. Start it from `benchmark/` with
+`python3 -m iphone_mirroring`, then use the native Agent flags and dedicated
+quick-action mapping in its README. This bridge binds to Mac loopback; the
+documented workflow runs the Agent on the Mac, not in the Docker sandbox.
 
 ### Host Desktop
 

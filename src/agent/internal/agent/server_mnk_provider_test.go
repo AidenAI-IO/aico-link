@@ -53,7 +53,22 @@ func TestHandleProviderMNKRoutesThroughHandler(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/providers/mnk", nil)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var capabilities struct {
+		Capabilities map[string]bool `json:"capabilities"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &capabilities); err != nil {
+		t.Fatal(err)
+	}
+	if supported, present := capabilities.Capabilities["insert_text"]; !present || supported {
+		t.Fatalf("unexpected capabilities: %s", rec.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPut, "/api/providers/mnk", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("GET status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+		t.Fatalf("PUT status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
 }

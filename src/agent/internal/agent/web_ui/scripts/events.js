@@ -323,6 +323,11 @@ function handleSemanticEvent(event) {
             return;
         case 'tool.call_ready':
             if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
+            // A realtime voice reply speaks around its tool calls within one
+            // response: the text that follows the call is the rest of the
+            // same reply, not a late delta, and no tool.completed event
+            // reopens the draft. Keep streaming it.
+            if (event.origin === 'realtimevoice') return;
             retireAssistantDraft({
                 type: 'tool_call', request_id: requestId, episode_id: episodeId,
                 content: semanticText(payload),
@@ -341,13 +346,29 @@ function handleSemanticEvent(event) {
         case 'response.terminal':
         case 'run.terminal':
         case 'session.closed':
+            // A request streamed over NDJSON owns its draft until its own
+            // stream ends. SSE and NDJSON are separate connections, so this
+            // event can overtake the request's last deltas; releasing the
+            // draft here would let those deltas start a new one.
             if (requestId) {
+                if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
                 delete streamingAssistantDrafts[requestId];
                 assistantDraftBlockedByTool.delete(requestId);
             } else {
-                streamingAssistantDrafts = {};
-                assistantDraftBlockedByTool.clear();
+                Object.keys(streamingAssistantDrafts).forEach(function(key) {
+                    if (key === currentChatRequestId || ndjsonOwnedRequestIds.has(key)) return;
+                    delete streamingAssistantDrafts[key];
+                });
+                // A tool call retires its draft but keeps the request blocked,
+                // so markers are released on their own, not only with drafts.
+                for (const key of assistantDraftBlockedByTool) {
+                    if (key !== currentChatRequestId && !ndjsonOwnedRequestIds.has(key)) {
+                        assistantDraftBlockedByTool.delete(key);
+                    }
+                }
             }
+            // Clear a run indicator this page restored without waiting for the poll.
+            if (externalActiveRequestId) refreshCurrentLiveActivity();
             refreshHistoryFromContext();
             return;
         default:

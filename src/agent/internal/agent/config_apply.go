@@ -358,11 +358,10 @@ func (r *Runtime) applyConfig(ctx context.Context, cfg Config) error {
 	if current.Locale != cfg.Locale || current.TimezoneOrDefault() != cfg.TimezoneOrDefault() || current.Instruction != cfg.Instruction || current.Prompt != cfg.Prompt {
 		r.configPromptRefresh.Store(true)
 	}
+	// A voice model change keeps the realtime user context: it holds plain
+	// messages and tool calls that any voice provider can replay.
 	if current.Model.Provider != cfg.Model.Provider || current.Model.Model != cfg.Model.Model || current.Model.APIMode != cfg.Model.APIMode || current.Model.BaseURL != cfg.Model.BaseURL {
 		r.configContextRotate.Store(true)
-		r.configUserContextRotate.Store(true)
-	}
-	if !reflect.DeepEqual(current.VoiceModel, cfg.VoiceModel) {
 		r.configUserContextRotate.Store(true)
 	}
 	committed = true
@@ -385,13 +384,13 @@ func (r *Runtime) StopConfigReloads() {
 	r.configWorkerWG.Wait()
 }
 
-// PrepareUserContext preserves old realtime transcripts when the model or
-// voice provider changes and prevents replaying incompatible continuation data.
-// A system prompt change alone keeps the conversation; InitializeContextManager
-// rewrites the session's system message.
+// PrepareUserContext starts a new realtime user context when the backend model
+// changed, keeping the old transcript on disk. A system prompt or voice model
+// change keeps the conversation; InitializeContextManager rewrites the
+// session's system message.
 //
-// A model or voice model change made while the Agent was stopped also starts a
-// new user context, because applyConfig never saw it.
+// A model change made while the Agent was stopped also starts a new user
+// context, because applyConfig never saw it.
 func (r *Runtime) PrepareUserContext(systemPrompt string) error {
 	if r == nil {
 		return nil
@@ -401,7 +400,7 @@ func (r *Runtime) PrepareUserContext(systemPrompt string) error {
 		if strings.TrimSpace(cfg.ConfigDir) == "" {
 			return nil
 		}
-		return startConversationForIdentity(agentpath.UserContextManagerSessionFolder(cfg.ConfigDir), userConversationIdentity(cfg), systemPrompt)
+		return startConversationForIdentity(agentpath.UserContextManagerSessionFolder(cfg.ConfigDir), userConversationIdentity(cfg), systemPrompt, legacyUserConversationIdentity(cfg))
 	}
 	if err := r.rotateUserContext(systemPrompt); err != nil {
 		return err

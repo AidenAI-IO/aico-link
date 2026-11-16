@@ -2,7 +2,7 @@ import {request} from '../data.js';
 import {el, replace} from '../../ui/dom.js';
 import {group, row} from '../../ui/list.js';
 import {switchControl} from '../../ui/switch.js';
-import {msg, resolve} from '../../ui/text.js';
+import {msg, resolve, text} from '../../ui/text.js';
 import {toast} from '../../ui/toast.js';
 
 const endpoint = '/api/network/usb-internet';
@@ -61,13 +61,19 @@ export function usbInternetSettings() {
       : !state.enabled ? msg('usb_internet.off', '已关闭')
         : state.active ? (state.host === 'android' ? msg('usb_internet.android', '通过 Android 联网') : msg('usb_internet.mac', '通过 Mac 联网'))
           : msg('usb_internet.waiting', '等待主机共享网络');
-    replace(root, [group({rows: [row({
-      label: msg('usb_internet.title', 'USB 联网'),
-      value: status,
-      description: msg('usb_internet.help', 'macOS 需运行 scripts/usb-internet-macos.sh start；Android 需使用 Aico App；不支持 iOS。'),
-      accessory: control,
-      action: 'toggle-usb-internet',
-    })], note: state && !state.via_usb ? msg('lan.usb_only', '只能在通过 USB 连接时修改这些设置。') : null})]);
+    replace(root, [group({
+      joined: true,
+      rows: [
+        row({
+          label: msg('usb_internet.title', 'USB 联网'),
+          description: status,
+          accessory: control,
+          action: 'toggle-usb-internet',
+        }),
+        text(msg('usb_internet.help', 'Android：打开 Aico App。\nMac：运行 scripts/usb-internet-macos.sh start\niOS：暂不支持。'), 'ds-group__note ds-usb-internet-help'),
+      ],
+      note: state && !state.via_usb ? msg('lan.usb_only', '只能在通过 USB 连接时修改这些设置。') : null,
+    })]);
   }
   function schedule() {
     setTimeout(async () => {

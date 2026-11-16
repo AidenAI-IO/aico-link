@@ -455,7 +455,7 @@ frame_socket = "/run/frame_service/frame_service.sock"
 | Field                       | Default / allowed values    | Description                                                                                                                                                                                               |
 | --------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `locale`                    | `en-US` (default) / `zh-CN` | Device-level language for Config Web and user-facing Agent responses, including progress messages and `<tts>` content. This is independent from `[voice_settings.classic.stt].language`, which only controls speech recognition. |
-| `timezone`                  | `UTC` (default) / supported IANA zone | Controller time zone used for the model-facing current date, `controller_timezone` state, and shell child processes. Config Web provides the supported IANA zone list. |
+| `timezone`                  | `UTC` (default) / supported IANA zone | Controller time zone used for the `controller_time` and `controller_timezone` entries in each user turn's state message, and for shell child processes. Config Web provides the supported IANA zone list. |
 | `prompt`                    | -                           | Prompt appended after the built-in Agent instruction at runtime. The built-in instruction is not configurable. |
 | `max_iterations`            | `-1`                        | Maximum number of tool-call loops per run; `-1` means unlimited                                                                                                                                           |
 | `mcp_enabled`               | `true`                      | When on, the Agent serves Streamable HTTP MCP at `POST /mcp` on port 8080. Config Web exposes this under Advanced Settings. See [MCP](mcp.md).                                                              |
@@ -873,6 +873,27 @@ Every decision writes one Agent log line under the `decision` component:
 `op=... provider=... dm={...} conf=... llm={...} agree=... dm_ms=... llm_ms=... fallback=...`,
 where `dm` is the decision model's answer; `llm` and `agree` are filled in
 when the main model's answer was also used.
+
+Each user turn also asks the decision model once, from the utterance text
+and the exchange before it (the previous request, the tools it used and the
+reply), while the turn's screenshot is being captured (`turn_screenshot`):
+does responding need the phone screen? The previous exchange lets a follow-up
+such as "now press equals" after opening an app read as needing the screen. Only a confident "no", such as small
+talk, arithmetic or the weather, drops the screenshot from the turn; the main
+model can still call `screenshot`. The request is bounded at 4 seconds, and an
+unsure answer, a failed request or a disabled decision model keeps the
+screenshot.
+
+The same request also decides which saved memories bear on the request
+(`memory_recall`). Profile, preference and rule memories already reach the main
+model through the system prompt's user profile, so only fact and procedure
+memories are offered: up to 20 of the highest-priority ones, of which up to 5
+confidently relevant ones are added to the turn's state message. Sensitive
+memories and memories written from notifications are never offered this way,
+because a notification's text is controlled by third parties; `recall_memory`
+still finds them, and any memory not recalled automatically, by topic. An unsure answer or a failed
+request recalls nothing. The memory texts offered are sent to the decision
+model provider.
 
 The TypeSafe API is region-restricted (HTTP 451 outside supported regions);
 the Agent reaches both providers through the same proxy environment it uses for
@@ -1358,6 +1379,15 @@ Volcengine TTS adapters, prefer `HTTPS_PROXY`, then `HTTP_PROXY`, then
 when the proxy is SOCKS5, and use the default private-network bypass list when
 a proxy URL is set without `NO_PROXY`. The Alibaba Cloud TTS adapter always
 connects directly.
+
+The `web_scraper` tool refuses targets that are, or resolve to, loopback,
+private, or link-local addresses, and checks every redirect the same way. When
+a proxy carries the request, the scraper checks the target name with the
+board's DNS, but the proxy resolves it again and connects on its own. The
+configured proxy is therefore trusted: the scraper may connect to it even on
+loopback or the LAN, and the proxy is responsible for refusing private,
+loopback, and link-local destinations if that protection is needed. The local
+proxy at `127.0.0.1:18080` and its upstreams do not filter destinations.
 
 Per-Wi-Fi policies are configured in the Config Web connection dialog and
 stored in `/userdata/system/wifi-proxies.json` with mode `0600`. Setting

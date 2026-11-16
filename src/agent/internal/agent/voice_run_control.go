@@ -186,7 +186,12 @@ func (c *voiceRunControl) consumePending(requestID string) (RunSteerMessage, boo
 		return RunSteerMessage{}, false
 	}
 
-	// Check interrupt steer first (interruption scenario)
+	return c.takeSteerLocked()
+}
+
+// takeSteerLocked returns a completed interrupt steer, which supersedes any
+// older queued one, or else the queued steer.
+func (c *voiceRunControl) takeSteerLocked() (RunSteerMessage, bool) {
 	if c.interrupt.active && c.interrupt.done && c.interrupt.hasText {
 		steer := c.interrupt.steer
 		c.resetInterruptLocked()
@@ -195,8 +200,6 @@ func (c *voiceRunControl) consumePending(requestID string) (RunSteerMessage, boo
 		logging.Infof("agent", "steer", "consumePending: interrupt steer consumed (length=%d)", len(steer.Content))
 		return steer, true
 	}
-
-	// Check pending steer next (normal scenario)
 	if !c.hasPendingSteer {
 		return RunSteerMessage{}, false
 	}
@@ -210,8 +213,8 @@ func (c *voiceRunControl) consumeFinalPending(requestID string) (RunSteerMessage
 	if requestID == "" || c.activeRequestID != requestID || !c.acceptingSteer {
 		return RunSteerMessage{}, false
 	}
-	if c.hasPendingSteer {
-		return c.consumePendingLocked()
+	if steer, ok := c.takeSteerLocked(); ok {
+		return steer, true
 	}
 	c.closeAcceptanceLocked()
 	return RunSteerMessage{}, false

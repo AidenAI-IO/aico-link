@@ -73,7 +73,7 @@ func TestWaitForWakeupExposedToAgentAndToolLab(t *testing.T) {
 		NewSkillIndex(),
 	)
 	if _, ok := runtime.ToolDescriptorByName("wait_for_wakeup"); !ok {
-		t.Fatal("expected wait_for_wakeup in Tool Lab HTTP catalog")
+		t.Fatal("expected wait_for_wakeup in HTTP tool catalog")
 	}
 	if !toolAgentExposed("wait_for_wakeup") {
 		t.Fatal("expected wait_for_wakeup available to conversational agent")

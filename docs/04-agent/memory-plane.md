@@ -142,6 +142,13 @@ profile change never starts a new conversation. If the profile cannot be read
 or the session cannot be rewritten, the run logs a warning and continues with
 the section the session already carries.
 
+In realtime mode the foreground voice model's instructions end with the same
+section. It is read when each provider session opens, so a profile saved during
+a conversation applies from the next session. The saved realtime user context
+records the section that session was opened with. If the profile cannot be
+read, the session logs a warning and keeps the section the saved user context
+already carries.
+
 Sensitive memories, `fact` memories, and memories whose content was written by
 Notification Memory are not listed; notification content is written by third
 parties and must not become an instruction. Each record's `origin` (`user` or

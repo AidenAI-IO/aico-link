@@ -11,10 +11,11 @@ import (
 // CrossSiteReason reports why Guard refuses r as a browser request made on
 // behalf of another site, or "" when r may proceed.
 //
-// The USB link and the board itself are trusted without credentials, but the
-// phone or computer at the other end of the cable also runs a browser. A page
-// it loads can send requests to 192.168.42.1, and those arrive on the USB
-// socket like the app's own. Native clients (the app, MCP hosts, curl) send no
+// A USB client can pair for a session without the password, and with no
+// password set every reachable client is admitted, but the phone or computer
+// at the other end of the cable also runs a browser. A page it loads can send
+// requests to 192.168.42.1, and those arrive on the USB socket like the app's
+// own. Native clients (the app, MCP hosts, curl) send no
 // Origin and no Sec-Fetch-Site, so these checks only affect browsers:
 //
 //   - Sec-Fetch-Site: cross-site is a request started by another site, except

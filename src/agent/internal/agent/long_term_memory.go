@@ -140,6 +140,10 @@ type MemoryQuery struct {
 	// includeSensitive lets internal callers, such as the duplicate check and
 	// maintenance, see sensitive records that a browse by the Agent omits.
 	includeSensitive bool
+	// excludeNotification drops records whose content a notification wrote.
+	// Automatic recall sets it: third parties control that text, so it reaches
+	// the main model only through an explicit recall_memory call.
+	excludeNotification bool
 }
 
 type MemoryResult struct {
@@ -292,6 +296,9 @@ func (s *LongTermMemoryStore) searchLocked(ctx context.Context, query MemoryQuer
 			continue
 		}
 		if err != nil {
+			continue
+		}
+		if query.excludeNotification && memoryFromNotification(parsed.Item) {
 			continue
 		}
 		score := scoreMemoryEntry(query, entry, parsed)

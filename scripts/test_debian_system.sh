@@ -317,10 +317,9 @@ grep -Fq 'useradd --uid 1000 --gid aico --create-home' \
     "${SYSTEM_DIR}/container-build-rootfs.sh"
 grep -Fq 'sudo,audio,video,dialout,plugdev,netdev aico' \
     "${SYSTEM_DIR}/container-build-rootfs.sh"
-# SHA-512 crypt hash for the factory password luckfox, with fixed salt aico.
-grep -Fq '$6$aico$.IiSAzc6XNkYvV3CRDyP031IcVvRKR7F4Y8cItMftzo06ke.hz399b9z/3B442avhFdXyC29l8tdHUHroBOsM.' \
-    "${SYSTEM_DIR}/container-build-rootfs.sh" \
-    || fail "factory aico account password hash does not match luckfox"
+# The factory image ships no usable aico password.
+grep -Fq "usermod -p '*' aico" "${SYSTEM_DIR}/container-build-rootfs.sh" \
+    || fail "the factory aico password login is not locked"
 grep -qx 'PasswordAuthentication yes' \
     "${REPO_ROOT}/overlay-debian/etc/ssh/sshd_config.d/20-aico.conf"
 grep -qx 'PermitRootLogin prohibit-password' \

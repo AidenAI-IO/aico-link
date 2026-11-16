@@ -96,36 +96,6 @@ func TestInitializeContextManagerReusesSessionWhenSystemPromptMatches(t *testing
 	}
 }
 
-func TestInitializeContextManagerDateRolloverPreservesConfigurationChanges(t *testing.T) {
-	originalNow := promptNow
-	t.Cleanup(func() { promptNow = originalNow })
-	for _, tc := range []struct {
-		name   string
-		config AgentConfig
-	}{
-		{"timezone", AgentConfig{Timezone: "Asia/Shanghai"}},
-		{"locale", AgentConfig{Locale: "zh-CN"}},
-		{"instruction", AgentConfig{Instruction: "Current date: 2030-01-01 (Tuesday, timezone: UTC)"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			promptNow = func() time.Time { return time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC) }
-			folder := t.TempDir()
-			original, err := InitializeContextManager(testPromptProfile(AgentConfig{}).SystemPrompt, folder, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			promptNow = func() time.Time { return time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC) }
-			changed, err := InitializeContextManager(testPromptProfile(tc.config).SystemPrompt, folder, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if changed.GetSessionID() == original.GetSessionID() {
-				t.Fatal("date rollover hid a configuration change")
-			}
-		})
-	}
-}
-
 func TestInitializeContextManagerReusesSessionWhenOnlyUserProfileChanges(t *testing.T) {
 	originalNow := promptNow
 	t.Cleanup(func() { promptNow = originalNow })

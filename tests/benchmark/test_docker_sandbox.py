@@ -286,15 +286,6 @@ class DockerSandboxContractTest(unittest.TestCase):
         self.assertNotEqual(agent_port, 0)
         self.assertNotEqual(config_port, agent_port)
 
-    def test_entrypoint_exits_when_either_web_process_stops(self):
-        entrypoint = read_repo_file("docker/dev/entrypoint.sh")
-
-        self.assertTrue(entrypoint.startswith("#!/bin/bash\n"))
-        self.assertIn(
-            'wait -n "$config_web_pid" "$ttyd_pid"',
-            entrypoint,
-        )
-
     def test_entrypoint_configures_ttyd_options(self):
         entrypoint = read_repo_file("docker/dev/entrypoint.sh")
 
@@ -310,6 +301,149 @@ class DockerSandboxContractTest(unittest.TestCase):
             'disableResizeOverlay=${TTYD_DISABLE_RESIZE_OVERLAY:-true}',
             entrypoint,
         )
+
+    def test_quick_actions_preset_only_manages_its_own_copy(self):
+        helper = REPO_ROOT / "docker/dev/aico-quick-actions"
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            preset_directory = temporary_path / "presets"
+            preset_directory.mkdir()
+            (preset_directory / "alpha.json").write_text('{"preset": "alpha"}\n')
+            (preset_directory / "beta.json").write_text('{"preset": "beta"}\n')
+            agent_directory = temporary_path / "agent"
+            target = agent_directory / "quick_actions.json"
+            marker = agent_directory / ".quick-actions-preset"
+            log_file = agent_directory / "log/agent.log"
+
+            def run(preset):
+                environment = os.environ.copy()
+                environment.pop("AICO_QUICK_ACTIONS_PRESET", None)
+                environment.update(
+                    {
+                        "AICO_AGENT_DIR": str(agent_directory),
+                        "AICO_QUICK_ACTIONS_DIR": str(preset_directory),
+                    }
+                )
+                if preset is not None:
+                    environment["AICO_QUICK_ACTIONS_PRESET"] = preset
+                completed = subprocess.run(
+                    ["sh", str(helper)],
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            def installed():
+                return target.read_text() if target.exists() else None
+
+            run(None)
+            self.assertIsNone(installed())
+
+            run("alpha")
+            self.assertEqual(installed(), '{"preset": "alpha"}\n')
+            run("beta")
+            self.assertEqual(installed(), '{"preset": "beta"}\n')
+
+            run("../presets/alpha")
+            run("missing")
+            self.assertEqual(installed(), '{"preset": "beta"}\n')
+            self.assertIn("quick_actions_preset_unknown", log_file.read_text())
+
+            run("")
+            self.assertIsNone(installed())
+            self.assertFalse(marker.exists())
+
+            # A crash between replacing the file and writing the marker leaves
+            # a bundled preset copy behind a stale or missing marker.
+            run("alpha")
+            target.write_text('{"preset": "beta"}\n')
+            (agent_directory / "quick_actions.json.tmp.1").write_text("partial")
+            run("beta")
+            self.assertEqual(installed(), '{"preset": "beta"}\n')
+            self.assertTrue(marker.read_text().startswith("beta "))
+            self.assertEqual(
+                sorted(path.name for path in agent_directory.glob("*.tmp.*")), []
+            )
+            marker.unlink()
+            run("")
+            self.assertIsNone(installed())
+
+            # The same interruption followed by reselecting the original
+            # preset must restore it rather than trust the stale marker.
+            run("alpha")
+            target.write_text('{"preset": "beta"}\n')
+            run("alpha")
+            self.assertEqual(installed(), '{"preset": "alpha"}\n')
+
+            run("alpha")
+            target.write_text('{"custom": true}\n')
+            run("beta")
+            self.assertEqual(installed(), '{"custom": true}\n')
+            self.assertIn("quick_actions_preset_skipped", log_file.read_text())
+            run(None)
+            self.assertEqual(installed(), '{"custom": true}\n')
+
+            marker.unlink()
+            run("alpha")
+            self.assertEqual(installed(), '{"custom": true}\n')
+
+    def test_python_base_is_reset_unless_marked_for_the_current_arch(self):
+        entrypoint = REPO_ROOT / "docker/dev/entrypoint.sh"
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            base = temporary_path / "python"
+
+            def prepare(arch):
+                completed = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        'source "$1" && prepare_python_base "$2" "$3"',
+                        "test",
+                        str(entrypoint),
+                        str(base),
+                        arch,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            def set_aside(prefix):
+                return sorted(
+                    path.name.rsplit(".", 1)[0]
+                    for path in temporary_path.glob(f"python.{prefix}.*")
+                )
+
+            # A missing or empty base is simply marked.
+            prepare("aarch64")
+            self.assertEqual((base / ".aico-arch").read_text(), "aarch64\n")
+            (base / ".aico-arch").unlink()
+            prepare("aarch64")
+            self.assertEqual((base / ".aico-arch").read_text(), "aarch64\n")
+            self.assertEqual(set_aside("*"), [])
+
+            # A matching marker keeps installed packages.
+            (base / "lib").mkdir()
+            prepare("aarch64")
+            self.assertTrue((base / "lib").is_dir())
+
+            # A different marker, or packages without any marker, are moved
+            # aside so the new base starts empty.
+            prepare("x86_64")
+            self.assertEqual(set_aside("aarch64"), ["python.aarch64"])
+            self.assertEqual(sorted(path.name for path in base.iterdir()), [".aico-arch"])
+            (base / ".aico-arch").unlink()
+            (base / "lib").mkdir()
+            prepare("aarch64")
+            self.assertEqual(set_aside("unknown"), ["python.unknown"])
+            self.assertEqual((base / ".aico-arch").read_text(), "aarch64\n")
+            self.assertFalse((base / "lib").exists())
 
     def test_agent_supervisor_truncates_the_persistent_log(self):
         service = REPO_ROOT / "docker/dev/agent-service.sh"
@@ -378,6 +512,95 @@ class DockerSandboxContractTest(unittest.TestCase):
             stderr = supervisor.stderr.read()
             supervisor.stderr.close()
             self.assertEqual(supervisor.returncode, 0, stderr)
+
+    def test_agent_supervisor_disables_classic_voice_only_when_requested(self):
+        service = REPO_ROOT / "docker/dev/agent-service.sh"
+        cases = {
+            None: False,
+            "1": False,
+            "0": True,
+            "off": True,
+        }
+
+        for classic_voice, expect_disabled in cases.items():
+            with self.subTest(AICO_CLASSIC_VOICE=classic_voice):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    temporary_path = Path(temporary_directory)
+                    arguments_file = temporary_path / "arguments.json"
+                    agent = temporary_path / "fake-agent.py"
+                    agent.write_text(
+                        "#!/usr/bin/env python3\n"
+                        "import json\n"
+                        "import signal\n"
+                        "import sys\n"
+                        "import time\n"
+                        "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n"
+                        f"with open({str(arguments_file)!r}, 'w') as output:\n"
+                        "    json.dump(sys.argv[1:], output)\n"
+                        "time.sleep(30)\n",
+                        encoding="utf-8",
+                    )
+                    agent.chmod(0o755)
+
+                    environment = os.environ.copy()
+                    for key in (
+                        "AICO_CLASSIC_VOICE",
+                        "AICO_DEVICE_TYPE",
+                        "AICO_ENVIRONMENT_BRIDGE_ENDPOINT",
+                        "ENVIRONMENT_BRIDGE_ENDPOINT",
+                    ):
+                        environment.pop(key, None)
+                    if classic_voice is not None:
+                        environment["AICO_CLASSIC_VOICE"] = classic_voice
+                    environment.update(
+                        {
+                            "AICO_AGENT_BIN": str(agent),
+                            "AICO_AGENT_DIR": str(temporary_path / "agent"),
+                            "AICO_AGENT_RUN_DIR": str(temporary_path / "run"),
+                            "AICO_SYSTEM_ENV": str(temporary_path / "system-env"),
+                            "AICO_ENV_RUN_BIN": str(
+                                REPO_ROOT / "docker/dev/aico-env-run"
+                            ),
+                        }
+                    )
+                    supervisor = subprocess.Popen(
+                        ["sh", str(service), "run"],
+                        env=environment,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    try:
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline:
+                            if arguments_file.exists():
+                                try:
+                                    arguments = json.loads(
+                                        arguments_file.read_text(encoding="utf-8")
+                                    )
+                                    break
+                                except json.JSONDecodeError:
+                                    pass
+                            time.sleep(0.05)
+                        else:
+                            self.fail("agent supervisor did not start the agent")
+                    finally:
+                        supervisor.terminate()
+                        try:
+                            stdout, stderr = supervisor.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            supervisor.kill()
+                            stdout, stderr = supervisor.communicate(timeout=5)
+
+                    self.assertEqual(
+                        "--classic-voice=false" in arguments, expect_disabled
+                    )
+                    # The logged command line must match what was executed.
+                    self.assertIn(
+                        "command=" + " ".join([str(agent), *arguments]),
+                        stdout,
+                        stderr,
+                    )
 
     def test_bridge_session_outlives_agent_and_supervisor_restarts(self):
         service = REPO_ROOT / "docker/dev/agent-service.sh"

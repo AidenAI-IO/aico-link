@@ -5,6 +5,7 @@
  * the right-hand panel empty on the list itself.
  */
 
+import {localOverviewPage} from './pages/local.js';
 import {homePage} from './pages/home.js';
 import {wifiDetailPage, wifiPage} from './pages/wifi.js';
 import {basicPage, languagePage} from './pages/basic.js';
@@ -20,7 +21,7 @@ import {memoryPage} from './pages/memory.js';
 import {storagePage} from './pages/storage.js';
 import {advancedPage, agentLogPage, logLevelPage, logsPage, manualConfigPage} from './pages/advanced.js';
 import {otaLogPage, otaPage} from './pages/ota.js';
-import {lanAccessPage} from './pages/lan-access.js';
+import {devicePasswordPage, lanAccessPage} from './pages/lan-access.js';
 import {mcpPage} from './pages/mcp.js';
 
 /** Section ids that have a real page on the new layout. */
@@ -53,7 +54,14 @@ export const routes = [
   {path: '/advanced/logs/level', name: 'advanced-log-level', page: logLevelPage},
   {path: '/advanced/config', name: 'advanced-config', page: manualConfigPage},
   {path: '/advanced/lan', name: 'advanced-lan', page: lanAccessPage},
+  {path: '/advanced/password', name: 'advanced-password', page: devicePasswordPage},
   {path: '/advanced/mcp', name: 'advanced-mcp', page: mcpPage},
   {path: '/firmware', name: 'firmware', page: otaPage},
   {path: '/firmware/log', name: 'firmware-log', page: otaLogPage},
+];
+
+export const localRoutes = [
+  {path: '/', name: 'local-home', page: localOverviewPage},
+  ...routes.filter(route => route.path.startsWith('/model') || route.path.startsWith('/conversation') ||
+    route.path === '/basic/language' || route.path.startsWith('/advanced/logs')),
 ];

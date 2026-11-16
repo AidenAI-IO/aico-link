@@ -456,3 +456,70 @@ func TestAgentLoopPendingSteerBeforeFirstModelGetsFreshIterationBudget(t *testin
 		t.Fatalf("model call count = %d, want 1", model.callCount)
 	}
 }
+
+// A steer queued while the model produced its final answer must continue the
+// run after that answer rather than being dropped when the run returns.
+func TestAgentLoopFinalSteerContinuesAfterFinalAnswer(t *testing.T) {
+	t.Parallel()
+
+	model := &scriptedModel{responses: []*llms.ContentResponse{
+		contentResponse("First answer."),
+		contentResponse("Answer to the steer."),
+	}}
+	manager, err := freshNewContextManager("system", "task", nil, t.TempDir())
+	if err != nil {
+		t.Fatalf("freshNewContextManager() error = %v", err)
+	}
+	loop := NewAgentLoop(model, RoleProfile{}, 1, nil, nil, manager)
+	loop.SteerProvider = func(context.Context) (RunSteerMessage, bool) { return RunSteerMessage{}, false }
+	var finalChecks int
+	loop.FinalSteerProvider = func(context.Context) (RunSteerMessage, bool) {
+		finalChecks++
+		if finalChecks > 1 {
+			return RunSteerMessage{}, false
+		}
+		return RunSteerMessage{Content: "Also check the weather."}, true
+	}
+
+	output, err := loop.Run(context.Background(), "task")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if output != "Answer to the steer." {
+		t.Fatalf("output = %q, want the reply to the steer", output)
+	}
+	if finalChecks != 2 {
+		t.Fatalf("final steer checks = %d, want 2", finalChecks)
+	}
+	if len(model.messages) != 2 || !runtimeModelCallContains(model.messages[1], "First answer.") ||
+		!runtimeModelCallContains(model.messages[1], "Also check the weather.") {
+		t.Fatalf("second model call should carry the first answer and the steer: %#v", model.messages)
+	}
+}
+
+// A voice steer captured through an interrupt that completes after the last
+// ordinary check must still be delivered by the final check.
+func TestVoiceRunControlFinalCheckDeliversCompletedInterruptSteer(t *testing.T) {
+	t.Parallel()
+
+	var c voiceRunControl
+	if !c.begin("voice-1") {
+		t.Fatal("begin() rejected the run")
+	}
+	if _, started, ok := c.beginInterrupt(); !started || !ok {
+		t.Fatalf("beginInterrupt() started=%t ok=%t", started, ok)
+	}
+	if _, ok := c.queueSteer("change direction"); !ok {
+		t.Fatal("queueSteer() refused the interrupt text")
+	}
+	steer, ok := c.consumeFinalPending("voice-1")
+	if !ok || steer.Content != "change direction" {
+		t.Fatalf("consumeFinalPending() = %+v, %t; want the interrupt steer", steer, ok)
+	}
+	if _, ok := c.consumeFinalPending("voice-1"); ok {
+		t.Fatal("consumeFinalPending() delivered a steer twice")
+	}
+	if _, ok := c.queueSteer("too late"); ok {
+		t.Fatal("queueSteer() accepted a steer after the final check closed acceptance")
+	}
+}

@@ -29,3 +29,12 @@ export const SECONDARY_ITEMS = [
 
 /** Every entry, in presentation order. */
 export const ALL_ITEMS = [...PRIMARY_ITEMS, ...SECONDARY_ITEMS];
+
+/** Host mode has no board services or launch-time device controls. */
+export const LOCAL_ITEMS = [
+  {id: 'overview', label: msg('local.overview', '运行概览'), route: '/'},
+  {id: 'model', label: msg('ui.nav_model', '模型设置'), route: '/model'},
+  {id: 'conversation', label: msg('ui.nav_conversation', '对话与工具'), route: '/conversation'},
+  {id: 'language', label: msg('basic.language_title', '语言与时区'), route: '/basic/language'},
+  {id: 'logs', label: msg('advanced.logs', '日志'), route: '/advanced/logs'},
+];

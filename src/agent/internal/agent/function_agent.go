@@ -159,6 +159,15 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (strin
 	if actionOutput, ok := actionOutputFromScreenshotObservation(step.Observation); ok {
 		toolContent = actionOutput
 	}
+	if step.Action.Tool == toolReadImage {
+		return readImageToolContent(step.Observation), []llms.MessageContent{{
+			Role: llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{
+				llms.TextPart(readImageObservationCaption(step.Observation)),
+				buildImagePart(visual.MIMEType, visual.ImageBytes),
+			},
+		}}
+	}
 	caption := fmt.Sprintf("This image is the screenshot observation returned by the %s tool. Use it when answering the original request.", step.Action.Tool)
 	if summary := screenshotObservationStatusSummary(step.Action.Tool, result, a.usesPixelCoordinates()); summary != "" {
 		caption += " " + summary

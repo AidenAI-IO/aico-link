@@ -81,7 +81,7 @@ export function terminalUrl(location = window.location) {
 function terminalRow() {
   const node = row({
     label: msg('advanced.terminal', '终端'),
-    value: msg('advanced.terminal_hint', '设备命令行'),
+    description: msg('advanced.terminal_hint', '设备命令行'),
     chevron: true,
     action: 'open-terminal',
     onPress: () => {
@@ -117,14 +117,14 @@ export async function advancedPage(context) {
         rows: [
           row({
             label: msg('advanced.logs', '日志'),
-            value: msg('advanced.logs_hint', '管理日志记录和导出'),
+            description: msg('advanced.logs_hint', '管理日志记录和导出'),
             chevron: true,
             action: 'open-logs',
             onPress: () => context.navigate('/advanced/logs'),
           }),
           row({
             label: msg('advanced.manual_config', '手动编辑配置'),
-            value: msg('advanced.manual_config_hint', '编辑 Agent TOML 配置文件'),
+            description: msg('advanced.manual_config_hint', '编辑 Agent TOML 配置文件'),
             chevron: true,
             action: 'open-manual-config',
             onPress: () => context.navigate('/advanced/config'),
@@ -136,6 +136,13 @@ export async function advancedPage(context) {
             chevron: true,
             action: 'open-lan-access',
             onPress: () => context.navigate('/advanced/lan'),
+          }),
+          row({
+            label: msg('lan.password', '设备密码'),
+            value: lanAccess == null ? null : (lanAccess.password_set ? msg('lan.password_set', '已设置') : msg('lan.password_unset', '未设置')),
+            chevron: true,
+            action: 'open-device-password',
+            onPress: () => context.navigate('/advanced/password'),
           }),
           row({
             label: msg('advanced.mcp_enabled', 'MCP'),
@@ -159,7 +166,7 @@ export async function logsPage(context) {
   const body = el('div');
   const saver = createSaver(context, {
     title: msg('advanced.logs', '日志'),
-    back: '/advanced',
+    back: context.localAgent ? '/' : '/advanced',
     root: body,
     onSaved: adoptSaved(snapshot, () => render()),
   });
@@ -245,7 +252,7 @@ export async function logsPage(context) {
           onSelect: value => saver.change('log.llm_http_retention_days', {log: {llm_http_retention_days: value}}),
         }),
       })]}), msg('advanced.retention_help', '详细模型请求日志在自动清理前保留的天数。')),
-      el('div', {class: 'ds-group'}, [exportButton]),
+      context.localAgent ? null : el('div', {class: 'ds-group'}, [exportButton]),
     ]);
     saver.refreshChrome();
   }

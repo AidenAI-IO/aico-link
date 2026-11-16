@@ -31,6 +31,7 @@ const (
 // configuration portal. Paths are flags so host tests can run without device
 // files, while production keeps the established locations.
 type Options struct {
+	LocalAgent                bool
 	BindAddress               string
 	Port                      int
 	AgentConfigPath           string
@@ -64,7 +65,7 @@ type Options struct {
 	BluetoothStateScript      string
 	OTAConfigPath             string
 
-	// LAN access: LANGuard refuses non-USB requests while the switch is off.
+	// LAN access: LANGuard applies the LAN access switch and the device password.
 	// The switch and device password are shared with the Agent; LANAccessSync
 	// applies them to SSH and the aico login; USBTerminalPort fronts the
 	// loopback-bound ttyd on the USB link only (0 disables it).
@@ -180,6 +181,9 @@ func (o Options) Addr() string {
 }
 
 func (o Options) Validate() error {
+	if o.LocalAgent {
+		return validateLocalAgentOptions(o)
+	}
 	switch o.BindAddress {
 	case "0.0.0.0", "127.0.0.1", "192.168.42.1":
 	default:

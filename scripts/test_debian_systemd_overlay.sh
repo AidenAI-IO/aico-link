@@ -683,15 +683,15 @@ lan_rule_restricted() {
 run_lan_sync
 lan_rule_restricted || fail "LAN access off does not restrict SSH"
 grep -Fxq 'reload ssh.service' "${systemctl_log}" || fail "sshd was not reloaded"
-[ ! -e "${usermod_args}" ] || fail "LAN sync changed the account without a device password"
-# Switch on without a password: SSH must stay restricted.
+account_locked() {
+    grep -Fxq -- '*' "${usermod_args}" && grep -Fxq -- 'aico' "${usermod_args}"
+}
+account_locked || fail "without a device password the aico login is not locked"
+# Switch on without a password is a normal state, but SSH stays restricted.
 touch "${lan_root}/enabled"
-set +e
-run_lan_sync
-lan_status=$?
-set -e
-[ "${lan_status}" -eq 3 ] || fail "LAN sync without a password returned ${lan_status}"
+run_lan_sync || fail "LAN sync with LAN access on and no password failed"
 lan_rule_restricted || fail "LAN access on without a password opened SSH"
+account_locked || fail "LAN access on without a password left the aico login unlocked"
 device_hash='$2a$10$abcdefghijklmnopqrstuuJ2s0yZ1k8m7Y8Y2b6Wm8kQ3xvOQyWm'
 printf '%s\n' "${device_hash}" >"${lan_root}/device-password"
 run_lan_sync
@@ -701,6 +701,11 @@ fi
 grep -Fxq -- '-p' "${usermod_args}"
 grep -Fxq -- "${device_hash}" "${usermod_args}"
 grep -Fxq -- 'aico' "${usermod_args}"
+# Clearing the password locks the account again and closes SSH to the LAN.
+rm -f "${lan_root}/device-password" "${usermod_args}"
+run_lan_sync || fail "LAN sync after clearing the password failed"
+lan_rule_restricted || fail "clearing the password left SSH open to the LAN"
+account_locked || fail "clearing the password left the aico login unlocked"
 # A damaged password file must close SSH again even though the switch is on.
 printf '%s\n' 'plaintext' >"${lan_root}/device-password"
 set +e
@@ -709,6 +714,7 @@ lan_status=$?
 set -e
 [ "${lan_status}" -eq 3 ] || fail "LAN sync accepted a non-bcrypt value (status ${lan_status})"
 lan_rule_restricted || fail "a plaintext password file left SSH open to the LAN"
+account_locked || fail "a plaintext password file left the aico login unlocked"
 # A failing usermod must also leave SSH restricted.
 printf '%s\n' "${device_hash}" >"${lan_root}/device-password"
 run_lan_sync

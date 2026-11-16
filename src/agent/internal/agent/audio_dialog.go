@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"aico-agent/internal/agent/speech"
@@ -62,6 +63,16 @@ type AudioDialog struct {
 	transcriptObserver  func(uint64, stream.TranscriptEvent)
 	audioArchive        *AudioArchiveManager
 	connWarmer          *ConnectionWarmer
+	// voice is the conversation the dialog currently serves, or nil outside
+	// one. A browser conversation captures and plays through its endpoint;
+	// either route applies the conversation's mute state.
+	voice atomic.Pointer[RealtimeVoiceSession]
+	// activeRecordBackend is the backend the open recording started on, so a
+	// recording never moves between endpoints while it runs.
+	activeRecordBackend audioRecordingBackend
+	// activitySink receives the conversation's listening, thinking and
+	// speaking transitions for the Web UI voice mode.
+	activitySink stream.EventSink
 }
 
 type activeTTSOutput struct {
@@ -428,13 +439,15 @@ func (d *AudioDialog) StartRecording() error {
 		BitWidth:   uint32(d.config.Audio.BitWidthOrDefault()),
 	}
 
-	result, err := startRecordingWithRetry(recordingBackendOrService(d.recordBackend, d.audioClient), format, recordingStartRetryTimeout, recordingStartRetryInterval)
+	backend := d.recordingBackend()
+	result, err := startRecordingWithRetry(backend, format, recordingStartRetryTimeout, recordingStartRetryInterval)
 	if err != nil {
 		return fmt.Errorf("start recording: %w", err)
 	}
 	d.sessionID = result.SessionID
-	if d.config.AudioBackendOrDefault() != AudioBackendLocal {
-		if reader, err := d.audioClient.OpenRecordChunkReader(result.SessionID); err == nil {
+	d.activeRecordBackend = backend
+	if service, ok := backend.(*AudioServiceClient); ok && service != nil {
+		if reader, err := service.OpenRecordChunkReader(result.SessionID); err == nil {
 			d.recordReader = reader
 		} else {
 			logging.Warnf("agent", "audio", "Persistent record reader unavailable, using per-request reads: %v", err)
@@ -731,6 +744,8 @@ func (d *AudioDialog) StopRecording() error {
 	d.recordActive = false
 	d.sessionID = 0
 	d.recordReader = nil
+	backend := d.activeRecordBackend
+	d.activeRecordBackend = nil
 	d.recordMu.Unlock()
 	if takenRecordSTT != nil {
 		defer func() {
@@ -742,13 +757,18 @@ func (d *AudioDialog) StopRecording() error {
 		defer reader.Close()
 	}
 
-	backend := recordingBackendOrService(d.recordBackend, d.audioClient)
+	if backend == nil {
+		backend = recordingBackendOrService(d.recordBackend, d.audioClient)
+	}
 	if err := backend.StopRecording(sessionID); err != nil {
 		return fmt.Errorf("stop recording: %w", err)
 	}
 	_, serviceBackend := backend.(*AudioServiceClient)
 	if serviceBackend {
 		tail, err := drainRecordChunks(backend, reader, sessionID)
+		if len(tail) > 0 && d.voiceSession().Muted() {
+			tail = make([]byte, len(tail))
+		}
 		d.recordMu.Lock()
 		d.recordTail = tail
 		d.recordMu.Unlock()
@@ -857,31 +877,103 @@ func (d *AudioDialog) readRecordChunk(timeoutMs uint32, uploadSTT bool) (*AudioC
 		d.recordMu.Unlock()
 		return nil, fmt.Errorf("recording is not active")
 	}
+	if d.voiceSession().Stopped() {
+		// The conversation was ended (End in the Web UI, or its browser
+		// left): the listener sees the end of the stream and closes it.
+		d.recordMu.Unlock()
+		return &AudioChunkResult{EndOfStream: true}, nil
+	}
 	reader := d.recordReader
 	sessionID := d.sessionID
+	backend := d.activeRecordBackend
 	d.recordMu.Unlock()
-
-	if reader != nil {
-		chunk, err := reader.Read(timeoutMs)
-		if err == nil {
-			if uploadSTT {
-				d.uploadRecordChunkToStreamingSTT(sessionID, chunk)
-			}
-			return chunk, nil
-		}
-		logging.Warnf("agent", "audio", "Persistent record reader failed, falling back to per-request reads: %v", err)
-		d.recordMu.Lock()
-		if d.recordReader == reader {
-			_ = d.recordReader.Close()
-			d.recordReader = nil
-		}
-		d.recordMu.Unlock()
+	if backend == nil {
+		backend = recordingBackendOrService(d.recordBackend, d.audioClient)
 	}
-	chunk, err := recordingBackendOrService(d.recordBackend, d.audioClient).ReadRecordChunk(sessionID, timeoutMs)
-	if err == nil && uploadSTT {
+
+	var chunk *AudioChunkResult
+	var err error
+	if reader != nil {
+		chunk, err = reader.Read(timeoutMs)
+		if err != nil {
+			logging.Warnf("agent", "audio", "Persistent record reader failed, falling back to per-request reads: %v", err)
+			d.recordMu.Lock()
+			if d.recordReader == reader {
+				_ = d.recordReader.Close()
+				d.recordReader = nil
+			}
+			d.recordMu.Unlock()
+			reader = nil
+		}
+	}
+	if reader == nil {
+		chunk, err = backend.ReadRecordChunk(sessionID, timeoutMs)
+	}
+	if err != nil {
+		return chunk, err
+	}
+	if chunk != nil && len(chunk.PCM) > 0 && d.voiceSession().Muted() {
+		// A muted microphone hears silence: VAD and STT keep their timing,
+		// but nothing the user says reaches either.
+		chunk = &AudioChunkResult{PCM: make([]byte, len(chunk.PCM)), EndOfStream: chunk.EndOfStream}
+	}
+	if uploadSTT {
 		d.uploadRecordChunkToStreamingSTT(sessionID, chunk)
 	}
-	return chunk, err
+	return chunk, nil
+}
+
+// SetVoiceSession attaches the voice conversation the dialog serves, or
+// detaches it with nil. While a browser conversation is attached, recordings
+// started afterwards and all playback use the browser; a recording already
+// open keeps the endpoint it started on.
+func (d *AudioDialog) SetVoiceSession(voice *RealtimeVoiceSession) {
+	if d != nil {
+		d.voice.Store(voice)
+	}
+}
+
+// SetVoiceActivitySink installs the sink that receives voice activity
+// transitions. Call it before the voice loop starts.
+func (d *AudioDialog) SetVoiceActivitySink(sink stream.EventSink) {
+	if d != nil {
+		d.activitySink = sink
+	}
+}
+
+// ReportVoiceActivity publishes a listening, thinking or speaking transition
+// of the attached voice conversation, so the Web UI voice mode can follow it.
+// It does nothing outside a conversation.
+func (d *AudioDialog) ReportVoiceActivity(kind stream.EventKind) {
+	if d == nil || d.activitySink == nil || d.voiceSession() == nil {
+		return
+	}
+	event := stream.NewEvent(stream.EventIdentity{}, kind, nil)
+	event.Origin = "classic"
+	event.Visibility = stream.VisibilityInternal
+	_ = d.activitySink.Emit(context.Background(), event)
+}
+
+// VoiceSession returns the attached conversation, or nil outside one. Its
+// methods are safe to call on nil.
+func (d *AudioDialog) VoiceSession() *RealtimeVoiceSession {
+	return d.voiceSession()
+}
+
+func (d *AudioDialog) voiceSession() *RealtimeVoiceSession {
+	if d == nil {
+		return nil
+	}
+	return d.voice.Load()
+}
+
+// recordingBackend is the backend a new recording opens on: the browser of
+// an attached browser conversation, otherwise the configured device backend.
+func (d *AudioDialog) recordingBackend() audioRecordingBackend {
+	if voice := d.voiceSession(); voice != nil && voice.Route() == RealtimeAudioRouteWeb {
+		return voice.Audio().Recording()
+	}
+	return recordingBackendOrService(d.recordBackend, d.audioClient)
 }
 
 func (d *AudioDialog) uploadRecordChunkToStreamingSTT(sessionID uint64, chunk *AudioChunkResult) {
@@ -1692,6 +1784,10 @@ func (d *AudioDialog) currentTTSPlaybackBackend() tts.AudioServiceBackend {
 	if d == nil {
 		return nil
 	}
+	return voicePlayback(d.voiceSession(), d.devicePlaybackBackend())
+}
+
+func (d *AudioDialog) devicePlaybackBackend() tts.AudioServiceBackend {
 	if d.ttsPlaybackBackend != nil {
 		if backend, ok := d.ttsPlaybackBackend.(*audioBackend); ok && d.audioClient != nil && backend.c != d.audioClient {
 			return newAudioBackend(d.audioClient)

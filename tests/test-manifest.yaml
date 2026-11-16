@@ -63,8 +63,10 @@ suites:
     quick: true
     quick_command: |
       go test -count=1 -timeout=2m -run '^TestShared' ./internal/ota
+      go test -count=1 -timeout=2m -run '^TestSourceLstat' ./internal/backup
+      go test -count=1 -timeout=2m -run '^Test(NativeText|NativeSystemAction|QuickAction|EnterText|HandleProviderMNK|HTTPHandler|HTTPProvider|GoEnvironmentBridge|EnvironmentBridge|IPhoneMirroring)' ./internal/agent ./internal/agent/mnk
       go test -race -count=1 -timeout=2m ./internal/usbuplink ./internal/wifiproxy
-      go test -race -count=1 -timeout=2m -run '^TestUSBInternet' ./internal/configweb
+      go test -race -count=1 -timeout=2m -run '^Test(USBInternet|LocalAgent)' ./internal/configweb
     dependencies: [go, gcc]
     required: true
     timeout_seconds: 900
@@ -87,10 +89,10 @@ suites:
 
   - name: benchmark-python
     class: deterministic
-    paths: [benchmark]
+    paths: [benchmark, scripts/local_agent.py]
     command: cd benchmark && uv run --locked pytest -q tests ../tests/benchmark mobilegym/bridge/test_tools_api.py
     quick: true
-    quick_command: cd benchmark && uv run --locked pytest -q tests/test_suite.py tests/test_mnk_provider.py tests/test_harness.py tests/test_experiment.py tests/test_experiment_web.py tests/test_operations.py tests/test_openclaw.py tests/test_raw_tools.py tests/test_harnesses.py tests/test_ci_run_experiment.py tests/test_auto_improve.py tests/test_process.py
+    quick_command: cd benchmark && uv run --locked pytest -q tests/test_suite.py tests/test_mnk_provider.py tests/test_desktop_bridge.py tests/test_iphone_mirroring.py tests/test_ios_device.py tests/test_local_agent.py tests/test_harness.py tests/test_experiment.py tests/test_experiment_web.py tests/test_operations.py tests/test_openclaw.py tests/test_raw_tools.py tests/test_harnesses.py tests/test_ci_run_experiment.py tests/test_auto_improve.py tests/test_process.py
     dependencies: [uv]
     required: true
     timeout_seconds: 1200

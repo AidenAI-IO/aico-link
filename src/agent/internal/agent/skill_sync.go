@@ -37,6 +37,9 @@ type BundledManifest struct {
 	Version   int                      `json:"version"`
 	UpdatedAt string                   `json:"updated_at"`
 	Skills    map[string]ManifestEntry `json:"skills"`
+	// SupportFiles records, per skill, the hash of each bundled supporting file
+	// (references/, templates/, scripts/, assets/) last written to the user copy.
+	SupportFiles map[string]map[string]string `json:"support_files,omitempty"`
 }
 
 type ManifestEntry struct {
@@ -81,6 +84,7 @@ func SyncBundledSkills(ctx context.Context, opts SkillSyncOptions) (*SkillSyncRe
 
 	for name, bundledPath := range bundled {
 		syncOneSkill(name, bundledPath, userSkillsDir, stateDir, manifest, report)
+		syncSupportFiles(name, filepath.Dir(bundledPath), filepath.Join(userSkillsDir, name), manifest, false)
 	}
 
 	cleanStaleManifestEntries(manifest, bundled, report)
@@ -335,6 +339,92 @@ func cleanStaleManifestEntries(manifest *BundledManifest, bundled map[string]str
 			delete(manifest.Skills, name)
 		}
 	}
+	for name := range manifest.SupportFiles {
+		if _, ok := bundled[name]; !ok {
+			delete(manifest.SupportFiles, name)
+		}
+	}
+}
+
+// syncSupportFiles mirrors a bundled skill's supporting files (references/,
+// templates/, scripts/, assets/) into the user copy. A file is written when the
+// user copy lacks it and it was never synced, or when the user copy still matches
+// the last synced bundled version; files the user edited or removed are left
+// alone, and files dropped upstream are removed only while unedited. With force,
+// every bundled file overwrites the user copy. Nothing happens while the skill's
+// SKILL.md is absent from the user copy.
+func syncSupportFiles(name, bundledSkillDir, userSkillDir string, manifest *BundledManifest, force bool) {
+	if !fileExists(filepath.Join(userSkillDir, "SKILL.md")) {
+		return
+	}
+	recorded := manifest.SupportFiles[name]
+	next := make(map[string]string)
+	bundledSet := make(map[string]bool)
+
+	for _, rel := range listSkillLinkedFiles(filepath.Dir(bundledSkillDir), filepath.Base(bundledSkillDir)) {
+		bundledSet[rel] = true
+		lastHash, synced := recorded[rel]
+		content, err := os.ReadFile(filepath.Join(bundledSkillDir, filepath.FromSlash(rel)))
+		if err != nil {
+			logging.Errorf("agent", "skill_sync", "read bundled %s/%s: %v", name, rel, err)
+			if synced {
+				next[rel] = lastHash
+			}
+			continue
+		}
+		bundledHash := hashContent(content)
+		userPath := filepath.Join(userSkillDir, filepath.FromSlash(rel))
+
+		write := force
+		if !write {
+			userContent, err := os.ReadFile(userPath)
+			switch {
+			case os.IsNotExist(err):
+				write = !synced
+			case err != nil:
+				logging.Errorf("agent", "skill_sync", "read user %s/%s: %v", name, rel, err)
+			default:
+				userHash := hashContent(userContent)
+				if userHash == bundledHash {
+					next[rel] = bundledHash
+					continue
+				}
+				write = synced && userHash == lastHash
+			}
+		}
+		if write {
+			if err := writeFileAtomic(userPath, content, 0o644); err != nil {
+				logging.Errorf("agent", "skill_sync", "write %s/%s: %v", name, rel, err)
+			} else {
+				next[rel] = bundledHash
+				continue
+			}
+		}
+		if synced {
+			next[rel] = lastHash
+		}
+	}
+
+	for rel, lastHash := range recorded {
+		if bundledSet[rel] {
+			continue
+		}
+		userPath := filepath.Join(userSkillDir, filepath.FromSlash(rel))
+		if userContent, err := os.ReadFile(userPath); err == nil && hashContent(userContent) == lastHash {
+			if err := os.Remove(userPath); err != nil {
+				logging.Errorf("agent", "skill_sync", "remove %s/%s: %v", name, rel, err)
+			}
+		}
+	}
+
+	if len(next) == 0 {
+		delete(manifest.SupportFiles, name)
+		return
+	}
+	if manifest.SupportFiles == nil {
+		manifest.SupportFiles = make(map[string]map[string]string)
+	}
+	manifest.SupportFiles[name] = next
 }
 
 func loadManifest(path string) *BundledManifest {
@@ -428,6 +518,7 @@ func RestoreBundledSkill(configDir, bundledSkillsDir, name string) error {
 
 	manifestPath := filepath.Join(stateDir, ".bundled_manifest.json")
 	manifest := loadManifest(manifestPath)
+	syncSupportFiles(name, filepath.Dir(bundledPath), filepath.Dir(userPath), manifest, true)
 	manifest.Skills[name] = ManifestEntry{
 		OriginHash:    hashContent(content),
 		EffectiveHash: hashContent(content),

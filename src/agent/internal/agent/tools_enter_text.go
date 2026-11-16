@@ -80,6 +80,7 @@ func (t *EnterTextTool) platform() string {
 
 func (t *EnterTextTool) Description() string {
 	return `Enter exact text into a visible, focused input field or composer. ` +
+		`When an environment bridge advertises native text insertion (such as macOS iPhone Mirroring), it inserts the original Unicode text through the host and verifies the field, without phone IME probing or candidate selection. ` +
 		`First prefers the Phone Bridge clipboard route when it is currently usable, including long, multiline, CJK, and non-ASCII text; it pastes and verifies the complete target. ` +
 		`If Bridge is unavailable or its restore/paste attempt fails, the field must already be focused for the local HID/IME fallback. The local path holds the pointer-free keyboard isolation profile for the whole operation, probes the current ENG/IME state with a temporary "a", and maintains that state while entering parts in order. ` +
 		`ASCII parts are typed directly in ENG mode without a vision verification step. IME parts are typed in IME mode and use vision-guided candidate selection until the part is committed. The local path never uses mouse input. ` +
@@ -129,6 +130,13 @@ func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, option
 		args.ReplaceField = options.replaceField
 		if strings.TrimSpace(args.Text) == "" {
 			return enterTextToolFailure(batchCtx, CodeInvalidArguments, "Provide non-empty text, then retry enter_text."), nil
+		}
+		if result, handled := t.engine.runNativeTextInsertion(batchCtx, args); handled {
+			if !result.OK {
+				logging.Warnf("agent", "text_input", "native text insertion failed: %s", result.Reason)
+				return enterTextToolFailure(batchCtx, CodeToolExecutionFailed, enterTextFailureSuggestion(result)), nil
+			}
+			return enterTextToolResultString(result), nil
 		}
 		platform := t.platform()
 		localController := controller
@@ -196,6 +204,9 @@ func enterTextToolFailure(ctx context.Context, code, suggestion string) string {
 }
 
 func enterTextFailureSuggestion(result textInputResult) string {
+	if result.TextMayBeInserted {
+		return "Text may already be present. Inspect the latest screen and correct or clear the target field before retrying; do not repeat the insertion blindly."
+	}
 	if strings.Contains(strings.ToLower(result.Reason), "deadline") || strings.Contains(strings.ToLower(result.Reason), "timeout") {
 		return "Retry enter_text; if it times out again, enter a shorter section at a time."
 	}

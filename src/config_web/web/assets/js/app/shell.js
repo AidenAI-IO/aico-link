@@ -16,7 +16,8 @@ import {applyServerLocale, initI18n, loadSnapshot} from './data.js';
 import {createHeader} from './header.js';
 import {ALL_ITEMS} from './nav-items.js';
 import {createRouter} from './router.js';
-import {routes} from './routes.js';
+import {localApplicationStatus} from './pages/local.js';
+import {localRoutes, routes} from './routes.js';
 import {settingsList} from './settings-list.js';
 import {el, replace} from '../ui/dom.js';
 import {applyEnvironmentClass, isEmbedded} from '../ui/environment.js';
@@ -41,14 +42,14 @@ export function defaultHeader(path, navigate) {
  * @param {string} [rootId] - id of the host element.
  * @returns {Promise<object>} the router, for tests and debugging.
  */
-export async function boot(rootId = 'app') {
+export async function boot(rootId = 'app', options = {}) {
   const root = document.getElementById(rootId);
   if (!root) throw new Error(`settings shell: #${rootId} not found`);
 
   applyEnvironmentClass();
   // The embedded case is wrapped by a native screen that already shows the
   // product chrome and the page's back/title/save, so no top bar is built.
-  const header = createHeader({embedded: isEmbedded()});
+  const header = createHeader({embedded: isEmbedded(), localAgent: options.localAgent});
   /** Bumped per navigation, so a page that settles late cannot repaint the bar. */
   let generation = 0;
 
@@ -58,10 +59,10 @@ export async function boot(rootId = 'app') {
 
   let navigate = () => {};
   const renderRail = (snapshot, currentPath) =>
-    replace(railBody, [settingsList(snapshot, navigate, currentPath)]);
+    replace(railBody, [settingsList(snapshot, navigate, currentPath, options.localAgent)]);
 
   const router = createRouter({
-    routes,
+    routes: options.localAgent ? localRoutes : routes,
     render: async context => {
       navigate = context.navigate;
       const current = ++generation;
@@ -85,7 +86,7 @@ export async function boot(rootId = 'app') {
       applyServerLocale(snapshot);
 
       view.className = context.name === 'home' ? 'app__scroll route-home' : 'app__scroll';
-      const content = await context.page({...context, snapshot, header: setHeader});
+      const content = await context.page({...context, snapshot, localAgent: options.localAgent, header: setHeader});
       if (current !== generation) return;
       replace(view, [content]);
       mounted = true;
@@ -107,7 +108,7 @@ export async function boot(rootId = 'app') {
   root.appendChild(
     el('div', {class: 'app'}, [
       header.element,
-      el('div', {class: 'app__body'}, [navHost, el('div', {class: 'app__panel'}, [view])]),
+      el('div', {class: 'app__body'}, [navHost, el('div', {class: 'app__panel'}, [options.localAgent ? localApplicationStatus() : null, view])]),
     ]),
   );
 
