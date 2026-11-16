@@ -364,6 +364,40 @@ func (c *iosKeyboardIsolationController) withPointerAction(ctx context.Context, 
 	return action(ctx)
 }
 
+// reenumeratePointer detaches and reattaches the pointer through the same
+// pointer-free profile round trip that modified keyboard input uses, so the
+// host enumerates the pointer again. Inside a batch it reuses the batch's
+// hold on the devices instead of waiting for it.
+func (c *iosKeyboardIsolationController) reenumeratePointer(ctx context.Context) error {
+	if c == nil {
+		return errors.New("iOS keyboard isolation is not available")
+	}
+	if batch := c.batchFromContext(ctx); batch != nil {
+		if err := batch.isolate(); err != nil {
+			return err
+		}
+		return batch.restore()
+	}
+	if err := c.acquire(ctx); err != nil {
+		return err
+	}
+	defer c.release()
+	if err := c.ensureNormalProfileLocked(); err != nil {
+		return err
+	}
+	c.closeHIDDevices()
+	if isolateErr := c.switchProfile("isolate"); isolateErr != nil {
+		restoreErr := c.switchProfile("restore")
+		c.recordRestoreResult(restoreErr)
+		return errors.Join(isolateErr, restoreErr)
+	}
+	c.needsRestore = true
+	c.closeHIDDevices()
+	err := c.switchProfile("restore")
+	c.recordRestoreResult(err)
+	return err
+}
+
 func (c *iosKeyboardIsolationController) withExtraKeys(ctx context.Context, action func() error) error {
 	if c == nil {
 		return action()

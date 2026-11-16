@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -208,12 +209,24 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	keyboardText := &KeyboardTextTool{dev: kbDev, adb: adbInput, keyboardLayout: hidCfg.KeyboardLayoutOrDefault(), iosKeyboardIsolation: iosKeyboardIsolation}
 	keyboardText.textProvider, _ = mnkProvider.(mnk.TextProvider)
 	decider := &decisionAdvisor{}
+	frameCapture := newFrameCapturer(provider)
+	// Only the absolute pointer is turned with a landscape iPhone; a
+	// touchscreen contact needs no check.
+	var landscape *landscapePointerCorrector
+	if !hidCfg.PointerTouchscreen() {
+		var reenumerate func(context.Context) error
+		if iosKeyboardIsolation != nil {
+			reenumerate = iosKeyboardIsolation.reenumeratePointer
+		}
+		landscape = newLandscapePointerCorrector(frameCapture, screen, reenumerate)
+	}
 	touchGesture := &TouchGestureTool{
 		mnkProvider:    mnkProvider,
 		screen:         screen,
 		touchscreen:    hidCfg.PointerTouchscreen(),
-		captureFrame:   newFrameCapturer(provider),
+		captureFrame:   frameCapture,
 		confirmTargets: newTapSequenceConfirmer(decider),
+		landscape:      landscape,
 	}
 	quickAction := &QuickActionTool{keyboard: keyboardTap, touch: touchGesture, iosKeyboardIsolation: iosKeyboardIsolation, decider: decider, screenshot: screenshot}
 	quickAction.systemActions, _ = mnkProvider.(mnk.SystemActionProvider)
@@ -234,7 +247,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	}
 	tools := map[string]langtools.Tool{
 		"keyboard_tap":           newPostActionStableScreenshotTool(keyboardTap, waitStable, screenshot, postActionScreenshotDelay, screenStable),
-		"mouse_move":             newPostActionStableScreenshotTool(&MouseMoveTool{mnkProvider: mnkProvider}, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack),
+		"mouse_move":             newPostActionStableScreenshotTool(&MouseMoveTool{mnkProvider: mnkProvider, landscape: landscape}, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack),
 		"mouse_scroll":           newPostActionStableScreenshotTool(&MouseScrollTool{mnkProvider: mnkProvider}, waitStable, screenshot, postActionScreenshotDelay, screenStable),
 		"touch_gesture":          newPostActionStableScreenshotTool(touchGesture, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack),
 		"quick_action":           newPostActionStableScreenshotTool(quickAction, waitStable, screenshot, postActionScreenshotDelay, screenStable),
