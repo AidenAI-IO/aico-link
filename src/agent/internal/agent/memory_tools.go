@@ -54,10 +54,10 @@ func (t *RecallSessionChunksTool) Name() string { return "recall_session_chunks"
 func (t *RecallSessionChunksTool) Description() string {
 	return strings.Join([]string{
 		"Recall compressed session history chunks from this conversation and prior sessions.",
-		"Call this tool whenever the user references or asks about prior conversation content that is not present in your visible context — including denials such as 'we never discussed X'. The visible context is only the recent hot window; older turns are compressed into archived chunks invisible until recalled.",
+		"Call this tool when the user references or asks about something said in prior conversation that is not present in your visible context — including denials such as 'we never discussed X'. The visible context is only the recent hot window; older turns are compressed into archived chunks invisible until recalled.",
 		"The tool searches all sessions in a single call. If no results match, retry once with broader topic terms or no filters before concluding the history is unavailable.",
 		"Prefer chunk_ids when known; otherwise pass tags (topic keywords from the user's question) and use empty tags [] for recent history.",
-		"For remembered preferences, rules, procedures, or facts, use recall_memory instead.",
+		"For remembered preferences, rules, procedures, facts, or screen content the user saved, use recall_memory instead. Session history is evidence of conversation, not of a saved screen.",
 	}, " ")
 }
 
@@ -102,6 +102,8 @@ func (t *RecallMemoryTool) Description() string {
 		"Temporary memories are short-lived notification-derived conclusions and are returned with memory_scope=temporary; long-term memories are returned with memory_scope=long_term.",
 		"Use for remembered preferences, rules, procedures, facts, profile info, or screen content the user saved earlier with the device button.",
 		"Screen content the user saved belongs here even when they phrase it as something recent (\"the tracking number I just saved\"); use types [\"screen_snapshot\"] for those. Only use recall_session_chunks for what was actually said in conversation.",
+		"When no screen_snapshot matches, say that nothing matching was saved; conversation history and other sources are not records of saved screens.",
+		"A screen_snapshot is a past observation: a status read from it holds only at its recorded capture time, so report that time and do not present the status as current.",
 		"Notification-derived temporary memories are included automatically. Use this tool for remembered notification conclusions; when the exact original notification record is required, use shell to read `/userdata/agent/memory/notifications/events/*.jsonl` without modifying it.",
 		"Sensitive memories (secrets the user asked to keep) are returned only when tags or entities name their topic, never by a browse with empty arrays.",
 		"Returns matching memories with id, revision, type, title, content, summary.",
@@ -293,11 +295,13 @@ func unrequestedSecretRefusal(sensitive memorySensitiveKind) map[string]string {
 
 func (t *SaveMemoryTool) Name() string { return "save_memory" }
 
+const personalMemoryAdmissionGuidance = "Call save_memory when the user asks to remember/save, and for observed stable preferences, rules, or procedures. Also call it, without being asked, when the user plainly states a lasting fact about themselves that could shape future help, even if they do not say how it will be used. Do not infer personal facts from quotations, third-person statements, temporary states, or one-off plans, and respect requests not to save."
+
 func (t *SaveMemoryTool) Description() string {
 	return strings.Join([]string{
 		"Save long-term memory for future recall.",
 		"Do NOT call it for one-off or time-bound plans, appointments, reminders, passing states, chat, or a secret (password, PIN, card number) the user merely mentions; just reply, without claiming you remembered anything. Example: \"I have a dentist visit tomorrow\" is not saved.",
-		"Call it when the user asks to remember/save, and for observed stable preferences, rules, or procedures.",
+		personalMemoryAdmissionGuidance,
 		"Do not tell the user something was remembered or saved until this tool returns status=saved or status=ignored as a duplicate.",
 		"Use profile for durable user facts (name, nickname, location, timezone, home city, role, background); preference/rule for future defaults and must/must-not behavior such as a default city; fact for stable info that should be recalled but not surfaced in the synthesized user profile.",
 		"A secret is kept only if the user explicitly asked to keep it: set sensitive and put in user_request only their words asking to remember it, never the sentence stating the secret; otherwise it is refused and you must say it was not remembered.",

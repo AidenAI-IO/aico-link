@@ -870,24 +870,33 @@ func TestFunctionAgentUsesMarkedTouchGestureScreenshotForModel(t *testing.T) {
 	}
 }
 
-func TestFunctionAgentStateStatesScreenshotSize(t *testing.T) {
+func TestFunctionAgentStateUsesActiveCoordinateProtocol(t *testing.T) {
 	raw := solidJPEG(t, 120, 80, color.RGBA{R: 24, G: 48, B: 72, A: 255})
 	data := base64.StdEncoding.EncodeToString(raw)
-	agent := &FunctionAgent{Tools: []langtools.Tool{
-		&stubTool{name: "screenshot", visual: true},
-		&stubTool{name: "touch_gesture", visual: true},
-	}}
-	for _, step := range []schema.AgentStep{
-		{Action: schema.AgentAction{Tool: "screenshot"}, Observation: fmt.Sprintf(`{"width":120,"height":80,"format":"jpeg","size":%d,"data":"%s"}`, len(raw), data)},
-		{Action: schema.AgentAction{Tool: "touch_gesture"}, Observation: fmt.Sprintf(`{"action_output":"ok","width":120,"height":80,"format":"jpeg","size":%d,"data":"%s"}`, len(raw), data)},
-	} {
-		_, followups := agent.observationMessagesForStep(step)
-		if len(followups) != 1 {
-			t.Fatalf("%s: visual followups = %#v", step.Action.Tool, followups)
+	for _, pixels := range []bool{false, true} {
+		tools := []langtools.Tool{
+			&stubTool{name: "screenshot", visual: true},
+			&stubTool{name: "touch_gesture", visual: true},
 		}
-		caption := followups[0].Parts[0].(llms.TextContent).Text
-		if !strings.Contains(caption, "Screenshot size: 120x80 px. Touch coordinates refer to this image.") {
-			t.Fatalf("%s: state message lacks the screenshot size: %q", step.Action.Tool, caption)
+		if pixels {
+			tools = newVisualCoordinates().wrap(tools)
+		}
+		agent := &FunctionAgent{Tools: tools}
+		for _, tool := range []string{"screenshot", "touch_gesture"} {
+			step := schema.AgentStep{
+				Action:      schema.AgentAction{Tool: tool},
+				Observation: fmt.Sprintf(`{"action_output":"ok","width":120,"height":80,"format":"jpeg","size":%d,"data":"%s"}`, len(raw), data),
+			}
+			_, followups := agent.observationMessagesForStep(step)
+			if len(followups) != 1 {
+				t.Fatalf("%s: visual followups = %#v", tool, followups)
+			}
+			caption := followups[0].Parts[0].(llms.TextContent).Text
+			if !strings.Contains(caption, "120x80 px") ||
+				strings.Contains(caption, "use pixels in this image") != pixels ||
+				strings.Contains(caption, "use normalized 0-1000 units") == pixels {
+				t.Fatalf("%s pixels=%t: incompatible coordinate caption: %q", tool, pixels, caption)
+			}
 		}
 	}
 }
