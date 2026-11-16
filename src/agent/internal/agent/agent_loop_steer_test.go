@@ -496,3 +496,30 @@ func TestAgentLoopFinalSteerContinuesAfterFinalAnswer(t *testing.T) {
 		t.Fatalf("second model call should carry the first answer and the steer: %#v", model.messages)
 	}
 }
+
+// A voice steer captured through an interrupt that completes after the last
+// ordinary check must still be delivered by the final check.
+func TestVoiceRunControlFinalCheckDeliversCompletedInterruptSteer(t *testing.T) {
+	t.Parallel()
+
+	var c voiceRunControl
+	if !c.begin("voice-1") {
+		t.Fatal("begin() rejected the run")
+	}
+	if _, started, ok := c.beginInterrupt(); !started || !ok {
+		t.Fatalf("beginInterrupt() started=%t ok=%t", started, ok)
+	}
+	if _, ok := c.queueSteer("change direction"); !ok {
+		t.Fatal("queueSteer() refused the interrupt text")
+	}
+	steer, ok := c.consumeFinalPending("voice-1")
+	if !ok || steer.Content != "change direction" {
+		t.Fatalf("consumeFinalPending() = %+v, %t; want the interrupt steer", steer, ok)
+	}
+	if _, ok := c.consumeFinalPending("voice-1"); ok {
+		t.Fatal("consumeFinalPending() delivered a steer twice")
+	}
+	if _, ok := c.queueSteer("too late"); ok {
+		t.Fatal("queueSteer() accepted a steer after the final check closed acceptance")
+	}
+}
