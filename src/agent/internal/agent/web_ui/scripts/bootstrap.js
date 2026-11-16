@@ -32,13 +32,13 @@ inputEl.addEventListener('keydown', function(event) {
 });
 
 document.addEventListener('click', function(event) {
-    const menu = document.getElementById('clearMenu');
-    if (menu && menu.open && !menu.contains(event.target)) closeClearMenu();
+    const menu = document.getElementById('topbarMenu');
+    if (menu && menu.open && !menu.contains(event.target)) closeTopbarMenu();
 });
 
 document.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') {
-        closeClearMenu();
+        closeTopbarMenu();
     }
     if (event.key === 'Escape' && activeStateMessageKey) {
         closeStateDetails();

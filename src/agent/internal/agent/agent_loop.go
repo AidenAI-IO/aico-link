@@ -14,6 +14,7 @@ import (
 	"aico-agent/internal/agent/model"
 	"aico-agent/internal/agent/screen"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/util"
 
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/callbacks"
@@ -36,6 +37,51 @@ var errModelOutputTruncated = errors.New("model output truncated before a reply 
 // nor tool_calls, which would fail every later request in the conversation.
 func isEmptyModelTurn(choice llms.ContentChoice) bool {
 	return strings.TrimSpace(choice.Content) == "" && len(choice.ToolCalls) == 0 && choice.FuncCall == nil
+}
+
+// maxEmptyModelTurnRetries bounds how many consecutive empty model turns one
+// run retries before failing. Some providers occasionally end a turn with
+// finish_reason=stop and no text or tool call; asking again usually recovers.
+const maxEmptyModelTurnRetries = 1
+
+const emptyModelTurnRetryNotice = "Your previous response was empty: it contained no text and no tool call. Continue the current task from the latest observation: call the next tool, or give the final answer if the task is complete."
+
+// runIterationState carries per-run recovery bookkeeping across iterations.
+type runIterationState struct {
+	contextOverflowRecoveryUsed bool
+	emptyTurnRetries            int
+}
+
+// noReturnError wraps agents.ErrAgentNoReturn with which case produced it and
+// the model's own report of the turn, so a failed run says why it stopped.
+func noReturnError(reason string, choice *llms.ContentChoice, iteration int) error {
+	return fmt.Errorf("%w: %s (%s iteration=%d)", agents.ErrAgentNoReturn, reason, describeModelTurn(choice), iteration)
+}
+
+// describeModelTurn summarizes the provider-reported shape of a model turn for
+// logs and errors.
+func describeModelTurn(choice *llms.ContentChoice) string {
+	if choice == nil {
+		return "choice=nil"
+	}
+	parts := []string{fmt.Sprintf("finish_reason=%q", strings.TrimSpace(choice.StopReason))}
+	if native, ok := choice.GenerationInfo["llm_native_finish_reason"].(string); ok && native != "" {
+		parts = append(parts, fmt.Sprintf("native_finish_reason=%q", native))
+	}
+	for _, key := range []string{"completion_tokens", "reasoning_tokens"} {
+		if value, ok := util.UsageMetricInt(choice.GenerationInfo[key]); ok {
+			parts = append(parts, fmt.Sprintf("%s=%d", key, value))
+		}
+	}
+	parts = append(parts,
+		fmt.Sprintf("content_chars=%d", len(strings.TrimSpace(choice.Content))),
+		fmt.Sprintf("reasoning_chars=%d", len(choice.ReasoningContent)),
+		fmt.Sprintf("tool_calls=%d", len(choice.ToolCalls)),
+	)
+	if id, ok := choice.GenerationInfo["llm_response_id"].(string); ok && id != "" {
+		parts = append(parts, "response_id="+id)
+	}
+	return strings.Join(parts, " ")
 }
 
 // absorbTruncatedThinkingBlock moves a trailing unclosed thinking block into
@@ -153,7 +199,7 @@ func (l *AgentLoop) Run(ctx context.Context, input string, options ...chains.Cha
 		toolExecutionHooks = l.toolExecutionHookFactory()
 	}
 	policy := l.loopGuardPolicy()
-	contextOverflowRecoveryUsed := false
+	state := &runIterationState{}
 
 restartBudget:
 	for {
@@ -171,7 +217,7 @@ restartBudget:
 				}
 				continue restartBudget
 			}
-			answer, outcome, err := l.runIteration(ctx, i+1, callOptions, llmExecutor, parser, toolSpecs, toolExecutionHooks, policy, &contextOverflowRecoveryUsed)
+			answer, outcome, err := l.runIteration(ctx, i+1, callOptions, llmExecutor, parser, toolSpecs, toolExecutionHooks, policy, state)
 			if err != nil {
 				return "", err
 			}
@@ -217,7 +263,7 @@ func (l *AgentLoop) stopWithSteerCheck(ctx context.Context, executor *executor.L
 	return answer, true, err
 }
 
-func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions []llms.CallOption, llmExecutor *executor.LLMExecutor, parser *FunctionAgent, toolSpecs *ToolSpecs, toolExecutionHooks toolExecutionHookHandler, policy *TerminationPolicy, contextOverflowRecoveryUsed *bool) (string, iterationOutcome, error) {
+func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions []llms.CallOption, llmExecutor *executor.LLMExecutor, parser *FunctionAgent, toolSpecs *ToolSpecs, toolExecutionHooks toolExecutionHookHandler, policy *TerminationPolicy, state *runIterationState) (string, iterationOutcome, error) {
 	iterationStartTime := time.Now()
 	toolCallsInIteration := 0
 	if l.Recorder != nil {
@@ -298,8 +344,8 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		if ctx.Err() != nil {
 			return "", iterationContinue, ctx.Err()
 		}
-		if contextOverflowRecoveryUsed != nil && !*contextOverflowRecoveryUsed && isProviderContextExceededError(err) && l.ContextOverflowRecovery != nil {
-			*contextOverflowRecoveryUsed = true
+		if !state.contextOverflowRecoveryUsed && isProviderContextExceededError(err) && l.ContextOverflowRecovery != nil {
+			state.contextOverflowRecoveryUsed = true
 			newManager, compacted, recoveryErr := l.ContextOverflowRecovery(ctx, llmExecutor.ContextManager())
 			if recoveryErr != nil {
 				return "", iterationContinue, fmt.Errorf("compact context after provider context overflow: %w", recoveryErr)
@@ -384,11 +430,24 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 			if err := l.notices.stop("output_truncated", "The model used its whole output token budget, mostly on reasoning, and was cut off before giving a reply or action; task completion is not confirmed. Plan in shorter steps and act sooner when resuming."); err != nil {
 				return "", iterationContinue, err
 			}
-			return "", iterationContinue, fmt.Errorf("%w: finish_reason=%s reasoning_chars=%d",
-				errModelOutputTruncated, strings.TrimSpace(choice.StopReason), len(choice.ReasoningContent))
+			return "", iterationContinue, fmt.Errorf("%w: %s iteration=%d",
+				errModelOutputTruncated, describeModelTurn(choice), iteration)
 		}
-		return "", iterationContinue, agents.ErrAgentNoReturn
+		if state.emptyTurnRetries < maxEmptyModelTurnRetries {
+			state.emptyTurnRetries++
+			logging.Warnf("agent", "agent_loop", "empty model turn; retrying (%d/%d): %s iteration=%d",
+				state.emptyTurnRetries, maxEmptyModelTurnRetries, describeModelTurn(choice), iteration)
+			// The empty turn itself never enters history (see isEmptyModelTurn);
+			// the notice changes the request so the retry is not a replay.
+			if err := l.contextManager.AppendMessage(messages.Message{Role: messages.MessageRoleNotice, Content: emptyModelTurnRetryNotice}); err != nil {
+				return "", iterationContinue, err
+			}
+			return "", iterationContinue, nil
+		}
+		return "", iterationContinue, noReturnError(
+			fmt.Sprintf("model returned an empty turn after %d retries", state.emptyTurnRetries), choice, iteration)
 	}
+	state.emptyTurnRetries = 0
 
 	actions, finish, err := parser.ParseOutput(contentResp)
 	if errors.Is(err, agents.ErrUnableToParseOutput) {
@@ -422,7 +481,7 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		answer, _ := finish.ReturnValues[agentLoopOutputKey].(string)
 		answer = strings.TrimSpace(answer)
 		if answer == "" {
-			return "", iterationContinue, agents.ErrAgentNoReturn
+			return "", iterationContinue, noReturnError("model finished with an empty answer", contentResp.Choices[0], iteration)
 		}
 		if err := llmExecutor.AppendMessage(messages.ConvertChoiceToContextManagerMessage(*contentResp.Choices[0])); err != nil {
 			return "", iterationContinue, err
@@ -440,7 +499,7 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		return answer, iterationDone, err
 	}
 	if len(actions) == 0 {
-		return "", iterationContinue, agents.ErrAgentNoReturn
+		return "", iterationContinue, noReturnError("parser returned neither an action nor a finish", contentResp.Choices[0], iteration)
 	}
 
 	// Problem 4: Check for pending steer after LLM returns actions (before tool execution)
