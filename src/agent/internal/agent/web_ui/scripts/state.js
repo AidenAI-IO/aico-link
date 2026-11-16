@@ -28,6 +28,10 @@ let composerHintTimer = null;
 let currentChatRequestId = '';
 let externalActiveRequestId = '';
 let externalActiveStartedAt = 0;
+// Only a run reported by /api/chat/active accepts steers; a Live Activity
+// that waits on the phone does not.
+let externalActiveSteerable = false;
+let externalActiveGeneration = 0;
 let currentChatAbortController = null;
 let currentChatCancelRequested = false;
 let currentChatStartedAt = 0;

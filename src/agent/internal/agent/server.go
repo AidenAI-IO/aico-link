@@ -1246,13 +1246,14 @@ func (s *Server) latestActiveRun() (string, time.Time, bool) {
 }
 
 type ChatActiveResponse struct {
-	Status    string `json:"status"`
-	RequestID string `json:"request_id,omitempty"`
-	ElapsedMS int64  `json:"elapsed_ms,omitempty"`
+	Status    string               `json:"status"`
+	RequestID string               `json:"request_id,omitempty"`
+	ElapsedMS int64                `json:"elapsed_ms,omitempty"`
+	Steer     *pendingSteerMessage `json:"steer,omitempty"`
 }
 
 // handleChatActive lets a page that did not start the current run, such as one
-// reloaded mid-run, find it and show its progress. Elapsed time is relative so
+// reloaded mid-run, find it, show its progress, and steer it. Elapsed time is relative so
 // a browser clock that differs from the board's does not skew the timer.
 func (s *Server) handleChatActive(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -1265,6 +1266,12 @@ func (s *Server) handleChatActive(w http.ResponseWriter, r *http.Request) {
 		if !startedAt.IsZero() {
 			resp.ElapsedMS = time.Since(startedAt).Milliseconds()
 		}
+		// A steer queued before a reload stays visible on the reloaded page.
+		s.steersMu.Lock()
+		if steer, ok := s.pendingSteers[requestID]; ok {
+			resp.Steer = &steer
+		}
+		s.steersMu.Unlock()
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -1855,6 +1862,7 @@ func (s *Server) handleChatAsync(
 		}
 
 		result, err := s.runtime.Run(run.ctx, runReq)
+		s.settleActiveRun(requestID)
 		if newStream != nil {
 			finalSpeechStreamed := speechWriter.FinalizeResponse()
 			closeErr := newStream.closeAndWait()
@@ -1867,7 +1875,6 @@ func (s *Server) handleChatAsync(
 
 		pending.mu.Lock()
 		if err != nil {
-			s.settleActiveRun(requestID)
 			canceled := errors.Is(run.ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
 			if canceled {
 				if s.liveActivity != nil {
@@ -1913,7 +1920,6 @@ func (s *Server) handleChatAsync(
 			return
 		}
 
-		s.settleActiveRun(requestID)
 		if s.liveActivity != nil {
 			s.liveActivity.CompleteTask(requestID, result.Output)
 		}
@@ -2234,6 +2240,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("Running runtime")
 	result, err := s.runtime.Run(ctx, runReq)
+	s.settleActiveRun(req.RequestID)
 	if newStream != nil {
 		finalSpeechStreamed := speechWriter.FinalizeResponse()
 		closeErr := newStream.closeAndWait()
@@ -2283,7 +2290,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	historySnapshot := turn
-	s.settleActiveRun(req.RequestID)
 	if s.liveActivity != nil {
 		s.liveActivity.CompleteTask(req.RequestID, result.Output)
 	}

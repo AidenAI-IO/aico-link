@@ -5309,8 +5309,12 @@ func TestServerHandleChatActiveReportsLatestRun(t *testing.T) {
 	server.registerActiveRun("req-old", func() {})
 	server.registerActiveRun("req-new", func() {})
 	server.activeRunStartedAt["req-old"] = time.Now().Add(-time.Minute)
-	if resp := get(); resp.Status != "running" || resp.RequestID != "req-new" {
+	if resp := get(); resp.Status != "running" || resp.RequestID != "req-new" || resp.Steer != nil {
 		t.Fatalf("running response = %+v, want req-new", resp)
+	}
+	server.setPendingSteer("req-new", "change direction")
+	if resp := get(); resp.Steer == nil || resp.Steer.Content != "change direction" {
+		t.Fatalf("response with queued steer = %+v", resp)
 	}
 	server.unregisterActiveRun("req-new")
 	if resp := get(); resp.RequestID != "req-old" || resp.ElapsedMS < time.Minute.Milliseconds() {

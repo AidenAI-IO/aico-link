@@ -20,7 +20,7 @@ async function sendMessage(options) {
         return mode === 'voice' ? startRealtimeVoice() : endRealtimeVoice();
     }
     if (sendBtn.disabled) return;
-    if (currentChatRequestId) {
+    if (steerableRequestId()) {
         await submitSteerMessage();
         return;
     }
@@ -37,6 +37,8 @@ async function sendMessage(options) {
     currentChatRequestId = createRequestId();
     rememberNDJSONOwnedRequest(currentChatRequestId);
     externalActiveRequestId = '';
+    externalActiveSteerable = false;
+    externalActiveGeneration++;
     currentChatAbortController = new AbortController();
     currentChatCancelRequested = false;
     currentChatStartedAt = Date.now();
@@ -112,7 +114,7 @@ async function sendMessage(options) {
 }
 
 async function submitSteerMessage() {
-    if (!currentChatRequestId || pendingSteerSubmitting) return;
+    if (!steerableRequestId() || pendingSteerSubmitting) return;
 
     const message = inputEl.value.trim();
     if (!message) return;
@@ -121,7 +123,9 @@ async function submitSteerMessage() {
         return;
     }
 
-    const requestId = currentChatRequestId;
+    const requestId = steerableRequestId();
+    // A refresh read before this steer would clear it from the page.
+    externalActiveGeneration++;
     const localSteer = {
         id: 'local-' + createRequestId(),
         request_id: requestId,
@@ -154,7 +158,7 @@ async function submitSteerMessage() {
         }
     } catch (err) {
         console.error('Failed to queue steer:', err);
-        if (currentChatRequestId === requestId) {
+        if (steerableRequestId() === requestId) {
             inputEl.value = message;
             autoResizeInput();
         }
@@ -163,7 +167,7 @@ async function submitSteerMessage() {
         showErrorToast('Steer failed', err);
     } finally {
         pendingSteerSubmitting = false;
-        setComposerState(!!currentChatRequestId);
+        setComposerState(!!activeChatRequestId());
     }
 }
 
@@ -176,6 +180,11 @@ function createRequestId() {
 
 function activeChatRequestId() {
     return currentChatRequestId || externalActiveRequestId || '';
+}
+
+// The run that typed messages steer: this page's own, or one it restored.
+function steerableRequestId() {
+    return currentChatRequestId || (externalActiveSteerable ? externalActiveRequestId : '');
 }
 
 function markStopRunPointer(event) {
@@ -215,6 +224,9 @@ function armStopRun() {
 // already going when the page loaded or reloaded) still shows its progress.
 async function refreshCurrentLiveActivity() {
     if (currentChatRequestId) return;
+    // A newer refresh, a steer, a stop, or a run this page starts supersedes
+    // this one, so a stale read cannot restore a finished run.
+    const generation = ++externalActiveGeneration;
     let active = await fetchActiveChatRun();
     if (!active) {
         const liveActivity = await fetchActiveLiveActivity();
@@ -222,7 +234,7 @@ async function refreshCurrentLiveActivity() {
         if (active === undefined && liveActivity === undefined) return;
         active = liveActivity || null;
     }
-    if (currentChatRequestId) return;
+    if (currentChatRequestId || generation !== externalActiveGeneration || pendingSteerSubmitting) return;
     const requestId = active ? active.requestId : '';
     if (requestId !== externalActiveRequestId) {
         // Restart the timer from the run's own start, not from this page's.
@@ -230,6 +242,8 @@ async function refreshCurrentLiveActivity() {
         externalActiveStartedAt = active ? active.startedAt : 0;
     }
     externalActiveRequestId = requestId;
+    externalActiveSteerable = !!(active && active.steerable);
+    pendingSteer = externalActiveSteerable ? active.steer : null;
     setComposerState(!!activeChatRequestId());
 }
 
@@ -241,7 +255,12 @@ async function fetchActiveChatRun() {
         if (!res.ok) return undefined;
         const data = await res.json();
         if (data.status !== 'running' || !data.request_id) return null;
-        return {requestId: data.request_id, startedAt: Date.now() - Math.max(0, Number(data.elapsed_ms) || 0)};
+        return {
+            requestId: data.request_id,
+            startedAt: Date.now() - Math.max(0, Number(data.elapsed_ms) || 0),
+            steerable: true,
+            steer: data.steer || null
+        };
     } catch (err) {
         console.warn('Failed to refresh active chat run:', err);
         return undefined;
@@ -319,14 +338,19 @@ async function cancelCurrentRun(event) {
         console.error('Failed to cancel chat request:', err);
         showErrorToast('Stop failed', err);
     }).finally(function() {
-        if (externalActiveRequestId === requestId) externalActiveRequestId = '';
+        if (externalActiveRequestId === requestId) {
+            externalActiveRequestId = '';
+            externalActiveSteerable = false;
+            externalActiveGeneration++;
+        }
         setComposerState(!!activeChatRequestId());
     });
 }
 
 async function cancelPendingSteer() {
-    if (!currentChatRequestId || !pendingSteer) return;
-    const requestId = currentChatRequestId;
+    if (!steerableRequestId() || !pendingSteer) return;
+    const requestId = steerableRequestId();
+    externalActiveGeneration++;
     const previous = pendingSteer;
     pendingSteer = null;
     renderPendingSteer();
@@ -343,7 +367,7 @@ async function cancelPendingSteer() {
     } catch (err) {
         console.error('Failed to cancel steer:', err);
         showErrorToast('Cancel failed', err);
-        if (currentChatRequestId === requestId) {
+        if (steerableRequestId() === requestId) {
             pendingSteer = previous;
             renderPendingSteer();
         }
