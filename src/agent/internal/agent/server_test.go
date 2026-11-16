@@ -5309,12 +5309,17 @@ func TestServerHandleChatActiveReportsLatestRun(t *testing.T) {
 	server.registerActiveRun("req-old", func() {})
 	server.registerActiveRun("req-new", func() {})
 	server.activeRunStartedAt["req-old"] = time.Now().Add(-time.Minute)
-	if resp := get(); resp.Status != "running" || resp.RequestID != "req-new" || resp.Steer != nil {
-		t.Fatalf("running response = %+v, want req-new", resp)
+	if resp := get(); resp.Status != "running" || resp.RequestID != "req-new" || !resp.Steerable || resp.Steer != nil {
+		t.Fatalf("running response = %+v, want steerable req-new", resp)
 	}
 	server.setPendingSteer("req-new", "change direction")
 	if resp := get(); resp.Steer == nil || resp.Steer.Content != "change direction" {
 		t.Fatalf("response with queued steer = %+v", resp)
+	}
+	// A run that refuses steers, such as a realtime run, is not offered as steerable.
+	server.closeSteerAcceptance("req-new")
+	if resp := get(); resp.RequestID != "req-new" || resp.Steerable {
+		t.Fatalf("response after steers close = %+v, want unsteerable req-new", resp)
 	}
 	server.unregisterActiveRun("req-new")
 	if resp := get(); resp.RequestID != "req-old" || resp.ElapsedMS < time.Minute.Milliseconds() {

@@ -31,7 +31,11 @@ let externalActiveStartedAt = 0;
 // Only a run reported by /api/chat/active accepts steers; a Live Activity
 // that waits on the phone does not.
 let externalActiveSteerable = false;
+// Bumped by a steer, a stop, or a run this page starts, so a refresh read
+// before the change cannot overwrite it.
 let externalActiveGeneration = 0;
+let externalActiveRefreshInFlight = false;
+let externalActiveRefreshQueued = false;
 let currentChatAbortController = null;
 let currentChatCancelRequested = false;
 let currentChatStartedAt = 0;

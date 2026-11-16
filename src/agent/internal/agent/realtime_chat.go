@@ -36,6 +36,9 @@ func (s *Server) handleRealtimeChatAsync(w http.ResponseWriter, req ChatRequest,
 		http.Error(w, "request_id already in use", http.StatusConflict)
 		return
 	}
+	// The realtime bridge has no steer path, so refuse steers instead of
+	// accepting and dropping them.
+	s.closeSteerAcceptance(requestID)
 	s.publishMessage(userMsg)
 	if s.liveActivity != nil {
 		s.liveActivity.StartTask(requestID, input.InputText, s.liveActivityPhoneID(req))
@@ -167,6 +170,9 @@ func (s *Server) handleRealtimeChatStream(w http.ResponseWriter, r *http.Request
 		s.unregisterActiveRun(req.RequestID)
 		cancel()
 	}()
+	// The realtime bridge has no steer path, so refuse steers instead of
+	// accepting and dropping them.
+	s.closeSteerAcceptance(req.RequestID)
 	s.publishMessage(userMessage)
 	if s.liveActivity != nil {
 		s.liveActivity.StartTask(req.RequestID, input.InputText, s.liveActivityPhoneID(req))

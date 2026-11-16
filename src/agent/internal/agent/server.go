@@ -1260,6 +1260,7 @@ type ChatActiveResponse struct {
 	Status    string               `json:"status"`
 	RequestID string               `json:"request_id,omitempty"`
 	ElapsedMS int64                `json:"elapsed_ms,omitempty"`
+	Steerable bool                 `json:"steerable,omitempty"`
 	Steer     *pendingSteerMessage `json:"steer,omitempty"`
 }
 
@@ -1279,6 +1280,8 @@ func (s *Server) handleChatActive(w http.ResponseWriter, r *http.Request) {
 		}
 		// A steer queued before a reload stays visible on the reloaded page.
 		s.steersMu.Lock()
+		_, closed := s.closedSteers[requestID]
+		resp.Steerable = !closed
 		if steer, ok := s.pendingSteers[requestID]; ok {
 			resp.Steer = &steer
 		}

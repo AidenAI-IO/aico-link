@@ -252,18 +252,39 @@ function armStopRun() {
 
 // A run this page did not start (another tab, voice, or a run that was
 // already going when the page loaded or reloaded) still shows its progress.
+// One refresh runs at a time. A request made meanwhile, such as the 2 s poll
+// on a slow link or a terminal event, runs once after it, so a slow board
+// still gets its reads applied.
 async function refreshCurrentLiveActivity() {
+    if (externalActiveRefreshInFlight) {
+        externalActiveRefreshQueued = true;
+        return;
+    }
+    externalActiveRefreshInFlight = true;
+    try {
+        do {
+            externalActiveRefreshQueued = false;
+            await refreshCurrentLiveActivityOnce();
+        } while (externalActiveRefreshQueued);
+    } finally {
+        externalActiveRefreshInFlight = false;
+    }
+}
+
+async function refreshCurrentLiveActivityOnce() {
     if (currentChatRequestId) return;
-    // A newer refresh, a steer, a stop, or a run this page starts supersedes
-    // this one, so a stale read cannot restore a finished run.
-    const generation = ++externalActiveGeneration;
-    let active = await fetchActiveChatRun();
+    const generation = externalActiveGeneration;
+    const chatRun = await fetchActiveChatRun();
+    let active = chatRun;
     if (!active) {
-        const liveActivity = await fetchActiveLiveActivity();
+        // While the chat check answers idle, a running Live Activity is only a
+        // run finishing its speech; one waiting on the phone still counts.
+        const liveActivity = await fetchActiveLiveActivity(chatRun === undefined);
         // Keep the current state when neither check reached the board.
-        if (active === undefined && liveActivity === undefined) return;
+        if (chatRun === undefined && liveActivity === undefined) return;
         active = liveActivity || null;
     }
+    // A steer, a stop, or a run this page started meanwhile supersedes this read.
     if (currentChatRequestId || generation !== externalActiveGeneration || pendingSteerSubmitting) return;
     const requestId = active ? active.requestId : '';
     if (requestId !== externalActiveRequestId) {
@@ -288,7 +309,7 @@ async function fetchActiveChatRun() {
         return {
             requestId: data.request_id,
             startedAt: Date.now() - Math.max(0, Number(data.elapsed_ms) || 0),
-            steerable: true,
+            steerable: data.steerable === true,
             steer: data.steer || null
         };
     } catch (err) {
@@ -299,13 +320,15 @@ async function fetchActiveChatRun() {
 
 // Live Activity also covers a finished run that waits for the user on the
 // phone. It is reachable only over USB and when Live Activity is enabled.
-async function fetchActiveLiveActivity() {
+// A running state counts only when includeRunning is set.
+async function fetchActiveLiveActivity(includeRunning) {
     try {
         const res = await fetch('/api/live-activity/current');
         if (!res.ok) return undefined;
         const data = await res.json();
         const state = data.live_activity;
-        const isActive = data.status === 'ok' && state && (state.status === 'running' || state.status === 'needs_app');
+        const isActive = data.status === 'ok' && state &&
+            (state.status === 'needs_app' || (includeRunning && state.status === 'running'));
         if (!isActive || !state.request_id) return null;
         const startedAt = Date.parse(state.started_at);
         return {requestId: state.request_id, startedAt: Number.isFinite(startedAt) ? Math.min(startedAt, Date.now()) : Date.now()};
