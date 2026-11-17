@@ -260,3 +260,30 @@ func TestBridgeCommandResponseSuccessOmitsError(t *testing.T) {
 		t.Errorf("success response must have nil Error")
 	}
 }
+
+func TestPhoneBridgeHandlesOrientationEvent(t *testing.T) {
+	cases := []struct {
+		name      string
+		data      string
+		connected bool
+		want      string
+	}{
+		{name: "reported orientation is kept", data: `{"orientation":"Landscape_Left","reported_at":"2026-06-01T02:03:06Z"}`, connected: true, want: "landscape_left"},
+		{name: "unknown orientation is ignored", data: `{"orientation":"sideways"}`, connected: true, want: ""},
+		{name: "a fresh report is kept while only HTTP polls arrive", data: `{"orientation":"portrait"}`, connected: false, want: "portrait"},
+		{name: "a stale report is hidden once the app is gone", data: `{"orientation":"portrait","reported_at":"2026-06-01T02:03:06Z"}`, connected: false, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bridge := newPhoneBridgeForTest()
+			defer bridge.queue.Stop()
+			bridge.connected = tc.connected
+			if !bridge.handleAppEvent(BridgeCommandResponse{ID: "phone_orientation", Method: "phone_orientation", Data: json.RawMessage(tc.data)}) {
+				t.Fatal("orientation event was not handled")
+			}
+			if got, _ := bridge.DeviceOrientation(); got != tc.want {
+				t.Fatalf("orientation = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
