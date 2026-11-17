@@ -381,6 +381,7 @@ textarea:focus-visible {
 
 .core-service-row[data-severity="failed"] .core-service-state { color: var(--tool-error-text); }
 .core-service-row[data-severity="degraded"] .core-service-state { color: var(--accent); }
+.core-service-row[data-severity="unavailable"] .core-service-state { color: var(--muted); }
 
 .core-service-metrics {
     color: var(--muted);

@@ -80,6 +80,26 @@ func TestCollectCoreServiceStatusesUsesSystemctl(t *testing.T) {
 	}
 }
 
+func TestCollectCoreServiceStatusesSystemctlError(t *testing.T) {
+	original := systemctlShow
+	t.Cleanup(func() { systemctlShow = original })
+	systemctlShow = func(units ...string) (string, error) {
+		return "", os.ErrPermission
+	}
+	snapshot := collectCoreServiceStatuses()
+	if len(snapshot.Services) != len(coreServiceSpecs) {
+		t.Fatalf("services=%d", len(snapshot.Services))
+	}
+	for _, service := range snapshot.Services {
+		if service.Severity != "degraded" {
+			t.Fatalf("severity=%q want degraded for %#v", service.Severity, service)
+		}
+		if service.LoadError == "" {
+			t.Fatalf("expected load_error for %#v", service)
+		}
+	}
+}
+
 func TestReadServiceIncidentEventsNewestFirst(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("AICO_DIAGNOSTICS_DIR", dir)
@@ -106,6 +126,31 @@ func TestReadServiceIncidentEventsNewestFirst(t *testing.T) {
 	}
 	if len(filtered) != 1 || filtered[0]["unit"] != "aico-frame.service" {
 		t.Fatalf("unit filter: %#v", filtered)
+	}
+}
+
+func TestReadServiceIncidentEventsTailWindow(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AICO_DIAGNOSTICS_DIR", dir)
+	path := filepath.Join(dir, "service-events.jsonl")
+	var b strings.Builder
+	// Prefix padding larger than the default read window forces a seek + partial first line drop.
+	b.WriteString(strings.Repeat("x", diagnosticsEventsReadWindow+64))
+	b.WriteString("partial-garbage\n")
+	b.WriteString(`{"ts":"2026-01-01T00:00:01Z","unit":"aico-frame.service","severity":"failed"}` + "\n")
+	b.WriteString(`{"ts":"2026-01-01T00:00:02Z","unit":"aico-audio.service","severity":"failed"}` + "\n")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events, err := readServiceIncidentEvents(10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events=%d want 2", len(events))
+	}
+	if events[0]["unit"] != "aico-audio.service" {
+		t.Fatalf("newest first: %#v", events[0])
 	}
 }
 

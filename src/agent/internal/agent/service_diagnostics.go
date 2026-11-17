@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ const (
 	defaultDiagnosticsDir        = "/userdata/diagnostics"
 	defaultDiagnosticsEventsFile = "service-events.jsonl"
 	diagnosticsEventsLimit       = 50
+	diagnosticsEventsReadWindow  = 256 * 1024
 )
 
 type coreServiceSpec struct {
@@ -222,6 +224,10 @@ func collectCoreServiceStatuses() serviceDiagnosticsSnapshot {
 			Severity:  "ok",
 			LoadError: loadErr,
 		}
+		if loadErr != "" {
+			// Collection failed: do not report a false "ok" summary.
+			status.Severity = "degraded"
+		}
 		if block, ok := blocks[spec.Unit]; ok {
 			status.ActiveState = block["ActiveState"]
 			status.SubState = block["SubState"]
@@ -241,23 +247,15 @@ func collectCoreServiceStatuses() serviceDiagnosticsSnapshot {
 	return snapshot
 }
 
-func readServiceIncidentEvents(limit int, unitFilter string) ([]serviceIncidentEvent, error) {
-	if limit <= 0 {
-		limit = diagnosticsEventsLimit
+func parseServiceIncidentEventsNewestFirst(data []byte, limit int, unitFilter string, dropPartialFirst bool) []serviceIncidentEvent {
+	text := strings.TrimRight(string(data), "\n")
+	if text == "" {
+		return nil
 	}
-	unitFilter = strings.TrimSpace(unitFilter)
-	if unitFilter != "" && !strings.HasSuffix(unitFilter, ".service") {
-		unitFilter += ".service"
+	lines := strings.Split(text, "\n")
+	if dropPartialFirst && len(lines) > 0 {
+		lines = lines[1:]
 	}
-	path := diagnosticsEventsPath()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []serviceIncidentEvent{}, nil
-		}
-		return nil, err
-	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	events := make([]serviceIncidentEvent, 0, limit)
 	for i := len(lines) - 1; i >= 0 && len(events) < limit; i-- {
 		line := strings.TrimSpace(lines[i])
@@ -276,7 +274,63 @@ func readServiceIncidentEvents(limit int, unitFilter string) ([]serviceIncidentE
 		}
 		events = append(events, event)
 	}
-	return events, nil
+	return events
+}
+
+func readServiceIncidentEvents(limit int, unitFilter string) ([]serviceIncidentEvent, error) {
+	if limit <= 0 {
+		limit = diagnosticsEventsLimit
+	}
+	unitFilter = strings.TrimSpace(unitFilter)
+	if unitFilter != "" && !strings.HasSuffix(unitFilter, ".service") {
+		unitFilter += ".service"
+	}
+	path := diagnosticsEventsPath()
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []serviceIncidentEvent{}, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := info.Size()
+	if size <= 0 {
+		return []serviceIncidentEvent{}, nil
+	}
+
+	window := int64(diagnosticsEventsReadWindow)
+	for {
+		if window > size {
+			window = size
+		}
+		offset := size - window
+		if _, err := file.Seek(offset, io.SeekStart); err != nil {
+			return nil, err
+		}
+		data := make([]byte, window)
+		n, err := io.ReadFull(file, data)
+		if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+			return nil, err
+		}
+		data = data[:n]
+		dropPartial := offset > 0
+		events := parseServiceIncidentEventsNewestFirst(data, limit, unitFilter, dropPartial)
+		if len(events) >= limit || window >= size {
+			return events, nil
+		}
+		if unitFilter == "" {
+			// Unfiltered: the newest window is enough for the UI limit.
+			return events, nil
+		}
+		// Filtered reads may need a larger window to find enough matches.
+		window *= 2
+	}
 }
 
 func readServiceIncidentLogTail(unit string, maxBytes int64) (string, error) {

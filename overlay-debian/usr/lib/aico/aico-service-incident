@@ -9,6 +9,7 @@ DIAG_DIR=${AICO_DIAGNOSTICS_DIR:-/userdata/diagnostics}
 EVENTS_FILE=${AICO_DIAGNOSTICS_EVENTS:-${DIAG_DIR}/service-events.jsonl}
 LAST_DIR=${DIAG_DIR}/last
 STAMP_DIR=${DIAG_DIR}/stamps
+LOCK_FILE=${AICO_DIAGNOSTICS_LOCK:-${DIAG_DIR}/service-events.lock}
 MAX_DIR_BYTES=${AICO_DIAGNOSTICS_MAX_BYTES:-16777216}
 LOG_TAIL_BYTES=${AICO_DIAGNOSTICS_LOG_TAIL_BYTES:-32768}
 DEDUP_SECONDS=${AICO_DIAGNOSTICS_DEDUP_SECONDS:-60}
@@ -39,8 +40,24 @@ if [ -f "${stamp}" ]; then
 fi
 
 json_escape() {
-    # Minimal JSON string escape for shell-collected values.
-    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | tr '\n\r' '  '
+    # Strip remaining C0 controls, then escape JSON string metacharacters.
+    printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037' \
+        | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | tr '\n\r' '  '
+}
+
+# Emit a JSON number when value is -?[0-9]+; otherwise a quoted string.
+json_number_or_string() {
+    case "$1" in
+        ''|-)
+            printf '0'
+            ;;
+        *[!0-9-]*|-*[!0-9]*|*-)
+            printf '"%s"' "$(json_escape "$1")"
+            ;;
+        *)
+            printf '%s' "$1"
+            ;;
+    esac
 }
 
 read_kv() {
@@ -74,8 +91,10 @@ if [ -n "${MONITOR_EXIT_STATUS:-}" ]; then
 fi
 
 case "${n_restarts}" in ''|*[!0-9]*) n_restarts=0 ;; esac
-case "${exec_main_status}" in ''|*[!0-9-]*) exec_main_status=0 ;; esac
 case "${main_pid}" in ''|*[!0-9]*) main_pid=0 ;; esac
+# Keep numeric exit status as a JSON number; keep signal names (KILL, SEGV, …)
+# as quoted strings instead of coercing them to 0.
+exec_main_status_json=$(json_number_or_string "${exec_main_status}")
 
 loadavg=""
 if [ -r /proc/loadavg ]; then
@@ -183,7 +202,6 @@ fi
 if [ "${record}" != 1 ]; then
     exit 0
 fi
-echo "${now}" >"${stamp}"
 
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)
 
@@ -193,7 +211,7 @@ if [ "${service_rss_json}" != "null" ]; then
     service_rss_json=${service_rss}
 fi
 
-{
+event_line=$(
     printf '{'
     printf '"ts":"%s",' "$(json_escape "${ts}")"
     printf '"unit":"%s",' "$(json_escape "${unit}")"
@@ -202,7 +220,7 @@ fi
     printf '"sub_state":"%s",' "$(json_escape "${sub_state}")"
     printf '"result":"%s",' "$(json_escape "${result}")"
     printf '"exec_main_code":"%s",' "$(json_escape "${exec_main_code}")"
-    printf '"exec_main_status":%s,' "${exec_main_status}"
+    printf '"exec_main_status":%s,' "${exec_main_status_json}"
     printf '"n_restarts":%s,' "${n_restarts}"
     printf '"board":{'
     printf '"loadavg":[%s,%s,%s],' "${load1}" "${load5}" "${load15}"
@@ -217,30 +235,45 @@ fi
     printf '},'
     printf '"log_tail_file":"%s",' "$(json_escape "${rel_tail}")"
     printf '"log_tail_bytes":%s' "${tail_bytes}"
-    printf '}\n'
-} >>"${EVENTS_FILE}"
+    printf '}'
+)
 
-# Bound the events file quickly: keep the newest half when over budget.
-# Avoid deleting one line per du() pass under TimeoutStartSec.
-events_bytes=$(wc -c <"${EVENTS_FILE}" 2>/dev/null | tr -d ' ' || echo 0)
-case "${events_bytes}" in ''|*[!0-9]*) events_bytes=0 ;; esac
-# Reserve room for last/ tails and stamps (~1MiB); the rest is for jsonl.
-max_events_bytes=$((MAX_DIR_BYTES / 2))
-if [ "${MAX_DIR_BYTES}" -gt 1048576 ]; then
-    max_events_bytes=$((MAX_DIR_BYTES - 1048576))
-fi
-if [ "${events_bytes}" -gt "${max_events_bytes}" ]; then
-    keep_bytes=$((max_events_bytes / 2))
-    if [ "${keep_bytes}" -lt 4096 ]; then
-        keep_bytes=4096
+append_and_trim_events() {
+    printf '%s\n' "${event_line}" >>"${EVENTS_FILE}"
+
+    # Bound the events file quickly: keep the newest half when over budget.
+    events_bytes=$(wc -c <"${EVENTS_FILE}" 2>/dev/null | tr -d ' ' || echo 0)
+    case "${events_bytes}" in ''|*[!0-9]*) events_bytes=0 ;; esac
+    max_events_bytes=$((MAX_DIR_BYTES / 2))
+    if [ "${MAX_DIR_BYTES}" -gt 1048576 ]; then
+        max_events_bytes=$((MAX_DIR_BYTES - 1048576))
     fi
-    tail -c "${keep_bytes}" "${EVENTS_FILE}" >"${EVENTS_FILE}.tmp" || true
-    # Drop a possible partial first line after byte-tail.
-    if [ -s "${EVENTS_FILE}.tmp" ]; then
-        sed '1d' "${EVENTS_FILE}.tmp" >"${EVENTS_FILE}.trim" 2>/dev/null || cp "${EVENTS_FILE}.tmp" "${EVENTS_FILE}.trim"
-        mv "${EVENTS_FILE}.trim" "${EVENTS_FILE}"
-        rm -f "${EVENTS_FILE}.tmp"
+    if [ "${events_bytes}" -gt "${max_events_bytes}" ]; then
+        keep_bytes=$((max_events_bytes / 2))
+        if [ "${keep_bytes}" -lt 4096 ]; then
+            keep_bytes=4096
+        fi
+        tail -c "${keep_bytes}" "${EVENTS_FILE}" >"${EVENTS_FILE}.tmp" || true
+        if [ -s "${EVENTS_FILE}.tmp" ]; then
+            sed '1d' "${EVENTS_FILE}.tmp" >"${EVENTS_FILE}.trim" 2>/dev/null || cp "${EVENTS_FILE}.tmp" "${EVENTS_FILE}.trim"
+            mv "${EVENTS_FILE}.trim" "${EVENTS_FILE}"
+            rm -f "${EVENTS_FILE}.tmp"
+        fi
     fi
+}
+
+if command -v flock >/dev/null 2>&1; then
+    # Serialize concurrent OnFailure instances against one events file.
+    (
+        flock 9 || exit 0
+        append_and_trim_events
+    ) 9>"${LOCK_FILE}"
+else
+    append_and_trim_events
 fi
+
+# Stamp only after a real event is recorded, so a failed write cannot suppress
+# a later OnFailure within the dedup window.
+echo "${now}" >"${stamp}"
 
 exit 0

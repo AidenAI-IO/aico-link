@@ -1,9 +1,11 @@
 let previousCoreServicesSnapshot = null;
 let coreServicesRequestInFlight = false;
 let coreIncidentsRequestInFlight = false;
-let selectedCoreIncidentUnit = '';
+let selectedCoreIncidentKey = '';
 const coreIncidentEventsByUnit = new Map();
+// Cache log tails by incident identity (unit|ts) so a newer failure invalidates older text.
 const coreIncidentLogCache = new Map();
+const coreIncidentLogInFlight = new Map();
 
 const CORE_SERVICES_POLL_MS = 5000;
 
@@ -32,8 +34,14 @@ function coreServiceBytes(value) {
 function coreServiceCPUPercent(service, previous, seconds) {
     const current = service?.proc?.cpu_total;
     const before = previous?.proc?.cpu_total;
+    const currentPid = service?.proc?.pid ?? service?.main_pid;
+    const beforePid = previous?.proc?.pid ?? previous?.main_pid;
     if (!Number.isFinite(current)) return null;
     if (!Number.isFinite(before) || seconds <= 0 || current < before) return null;
+    // After a restart the counter baseline belongs to a different process.
+    if (Number.isFinite(currentPid) && Number.isFinite(beforePid) && currentPid !== beforePid) {
+        return null;
+    }
     // cpu_total is in clock ticks; assume USER_HZ=100 like the Linux default.
     const percent = 100 * ((current - before) / 100) / seconds;
     if (!Number.isFinite(percent) || percent < 0) return null;
@@ -44,14 +52,26 @@ function coreServiceSeverityLabel(severity) {
     switch (severity) {
         case 'failed': return 'Failed';
         case 'degraded': return 'Watch';
+        case 'unavailable': return 'Unavailable';
         default: return 'OK';
     }
+}
+
+function coreServiceDisplaySeverity(service) {
+    if (!service) return 'unavailable';
+    if (service.load_error) return 'unavailable';
+    return service.severity || 'ok';
 }
 
 function coreServiceLabelForUnit(unit) {
     if (!unit) return '';
     if (CORE_SERVICE_LABELS[unit]) return CORE_SERVICE_LABELS[unit];
     return String(unit).replace(/\.service$/, '').replace(/^aico-/, '');
+}
+
+function coreIncidentKey(event) {
+    if (!event) return '';
+    return String(event.unit || '') + '|' + String(event.ts || '');
 }
 
 function formatCoreIncidentTime(ts) {
@@ -93,42 +113,58 @@ function coreIncidentReason(event) {
 
 function formatCoreIncidentExit(event) {
     if (!event || event.exec_main_status == null || event.exec_main_status === '') return '';
-    const code = Number(event.exec_main_status);
-    if (!Number.isFinite(code)) return 'exit ' + event.exec_main_status;
+    const raw = event.exec_main_status;
+    if (typeof raw === 'string' && /[A-Za-z_]/.test(raw)) {
+        const name = raw.startsWith('SIG') ? raw : ('SIG' + raw);
+        return name;
+    }
+    const code = Number(raw);
+    if (!Number.isFinite(code)) return 'exit ' + raw;
     const signalNames = {
         1: 'SIGHUP',
         2: 'SIGINT',
         9: 'SIGKILL',
         15: 'SIGTERM',
     };
-    if (event.result === 'signal' && signalNames[code]) {
+    if ((event.result === 'signal' || event.exec_main_code === 'killed' || event.exec_main_code === 'dumped')
+        && signalNames[code]) {
         return signalNames[code] + ' (' + code + ')';
     }
-    if (event.result === 'signal') return 'signal ' + code;
+    if (event.result === 'signal' || event.exec_main_code === 'killed' || event.exec_main_code === 'dumped') {
+        return 'signal ' + code;
+    }
     return 'exit ' + code;
 }
 
-async function loadCoreIncidentLog(unit, logNode) {
-    if (!unit || !logNode) return;
-    if (coreIncidentLogCache.has(unit)) {
-        logNode.textContent = coreIncidentLogCache.get(unit);
+async function loadCoreIncidentLog(event, logNode) {
+    if (!event?.unit || !logNode) return;
+    const key = coreIncidentKey(event);
+    if (coreIncidentLogCache.has(key)) {
+        logNode.textContent = coreIncidentLogCache.get(key);
         logNode.scrollTop = logNode.scrollHeight;
         return;
     }
+    if (coreIncidentLogInFlight.get(key)) return;
+    coreIncidentLogInFlight.set(key, true);
     logNode.textContent = 'Loading…';
     try {
-        const response = await fetch('/api/diagnostics/incident-log?unit=' + encodeURIComponent(unit), {
+        const response = await fetch('/api/diagnostics/incident-log?unit=' + encodeURIComponent(event.unit), {
             cache: 'no-store',
         });
         if (!response.ok) throw new Error('incident log failed');
         const payload = await response.json();
         const text = (payload.log || '').trim()
-            || ('No log tail captured for ' + coreServiceLabelForUnit(unit) + '.');
-        coreIncidentLogCache.set(unit, text);
+            || ('No log tail captured for ' + coreServiceLabelForUnit(event.unit) + '.');
+        // Ignore late responses for an older incident of the same unit.
+        if (coreIncidentKey(event) !== key) return;
+        coreIncidentLogCache.set(key, text);
         logNode.textContent = text;
         logNode.scrollTop = logNode.scrollHeight;
     } catch (_) {
-        logNode.textContent = 'Failed to load log tail for ' + coreServiceLabelForUnit(unit) + '.';
+        if (coreIncidentKey(event) !== key) return;
+        logNode.textContent = 'Failed to load log tail for ' + coreServiceLabelForUnit(event.unit) + '.';
+    } finally {
+        coreIncidentLogInFlight.delete(key);
     }
 }
 
@@ -174,9 +210,12 @@ function renderCoreServices(snapshot) {
     list.replaceChildren();
     let failed = 0;
     let degraded = 0;
+    let unavailable = 0;
     for (const service of services) {
-        if (service.severity === 'failed') failed += 1;
-        else if (service.severity === 'degraded') degraded += 1;
+        const displaySeverity = coreServiceDisplaySeverity(service);
+        if (displaySeverity === 'failed') failed += 1;
+        else if (displaySeverity === 'degraded') degraded += 1;
+        else if (displaySeverity === 'unavailable') unavailable += 1;
 
         const previous = previousByUnit.get(service.unit);
         const cpu = coreServiceCPUPercent(service, previous, seconds);
@@ -185,7 +224,7 @@ function renderCoreServices(snapshot) {
         row.type = 'button';
         row.className = 'core-service-row';
         row.dataset.unit = service.unit;
-        row.dataset.severity = service.severity || 'ok';
+        row.dataset.severity = displaySeverity;
 
         const copy = document.createElement('span');
         copy.className = 'core-service-copy';
@@ -206,7 +245,7 @@ function renderCoreServices(snapshot) {
 
         const state = document.createElement('span');
         state.className = 'core-service-state';
-        state.textContent = coreServiceSeverityLabel(service.severity);
+        state.textContent = coreServiceSeverityLabel(displaySeverity);
         state.title = [service.active_state, service.sub_state, service.result]
             .filter(Boolean).join(' · ') || service.load_error || '';
 
@@ -222,6 +261,7 @@ function renderCoreServices(snapshot) {
     const parts = [];
     if (failed) parts.push(failed + ' failed');
     if (degraded) parts.push(degraded + ' watch');
+    if (unavailable) parts.push(unavailable + ' unavailable');
     if (!parts.length && services.length) parts.push(services.length + ' ok');
     summary.textContent = parts.join(' · ');
     previousCoreServicesSnapshot = snapshot;
@@ -234,15 +274,16 @@ function isRealCoreIncident(event) {
     return true;
 }
 
-function renderCoreIncidents(events) {
+function renderCoreIncidents(events, options = {}) {
     const list = document.getElementById('coreIncidentsList');
     const empty = document.getElementById('coreIncidentsEmpty');
     if (!list || !empty) return;
-    const visible = (events || []).filter(isRealCoreIncident);
+    const errored = Boolean(options.error);
+    const visible = errored ? [] : (events || []).filter(isRealCoreIncident);
     const previouslyOpen = new Set(
-        [...list.querySelectorAll('details.core-incident-item[open]')].map(node => node.dataset.unit)
+        [...list.querySelectorAll('details.core-incident-item[open]')].map(node => node.dataset.incidentKey)
     );
-    if (selectedCoreIncidentUnit) previouslyOpen.add(selectedCoreIncidentUnit);
+    if (selectedCoreIncidentKey) previouslyOpen.add(selectedCoreIncidentKey);
 
     coreIncidentEventsByUnit.clear();
     for (const event of visible) {
@@ -251,18 +292,28 @@ function renderCoreIncidents(events) {
         }
     }
     list.replaceChildren();
+    if (errored) {
+        empty.hidden = false;
+        empty.textContent = 'Failure history unavailable.';
+        selectedCoreIncidentKey = '';
+        return;
+    }
     if (!visible.length) {
         empty.hidden = false;
-        selectedCoreIncidentUnit = '';
+        empty.textContent = 'No recorded failures.';
+        selectedCoreIncidentKey = '';
         return;
     }
     empty.hidden = true;
+    empty.textContent = 'No recorded failures.';
     for (const event of visible) {
+        const key = coreIncidentKey(event);
         const item = document.createElement('details');
         item.className = 'core-incident-item';
         item.dataset.unit = event.unit || '';
+        item.dataset.incidentKey = key;
         item.dataset.severity = event.severity || 'failed';
-        item.open = previouslyOpen.has(event.unit);
+        item.open = previouslyOpen.has(key);
 
         const summary = document.createElement('summary');
         summary.className = 'core-incident-summary';
@@ -331,8 +382,8 @@ function renderCoreIncidents(events) {
 
         const logNode = document.createElement('pre');
         logNode.className = 'core-incident-log';
-        if (coreIncidentLogCache.has(event.unit)) {
-            logNode.textContent = coreIncidentLogCache.get(event.unit);
+        if (coreIncidentLogCache.has(key)) {
+            logNode.textContent = coreIncidentLogCache.get(key);
         } else {
             logNode.textContent = 'Loading…';
         }
@@ -346,18 +397,18 @@ function renderCoreIncidents(events) {
         item.append(summary, body);
         item.addEventListener('toggle', () => {
             if (item.open) {
-                selectedCoreIncidentUnit = event.unit || '';
+                selectedCoreIncidentKey = key;
                 // Keep only one incident expanded for a quieter panel.
                 list.querySelectorAll('details.core-incident-item[open]').forEach(node => {
                     if (node !== item) node.open = false;
                 });
-                loadCoreIncidentLog(event.unit, logNode);
-            } else if (selectedCoreIncidentUnit === event.unit) {
-                selectedCoreIncidentUnit = '';
+                loadCoreIncidentLog(event, logNode);
+            } else if (selectedCoreIncidentKey === key) {
+                selectedCoreIncidentKey = '';
             }
         });
         list.append(item);
-        if (item.open) loadCoreIncidentLog(event.unit, logNode);
+        if (item.open) loadCoreIncidentLog(event, logNode);
     }
 }
 
@@ -365,7 +416,11 @@ function selectCoreServiceIncident(unit) {
     if (!unit) return;
     const section = document.getElementById('coreIncidentsDetails');
     if (section && !section.open) section.open = true;
-    const item = document.querySelector('.core-incident-item[data-unit="' + unit.replace(/"/g, '\\"') + '"]');
+    const event = coreIncidentEventsByUnit.get(unit);
+    const key = event ? coreIncidentKey(event) : '';
+    const item = key
+        ? document.querySelector('.core-incident-item[data-incident-key="' + key.replace(/"/g, '\\"') + '"]')
+        : document.querySelector('.core-incident-item[data-unit="' + unit.replace(/"/g, '\\"') + '"]');
     if (!item) return;
     item.open = true;
     item.scrollIntoView({block: 'nearest'});
@@ -408,7 +463,7 @@ async function refreshCoreIncidents() {
         const payload = await response.json();
         renderCoreIncidents(payload.events || []);
     } catch (_) {
-        renderCoreIncidents([]);
+        renderCoreIncidents([], {error: true});
     } finally {
         clearTimeout(timeout);
         coreIncidentsRequestInFlight = false;

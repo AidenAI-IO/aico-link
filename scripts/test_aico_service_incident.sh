@@ -125,5 +125,16 @@ MONITOR_SERVICE_RESULT=signal MONITOR_EXIT_CODE=killed MONITOR_EXIT_STATUS=9 \
 monitor_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
 [ "${monitor_after}" -gt "${monitor_before}" ] || fail "monitor env failure was not recorded"
 tail -n 1 "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | grep -q '"result":"signal"' || fail "monitor env result missing"
+tail -n 1 "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | grep -q '"exec_main_status":9' || fail "numeric monitor status missing"
+
+# systemd reports signal exits as names (KILL), not numeric MONITOR_EXIT_STATUS.
+rm -f "${AICO_DIAGNOSTICS_DIR}/stamps/aico-frame"
+kill_before=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
+MONITOR_SERVICE_RESULT=signal MONITOR_EXIT_CODE=killed MONITOR_EXIT_STATUS=KILL \
+    "${WORKDIR}/aico-service-incident" aico-frame
+kill_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
+[ "${kill_after}" -gt "${kill_before}" ] || fail "KILL monitor status was not recorded"
+tail -n 1 "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | grep -q '"exec_main_status":"KILL"' \
+    || fail "signal name status not preserved as JSON string"
 
 echo "aico-service-incident tests passed"
