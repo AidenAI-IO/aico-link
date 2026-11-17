@@ -96,6 +96,12 @@ func newLeasedGeminiSession(session Session, expiresAt time.Time, refreshMargin 
 func (s *leasedGeminiSession) SendToolResult(ctx context.Context, id, output string) error {
 	return s.tool.SendToolResult(ctx, id, output)
 }
+func (s *leasedGeminiSession) SendToolResultWithImages(ctx context.Context, id, output string, images []Image) error {
+	if sender, ok := s.tool.(ImageToolResultSender); ok {
+		return sender.SendToolResultWithImages(ctx, id, output, images)
+	}
+	return s.tool.SendToolResult(ctx, id, output)
+}
 func (s *leasedGeminiSession) SendText(ctx context.Context, text string) error {
 	return s.text.SendText(ctx, text)
 }

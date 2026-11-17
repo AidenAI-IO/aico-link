@@ -117,6 +117,29 @@ realtime tool executor; tool results are sent back through
 `ToolResultSender`, and providers that require explicit continuation receive a
 new `CreateResponse` after all results for that response have arrived.
 
+A tool that returns a visual observation, such as `screenshot` or a
+post-action screenshot, never sends its image to the model or the user context
+as base64 text. The realtime user context stores it the way the backend loop
+does: a tool result without the image, followed by a `state` message with the
+image as an attachment and its caption (screenshot size, screen-change notes,
+UI grounding). What the provider receives depends on the model:
+
+- Models that accept images in the conversation receive the backend tool
+  result with the captioned image. The list is kept in
+  `realtimevoice.SupportsImageInput`; it holds the `gpt-realtime` family
+  (OpenAI Realtime) and `gemini-3.8-live` models. OpenAI receives the image as
+  an `input_image` user message after the `function_call_output`; Gemini
+  receives it as `inlineData` parts of the function response, with the caption
+  in the response.
+- Other models, including the default Gemini 3.1 Flash Live, Qwen, xAI, and
+  MOSS Live, receive the caption wrapped in `<state>` in the tool result and an
+  `[Image omitted: ...]` placeholder in place of the image. Their protocols
+  take images only as streamed video frames or input buffers, or not at all.
+
+Context replay after a reconnect restores each `state` message into its tool
+result. A model that accepts images gets the latest image again; earlier
+images, and every image for other models, are replaced by the placeholder.
+
 Speech and tool or background-task execution can overlap in one response, so
 the realtime instructions require an outcome-claim gate: before a result showing
 the actual outcome is available, the model may only acknowledge that it is

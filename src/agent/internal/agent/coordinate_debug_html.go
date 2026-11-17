@@ -11,6 +11,7 @@ const coordinateDebugHTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Coordinate Debug · Aico</title>
 <link rel="stylesheet" href="/web-ui/styles.css">
+<script src="/web-ui/scripts/theme.js"></script>
 <style>
 .debug-layout { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 1px; min-height: calc(100vh - 64px); background: var(--line); }
 .debug-controls { display: flex; flex-direction: column; gap: 12px; padding: 16px; background: var(--surface-soft); }

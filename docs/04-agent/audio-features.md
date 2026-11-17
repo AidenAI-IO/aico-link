@@ -96,7 +96,7 @@ Waits for the hardware tap button to open a Classic voice session. On current bo
 
 Separately, if the MCU service socket is unavailable, the daemon may use a gated GPIO 33/32 fallback only on boards where those pins are still voice keys (for example Luckfox Pico Zero) or when `AICO_LEGACY_GPIO_VOICE_WAKEUP=1` is set. On Aico Link SCH v1 those GPIOs drive HDMI power/reset, so the fallback stays disabled there even when the MCU socket is missing.
 
-Classic STT Agent turns share the main model's `max_response_tokens` output limit (8192 by default), including any reasoning tokens counted toward that limit by the provider. They do not apply a separate voice-specific token cap.
+Classic STT Agent turns share the main model's `max_response_tokens` output limit, including any reasoning tokens counted toward that limit by the provider. The default `0` sends no limit, so the provider's model default applies; native Anthropic, which requires a limit, uses the model's advertised output limit (or `8192` when unknown). They do not apply a separate voice-specific token cap.
 
 
 ## Configuration Snippet

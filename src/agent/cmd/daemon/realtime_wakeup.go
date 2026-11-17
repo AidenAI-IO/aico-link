@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"aico-agent/internal/agenttask"
 	"aico-agent/internal/logging"
 	streamcontract "aico-agent/internal/stream"
+	"aico-agent/internal/util"
 
 	"github.com/google/uuid"
 	langtools "github.com/tmc/langchaingo/tools"
@@ -70,6 +72,10 @@ type realtimeChatCommand struct {
 type realtimeToolResult struct {
 	call   realtimevoice.Event
 	output string
+	// visual holds the image a visual tool returned. output then carries the
+	// tool result with a placeholder for the image, for a model that cannot
+	// receive images; a model that can gets the image with the result.
+	visual *agent.VisualToolObservation
 }
 
 // realtimeSemanticEmitter is the observer-side adapter for native realtime
@@ -1208,6 +1214,36 @@ func newRealtimeVoiceToolExecutor(runtime *agent.Runtime, tasks *agenttask.Manag
 	return executor
 }
 
+// result runs a tool call and separates the image a visual tool returns from
+// its text, so the image never reaches the provider as base64 text.
+func (e realtimeVoiceToolExecutor) result(ctx context.Context, call realtimevoice.Event) realtimeToolResult {
+	result := realtimeToolResult{call: call, output: e.call(ctx, call.Name, call.Arguments)}
+	if observation, ok := agent.SplitVisualToolOutput(e.delegated[call.Name], result.output); ok {
+		result.output = observation.ToolContentWithoutImages(agent.ImageOmittedModelUnsupported)
+		result.visual = &observation
+	}
+	return result
+}
+
+// sendRealtimeToolResult returns a tool result to the provider. A model that
+// accepts images gets a visual tool's images with the result, as the backend
+// model gets them in the following state message; any other model gets the
+// result with a placeholder for each image.
+func sendRealtimeToolResult(ctx context.Context, sender realtimevoice.ToolResultSender, imageSender realtimevoice.ImageToolResultSender, result realtimeToolResult) error {
+	if result.visual != nil && imageSender != nil {
+		return imageSender.SendToolResultWithImages(ctx, result.call.CallID, result.visual.ToolContent(), realtimeImages(result.visual.Images()))
+	}
+	return sender.SendToolResult(ctx, result.call.CallID, result.output)
+}
+
+func realtimeImages(images []agent.VisualImage) []realtimevoice.Image {
+	converted := make([]realtimevoice.Image, 0, len(images))
+	for _, image := range images {
+		converted = append(converted, realtimevoice.Image{Caption: image.Caption, MIMEType: image.MIMEType, Data: image.Data})
+	}
+	return converted
+}
+
 func (e realtimeVoiceToolExecutor) call(ctx context.Context, name, arguments string) string {
 	switch name {
 	case realtimeCurrentTimeTool:
@@ -1349,10 +1385,7 @@ func startRealtimeToolCall(ctx context.Context, executor realtimeVoiceToolExecut
 	go func() {
 		callCtx, cancel := context.WithTimeout(ctx, realtimeToolCallTimeout)
 		defer cancel()
-		result := realtimeToolResult{
-			call:   call,
-			output: executor.call(callCtx, call.Name, call.Arguments),
-		}
+		result := executor.result(callCtx, call)
 		select {
 		case results <- result:
 		case <-ctx.Done():
@@ -1614,13 +1647,20 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	canInterrupt := responseInterrupter != nil
 	toolResultSender := session.ToolResultSender
 	canSendToolResult := toolResultSender != nil
+	// Only a model on the image-input list gets images; others get a
+	// placeholder in their place.
+	var imageToolResultSender realtimevoice.ImageToolResultSender
+	if realtimevoice.SupportsImageInput(providerName, cfg.VoiceModel.Model) {
+		imageToolResultSender = session.ImageToolResultSender
+	}
+	imageInput := imageToolResultSender != nil
 	responseContinuer := session.ResponseContinuer
 	textSession := session.TextSession
 	supportsText := textSession != nil
 	contextReplayer := session.ContextReplayer
 	canReplayContext := contextReplayer != nil
 	if supportsText && canReplayContext {
-		if err := replayRealtimeContext(ctx, contextReplayer, userContext); err != nil {
+		if err := replayRealtimeContext(ctx, contextReplayer, userContext, imageInput); err != nil {
 			return markRealtimeProviderFailure(fmt.Errorf("restore realtime user context: %w", err))
 		}
 	}
@@ -2166,14 +2206,14 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			if !canSendToolResult {
 				return fmt.Errorf("realtime provider %s cannot send tool results", providerName)
 			}
-			if err := toolResultSender.SendToolResult(ctx, call.CallID, result.output); err != nil {
+			if err := sendRealtimeToolResult(ctx, toolResultSender, imageToolResultSender, result); err != nil {
 				return markRealtimeProviderFailure(fmt.Errorf("send realtime tool result: %w", err))
 			}
 			recordForeground(streamcontract.EventToolCompleted, map[string]any{"tool": call.Name, "call_id": call.CallID,
 				"arguments": call.Arguments, "output": result.output}, "", nil)
 			watchdog.progress()
 			if activeNotificationToken == "" && !suppressedNotificationResponsePending && !hasSuppressedNotificationResponse(suppressedNotificationResponseIDs, call.ResponseID) {
-				if err := appendRealtimeToolExecution(userContext, call, result.output); err != nil {
+				if err := appendRealtimeToolExecution(userContext, call, result.output, result.visual); err != nil {
 					return fmt.Errorf("persist realtime tool call and result: %w", err)
 				}
 				if call.Name == realtimeEndConversationTool {
@@ -3437,11 +3477,17 @@ func appendRealtimeAssistantMessage(manager *contextmanager.ContextManager, cont
 
 // appendRealtimeToolExecution persists the protocol pair only after the tool
 // has produced an output, so an interrupted call cannot remain in user context.
-func appendRealtimeToolExecution(manager *contextmanager.ContextManager, call realtimevoice.Event, output string) error {
+// A visual tool's result is stored as the backend loop stores it: the tool
+// result without the image, followed by a state message with the image as an
+// attachment, whichever model is in use.
+func appendRealtimeToolExecution(manager *contextmanager.ContextManager, call realtimevoice.Event, output string, visual *agent.VisualToolObservation) error {
 	if manager == nil {
 		return nil
 	}
-	return manager.AppendMessages([]messages.Message{
+	if visual != nil {
+		output = visual.ToolContent()
+	}
+	pair := []messages.Message{
 		{
 			Role: messages.MessageRoleToolCall,
 			ToolCalls: []messages.ToolCall{{
@@ -3458,17 +3504,46 @@ func appendRealtimeToolExecution(manager *contextmanager.ContextManager, call re
 				Content:    output,
 			}},
 		},
-	})
+	}
+	if visual != nil {
+		pair = append(pair, visual.StateMessages(manager)...)
+	}
+	return manager.AppendMessages(pair)
 }
 
-func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextReplayer, manager *contextmanager.ContextManager) error {
+func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextReplayer, manager *contextmanager.ContextManager, imageInput bool) error {
 	if session == nil || manager == nil {
 		return nil
 	}
+	recent := recentRealtimeContextMessages(manager.MessageListDump().Messages, realtimeContextReplayTurns)
+	toolStates := realtimeToolStateMessages(recent)
+	// Only the latest image is replayed: earlier screens are stale, and
+	// replaying every one would grow each restored context.
+	latestImage := -1
+	if imageInput {
+		for i, message := range recent {
+			if message.Role == messages.MessageRoleState && realtimeStateHasImage(message) {
+				latestImage = i
+			}
+		}
+	}
 	var items []realtimevoice.ContextItem
-	for _, message := range recentRealtimeContextMessages(manager.MessageListDump().Messages, realtimeContextReplayTurns) {
+	for i, message := range recent {
 		content := strings.TrimSpace(message.Content)
 		if message.Role == messages.MessageRoleSystem {
+			continue
+		}
+		if message.Role == messages.MessageRoleState {
+			text, images := replayedRealtimeState(manager, message, imageInput, i == latestImage)
+			if toolStates[i] {
+				// A state message that follows a tool result carries that
+				// result's image and is replayed with it.
+				item := &items[len(items)-1]
+				item.Output = strings.TrimSpace(item.Output + "\n" + text)
+				item.Images = append(item.Images, images...)
+			} else if text != "" || len(images) > 0 {
+				items = append(items, realtimevoice.ContextItem{Type: "message", Role: "user", Content: text, Images: images})
+			}
 			continue
 		}
 		if message.Role == messages.MessageRoleToolCall {
@@ -3493,6 +3568,69 @@ func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextRep
 		items = append(items, realtimevoice.ContextItem{Type: "message", Role: role, Content: content})
 	}
 	return session.ReplayContext(ctx, items)
+}
+
+// realtimeToolStateMessages marks the state messages that follow a tool
+// result, directly or after another such state message.
+func realtimeToolStateMessages(recent []messages.Message) map[int]bool {
+	marked := make(map[int]bool)
+	afterToolResult := false
+	for i, message := range recent {
+		switch message.Role {
+		case messages.MessageRoleSystem:
+		case messages.MessageRoleToolResult:
+			afterToolResult = len(message.ToolResults) > 0
+		case messages.MessageRoleState:
+			marked[i] = afterToolResult
+		default:
+			afterToolResult = false
+		}
+	}
+	return marked
+}
+
+func realtimeStateHasImage(message messages.Message) bool {
+	for _, attachment := range message.Attachments {
+		if strings.HasPrefix(strings.ToLower(attachment.MIMEType), "image/") {
+			return true
+		}
+	}
+	return false
+}
+
+// replayedRealtimeState restores a state message for replay: its images for
+// the latest image of a model that accepts images, otherwise its caption with
+// a placeholder for each image.
+func replayedRealtimeState(manager *contextmanager.ContextManager, state messages.Message, imageInput, latest bool) (string, []realtimevoice.Image) {
+	caption := strings.TrimSpace(state.Content)
+	if !realtimeStateHasImage(state) {
+		if caption == "" {
+			return "", nil
+		}
+		return util.STag("state", caption), nil
+	}
+	if imageInput && latest {
+		var images []realtimevoice.Image
+		for _, attachment := range state.Attachments {
+			if !strings.HasPrefix(strings.ToLower(attachment.MIMEType), "image/") {
+				continue
+			}
+			data, err := manager.ReadAttachment(filepath.Base(attachment.FilePath))
+			if err != nil || len(data) == 0 {
+				logging.Warnf("agent", "realtime", "Replay omitted a stored image: %v", err)
+				continue
+			}
+			images = append(images, realtimevoice.Image{Caption: caption, MIMEType: attachment.MIMEType, Data: data})
+		}
+		if len(images) > 0 {
+			return "", images
+		}
+	}
+	reason := agent.ImageOmittedModelUnsupported
+	if imageInput {
+		reason = agent.ImageOmittedNotReplayed
+	}
+	return agent.ToolResultWithOmittedImages("", []string{caption}, reason), nil
 }
 
 func recentRealtimeContextMessages(all []messages.Message, maxTurns int) []messages.Message {
@@ -3524,6 +3662,16 @@ func recentRealtimeContextMessages(all []messages.Message, maxTurns int) []messa
 			break
 		}
 		seen++
+	}
+	// A user turn's state message is stored before the user message, so it
+	// starts the turn with it. State that follows a tool result belongs to
+	// that earlier turn and is left out with it.
+	first := start
+	for first > 0 && all[first-1].Role == messages.MessageRoleState {
+		first--
+	}
+	if first == 0 || all[first-1].Role != messages.MessageRoleToolResult {
+		start = first
 	}
 	return all[start:]
 }

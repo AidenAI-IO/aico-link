@@ -127,8 +127,7 @@ megapixels are refused. The image is attached to the next model request with a
 caption naming the file and stating that it is not the connected display, so
 its coordinates are not used for `touch_gesture`; it is also not recorded as
 the latest display screenshot. The transcript keeps only the
-path, size, and format. `read_image` is a backend tool: the realtime foreground
-cannot attach images, so it does not receive it.
+path, size, and format. `read_image` is a backend tool: the realtime foreground does not receive it.
 
 Each user turn's state message also carries a `shared_files` entry that lists
 the 20 most recently modified files below `/share`, newest first, with size,
