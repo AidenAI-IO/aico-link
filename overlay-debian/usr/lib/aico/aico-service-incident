@@ -242,7 +242,8 @@ event_line=$(
 )
 
 append_and_trim_events() {
-    printf '%s\n' "${event_line}" >>"${EVENTS_FILE}"
+    # Explicit failure: when this function runs under `if`, shell errexit is off.
+    printf '%s\n' "${event_line}" >>"${EVENTS_FILE}" || return 1
 
     # Bound the events file quickly: keep the newest half when over budget.
     events_bytes=$(wc -c <"${EVENTS_FILE}" 2>/dev/null | tr -d ' ' || echo 0)
@@ -265,17 +266,17 @@ append_and_trim_events() {
     fi
 }
 
-# Stamp only after a successful append. A failed flock must not suppress later
-# OnFailure runs inside the dedup window.
+# Stamp only after a successful append. A failed flock/append must not suppress
+# later OnFailure runs inside the dedup window.
 if command -v flock >/dev/null 2>&1; then
     if ! (
         flock 9 || exit 1
-        append_and_trim_events
+        append_and_trim_events || exit 1
     ) 9>"${LOCK_FILE}"; then
         exit 0
     fi
 else
-    append_and_trim_events
+    append_and_trim_events || exit 0
 fi
 echo "${now}" >"${stamp}"
 

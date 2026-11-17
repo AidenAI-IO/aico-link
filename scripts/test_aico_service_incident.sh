@@ -149,4 +149,31 @@ kill_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
 tail -n 1 "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | grep -q '"exec_main_status":"KILL"' \
     || fail "signal name status not preserved as JSON string"
 
+# Append failure must not write a dedup stamp (stamp path remains writable).
+cat >"${TEST_ROOT}/bin/systemctl" <<'EOF'
+#!/bin/sh
+echo "ActiveState=failed"
+echo "SubState=dead"
+echo "Result=exit-code"
+echo "ExecMainStatus=1"
+echo "ExecMainCode=exited"
+echo "NRestarts=3"
+echo "MainPID=0"
+EOF
+chmod +x "${TEST_ROOT}/bin/systemctl"
+printf 'frame boom\n' >"${TEST_ROOT}/var/log/frame_service/frame_service.log"
+rm -f "${AICO_DIAGNOSTICS_DIR}/stamps/aico-frame"
+chmod a-w "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl"
+reject_before=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
+"${WORKDIR}/aico-service-incident" aico-frame || true
+reject_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
+chmod a+w "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl"
+[ "${reject_before}" = "${reject_after}" ] || fail "append should have failed"
+[ ! -f "${AICO_DIAGNOSTICS_DIR}/stamps/aico-frame" ] || fail "stamp written after append failure"
+# Recovery: a later successful append must still be allowed.
+"${WORKDIR}/aico-service-incident" aico-frame
+recover_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
+[ "${recover_after}" -gt "${reject_after}" ] || fail "append did not recover after writable restore"
+[ -f "${AICO_DIAGNOSTICS_DIR}/stamps/aico-frame" ] || fail "stamp missing after successful append"
+
 echo "aico-service-incident tests passed"
