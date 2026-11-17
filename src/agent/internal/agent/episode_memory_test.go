@@ -705,6 +705,57 @@ func TestEpisodeMemoryProcessorResumesPersistedProposalWithoutCallingModelAgain(
 	}
 }
 
+func TestEpisodeMemoryProcessorReextractsPersistedFailureProposalWithoutEvidenceCheck(t *testing.T) {
+	ctx := context.Background()
+	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
+	empty := episodeMemoryProposal{EpisodeAssessment: episodeMemoryAssessment{GoalResult: episodeGoalNotAchieved, Reason: "Send failed.", EvidenceRefs: []string{"ep_legacy_result"}}}
+	response, _ := json.Marshal(episodeMemoryBatchResponse{Results: []episodeMemoryBatchResult{{EpisodeID: "ep_legacy", Proposal: empty}}})
+	model := &episodeMemoryScriptedModel{responses: []string{string(response)}}
+	processor := newEpisodeMemoryProcessor(plane, model)
+	processor.state.bootstrapAt = time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+	if err := processor.Initialize(); err != nil {
+		t.Fatalf("Initialize() error = %v", err)
+	}
+	episode := TaskEpisode{
+		ID: "ep_legacy", Status: "active", StartedAt: "2026-08-14T04:00:00Z", EndedAt: "2026-08-14T04:00:05Z",
+		UserGoal: "Send the drafted message.", DeviceScope: map[string]string{"device_id": "device_a"},
+		Events: []TaskEpisodeEvent{
+			{EventID: "ep_legacy_call", Type: runEventToolCall, ToolName: "touch_gesture", ToolInput: `{}`},
+			{EventID: "ep_legacy_result", Type: "tool_result", ToolName: "touch_gesture", IsError: true, Observation: "Send failed because the recipient field was empty."},
+		},
+	}
+	if _, err := plane.episodes.AddEpisode(ctx, episode); err != nil {
+		t.Fatalf("AddEpisode() error = %v", err)
+	}
+	// Persisted before the Failure evidence check existed.
+	legacy := episodeMemoryProposal{
+		EpisodeAssessment: empty.EpisodeAssessment,
+		Candidates: []episodeMemoryCandidate{{
+			LessonKey: "fill_recipient", Type: episodeMemoryTypeFailure, Action: "create", Retention: episodeMemoryRetentionDurable,
+			Situation: "When sending a message", Guidance: "Fill the recipient first", ExpectedEffect: "Send succeeds",
+			Scope: map[string]string{"device_id": "device_a"}, EvidenceRefs: []string{"ep_legacy_result"},
+		}},
+	}
+	if err := processor.state.SetEpisode(episode.ID, episodeMemoryEpisodeStatus{
+		Status: episodeMemoryStatusProposed, ExtractorVersion: episodeMemoryExtractorVersion, Proposal: &legacy,
+	}); err != nil {
+		t.Fatalf("SetEpisode(proposed) error = %v", err)
+	}
+	if _, err := processor.ProcessBatch(ctx, nil); err != nil {
+		t.Fatalf("ProcessBatch() error = %v", err)
+	}
+	if got := model.callCount(); got == 0 {
+		t.Fatal("model was not called, want the unchecked Failure proposal re-extracted")
+	}
+	items, err := plane.device.readAll()
+	if err != nil {
+		t.Fatalf("readAll() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("memories = %#v, want the unchecked Failure candidate not applied", items)
+	}
+}
+
 func TestEpisodeMemoryProcessorDoesNotCarryErrorIntoNextPersistedProposal(t *testing.T) {
 	ctx := context.Background()
 	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)

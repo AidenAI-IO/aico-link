@@ -137,6 +137,10 @@ type episodeMemoryProposal struct {
 	EpisodeAssessment episodeMemoryAssessment  `json:"episode_assessment" yaml:"episode_assessment"`
 	Candidates        []episodeMemoryCandidate `json:"candidates" yaml:"candidates"`
 	ExistingRevisions map[string]int           `json:"-" yaml:"existing_revisions,omitempty"`
+	// FailureEvidenceChecked marks a proposal whose Failure candidates passed
+	// validateFailureRetentionEvidence; proposals persisted before that check
+	// existed are re-extracted rather than applied.
+	FailureEvidenceChecked bool `json:"-" yaml:"failure_evidence_checked,omitempty"`
 }
 
 type episodeMemoryRetentionDecision string
@@ -410,7 +414,7 @@ func (p *episodeMemoryProcessor) collectEpisodeMemoryWork(state *episodeMemorySt
 			break
 		}
 		work := episodeMemoryWork{episode: episode, originalStatus: status, status: status}
-		if status.Proposal != nil {
+		if status.Proposal != nil && !episodeMemoryProposalNeedsFailureEvidenceCheck(*status.Proposal) {
 			work.proposal = cloneEpisodeMemoryProposal(*status.Proposal)
 		} else {
 			// Keep this transition in memory until the work's retry-attempt group
@@ -913,8 +917,21 @@ func (p *episodeMemoryProcessor) postProcessEpisodeMemoryProposal(ctx context.Co
 	stats := summarizeEpisodeMemoryRetentionAudit(proposal.Candidates, audit)
 	stats.InvalidFailureEvidence = invalidFailureEvidence
 	proposal.Candidates = retainedEpisodeMemoryCandidates(proposal.Candidates, audit)
+	proposal.FailureEvidenceChecked = true
 	p.logEpisodeMemoryRetentionAudit("completed", originalCount, len(audit.Reviews), len(proposal.Candidates), stats)
 	return proposal, nil
+}
+
+func episodeMemoryProposalNeedsFailureEvidenceCheck(proposal episodeMemoryProposal) bool {
+	if proposal.FailureEvidenceChecked {
+		return false
+	}
+	for _, candidate := range proposal.Candidates {
+		if strings.EqualFold(strings.TrimSpace(string(candidate.Type)), string(episodeMemoryTypeFailure)) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeEpisodeMemoryAssessment(episode TaskEpisode, proposal episodeMemoryProposal, existing []DeviceMemoryItem) (episodeMemoryProposal, error) {
