@@ -149,6 +149,8 @@ if [ "${main_pid}" -gt 1 ] && [ -r "/proc/${main_pid}/stat" ] && [ -r "/proc/${m
 fi
 
 # Prefer known file logs; fall back to a short journal slice.
+# Capture only after the recording guard so healthy probes cannot overwrite
+# an existing failure tail under last/<unit>.
 log_file=""
 case "${unit}" in
     aico-agent.service) log_file=/userdata/agent/log/agent.log ;;
@@ -158,21 +160,6 @@ case "${unit}" in
     aico-wifi-proxy.service) log_file=/var/log/wifi_proxy/wifi_proxy.log ;;
     aico-ttyd.service) log_file=/var/log/ttyd/ttyd.log ;;
 esac
-
-tail_path=${LAST_DIR}/${unit}
-tail_bytes=0
-if [ -n "${log_file}" ] && [ -f "${log_file}" ]; then
-    tail -c "${LOG_TAIL_BYTES}" "${log_file}" >"${tail_path}" 2>/dev/null || true
-elif command -v "${JOURNALCTL_BIN}" >/dev/null 2>&1; then
-    "${JOURNALCTL_BIN}" -u "${unit}" -n 200 --no-pager -o short-iso 2>/dev/null \
-        | tail -c "${LOG_TAIL_BYTES}" >"${tail_path}" || true
-else
-    : >"${tail_path}"
-fi
-if [ -f "${tail_path}" ]; then
-    tail_bytes=$(wc -c <"${tail_path}" | tr -d ' ')
-fi
-case "${tail_bytes}" in ''|*[!0-9]*) tail_bytes=0 ;; esac
 
 # Only persist real failures. OnFailure= should already imply this; the guard
 # also drops manual/spurious runs while the unit is still healthy.
@@ -203,6 +190,21 @@ fi
 if [ "${record}" != 1 ]; then
     exit 0
 fi
+
+tail_path=${LAST_DIR}/${unit}
+tail_bytes=0
+if [ -n "${log_file}" ] && [ -f "${log_file}" ]; then
+    tail -c "${LOG_TAIL_BYTES}" "${log_file}" >"${tail_path}" 2>/dev/null || true
+elif command -v "${JOURNALCTL_BIN}" >/dev/null 2>&1; then
+    "${JOURNALCTL_BIN}" -u "${unit}" -n 200 --no-pager -o short-iso 2>/dev/null \
+        | tail -c "${LOG_TAIL_BYTES}" >"${tail_path}" || true
+else
+    : >"${tail_path}"
+fi
+if [ -f "${tail_path}" ]; then
+    tail_bytes=$(wc -c <"${tail_path}" | tr -d ' ')
+fi
+case "${tail_bytes}" in ''|*[!0-9]*) tail_bytes=0 ;; esac
 
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)
 
@@ -263,18 +265,18 @@ append_and_trim_events() {
     fi
 }
 
+# Stamp only after a successful append. A failed flock must not suppress later
+# OnFailure runs inside the dedup window.
 if command -v flock >/dev/null 2>&1; then
-    # Serialize concurrent OnFailure instances against one events file.
-    (
-        flock 9 || exit 0
+    if ! (
+        flock 9 || exit 1
         append_and_trim_events
-    ) 9>"${LOCK_FILE}"
+    ) 9>"${LOCK_FILE}"; then
+        exit 0
+    fi
 else
     append_and_trim_events
 fi
-
-# Stamp only after a real event is recorded, so a failed write cannot suppress
-# a later OnFailure within the dedup window.
 echo "${now}" >"${stamp}"
 
 exit 0

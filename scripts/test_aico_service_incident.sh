@@ -77,7 +77,8 @@ future_before=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' 
 future_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
 [ "${future_after}" -gt "${future_before}" ] || fail "future stamp suppressed recording"
 
-# Healthy unit snapshots must not be recorded.
+# Healthy unit snapshots must not be recorded, and must not overwrite an
+# existing failure log tail under last/<unit>.
 cat >"${TEST_ROOT}/bin/systemctl" <<'EOF'
 #!/bin/sh
 echo "ActiveState=active"
@@ -90,11 +91,14 @@ echo "MainPID=1"
 EOF
 chmod +x "${TEST_ROOT}/bin/systemctl"
 rm -f "${AICO_DIAGNOSTICS_DIR}/stamps/aico-frame"
+printf 'healthy noise\n' >"${TEST_ROOT}/var/log/frame_service/frame_service.log"
 healthy_before=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
 "${WORKDIR}/aico-service-incident" aico-frame
 healthy_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
 [ "${healthy_before}" = "${healthy_after}" ] || fail "healthy unit was recorded"
 [ ! -f "${AICO_DIAGNOSTICS_DIR}/stamps/aico-frame" ] || fail "healthy probe must not write dedup stamp"
+grep -q 'frame boom' "${AICO_DIAGNOSTICS_DIR}/last/aico-frame.service" || fail "healthy probe overwrote failure log"
+! grep -q 'healthy noise' "${AICO_DIAGNOSTICS_DIR}/last/aico-frame.service" || fail "healthy probe wrote new log into last/"
 
 # A skipped healthy probe must not suppress a following real failure.
 cat >"${TEST_ROOT}/bin/systemctl" <<'EOF'
