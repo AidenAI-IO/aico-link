@@ -1,7 +1,7 @@
 {
   "name": "episode_reflection_v2",
   "suite_category": "Memory & Cognition",
-  "version": "2.0",
+  "version": "2.1",
   "description": "Release-gate benchmark for episode review: evidence calibration, reusable lesson extraction, failure guards, version scope, privacy filtering, within-episode duplicate compression, and recall of newly consolidated lessons.",
   "global_reset": {},
   "tasks": [
@@ -104,11 +104,11 @@
     {
       "id": "incomplete_episode_is_not_overclaimed",
       "category": "memory",
-      "description_for_judge": "An abandoned episode with neither success proof nor actionable failure evidence must not be overclaimed as achieved or converted into memory.",
-      "prompt": "This episode was abandoned midway before the notification preference was configured. Choose (a) achieved, (b) not achieved, or (c) unknown. End with exactly one line in the form <final_answer>(x)</final_answer>.",
+      "description_for_judge": "An interrupted episode with neither success proof nor actionable failure evidence must not be overclaimed as achieved or converted into memory.",
+      "prompt": "This episode was interrupted midway before the notification preference was configured. Choose (a) achieved, (b) not achieved, or (c) unknown. End with exactly one line in the form <final_answer>(x)</final_answer>.",
       "expected_answer": "(b)",
       "answer_format": "option_letter",
-      "rubric": [{"id": "calibrates_incomplete_episode", "check": "The answer selects not achieved for an abandoned episode whose goal was not completed."}],
+      "rubric": [{"id": "calibrates_incomplete_episode", "check": "The answer selects not achieved for an interrupted episode whose goal was not completed."}],
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
@@ -117,8 +117,8 @@
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "not_achieved", "max_memory_ids": 0, "allow_empty_memory": true},
         "episode": {
-          "id": "ep_v2_abandoned_midway",
-          "status": "abandoned",
+          "id": "ep_v2_interrupted_midway",
+          "status": "interrupted",
           "user_goal": "Configure the notification preference.",
           "device_scope": {"device_id": "default", "app_name": "Settings", "page_name": "Notifications"},
           "outcome": {"success": false, "final_state": "The task ended before a final state was observed."},
@@ -132,11 +132,11 @@
     {
       "id": "failure_guard_is_recalled_and_applied",
       "category": "memory",
-      "description_for_judge": "A structured failure memory must be recalled and applied to prevent repeating the same failed send attempt.",
-      "prompt": "A previous message-send attempt produced a learned failure guard. Based on what this device learned, choose what should happen before tapping Send. End with exactly one line like <final_answer>(a)</final_answer>.\n\n(a) Tap Send again.\n(b) Fill and verify the recipient field first.\n(c) Clear the draft.\n(d) Change the app theme.\n\nEnd with exactly one line in the form <final_answer>(x)</final_answer>.",
+      "description_for_judge": "An observed app-specific validation constraint must be retained and recalled even without a successful recovery. A visible selected recipient alone did not satisfy this composer's phone-number requirement.",
+      "prompt": "A previous message-send attempt produced a learned failure guard. Based on what this device learned, choose what should happen before tapping Send. End with exactly one line like <final_answer>(a)</final_answer>.\n\n(a) Tap Send again.\n(b) Check that the selected recipient has a phone number; selecting an email-only contact is insufficient.\n(c) Clear the draft.\n(d) Change the app theme.\n\nEnd with exactly one line in the form <final_answer>(x)</final_answer>.",
       "expected_answer": "(b)",
       "answer_format": "option_letter",
-      "rubric": [{"id": "applies_failure_guard", "check": "The answer requires filling/verifying the recipient before Send."}],
+      "rubric": [{"id": "applies_failure_guard", "check": "The answer applies the learned constraint: the recipient needs a phone number, and a selected email-only contact does not satisfy this composer."}],
       "hard_assertions": {"min_tool_calls": 1, "max_tool_calls": 5, "must_complete_within_sec": 120, "response_required": true},
       "expected_recall_from_consolidation": true,
       "expected_recalled_memory_tool": "recall_device_memory",
@@ -145,14 +145,18 @@
         "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
-        "consolidation_expectation": {"goal_result": "not_achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["failure"], "required_memory_substrings": ["recipient"]},
+        "consolidation_expectation": {"goal_result": "not_achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["failure"], "required_memory_substrings": ["phone number"]},
         "episode": {
           "id": "ep_v2_send_failure_guard",
           "status": "completed",
           "user_goal": "Send the drafted message.",
-          "device_scope": {"device_id": "default", "app_name": "Messages", "page_name": "Composer"},
+          "device_scope": {"device_id": "default", "app_name": "Relay Chat", "app_version": "4", "page_name": "Composer"},
           "outcome": {"success": false, "final_state": "The message was not sent.", "final_answer": "Unable to send."},
-          "events": [{"event_id": "v2_send_error", "type": "tool_result", "tool_name": "touch_gesture", "is_error": true, "observation": "Send failed because the recipient field was empty."}]
+          "events": [
+            {"event_id": "v2_recipient_observation", "type": "tool_result", "tool_name": "screenshot", "observation": "The recipient chip shows Morgan with an email address and no phone number. The message body is filled and Send is enabled."},
+            {"event_id": "v2_send_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Tap Send."},
+            {"event_id": "v2_send_error", "type": "tool_result", "tool_name": "touch_gesture", "is_error": true, "observation": "Relay Chat displays: recipient requires a phone number. The email-only recipient chip remains selected and the draft is unsent."}
+          ]
         }
       }
     },
