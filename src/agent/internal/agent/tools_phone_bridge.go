@@ -470,6 +470,7 @@ func (s *ToolSet) RegisterPhoneBridge(bridge *PhoneBridge) {
 		s.screen.SetPhoneScreenScopeFunc(bridge.ScreenCacheScopeID)
 	}
 	bridge.SetEnvironmentObserver(s.UpdateDeviceEnvironment)
+	s.landscape.setDeviceOrientationFunc(bridge.DeviceOrientation)
 	if s.phoneBridgeRestorer != nil {
 		s.phoneBridgeRestorer.SetBridge(bridge)
 	}

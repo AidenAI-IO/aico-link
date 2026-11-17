@@ -124,6 +124,8 @@ type PhoneBridge struct {
 	lastHeartbeatAt        time.Time
 	appState               string
 	appStateAt             time.Time
+	deviceOrientation      string
+	deviceOrientationAt    time.Time
 	returnEntry            string
 	returnEntryOK          bool
 	returnEntrySeen        bool
@@ -476,6 +478,8 @@ func (pb *PhoneBridge) handleAppEvent(resp BridgeCommandResponse) bool {
 		return pb.handleEnvironmentEvent(resp)
 	case resp.ID == "phone_app_state" || resp.Method == "phone_app_state":
 		return pb.handleAppStateEvent(resp)
+	case resp.ID == "phone_orientation" || resp.Method == "phone_orientation":
+		return pb.handleOrientationEvent(resp)
 	default:
 		return false
 	}
@@ -583,6 +587,86 @@ func (pb *PhoneBridge) handleAppStateEvent(resp BridgeCommandResponse) bool {
 		pb.logger.Info("phone-bridge: app state updated (%s)", appState)
 	}
 	return true
+}
+
+// handleOrientationEvent stores how the phone is physically held, which the
+// app reads from the gravity vector. It does not tell which way the front app
+// turned its interface.
+func (pb *PhoneBridge) handleOrientationEvent(resp BridgeCommandResponse) bool {
+	if resp.Error != nil {
+		if pb.logger != nil {
+			pb.logger.Warn("phone-bridge: orientation report failed: code=%s msg=%s",
+				resp.Error.Code, resp.Error.Message)
+		}
+		return true
+	}
+	var payload struct {
+		Orientation string `json:"orientation"`
+		ReportedAt  string `json:"reported_at,omitempty"`
+	}
+	if err := json.Unmarshal(resp.Data, &payload); err != nil {
+		if pb.logger != nil {
+			pb.logger.Error("phone-bridge: decode orientation report failed: %v", err)
+		}
+		return true
+	}
+	orientation, ok := normalizeDeviceOrientation(payload.Orientation)
+	if !ok {
+		if pb.logger != nil {
+			pb.logger.Warn("phone-bridge: ignoring unknown orientation=%q", payload.Orientation)
+		}
+		return true
+	}
+	reportedAt := time.Now()
+	if ts := strings.TrimSpace(payload.ReportedAt); ts != "" {
+		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+			reportedAt = parsed
+		}
+	}
+	pb.mu.Lock()
+	changed := pb.noteDeviceOrientationLocked(orientation, reportedAt)
+	pb.mu.Unlock()
+	if changed && pb.logger != nil {
+		pb.logger.Info("phone-bridge: device orientation updated (%s)", orientation)
+	}
+	return true
+}
+
+// deviceOrientationHTTPFreshFor is how long an orientation carried by an HTTP
+// command poll stays current. The background app polls every few seconds, so
+// a missed poll or two still counts as live.
+const deviceOrientationHTTPFreshFor = 10 * time.Second
+
+// DeviceOrientation returns how the app last reported the phone held and
+// when. It is "" before any report, and once the app has neither a WebSocket
+// nor a recent HTTP poll.
+func (pb *PhoneBridge) DeviceOrientation() (string, time.Time) {
+	if pb == nil {
+		return "", time.Time{}
+	}
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	if !pb.connected && time.Since(pb.deviceOrientationAt) >= deviceOrientationHTTPFreshFor {
+		return "", time.Time{}
+	}
+	return pb.deviceOrientation, pb.deviceOrientationAt
+}
+
+// noteDeviceOrientationLocked records an orientation report; pb.mu is held.
+func (pb *PhoneBridge) noteDeviceOrientationLocked(orientation string, at time.Time) (changed bool) {
+	changed = pb.deviceOrientation != orientation
+	pb.deviceOrientation = orientation
+	pb.deviceOrientationAt = at
+	return changed
+}
+
+func normalizeDeviceOrientation(value string) (string, bool) {
+	switch v := strings.ToLower(strings.TrimSpace(value)); v {
+	case "portrait", "portrait_upside_down", "landscape_left", "landscape_right", "flat":
+		return v, true
+	default:
+		return "", false
+	}
 }
 
 func (pb *PhoneBridge) SendQueuedCommand(ctx context.Context, cmd BridgeCommand) (BridgeCommandResponse, error) {
