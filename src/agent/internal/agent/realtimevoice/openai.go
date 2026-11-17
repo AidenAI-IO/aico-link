@@ -602,16 +602,37 @@ func translateOpenAIEvent(body []byte) (Event, bool) {
 	case "error":
 		var event struct {
 			Error struct {
+				Type    string `json:"type"`
+				Code    string `json:"code"`
 				Message string `json:"message"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(body, &event); err != nil {
 			return Event{Kind: EventError, Error: err}, true
 		}
+		if isOpenAINoActiveResponseCancelError(event.Error.Type, event.Error.Code, event.Error.Message) {
+			return Event{}, false
+		}
 		return Event{Kind: EventError, Error: errors.New(event.Error.Message)}, true
 	default:
 		return Event{}, false
 	}
+}
+
+// isOpenAINoActiveResponseCancelError reports the error OpenAI returns when a
+// response.cancel arrives after the response already finished or was
+// cancelled by server VAD. Barge-in can race the server this way; the cancel
+// had nothing left to do, so the session must stay open. Relays may drop the
+// code, so the documented message is accepted as well.
+func isOpenAINoActiveResponseCancelError(errorType, code, message string) bool {
+	if errorType = strings.TrimSpace(errorType); errorType != "" && !strings.EqualFold(errorType, "invalid_request_error") {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(code), "response_cancel_not_active") {
+		return true
+	}
+	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(message)), ".")
+	return normalized == "cancellation failed: no active response found"
 }
 
 var _ Provider = OpenAIProvider{}
