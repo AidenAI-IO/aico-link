@@ -1234,11 +1234,8 @@ def test_android_bridge_serial_requires_auto_setup_and_environment(monkeypatch, 
     assert not (tmp_path / "runs").exists()
 
 
-@pytest.mark.parametrize("bridge_mode", ["none", "background", "foreground"])
-@pytest.mark.parametrize("skip_mode", ["none", "background_only", "all"])
-def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
-    monkeypatch, tmp_path, bridge_mode, skip_mode,
-):
+def _run_auto_bridge_suite(monkeypatch, tmp_path, *, bridge_mode, skip_mode, board_network=None, extra_args=(),
+                           extra_task_ids=(), prepare_failures=0):
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(
         json.dumps(
@@ -1258,6 +1255,11 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
         ),
         encoding="utf-8",
     )
+
+    if extra_task_ids:
+        suite_data = json.loads(suite_path.read_text())
+        suite_data["tasks"] += [{**suite_data["tasks"][0], "id": task_id} for task_id in extra_task_ids]
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
 
     if skip_mode != "none":
         suite_data = json.loads(suite_path.read_text())
@@ -1281,12 +1283,12 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
         yield
 
     @contextmanager
-    def board_network(serial):
+    def default_board_network(serial):
         bridge_actions.append("board_network")
         yield
 
     monkeypatch.setattr(main, "connected_android_phone_bridge", connected_bridge)
-    monkeypatch.setattr(main, "emulator_board_network", board_network)
+    monkeypatch.setattr(main, "emulator_board_network", board_network or default_board_network)
     monkeypatch.setattr(
         main, "wait_for_android_phone_bridge",
         lambda client, **kwargs: bridge_actions.append(("wait", kwargs)),
@@ -1315,7 +1317,12 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
     monkeypatch.setattr(main, "clear_stale_adb_android_owner", lambda url: stale_clears.append(url))
     monkeypatch.setattr(webui, "ensure_daemon_image", lambda *args, **kwargs: None)
     monkeypatch.setattr(webui, "read_environment_bridge_concurrency", lambda *args, **kwargs: 1)
+    prepare_calls = []
+
     def fake_prepare_run_config(base_config_dir, config_dir, **kwargs):
+        prepare_calls.append(config_dir)
+        if len(prepare_calls) <= prepare_failures:
+            raise RuntimeError("cannot prepare worker config")
         captured["prepare_config_kwargs"] = kwargs
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "control_token").write_text("test-token", encoding="utf-8")
@@ -1364,8 +1371,20 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
             "http://127.0.0.1:19090",
             "--auto-agent-setup",
             "--no-judge",
+            *extra_args,
         ] + (["--android-phone-bridge-serial", "emulator-5554", "--max-concurrency", "1"]
              if bridge_mode != "none" else [])
+    )
+    return rc, captured, stale_clears, bridge_actions
+
+
+@pytest.mark.parametrize("bridge_mode", ["none", "background", "foreground"])
+@pytest.mark.parametrize("skip_mode", ["none", "background_only", "all"])
+def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
+    monkeypatch, tmp_path, bridge_mode, skip_mode,
+):
+    rc, captured, stale_clears, bridge_actions = _run_auto_bridge_suite(
+        monkeypatch, tmp_path, bridge_mode=bridge_mode, skip_mode=skip_mode,
     )
 
     assert rc == 0
@@ -1392,7 +1411,7 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
     assert bridge_actions == {
         "none": [],
         "background": ["board_network", ("wait", {"require_background_bridge": True})],
-        "foreground": ["foreground"],
+        "foreground": ["board_network", "foreground"],
     }[bridge_mode]
     manifest = json.loads((tmp_path / "runs/auto-run/manifest.json").read_text())
     assert manifest["execution_environment"] == ("adb" if bridge_mode == "none" else "adb_aidenbridge")
@@ -2462,3 +2481,46 @@ def test_manifest_metrics_k_uses_common_repeat_prefix(monkeypatch, tmp_path):
     assert main.cli(["run", "--suite", str(suite_path), "--out", str(tmp_path / "runs"), "--run-id", "mixed", "--no-judge"]) == 0
     manifest = json.loads((tmp_path / "runs" / "mixed" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["metrics_k"] == 1
+
+
+@pytest.mark.parametrize("stage", ["setup", "teardown"])
+def test_board_network_failure_records_a_terminal_run(monkeypatch, tmp_path, stage):
+    @contextmanager
+    def failing_board_network(serial):
+        if stage == "setup":
+            raise RuntimeError("Android did not provision the emulator board network")
+        yield
+        raise RuntimeError("adb shell ip link del eth1 failed")
+
+    state_file = tmp_path / "state.json"
+    with pytest.raises(RuntimeError, match="board network|ip link del"):
+        _run_auto_bridge_suite(
+            monkeypatch, tmp_path, bridge_mode="foreground", skip_mode="none",
+            board_network=failing_board_network, extra_args=("--state-file", str(state_file)),
+        )
+
+    state = json.loads(state_file.read_text())
+    assert state["status"] == "failed"
+    assert "board network" in state["error"] or "ip link del" in state["error"]
+    if stage == "teardown":
+        # Results finished before the teardown failure are still written.
+        rows = (tmp_path / "runs/auto-run/results.jsonl").read_text().splitlines()
+        assert [json.loads(row)["status"] for row in rows] == ["passed"]
+        assert state["completed"] == 1
+
+
+def test_unit_failure_keeps_results_of_units_that_finished_afterwards(monkeypatch, tmp_path):
+    state_file = tmp_path / "state.json"
+    with pytest.raises(RuntimeError, match="cannot prepare worker config"):
+        # One worker runs units in order: the first fails before its task
+        # handler, and the second still runs to completion during shutdown.
+        _run_auto_bridge_suite(
+            monkeypatch, tmp_path, bridge_mode="foreground", skip_mode="none",
+            extra_task_ids=("open_settings",), prepare_failures=1,
+            extra_args=("--state-file", str(state_file)),
+        )
+
+    rows = [json.loads(row) for row in (tmp_path / "runs/auto-run/results.jsonl").read_text().splitlines()]
+    assert [(row["task_id"], row["status"]) for row in rows] == [("open_settings", "passed")]
+    state = json.loads(state_file.read_text())
+    assert state["status"] == "failed" and state["completed"] == 1

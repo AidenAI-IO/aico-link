@@ -21,6 +21,12 @@ REVERSE_PORT = "tcp:8080"
 INPUT_XML_PATH = "/sdcard/aiden-bridge-input.xml"
 ANDROID_BRIDGE_PACKAGE = "link.aico.app"
 ANDROID_BRIDGE_COMPONENT = f"{ANDROID_BRIDGE_PACKAGE}/.MainActivity"
+MESSAGES_PACKAGE = "com.google.android.apps.messaging"
+MESSAGES_COMPOSER_ID = f"{MESSAGES_PACKAGE}:id/compose_message_text"
+# An empty composer reports its hint as text.
+MESSAGES_COMPOSER_HINT = "Text message"
+SMS_DRAFT_RECIPIENT = "+12025550147"
+SMS_DRAFT_SENTINEL = "AIDEN_BRIDGE_DRAFT_RESET"
 NAT_RULE = [
     "-d", BOARD_ADDRESS, "-p", "tcp", "--dport", "8080",
     "-j", "DNAT", "--to-destination", "127.0.0.1:8080",
@@ -162,6 +168,45 @@ def _content(serial: str, action: str, uri: str, *args: str) -> str:
     return result
 
 
+def _messages_composer_text(serial: str) -> str | None:
+    """Return the Messages composer's text, or None while it is not on screen."""
+    try:
+        _adb(serial, "shell", "uiautomator", "dump", INPUT_XML_PATH)
+        hierarchy = ET.fromstring(_adb(serial, "shell", "cat", INPUT_XML_PATH))
+    except (RuntimeError, ET.ParseError):
+        return None
+    finally:
+        _adb(serial, "shell", "rm", "-f", INPUT_XML_PATH)
+    for node in hierarchy.iter("node"):
+        if node.attrib.get("resource-id") == MESSAGES_COMPOSER_ID:
+            return node.attrib.get("text", "")
+    return None
+
+
+def _wait_for_messages_composer(serial: str, expected: str, timeout_sec: int = 20) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if _messages_composer_text(serial) == expected:
+            return
+        time.sleep(1)
+    raise RuntimeError(f"Messages composer did not show {expected!r} for the reserved SMS draft")
+
+
+def _clear_reserved_sms_draft(serial: str) -> None:
+    # Messages keeps drafts in its own database and restores them on the next
+    # open. Opening the reserved recipient with a sentinel body replaces any
+    # saved draft; clearing the sentinel leaves nothing for Messages to save.
+    _adb(serial, "shell", "am", "force-stop", MESSAGES_PACKAGE)
+    _adb(serial, "shell", "am", "start", "-a", "android.intent.action.SENDTO",
+         "-d", f"smsto:{SMS_DRAFT_RECIPIENT}", "-p", MESSAGES_PACKAGE,
+         "--es", "sms_body", SMS_DRAFT_SENTINEL)
+    _wait_for_messages_composer(serial, SMS_DRAFT_SENTINEL)
+    _adb(serial, "shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A")
+    _adb(serial, "shell", "input", "keyevent", "KEYCODE_DEL")
+    _wait_for_messages_composer(serial, MESSAGES_COMPOSER_HINT)
+    _adb(serial, "shell", "input", "keyevent", "KEYCODE_HOME")
+
+
 @contextmanager
 def android_bridge_fixture(serial: str, fixture: str | None) -> Iterator[None]:
     """Scope writable fixtures to this suite's reserved account/name on the emulator."""
@@ -200,6 +245,12 @@ def android_bridge_fixture(serial: str, fixture: str | None) -> Iterator[None]:
             yield
         finally:
             cleanup()
+    elif fixture == "sms_draft":
+        _clear_reserved_sms_draft(serial)
+        try:
+            yield
+        finally:
+            _clear_reserved_sms_draft(serial)
     else:
         raise ValueError(f"Unsupported Android Bridge fixture: {fixture}")
 

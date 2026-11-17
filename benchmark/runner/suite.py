@@ -314,8 +314,8 @@ def load_suite(path: Path) -> Suite:
         ):
             raise SuiteValidationError(f"task {tid}: android_bridge_input_text must be non-empty text")
         android_bridge_fixture = raw.get("android_bridge_fixture")
-        if android_bridge_fixture not in (None, "calendar", "contacts"):
-            raise SuiteValidationError(f"task {tid}: android_bridge_fixture must be calendar or contacts")
+        if android_bridge_fixture not in (None, "calendar", "contacts", "sms_draft"):
+            raise SuiteValidationError(f"task {tid}: android_bridge_fixture must be calendar, contacts or sms_draft")
         platforms = _platform_list(raw.get("platforms", []), tid)
         environment_bridge_types = raw.get("environment_bridge_types", [])
         if not isinstance(environment_bridge_types, list) or any(
