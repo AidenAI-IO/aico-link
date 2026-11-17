@@ -67,7 +67,7 @@ func TestCollectCoreServiceStatusesUsesSystemctl(t *testing.T) {
 			if i > 0 {
 				b.WriteByte('\n')
 			}
-			b.WriteString("Id=" + unit + "\nActiveState=active\nSubState=running\nResult=success\nNRestarts=0\nMainPID=0\n")
+			b.WriteString("Id=" + unit + "\nLoadState=loaded\nActiveState=active\nSubState=running\nResult=success\nNRestarts=0\nMainPID=0\n")
 		}
 		return b.String(), nil
 	}
@@ -77,6 +77,39 @@ func TestCollectCoreServiceStatusesUsesSystemctl(t *testing.T) {
 	}
 	if snapshot.Services[0].Severity != "ok" || snapshot.Services[0].ActiveState != "active" {
 		t.Fatalf("first service: %#v", snapshot.Services[0])
+	}
+}
+
+func TestCollectCoreServiceStatusesNotFoundUnit(t *testing.T) {
+	original := systemctlShow
+	t.Cleanup(func() { systemctlShow = original })
+	systemctlShow = func(units ...string) (string, error) {
+		var b strings.Builder
+		for i, unit := range units {
+			if i > 0 {
+				b.WriteByte('\n')
+			}
+			if unit == "aico-frame.service" {
+				b.WriteString("Id=" + unit + "\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\nNRestarts=0\nMainPID=0\n")
+				continue
+			}
+			b.WriteString("Id=" + unit + "\nLoadState=loaded\nActiveState=active\nSubState=running\nResult=success\nNRestarts=0\nMainPID=0\n")
+		}
+		return b.String(), nil
+	}
+	snapshot := collectCoreServiceStatuses()
+	var frame *coreServiceStatus
+	for i := range snapshot.Services {
+		if snapshot.Services[i].Unit == "aico-frame.service" {
+			frame = &snapshot.Services[i]
+			break
+		}
+	}
+	if frame == nil {
+		t.Fatal("missing frame service")
+	}
+	if frame.Severity != "degraded" || frame.LoadError != "unit not found" {
+		t.Fatalf("not-found frame: %#v", frame)
 	}
 }
 
@@ -158,7 +191,7 @@ func TestServiceDiagnosticsHTTP(t *testing.T) {
 	original := systemctlShow
 	t.Cleanup(func() { systemctlShow = original })
 	systemctlShow = func(units ...string) (string, error) {
-		return "Id=aico-agent.service\nActiveState=active\nSubState=running\nResult=success\nNRestarts=0\nMainPID=0\n", nil
+		return "Id=aico-agent.service\nLoadState=loaded\nActiveState=active\nSubState=running\nResult=success\nNRestarts=0\nMainPID=0\n", nil
 	}
 	server := &Server{}
 	mux := http.NewServeMux()

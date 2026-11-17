@@ -178,6 +178,7 @@ var systemctlShow = func(units ...string) (string, error) {
 	args := append([]string{"show"}, units...)
 	args = append(args,
 		"-p", "Id",
+		"-p", "LoadState",
 		"-p", "ActiveState",
 		"-p", "SubState",
 		"-p", "Result",
@@ -234,9 +235,15 @@ func collectCoreServiceStatuses() serviceDiagnosticsSnapshot {
 			status.Result = block["Result"]
 			status.NRestarts, _ = strconv.Atoi(block["NRestarts"])
 			status.MainPID, _ = strconv.Atoi(block["MainPID"])
-			status.Severity = classifyServiceSeverity(status.ActiveState, status.Result, status.NRestarts)
-			status.Proc = readProcSample(status.MainPID)
-			status.LoadError = ""
+			if block["LoadState"] == "not-found" {
+				// Absent units still produce a show block with ActiveState=inactive.
+				status.Severity = "degraded"
+				status.LoadError = "unit not found"
+			} else {
+				status.Severity = classifyServiceSeverity(status.ActiveState, status.Result, status.NRestarts)
+				status.Proc = readProcSample(status.MainPID)
+				status.LoadError = ""
+			}
 		} else if loadErr == "" {
 			status.ActiveState = "unknown"
 			status.Severity = "degraded"

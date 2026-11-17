@@ -69,6 +69,14 @@ before=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
 after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
 [ "${before}" = "${after}" ] || fail "dedup failed: ${before} -> ${after}"
 
+# A future stamp (clock rollback) must not suppress recording.
+future=$(( $(date +%s) + 3600 ))
+echo "${future}" >"${AICO_DIAGNOSTICS_DIR}/stamps/aico-frame"
+future_before=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
+"${WORKDIR}/aico-service-incident" aico-frame
+future_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
+[ "${future_after}" -gt "${future_before}" ] || fail "future stamp suppressed recording"
+
 # Healthy unit snapshots must not be recorded.
 cat >"${TEST_ROOT}/bin/systemctl" <<'EOF'
 #!/bin/sh

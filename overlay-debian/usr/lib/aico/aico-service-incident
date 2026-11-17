@@ -34,7 +34,8 @@ if [ -f "${stamp}" ]; then
     case "${prev}" in
         ''|*[!0-9]*) prev=0 ;;
     esac
-    if [ $((now - prev)) -lt "${DEDUP_SECONDS}" ]; then
+    # Ignore future stamps (clock skew / rollback); only dedup when now >= prev.
+    if [ "${now}" -ge "${prev}" ] && [ $((now - prev)) -lt "${DEDUP_SECONDS}" ]; then
         exit 0
     fi
 fi

@@ -3,7 +3,7 @@ let coreServicesRequestInFlight = false;
 let coreIncidentsRequestInFlight = false;
 let selectedCoreIncidentKey = '';
 const coreIncidentEventsByUnit = new Map();
-// Cache log tails by incident identity (unit|ts) so a newer failure invalidates older text.
+// The on-disk tail is unit-scoped (latest overwrite). Cache by unit, not incident.
 const coreIncidentLogCache = new Map();
 const coreIncidentLogInFlight = new Map();
 
@@ -74,6 +74,47 @@ function coreIncidentKey(event) {
     return String(event.unit || '') + '|' + String(event.ts || '');
 }
 
+function coreServicesFocusSelector(value) {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function captureCoreServicesFocus() {
+    const active = document.activeElement;
+    if (!active || typeof active.closest !== 'function') return null;
+    const row = active.closest('.core-service-row');
+    if (row?.dataset?.unit) return {type: 'service', unit: row.dataset.unit};
+    const copy = active.closest('.core-incident-copy');
+    if (copy) {
+        const item = copy.closest('.core-incident-item');
+        if (item?.dataset?.incidentKey) return {type: 'copy', key: item.dataset.incidentKey};
+    }
+    const summary = active.closest('.core-incident-summary');
+    if (summary) {
+        const item = summary.closest('.core-incident-item');
+        if (item?.dataset?.incidentKey) return {type: 'incident', key: item.dataset.incidentKey};
+    }
+    return null;
+}
+
+function restoreCoreServicesFocus(focus) {
+    if (!focus) return;
+    let node = null;
+    if (focus.type === 'service') {
+        node = document.querySelector(
+            '.core-service-row[data-unit="' + coreServicesFocusSelector(focus.unit) + '"]'
+        );
+    } else if (focus.type === 'incident') {
+        node = document.querySelector(
+            '.core-incident-item[data-incident-key="' + coreServicesFocusSelector(focus.key) + '"] > .core-incident-summary'
+        );
+    } else if (focus.type === 'copy') {
+        node = document.querySelector(
+            '.core-incident-item[data-incident-key="' + coreServicesFocusSelector(focus.key) + '"] .core-incident-copy'
+        );
+    }
+    if (node && typeof node.focus === 'function') node.focus();
+}
+
 function formatCoreIncidentTime(ts) {
     if (!ts) return '';
     const date = new Date(ts);
@@ -138,33 +179,40 @@ function formatCoreIncidentExit(event) {
 
 async function loadCoreIncidentLog(event, logNode) {
     if (!event?.unit || !logNode) return;
-    const key = coreIncidentKey(event);
-    if (coreIncidentLogCache.has(key)) {
-        logNode.textContent = coreIncidentLogCache.get(key);
+    const unit = event.unit;
+    if (coreIncidentLogCache.has(unit)) {
+        logNode.textContent = coreIncidentLogCache.get(unit);
         logNode.scrollTop = logNode.scrollHeight;
         return;
     }
-    if (coreIncidentLogInFlight.get(key)) return;
-    coreIncidentLogInFlight.set(key, true);
+    if (coreIncidentLogInFlight.get(unit)) return;
+    coreIncidentLogInFlight.set(unit, true);
     logNode.textContent = 'Loading…';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
     try {
-        const response = await fetch('/api/diagnostics/incident-log?unit=' + encodeURIComponent(event.unit), {
+        const response = await fetch('/api/diagnostics/incident-log?unit=' + encodeURIComponent(unit), {
             cache: 'no-store',
+            signal: controller.signal,
         });
         if (!response.ok) throw new Error('incident log failed');
         const payload = await response.json();
         const text = (payload.log || '').trim()
-            || ('No log tail captured for ' + coreServiceLabelForUnit(event.unit) + '.');
-        // Ignore late responses for an older incident of the same unit.
-        if (coreIncidentKey(event) !== key) return;
-        coreIncidentLogCache.set(key, text);
-        logNode.textContent = text;
-        logNode.scrollTop = logNode.scrollHeight;
+            || ('No latest unit log captured for ' + coreServiceLabelForUnit(unit) + '.');
+        coreIncidentLogCache.set(unit, text);
+        // Refresh every open log pane for this unit; the file is latest-only.
+        document.querySelectorAll('.core-incident-item[data-unit="' + coreServicesFocusSelector(unit) + '"] .core-incident-log')
+            .forEach(node => {
+                node.textContent = text;
+                node.scrollTop = node.scrollHeight;
+            });
     } catch (_) {
-        if (coreIncidentKey(event) !== key) return;
-        logNode.textContent = 'Failed to load log tail for ' + coreServiceLabelForUnit(event.unit) + '.';
+        if (!coreIncidentLogCache.has(unit)) {
+            logNode.textContent = 'Failed to load latest unit log for ' + coreServiceLabelForUnit(unit) + '.';
+        }
     } finally {
-        coreIncidentLogInFlight.delete(key);
+        clearTimeout(timeout);
+        coreIncidentLogInFlight.delete(unit);
     }
 }
 
@@ -200,6 +248,7 @@ function renderCoreServices(snapshot) {
     const summary = document.getElementById('coreServicesSummary');
     if (!list || !summary) return;
 
+    const focus = captureCoreServicesFocus();
     const services = snapshot.services || [];
     const previousByUnit = new Map((previousCoreServicesSnapshot?.services || []).map(item => [item.unit, item]));
     const seconds = previousCoreServicesSnapshot &&
@@ -265,6 +314,7 @@ function renderCoreServices(snapshot) {
     if (!parts.length && services.length) parts.push(services.length + ' ok');
     summary.textContent = parts.join(' · ');
     previousCoreServicesSnapshot = snapshot;
+    restoreCoreServicesFocus(focus);
 }
 
 function isRealCoreIncident(event) {
@@ -278,6 +328,7 @@ function renderCoreIncidents(events, options = {}) {
     const list = document.getElementById('coreIncidentsList');
     const empty = document.getElementById('coreIncidentsEmpty');
     if (!list || !empty) return;
+    const focus = captureCoreServicesFocus();
     const errored = Boolean(options.error);
     const visible = errored ? [] : (events || []).filter(isRealCoreIncident);
     const previouslyOpen = new Set(
@@ -291,17 +342,25 @@ function renderCoreIncidents(events, options = {}) {
             coreIncidentEventsByUnit.set(event.unit, event);
         }
     }
+    // Drop stale unit-log cache entries for units no longer in the visible set.
+    const visibleUnits = new Set(visible.map(event => event.unit).filter(Boolean));
+    for (const unit of [...coreIncidentLogCache.keys()]) {
+        if (!visibleUnits.has(unit)) coreIncidentLogCache.delete(unit);
+    }
+
     list.replaceChildren();
     if (errored) {
         empty.hidden = false;
         empty.textContent = 'Failure history unavailable.';
         selectedCoreIncidentKey = '';
+        restoreCoreServicesFocus(focus);
         return;
     }
     if (!visible.length) {
         empty.hidden = false;
         empty.textContent = 'No recorded failures.';
         selectedCoreIncidentKey = '';
+        restoreCoreServicesFocus(focus);
         return;
     }
     empty.hidden = true;
@@ -372,7 +431,8 @@ function renderCoreIncidents(events, options = {}) {
         logHead.className = 'core-incident-log-head';
         const logLabel = document.createElement('div');
         logLabel.className = 'core-incident-log-label';
-        logLabel.textContent = 'Log tail';
+        // On-disk capture overwrites per unit; do not imply this belongs to this row alone.
+        logLabel.textContent = 'Latest unit log';
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
         copyBtn.className = 'core-incident-copy';
@@ -382,8 +442,8 @@ function renderCoreIncidents(events, options = {}) {
 
         const logNode = document.createElement('pre');
         logNode.className = 'core-incident-log';
-        if (coreIncidentLogCache.has(key)) {
-            logNode.textContent = coreIncidentLogCache.get(key);
+        if (coreIncidentLogCache.has(event.unit)) {
+            logNode.textContent = coreIncidentLogCache.get(event.unit);
         } else {
             logNode.textContent = 'Loading…';
         }
@@ -410,6 +470,7 @@ function renderCoreIncidents(events, options = {}) {
         list.append(item);
         if (item.open) loadCoreIncidentLog(event, logNode);
     }
+    restoreCoreServicesFocus(focus);
 }
 
 function selectCoreServiceIncident(unit) {
@@ -419,8 +480,8 @@ function selectCoreServiceIncident(unit) {
     const event = coreIncidentEventsByUnit.get(unit);
     const key = event ? coreIncidentKey(event) : '';
     const item = key
-        ? document.querySelector('.core-incident-item[data-incident-key="' + key.replace(/"/g, '\\"') + '"]')
-        : document.querySelector('.core-incident-item[data-unit="' + unit.replace(/"/g, '\\"') + '"]');
+        ? document.querySelector('.core-incident-item[data-incident-key="' + coreServicesFocusSelector(key) + '"]')
+        : document.querySelector('.core-incident-item[data-unit="' + coreServicesFocusSelector(unit) + '"]');
     if (!item) return;
     item.open = true;
     item.scrollIntoView({block: 'nearest'});
