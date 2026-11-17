@@ -185,7 +185,7 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	seenWidth, seenHeight, seenOK := t.screen.ScreenshotDimensions()
 	baselineOutput, baselineImage := t.captureBaseline(ctx)
 	timing.mark(&timing.baselineMs)
-	if seenOK && baselineImage != nil {
+	if seenOK && baselineImage != nil && !releasesHeldContact(t.inner.Name(), input) {
 		bounds := baselineImage.Bounds()
 		if (seenWidth > seenHeight) != (bounds.Dx() > bounds.Dy()) {
 			return t.turnedScreenResult(seenWidth, seenHeight, bounds, baselineOutput), nil
@@ -566,6 +566,19 @@ func (t *postActionScreenshotTool) captureBaseline(ctx context.Context) (string,
 	}
 	touchscreenRCALogf("post_action baseline completed inner=%q", t.inner.Name())
 	return output, img
+}
+
+// releasesHeldContact reports whether input ends a contact that drag_start
+// left down. Such a call must still run after the screen turned: holding it
+// back would leave the contact pressed and block every other pointer action.
+func releasesHeldContact(toolName, input string) bool {
+	if toolName != "touch_gesture" {
+		return false
+	}
+	var args struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(input), &args) == nil && strings.EqualFold(strings.TrimSpace(args.Type), "drag_release")
 }
 
 // turnedScreenResult returns the pre-action screenshot without sending the

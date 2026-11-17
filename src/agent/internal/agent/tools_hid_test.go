@@ -2599,10 +2599,13 @@ func TestPointerActionIsNotSentAfterTheScreenTurned(t *testing.T) {
 		name     string
 		seenW    int
 		seenH    int
+		input    string
 		wantSent bool
 	}{
 		{name: "same orientation", seenW: 1920, seenH: 884, wantSent: true},
 		{name: "portrait screenshot, landscape screen", seenW: 498, seenH: 1080, wantSent: false},
+		// Holding the release back would leave the contact pressed.
+		{name: "drag release still ends the held contact", seenW: 498, seenH: 1080, input: `{"type":"drag_release","point":{"x":145,"y":684}}`, wantSent: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2613,7 +2616,11 @@ func TestPointerActionIsNotSentAfterTheScreenTurned(t *testing.T) {
 			action := &stubTool{name: "touch_gesture", output: "ok"}
 			tool := newPostActionScreenshotTool(action, shot, 0).(*postActionScreenshotTool).withTurnedScreenGuard(state)
 
-			out, err := tool.Call(context.Background(), `{"type":"tap","point":{"x":145,"y":684}}`)
+			input := tc.input
+			if input == "" {
+				input = `{"type":"tap","point":{"x":145,"y":684}}`
+			}
+			out, err := tool.Call(context.Background(), input)
 			if err != nil {
 				t.Fatalf("Call: %v", err)
 			}

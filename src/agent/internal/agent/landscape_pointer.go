@@ -235,7 +235,7 @@ func (c *landscapePointerCorrector) ensureEnumeratedOrientation(ctx context.Cont
 		logging.Warnf("agent", "landscape_pointer", "pointer re-enumeration after %s to %s turn failed: %v", previous, current, err)
 		return
 	}
-	c.noteReenumerated()
+	c.noteReenumeratedIn(current)
 	logging.Infof("agent", "landscape_pointer", "re-enumerated USB pointer after %s to %s turn in %dms", previous, current, time.Since(started).Milliseconds())
 }
 
@@ -246,9 +246,14 @@ func (c *landscapePointerCorrector) noteReenumerated() {
 	if c == nil {
 		return
 	}
-	current := c.currentOrientation()
+	c.noteReenumeratedIn(c.currentOrientation())
+}
+
+// noteReenumeratedIn records a reattach done for orientation, which may differ
+// from the screen now if the phone turned while it ran.
+func (c *landscapePointerCorrector) noteReenumeratedIn(orientation screenOrientation) {
 	c.mu.Lock()
-	c.enumerated = current
+	c.enumerated = orientation
 	// A new enumeration may map the pointer differently.
 	c.last = landscapePointerDecision{}
 	c.mu.Unlock()
@@ -298,7 +303,12 @@ func (c *landscapePointerCorrector) heldLandscapeTurn(region image.Rectangle) (p
 }
 
 func (c *landscapePointerCorrector) remember(turn pointerTurn, region image.Rectangle) {
-	held := c.held()
+	c.rememberHeld(turn, region, c.held())
+}
+
+// rememberHeld stores a decision together with how the phone was held when it
+// was measured, so a report that arrives meanwhile cannot relabel it.
+func (c *landscapePointerCorrector) rememberHeld(turn pointerTurn, region image.Rectangle, held string) {
 	c.mu.Lock()
 	c.last = landscapePointerDecision{turn: turn, region: region, held: held, at: time.Now()}
 	c.mu.Unlock()
@@ -341,38 +351,35 @@ func (c *landscapePointerCorrector) probe(ctx context.Context, inner mnk.Provide
 		x, y = landscapePointerProbeFallback.X, landscapePointerProbeFallback.Y
 		candidates, parked, park = landscapeProbeLayout(region, x, y)
 	}
+	held := c.held()
 	var changed [pointerTurns]float64
+	sawBusy := false
 	for attempt := 1; attempt <= landscapePointerProbeAttempts; attempt++ {
-		var ok, busy bool
+		var ok bool
 		changed, ok = c.measure(ctx, inner, x, y, park, candidates, radius, frameWidth, frameHeight)
 		if !ok {
-			return c.recentTurn(region)
-		}
-		best, decided := pickPointerTurn(changed)
-		if decided {
-			c.remember(best, region)
-			logging.Infof("agent", "landscape_pointer", "pointer %s at (%.0f,%.0f) held=%q: changed=%.3f", best, x, y, c.held(), changed)
-			return best
-		}
-		for _, fraction := range changed {
-			if fraction >= landscapePointerProbeMinChanged {
-				if busy {
-					break
-				}
-				busy = true
-			}
-		}
-		if !busy {
-			// Nothing or one weak patch changed: the pointer is hidden or
-			// sits on a flat area, and another check sees the same.
 			break
 		}
+		if screenBusy(changed) {
+			// More than one patch changed, which one pointer cannot do, so
+			// even a dominant patch may be an animation; check again.
+			sawBusy = true
+			continue
+		}
+		if best, decided := pickPointerTurn(changed); decided {
+			c.rememberHeld(best, region, held)
+			logging.Infof("agent", "landscape_pointer", "pointer %s at (%.0f,%.0f) held=%q: changed=%.3f", best, x, y, held, changed)
+			return best
+		}
+		// Nothing or one weak patch changed: the pointer is hidden or sits on
+		// a flat area, and another check sees the same.
+		break
 	}
 	// The pointer was not found. An earlier decision only stands in when the
 	// screen kept still, because a changing screen often means the app or its
 	// orientation changed under the same active area.
 	turn := c.recentTurn(region)
-	if screenBusy(changed) {
+	if sawBusy {
 		// The busy screen rejected the earlier decision as well; a later
 		// undecided check must not bring it back.
 		turn = 0

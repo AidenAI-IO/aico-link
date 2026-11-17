@@ -344,3 +344,37 @@ func TestLandscapePointerTracksReattachByKeyboardIsolation(t *testing.T) {
 		t.Fatalf("re-enumerations = %d, want 2 (first landscape, then back to landscape after the portrait reattach)", calls)
 	}
 }
+
+// A measurement where one patch dominates but another also changed was taken
+// while the screen moved; it must not be accepted as the pointer's turn.
+func TestLandscapePointerRejectsDominantPatchOnBusyScreen(t *testing.T) {
+	state := &screen.ScreenState{}
+	state.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 0, Y: 98, Width: 1920, Height: 884, Valid: true})
+	mock := mnk.NewMockProvider()
+	region := image.Rect(0, 98, 1920, 982)
+	sim := &simulatedPointer{mock: mock, region: region, turn: 1, frameW: 1920, frameH: 1080}
+	frame := 0
+	corrector := newLandscapePointerCorrector(func(ctx context.Context) (lumaFrame, error) {
+		f, err := sim.capture(ctx)
+		frame++
+		if frame%2 == 0 {
+			// An animation next to where an upright pointer would land.
+			c := landscapeFramePoint(region, 200, 700)
+			for y := c.Y - 6; y <= c.Y+6; y++ {
+				for x := c.X - 6; x <= c.X+6; x++ {
+					f.y[y*f.stride+x] = 20
+				}
+			}
+		}
+		return f, err
+	}, state, nil)
+	corrector.settle = 0
+	corrector.setDeviceTypeFunc(func() string { return "iOS" })
+
+	if err := corrector.session(mock).Click(context.Background(), 200, 700, mnk.ButtonLeft, 0); err != nil {
+		t.Fatalf("click: %v", err)
+	}
+	if got := corrector.recentTurn(region); got != 0 {
+		t.Fatalf("cached turn = %s after a busy measurement, want none", got)
+	}
+}
