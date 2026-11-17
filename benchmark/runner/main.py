@@ -977,6 +977,8 @@ def _cmd_run_auto_agent_setup_inner(
     board_network = (
         emulator_board_network(bridge_serial) if bridge_tasks else nullcontext()
     )
+    future_to_unit: dict[concurrent.futures.Future, TaskRunUnit] = {}
+    collected: set[concurrent.futures.Future] = set()
     try:
         with board_network, concurrent.futures.ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f"bench-cli-{run_id}") as executor:
             future_to_unit = {
@@ -994,6 +996,7 @@ def _cmd_run_auto_agent_setup_inner(
                     progress=f"{unit.index}/{total_runs}",
                 )
                 results.append(result)
+                collected.add(future)
                 completed += 1
                 _write_state(args.state_file, {
                     **base_state,
@@ -1005,8 +1008,15 @@ def _cmd_run_auto_agent_setup_inner(
                     "totals": _result_totals(results, total_runs),
                 })
     except Exception as exc:
-        # Board network setup and teardown run outside the per-task handler.
-        # Keep the results that finished and leave a terminal state behind.
+        # Board network setup and teardown, and worker preparation, run outside
+        # the per-task handler. Executor shutdown has already waited for the
+        # other units, so keep every result that finished and leave a terminal
+        # state behind.
+        for future in future_to_unit:
+            if future in collected or not future.done() or future.cancelled() or future.exception():
+                continue
+            results.append(future.result())
+            completed += 1
         write_jsonl(run_dir / "results.jsonl", results)
         _write_state(args.state_file, {
             **base_state,

@@ -1234,7 +1234,8 @@ def test_android_bridge_serial_requires_auto_setup_and_environment(monkeypatch, 
     assert not (tmp_path / "runs").exists()
 
 
-def _run_auto_bridge_suite(monkeypatch, tmp_path, *, bridge_mode, skip_mode, board_network=None, extra_args=()):
+def _run_auto_bridge_suite(monkeypatch, tmp_path, *, bridge_mode, skip_mode, board_network=None, extra_args=(),
+                           extra_task_ids=(), prepare_failures=0):
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(
         json.dumps(
@@ -1254,6 +1255,11 @@ def _run_auto_bridge_suite(monkeypatch, tmp_path, *, bridge_mode, skip_mode, boa
         ),
         encoding="utf-8",
     )
+
+    if extra_task_ids:
+        suite_data = json.loads(suite_path.read_text())
+        suite_data["tasks"] += [{**suite_data["tasks"][0], "id": task_id} for task_id in extra_task_ids]
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
 
     if skip_mode != "none":
         suite_data = json.loads(suite_path.read_text())
@@ -1311,7 +1317,12 @@ def _run_auto_bridge_suite(monkeypatch, tmp_path, *, bridge_mode, skip_mode, boa
     monkeypatch.setattr(main, "clear_stale_adb_android_owner", lambda url: stale_clears.append(url))
     monkeypatch.setattr(webui, "ensure_daemon_image", lambda *args, **kwargs: None)
     monkeypatch.setattr(webui, "read_environment_bridge_concurrency", lambda *args, **kwargs: 1)
+    prepare_calls = []
+
     def fake_prepare_run_config(base_config_dir, config_dir, **kwargs):
+        prepare_calls.append(config_dir)
+        if len(prepare_calls) <= prepare_failures:
+            raise RuntimeError("cannot prepare worker config")
         captured["prepare_config_kwargs"] = kwargs
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "control_token").write_text("test-token", encoding="utf-8")
@@ -2496,3 +2507,20 @@ def test_board_network_failure_records_a_terminal_run(monkeypatch, tmp_path, sta
         rows = (tmp_path / "runs/auto-run/results.jsonl").read_text().splitlines()
         assert [json.loads(row)["status"] for row in rows] == ["passed"]
         assert state["completed"] == 1
+
+
+def test_unit_failure_keeps_results_of_units_that_finished_afterwards(monkeypatch, tmp_path):
+    state_file = tmp_path / "state.json"
+    with pytest.raises(RuntimeError, match="cannot prepare worker config"):
+        # One worker runs units in order: the first fails before its task
+        # handler, and the second still runs to completion during shutdown.
+        _run_auto_bridge_suite(
+            monkeypatch, tmp_path, bridge_mode="foreground", skip_mode="none",
+            extra_task_ids=("open_settings",), prepare_failures=1,
+            extra_args=("--state-file", str(state_file)),
+        )
+
+    rows = [json.loads(row) for row in (tmp_path / "runs/auto-run/results.jsonl").read_text().splitlines()]
+    assert [(row["task_id"], row["status"]) for row in rows] == [("open_settings", "passed")]
+    state = json.loads(state_file.read_text())
+    assert state["status"] == "failed" and state["completed"] == 1
