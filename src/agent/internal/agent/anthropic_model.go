@@ -331,6 +331,7 @@ func (m *anthropicModel) generateContent(ctx context.Context, messages []llms.Me
 			return nil, fail(fmt.Errorf("create Anthropic request: %w", err))
 		}
 		httpRequest.Header.Set("Content-Type", "application/json")
+		httpRequest.Header.Set("User-Agent", "Claude Code")
 		httpRequest.Header.Set("anthropic-version", anthropicAPIVersion)
 		if m.token != "" && m.useBearerAuth {
 			httpRequest.Header.Set("Authorization", "Bearer "+m.token)

@@ -53,11 +53,11 @@ func TestVisualCoordinatesLive(t *testing.T) {
 	if os.Getenv("AICO_VISUAL_LIVE") != "1" {
 		t.Skip("set AICO_VISUAL_LIVE=1 to make paid real-model requests")
 	}
-	base, token := os.Getenv("ANTHROPIC_BASE_URL"), os.Getenv("ANTHROPIC_AUTH_TOKEN")
+	base, token := os.Getenv("AICO_RELAY_BASE_URL"), os.Getenv("AICO_RELAY_AUTH_TOKEN")
 	modelName := os.Getenv("AICO_VISUAL_MODEL")
 	output := os.Getenv("AICO_VISUAL_RESULTS")
 	if base == "" || token == "" || modelName == "" || output == "" {
-		t.Fatal("requires ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, AICO_VISUAL_MODEL, AICO_VISUAL_RESULTS")
+		t.Fatal("requires AICO_RELAY_BASE_URL, AICO_RELAY_AUTH_TOKEN, AICO_VISUAL_MODEL, AICO_VISUAL_RESULTS")
 	}
 	if err := os.MkdirAll(output, 0700); err != nil {
 		t.Fatal(err)
