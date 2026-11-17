@@ -20,6 +20,26 @@ func TestBundledQuickActionsPathUsesBusinessPackage(t *testing.T) {
 	}
 }
 
+func TestAndroidNotificationCenterSwipeReachesShade(t *testing.T) {
+	_, binding, ok := newQuickActionsTable().lookup("notification_center", "android")
+	if !ok || binding.Status != quickActionStatusActive || binding.Tool != "touch_gesture" {
+		t.Fatalf("Android notification_center binding = %#v, found=%v; want active touch_gesture", binding, ok)
+	}
+	var swipe struct {
+		Type  string         `json:"type"`
+		Start focusPointArgs `json:"start"`
+		End   focusPointArgs `json:"end"`
+	}
+	if err := json.Unmarshal(binding.Input, &swipe); err != nil {
+		t.Fatalf("decode binding input: %v", err)
+	}
+	// A short drag from the status bar only peeks the shade on stock Android;
+	// it must travel far enough to leave the notification list expanded.
+	if swipe.Type != "swipe" || swipe.Start.Y != 0 || swipe.End.Y < 600 {
+		t.Fatalf("Android notification_center swipe = %+v; want a swipe from y=0 to y>=600", swipe)
+	}
+}
+
 func TestQuickActionsResolveAliasAndPlatform(t *testing.T) {
 	table := newQuickActionsTable()
 	if _, ok := table.resolveActionID("返回"); !ok {

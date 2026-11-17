@@ -970,41 +970,62 @@ def _cmd_run_auto_agent_setup_inner(
         f"environment={display_environment_url}",
         flush=True,
     )
-    # Tasks that leave the companion App in the background can reach Phone
-    # Bridge only through its FGS poller, which needs a board-like network.
-    background_bridge = bool(bridge_serial) and any(
-        not unit.skip_reason and unit.task.foreground_app_id != ANDROID_BRIDGE_PACKAGE
-        for unit in units
-    )
+    # The companion App connects to the board only after binding to a USB or
+    # Ethernet network that routes to the board subnet, whether it runs in the
+    # foreground or through its background FGS poller.
+    bridge_tasks = bool(bridge_serial) and any(not unit.skip_reason for unit in units)
     board_network = (
-        emulator_board_network(bridge_serial) if background_bridge else nullcontext()
+        emulator_board_network(bridge_serial) if bridge_tasks else nullcontext()
     )
-    with board_network, concurrent.futures.ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f"bench-cli-{run_id}") as executor:
-        future_to_unit = {
-            executor.submit(run_unit, unit): unit
-            for unit in units
-        }
-        for future in concurrent.futures.as_completed(future_to_unit):
-            unit = future_to_unit[future]
-            result = future.result()
-            _log_task_result(
-                unit.task.id,
-                unit.attempt,
-                result,
-                verbose=args.verbose,
-                progress=f"{unit.index}/{total_runs}",
-            )
-            results.append(result)
+    future_to_unit: dict[concurrent.futures.Future, TaskRunUnit] = {}
+    collected: set[concurrent.futures.Future] = set()
+    try:
+        with board_network, concurrent.futures.ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f"bench-cli-{run_id}") as executor:
+            future_to_unit = {
+                executor.submit(run_unit, unit): unit
+                for unit in units
+            }
+            for future in concurrent.futures.as_completed(future_to_unit):
+                unit = future_to_unit[future]
+                result = future.result()
+                _log_task_result(
+                    unit.task.id,
+                    unit.attempt,
+                    result,
+                    verbose=args.verbose,
+                    progress=f"{unit.index}/{total_runs}",
+                )
+                results.append(result)
+                collected.add(future)
+                completed += 1
+                _write_state(args.state_file, {
+                    **base_state,
+                    "completed": completed,
+                    "current": unit.index,
+                    "current_task": unit.task.id,
+                    "current_attempt": unit.attempt,
+                    "last_result": result.status,
+                    "totals": _result_totals(results, total_runs),
+                })
+    except Exception as exc:
+        # Board network setup and teardown, and worker preparation, run outside
+        # the per-task handler. Executor shutdown has already waited for the
+        # other units, so keep every result that finished and leave a terminal
+        # state behind.
+        for future in future_to_unit:
+            if future in collected or not future.done() or future.cancelled() or future.exception():
+                continue
+            results.append(future.result())
             completed += 1
-            _write_state(args.state_file, {
-                **base_state,
-                "completed": completed,
-                "current": unit.index,
-                "current_task": unit.task.id,
-                "current_attempt": unit.attempt,
-                "last_result": result.status,
-                "totals": _result_totals(results, total_runs),
-            })
+        write_jsonl(run_dir / "results.jsonl", results)
+        _write_state(args.state_file, {
+            **base_state,
+            "status": "failed",
+            "error": str(exc),
+            "completed": completed,
+            "totals": _result_totals(results, total_runs),
+        })
+        raise
 
     totals = _result_totals(results, total_runs)
     suite_snapshot_path = _write_suite_snapshot(run_dir, suite)

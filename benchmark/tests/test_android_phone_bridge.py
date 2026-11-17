@@ -345,3 +345,34 @@ def test_contact_fixture_deletes_only_reserved_raw_contact_ids(monkeypatch):
         "content://com.android.contacts/raw_contacts/73?caller_is_syncadapter=true",
     ] * 2
     assert all(call[-1] == "display_name='AidenBridgeBenchmarkContact'" for call in calls if call[1] == "query")
+
+
+def test_sms_draft_fixture_clears_reserved_draft_before_and_after_failure(monkeypatch):
+    commands = []
+    composer = iter(["", "AIDEN_BRIDGE_DRAFT_RESET", "Text message"] * 2)
+    monkeypatch.setattr(android_phone_bridge, "_adb", lambda serial, *args: commands.append(args) or "")
+    monkeypatch.setattr(android_phone_bridge, "_messages_composer_text", lambda serial: next(composer))
+    monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(RuntimeError, match="task failed"):
+        with android_phone_bridge.android_bridge_fixture("emulator-5554", "sms_draft"):
+            raise RuntimeError("task failed")
+
+    starts = [args for args in commands if args[:3] == ("shell", "am", "start")]
+    assert len(starts) == 2
+    # Only the reserved recipient's draft is replaced; other conversations are untouched.
+    assert all("smsto:+12025550147" in args and "AIDEN_BRIDGE_DRAFT_RESET" in args for args in starts)
+    assert commands.count(("shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A")) == 2
+    assert commands[-1] == ("shell", "input", "keyevent", "KEYCODE_HOME")
+
+
+def test_sms_draft_fixture_fails_when_composer_never_shows_sentinel(monkeypatch):
+    monkeypatch.setattr(android_phone_bridge, "_adb", lambda serial, *args: "")
+    monkeypatch.setattr(android_phone_bridge, "_messages_composer_text", lambda serial: None)
+    monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
+    clock = iter(range(0, 1000, 5))
+    monkeypatch.setattr(android_phone_bridge.time, "monotonic", lambda: next(clock))
+
+    with pytest.raises(RuntimeError, match="Messages composer"):
+        with android_phone_bridge.android_bridge_fixture("emulator-5554", "sms_draft"):
+            pass

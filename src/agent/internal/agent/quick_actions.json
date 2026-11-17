@@ -229,9 +229,10 @@
           "input": {
             "type": "swipe",
             "start": { "x": 300, "y": 0 },
-            "end": { "x": 300, "y": 250 },
+            "end": { "x": 300, "y": 700 },
             "speed": 2500
-          }
+          },
+          "note": "a short drag only peeks the shade; travel past mid-screen so the notification list stays open"
         },
         "mac": {
           "status": "reserved",
