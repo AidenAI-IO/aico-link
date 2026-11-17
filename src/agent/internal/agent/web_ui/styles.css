@@ -329,6 +329,241 @@ textarea:focus-visible {
     text-align: right;
 }
 
+.core-services-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-top: 4px;
+}
+
+.core-service-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    padding: 4px 6px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+}
+
+.core-service-row:hover,
+.core-service-row:focus-visible {
+    background: var(--surface-soft);
+}
+
+.core-service-copy {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    text-align: left;
+}
+
+.core-service-name {
+    font-size: 0.88rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.core-service-state {
+    flex: 0 0 auto;
+    font: 0.7rem ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--muted);
+}
+
+.core-service-row[data-severity="failed"] .core-service-state { color: var(--tool-error-text); }
+.core-service-row[data-severity="degraded"] .core-service-state { color: var(--accent); }
+
+.core-service-metrics {
+    color: var(--muted);
+    font: 0.7rem ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+.core-incidents-list {
+    margin: 8px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.core-incident-item {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    border-radius: 10px;
+    color: var(--text);
+    background: transparent;
+}
+
+.core-incident-item[open] {
+    background: var(--surface-soft);
+}
+
+/* Must beat .resource-details summary { width: fit-content }, which otherwise
+   shrink-wraps this row and leaves "signal" stuck beside the title. */
+.resource-details .core-incident-summary,
+.core-incident-summary {
+    display: flex !important;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100% !important;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    cursor: pointer;
+    list-style: none;
+    font-size: inherit;
+}
+
+.core-incident-summary::-webkit-details-marker { display: none; }
+
+.core-incident-item:not([open]) .core-incident-summary:hover {
+    border-radius: 10px;
+    background: var(--surface-soft);
+}
+
+.core-incident-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.core-incident-title {
+    display: block;
+    min-width: 0;
+    font-size: 0.84rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.core-incident-badge {
+    flex: 0 0 auto;
+    margin: 0;
+    margin-left: auto;
+    text-align: right;
+    white-space: nowrap;
+    font: 0.7rem ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--muted);
+}
+
+.core-incident-item[data-severity="failed"] .core-incident-badge { color: var(--tool-error-text); }
+.core-incident-item[data-severity="degraded"] .core-incident-badge { color: var(--accent); }
+
+.core-incident-meta {
+    display: block;
+    margin-top: 2px;
+    color: var(--muted);
+    font: 0.68rem ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.core-incident-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0 8px 8px;
+    padding: 0;
+    border-top: 1px solid var(--line);
+}
+
+/* Override .resource-details dl/dt spacing that otherwise leaves a big gap. */
+.resource-details .core-incident-facts,
+.core-incident-facts {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 4px 0 0;
+}
+
+.resource-details .core-incident-fact,
+.core-incident-fact {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    color: var(--muted);
+    font: 0.68rem ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+.resource-details .core-incident-fact dt,
+.core-incident-fact dt {
+    margin: 0;
+    color: var(--muted);
+    opacity: 0.8;
+}
+
+.resource-details .core-incident-fact dd,
+.core-incident-fact dd {
+    margin: 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+
+.core-incident-log-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.core-incident-log-label {
+    color: var(--muted);
+    font-size: 0.68rem;
+}
+
+.core-incident-copy {
+    flex: 0 0 auto;
+    padding: 2px 8px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font: 0.68rem ui-monospace, SFMono-Regular, Menlo, monospace;
+    cursor: pointer;
+}
+
+.core-incident-copy:hover,
+.core-incident-copy:focus-visible {
+    color: var(--text);
+    background: var(--bg);
+}
+
+.core-incident-log {
+    margin: 0;
+    max-height: 160px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 8px;
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font: 0.68rem ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    tab-size: 2;
+}
+
 .inspector-list {
     display: flex;
     flex-direction: column;

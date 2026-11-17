@@ -1,5 +1,6 @@
 [Unit]
 Description=Aico Link BLE peripheral and ANCS service
+OnFailure=aico-service-incident@%p.service
 Requires=aico-environment.service bluetooth.service
 After=aico-environment.service bluetooth.service
 StartLimitIntervalSec=60s

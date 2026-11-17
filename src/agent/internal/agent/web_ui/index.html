@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aico</title>
-    <link rel="stylesheet" href="/web-ui/styles.css">
+    <link rel="stylesheet" href="/web-ui/styles.css?v=core-incident-8">
 </head>
 <body>
     <div class="app-shell">
@@ -194,6 +194,21 @@
                 </div>
             </details>
 
+            <details class="inspector-section resource-panel" id="coreServicesPanel">
+                <summary class="resource-panel-head">
+                    <span class="inspector-section-title">Core services</span>
+                    <span class="resource-summary" id="coreServicesSummary"></span>
+                </summary>
+                <div class="resource-panel-body">
+                    <div id="coreServicesList" class="core-services-list" aria-live="polite"></div>
+                    <details class="resource-details" id="coreIncidentsDetails">
+                        <summary>Recent failures</summary>
+                        <div class="core-incidents-list" id="coreIncidentsList"></div>
+                        <p class="inspector-empty" id="coreIncidentsEmpty">No recorded failures.</p>
+                    </details>
+                </div>
+            </details>
+
             <section class="inspector-section" aria-labelledby="tasksTitle">
                 <h2 class="inspector-section-title" id="tasksTitle">Background tasks <span class="inspector-summary" id="inspectorSummary"></span></h2>
                 <ol class="inspector-list task-list" id="taskList" aria-describedby="taskHint"></ol>
@@ -265,6 +280,7 @@
     <script defer src="/web-ui/scripts/attachments.js"></script>
     <script defer src="/web-ui/scripts/tool_messages.js"></script>
     <script defer src="/web-ui/scripts/resources.js"></script>
+    <script defer src="/web-ui/scripts/core_services.js?v=core-incident-8"></script>
     <script defer src="/web-ui/scripts/inspector.js"></script>
     <script defer src="/web-ui/scripts/shared_links.js"></script>
     <script defer src="/web-ui/scripts/voice.js"></script>
