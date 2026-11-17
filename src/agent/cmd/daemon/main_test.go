@@ -317,7 +317,7 @@ func TestRealtimeSessionConfigIncludesConfiguredResponseLanguage(t *testing.T) {
 			if !strings.Contains(got.Instructions, "The configured response locale is "+tc.locale+".") {
 				t.Fatalf("realtime instructions missing configured locale: %q", got.Instructions)
 			}
-			if !strings.Contains(got.Instructions, "Always respond in "+tc.language) {
+			if !strings.Contains(got.Instructions, "Keep explanatory prose in "+tc.language) {
 				t.Fatalf("realtime instructions missing fixed response language: %q", got.Instructions)
 			}
 			// The realtime model speaks directly; a <tts> requirement belongs

@@ -151,6 +151,7 @@ type MemoryResult struct {
 	Type          string            `json:"type"`
 	Status        string            `json:"status"`
 	Revision      int               `json:"revision,omitempty"`
+	CreatedAt     string            `json:"created_at,omitempty"`
 	Title         string            `json:"title"`
 	Summary       string            `json:"summary"`
 	Content       string            `json:"content"`
@@ -310,6 +311,7 @@ func (s *LongTermMemoryStore) searchLocked(ctx context.Context, query MemoryQuer
 			Type:          entry.Type,
 			Status:        entry.Status,
 			Revision:      effectiveMemoryRevision(parsed.Item),
+			CreatedAt:     parsed.Item.CreatedAt,
 			Title:         parsed.Title,
 			Summary:       entry.Summary,
 			Content:       parsed.Content,
