@@ -163,17 +163,20 @@ EOF
 chmod +x "${TEST_ROOT}/bin/systemctl"
 printf 'frame boom\n' >"${TEST_ROOT}/var/log/frame_service/frame_service.log"
 rm -f "${AICO_DIAGNOSTICS_DIR}/stamps/aico-frame"
-chmod a-w "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl"
+# A directory at the events path forces >> failure even under CAP_DAC_OVERRIDE.
 reject_before=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
+mv "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl.bak"
+mkdir "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl"
 "${WORKDIR}/aico-service-incident" aico-frame || true
-reject_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
-chmod a+w "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl"
-[ "${reject_before}" = "${reject_after}" ] || fail "append should have failed"
 [ ! -f "${AICO_DIAGNOSTICS_DIR}/stamps/aico-frame" ] || fail "stamp written after append failure"
+rmdir "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl"
+mv "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl.bak" "${AICO_DIAGNOSTICS_DIR}/service-events.jsonl"
+reject_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
+[ "${reject_before}" = "${reject_after}" ] || fail "events file changed despite append failure"
 # Recovery: a later successful append must still be allowed.
 "${WORKDIR}/aico-service-incident" aico-frame
 recover_after=$(wc -l <"${AICO_DIAGNOSTICS_DIR}/service-events.jsonl" | tr -d ' ')
-[ "${recover_after}" -gt "${reject_after}" ] || fail "append did not recover after writable restore"
+[ "${recover_after}" -gt "${reject_after}" ] || fail "append did not recover after path restore"
 [ -f "${AICO_DIAGNOSTICS_DIR}/stamps/aico-frame" ] || fail "stamp missing after successful append"
 
 echo "aico-service-incident tests passed"

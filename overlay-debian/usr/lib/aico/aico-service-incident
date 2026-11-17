@@ -257,11 +257,23 @@ append_and_trim_events() {
         if [ "${keep_bytes}" -lt 4096 ]; then
             keep_bytes=4096
         fi
-        tail -c "${keep_bytes}" "${EVENTS_FILE}" >"${EVENTS_FILE}.tmp" || true
-        if [ -s "${EVENTS_FILE}.tmp" ]; then
-            sed '1d' "${EVENTS_FILE}.tmp" >"${EVENTS_FILE}.trim" 2>/dev/null || cp "${EVENTS_FILE}.tmp" "${EVENTS_FILE}.trim"
-            mv "${EVENTS_FILE}.trim" "${EVENTS_FILE}"
+        # Only replace EVENTS_FILE after every trim step succeeds; otherwise keep
+        # the original history and drop temps (partial .tmp/.trim must not win).
+        trim_ready=0
+        if tail -c "${keep_bytes}" "${EVENTS_FILE}" >"${EVENTS_FILE}.tmp" \
+            && [ -s "${EVENTS_FILE}.tmp" ]; then
+            if sed '1d' "${EVENTS_FILE}.tmp" >"${EVENTS_FILE}.trim" 2>/dev/null \
+                && [ -s "${EVENTS_FILE}.trim" ]; then
+                trim_ready=1
+            elif cp "${EVENTS_FILE}.tmp" "${EVENTS_FILE}.trim" \
+                && [ -s "${EVENTS_FILE}.trim" ]; then
+                trim_ready=1
+            fi
+        fi
+        if [ "${trim_ready}" = 1 ] && mv "${EVENTS_FILE}.trim" "${EVENTS_FILE}"; then
             rm -f "${EVENTS_FILE}.tmp"
+        else
+            rm -f "${EVENTS_FILE}.tmp" "${EVENTS_FILE}.trim"
         fi
     fi
 }
