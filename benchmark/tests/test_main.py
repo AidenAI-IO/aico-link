@@ -1234,11 +1234,7 @@ def test_android_bridge_serial_requires_auto_setup_and_environment(monkeypatch, 
     assert not (tmp_path / "runs").exists()
 
 
-@pytest.mark.parametrize("bridge_mode", ["none", "background", "foreground"])
-@pytest.mark.parametrize("skip_mode", ["none", "background_only", "all"])
-def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
-    monkeypatch, tmp_path, bridge_mode, skip_mode,
-):
+def _run_auto_bridge_suite(monkeypatch, tmp_path, *, bridge_mode, skip_mode, board_network=None, extra_args=()):
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(
         json.dumps(
@@ -1281,12 +1277,12 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
         yield
 
     @contextmanager
-    def board_network(serial):
+    def default_board_network(serial):
         bridge_actions.append("board_network")
         yield
 
     monkeypatch.setattr(main, "connected_android_phone_bridge", connected_bridge)
-    monkeypatch.setattr(main, "emulator_board_network", board_network)
+    monkeypatch.setattr(main, "emulator_board_network", board_network or default_board_network)
     monkeypatch.setattr(
         main, "wait_for_android_phone_bridge",
         lambda client, **kwargs: bridge_actions.append(("wait", kwargs)),
@@ -1364,8 +1360,20 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
             "http://127.0.0.1:19090",
             "--auto-agent-setup",
             "--no-judge",
+            *extra_args,
         ] + (["--android-phone-bridge-serial", "emulator-5554", "--max-concurrency", "1"]
              if bridge_mode != "none" else [])
+    )
+    return rc, captured, stale_clears, bridge_actions
+
+
+@pytest.mark.parametrize("bridge_mode", ["none", "background", "foreground"])
+@pytest.mark.parametrize("skip_mode", ["none", "background_only", "all"])
+def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
+    monkeypatch, tmp_path, bridge_mode, skip_mode,
+):
+    rc, captured, stale_clears, bridge_actions = _run_auto_bridge_suite(
+        monkeypatch, tmp_path, bridge_mode=bridge_mode, skip_mode=skip_mode,
     )
 
     assert rc == 0
@@ -2462,3 +2470,29 @@ def test_manifest_metrics_k_uses_common_repeat_prefix(monkeypatch, tmp_path):
     assert main.cli(["run", "--suite", str(suite_path), "--out", str(tmp_path / "runs"), "--run-id", "mixed", "--no-judge"]) == 0
     manifest = json.loads((tmp_path / "runs" / "mixed" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["metrics_k"] == 1
+
+
+@pytest.mark.parametrize("stage", ["setup", "teardown"])
+def test_board_network_failure_records_a_terminal_run(monkeypatch, tmp_path, stage):
+    @contextmanager
+    def failing_board_network(serial):
+        if stage == "setup":
+            raise RuntimeError("Android did not provision the emulator board network")
+        yield
+        raise RuntimeError("adb shell ip link del eth1 failed")
+
+    state_file = tmp_path / "state.json"
+    with pytest.raises(RuntimeError, match="board network|ip link del"):
+        _run_auto_bridge_suite(
+            monkeypatch, tmp_path, bridge_mode="foreground", skip_mode="none",
+            board_network=failing_board_network, extra_args=("--state-file", str(state_file)),
+        )
+
+    state = json.loads(state_file.read_text())
+    assert state["status"] == "failed"
+    assert "board network" in state["error"] or "ip link del" in state["error"]
+    if stage == "teardown":
+        # Results finished before the teardown failure are still written.
+        rows = (tmp_path / "runs/auto-run/results.jsonl").read_text().splitlines()
+        assert [json.loads(row)["status"] for row in rows] == ["passed"]
+        assert state["completed"] == 1
