@@ -133,7 +133,9 @@ The live Anthropic relay test requires `AICO_RELAY_BASE_URL` and
 `AICO_RELAY_AUTH_TOKEN`; `AICO_RELAY_MODEL` optionally overrides its model.
 It does not use the shell's `ANTHROPIC_*` variables, so credentials used by
 development tools do not automatically enable this test. The visual coordinate
-evaluation uses the same relay credentials and still requires `AICO_VISUAL_LIVE=1`.
+evaluation uses the same relay credentials and requires `AICO_VISUAL_LIVE=1`,
+`AICO_VISUAL_MODEL` (the model to evaluate), and `AICO_VISUAL_RESULTS` (the output
+directory for evaluation results). Both tests send the relay token as Bearer auth.
 Anthropic model requests send `User-Agent: Claude Code`.
 
 ## Audio Model Roundtrip Script

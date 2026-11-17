@@ -153,7 +153,7 @@ func TestVisualCoordinatesLive(t *testing.T) {
 						transforms = append(transforms, frames)
 						tool = frames.wrap([]langtools.Tool{tool})[0]
 					}
-					client := newAnthropicModel(base, modelName, token, &http.Client{Timeout: 120 * time.Second}).(*anthropicModel)
+					client := newAnthropicModel(base, modelName, token, &http.Client{Timeout: 120 * time.Second}, withAnthropicBearerAuth()).(*anthropicModel)
 					client.streamMaxRetries = 0
 					client.protocolRetries = 0
 					exec := executor.NewLLMExecutor(client, manager, transforms...)
