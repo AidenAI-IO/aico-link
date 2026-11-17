@@ -80,6 +80,9 @@ type landscapePointerCorrector struct {
 	// enumerated is the orientation the gadget was last enumerated in, as
 	// seen by this process; unknown until the first pointer action.
 	enumerated screenOrientation
+	// enumerations counts pointer reattaches, so a check that spans one can
+	// tell its measurement predates the current mapping.
+	enumerations uint64
 }
 
 type screenOrientation int
@@ -253,6 +256,7 @@ func (c *landscapePointerCorrector) noteReenumerated() {
 // from the screen now if the phone turned while it ran.
 func (c *landscapePointerCorrector) noteReenumeratedIn(orientation screenOrientation) {
 	c.mu.Lock()
+	c.enumerations++
 	c.enumerated = orientation
 	// A new enumeration may map the pointer differently.
 	c.last = landscapePointerDecision{}
@@ -309,7 +313,23 @@ func (c *landscapePointerCorrector) remember(turn pointerTurn, region image.Rect
 // rememberHeld stores a decision together with how the phone was held when it
 // was measured, so a report that arrives meanwhile cannot relabel it.
 func (c *landscapePointerCorrector) rememberHeld(turn pointerTurn, region image.Rectangle, held string) {
+	c.rememberMeasured(turn, region, held, c.enumerationCount())
+}
+
+func (c *landscapePointerCorrector) enumerationCount() uint64 {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.enumerations
+}
+
+// rememberMeasured stores a decision only when the pointer was not
+// reattached since the measurement started, since a reattach may map it anew.
+func (c *landscapePointerCorrector) rememberMeasured(turn pointerTurn, region image.Rectangle, held string, enumerations uint64) {
+	c.mu.Lock()
+	if c.enumerations != enumerations {
+		c.mu.Unlock()
+		return
+	}
 	c.last = landscapePointerDecision{turn: turn, region: region, held: held, at: time.Now()}
 	c.mu.Unlock()
 }
@@ -352,6 +372,7 @@ func (c *landscapePointerCorrector) probe(ctx context.Context, inner mnk.Provide
 		candidates, parked, park = landscapeProbeLayout(region, x, y)
 	}
 	held := c.held()
+	enumerations := c.enumerationCount()
 	var changed [pointerTurns]float64
 	sawBusy := false
 	for attempt := 1; attempt <= landscapePointerProbeAttempts; attempt++ {
@@ -367,7 +388,7 @@ func (c *landscapePointerCorrector) probe(ctx context.Context, inner mnk.Provide
 			continue
 		}
 		if best, decided := pickPointerTurn(changed); decided {
-			c.rememberHeld(best, region, held)
+			c.rememberMeasured(best, region, held, enumerations)
 			logging.Infof("agent", "landscape_pointer", "pointer %s at (%.0f,%.0f) held=%q: changed=%.3f", best, x, y, held, changed)
 			return best
 		}

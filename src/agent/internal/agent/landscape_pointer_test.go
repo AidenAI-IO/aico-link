@@ -19,6 +19,8 @@ type simulatedPointer struct {
 	turn   pointerTurn
 	frameW int
 	frameH int
+	// discRadius sizes the drawn pointer; zero uses the default.
+	discRadius int
 }
 
 func (s *simulatedPointer) capture(context.Context) (lumaFrame, error) {
@@ -32,7 +34,10 @@ func (s *simulatedPointer) capture(context.Context) (lumaFrame, error) {
 	}
 	x, y := s.turn.land(moves[len(moves)-1].X, moves[len(moves)-1].Y)
 	center := landscapeFramePoint(s.region, x, y)
-	const discRadius = 10
+	discRadius := s.discRadius
+	if discRadius == 0 {
+		discRadius = 10
+	}
 	for py := center.Y - discRadius; py <= center.Y+discRadius; py++ {
 		for px := center.X - discRadius; px <= center.X+discRadius; px++ {
 			if px >= 0 && py >= 0 && px < s.frameW && py < s.frameH && (px-center.X)*(px-center.X)+(py-center.Y)*(py-center.Y) <= discRadius*discRadius {
@@ -352,8 +357,12 @@ func TestLandscapePointerRejectsDominantPatchOnBusyScreen(t *testing.T) {
 	state.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 0, Y: 98, Width: 1920, Height: 884, Valid: true})
 	mock := mnk.NewMockProvider()
 	region := image.Rect(0, 98, 1920, 982)
-	sim := &simulatedPointer{mock: mock, region: region, turn: 1, frameW: 1920, frameH: 1080}
+	// A disc large enough that its patch dominates the animated one, so only
+	// the busy-screen check can reject the measurement.
+	sim := &simulatedPointer{mock: mock, region: region, turn: 1, frameW: 1920, frameH: 1080, discRadius: 13}
 	frame := 0
+	var last [pointerTurns]float64
+	var before lumaFrame
 	corrector := newLandscapePointerCorrector(func(ctx context.Context) (lumaFrame, error) {
 		f, err := sim.capture(ctx)
 		frame++
@@ -365,6 +374,14 @@ func TestLandscapePointerRejectsDominantPatchOnBusyScreen(t *testing.T) {
 					f.y[y*f.stride+x] = 20
 				}
 			}
+			short := min(region.Dx(), region.Dy())
+			radius := max(4, int(float64(short)*landscapePointerProbeRadiusFraction+0.5))
+			candidates, _, _ := landscapeProbeLayout(region, 200, 700)
+			for turn := range pointerTurn(pointerTurns) {
+				last[turn], _ = lumaChangedFraction(before, f, candidates[turn], radius)
+			}
+		} else {
+			before = f
 		}
 		return f, err
 	}, state, nil)
@@ -376,5 +393,27 @@ func TestLandscapePointerRejectsDominantPatchOnBusyScreen(t *testing.T) {
 	}
 	if got := corrector.recentTurn(region); got != 0 {
 		t.Fatalf("cached turn = %s after a busy measurement, want none", got)
+	}
+	// The fixture must pass the dominance rule on its own; otherwise this
+	// test would hold without the busy-screen check.
+	if _, decided := pickPointerTurn(last); !decided || !screenBusy(last) {
+		t.Fatalf("fixture changed=%.3f: want a dominant patch that is also busy", last)
+	}
+}
+
+// A pointer reattach while a check runs may map the pointer anew, so the
+// check's result must not be cached under the new enumeration.
+func TestLandscapePointerDropsDecisionSpanningReattach(t *testing.T) {
+	state := &screen.ScreenState{}
+	state.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 0, Y: 98, Width: 1920, Height: 884, Valid: true})
+	region := image.Rect(0, 98, 1920, 982)
+	corrector := newLandscapePointerCorrector(func(context.Context) (lumaFrame, error) {
+		return lumaFrame{}, errNoFrameForTest
+	}, state, nil)
+	started := corrector.enumerationCount()
+	corrector.noteReenumerated()
+	corrector.rememberMeasured(1, region, "", started)
+	if got := corrector.recentTurn(region); got != 0 {
+		t.Fatalf("turn measured before the reattach was cached as %s", got)
 	}
 }
