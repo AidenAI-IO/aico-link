@@ -18,6 +18,7 @@ function statusFor(item, snapshot) {
   if (!item.status || !snapshot) return null;
 
   if (item.status === 'wifi') {
+    if (snapshot.wifi_status?.state === 'UNKNOWN') return {value: msg('status.state.unknown', '未知'), tone: null};
     if (connectedSsid(snapshot)) return {value: msg('wifi.connected', '已连接'), tone: 'success'};
     return {value: msg('ui.not_connected', '未连接'), tone: null};
   }

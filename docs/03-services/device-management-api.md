@@ -48,6 +48,7 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Security | `GET /api/auth/session` | Report whether the request is signed in |
 | Device | `POST /api/device/usb/reenumerate` | Re-enumerate USB HID/ECM |
 | Network | `POST /api/network/wifi/scan` | Scan for nearby Wi-Fi networks |
+| Network | `GET /api/network/wifi/status` | Read live radio status and saved profiles without a scan or full device snapshot |
 | Network | `PUT /api/network/wifi/connection` | Start a bounded asynchronous connect-and-save task |
 | Network | `GET /api/network/wifi/connection?task_id=...` | Poll connection, persistence, and rollback status |
 | Network | `DELETE /api/network/wifi/connection?ssid=...` | Forget a network without relying on a DELETE request body |
@@ -244,6 +245,14 @@ operations. It uses a read-only state view to include the SD archive root when
 serving previously migrated audio.
 
 ## Wi-Fi Task Lifecycle
+
+`GET /api/network/wifi/status` returns `wifi` (saved profiles with redacted
+proxy URLs) and `wifi_status` (current `connected`, `ssid`, `state`,
+`ip_address`, and optional `signal_dbm`). It is uncached, has a three-second
+probe deadline, and remains readable during connection and rollback tasks.
+Radio association and the task outcome are separate: `connected` reflects
+association, while task success also requires address acquisition and
+persistence. A newly associated SSID may not be saved until its task succeeds.
 
 `PUT /api/network/wifi/connection` returns HTTP 202 with a `task_id` immediately.
 The task has a 120-second total deadline covering candidate application,

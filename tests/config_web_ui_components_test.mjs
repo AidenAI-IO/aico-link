@@ -767,6 +767,55 @@ process.stdout.write('config web UI component tests passed\n');
 
 /* ----------------------------------------------- Advanced → MCP entry --- */
 
+/* -------------------------------------------------- Wi-Fi live status --- */
+
+{
+  const {wifiPage, wifiDetailPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/wifi.js')).href);
+  const {homePage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/home.js')).href);
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async url => {
+    calls.push(url);
+    return {ok: true, text: async () => JSON.stringify({networks: ['Home', 'Candidate']})};
+  };
+  const wifi = {networks: [{ssid: 'Home', has_psk: true}]};
+  const disconnected = {wifi, wifi_status: {connected: false, state: 'DISCONNECTED'}};
+  const connected = {wifi, wifi_status: {connected: true, ssid: 'Home', ip_address: '192.168.1.8', state: 'COMPLETED'}};
+  try {
+    let updateList;
+    const page = await wifiPage({snapshot: disconnected, navigate() {}, onWiFiChange: callback => { updateList = callback; }});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(countByClass(page, 'ds-row__icon--success'), 0);
+    updateList(connected);
+    assert.equal(countByClass(page, 'ds-row__icon--success'), 1, 'association paints a check without another scan');
+    updateList({...connected, wifi_status: {...connected.wifi_status, ssid: 'Candidate'}});
+    assert.equal(countByClass(page, 'ds-row__icon--success'), 1, 'a candidate is visible before its profile is persisted');
+    updateList(disconnected);
+    assert.equal(countByClass(page, 'ds-row__icon--success'), 0, 'external disconnects remove the check');
+    assert.equal(calls.length, 1, 'status updates never trigger a scan or aggregate snapshot');
+
+    let updateHome;
+    const home = homePage({snapshot: connected, navigate() {}, onWiFiChange: callback => { updateHome = callback; }});
+    assert.ok(countByClass(home, 'ds-row__value--success') > 0);
+    updateHome(disconnected);
+    assert.equal(countByClass(home, 'ds-row__value--success'), 0, 'the settings home follows the same observation');
+
+    let updateDetail;
+    const detail = await wifiDetailPage({snapshot: connected, params: {ssid: 'Home'}, navigate() {}, onWiFiChange: callback => { updateDetail = callback; }});
+    const input = detail.querySelector('input');
+    input.value = 'http://unsaved.local:8080';
+    assert.ok(detail.textContent.includes('192.168.1.8'));
+    updateDetail(disconnected);
+    assert.ok(!detail.textContent.includes('192.168.1.8'), 'the old address disappears on disconnect');
+    updateDetail({...connected, wifi_status: {...connected.wifi_status, ip_address: '192.168.1.9'}});
+    assert.ok(detail.textContent.includes('192.168.1.9'), 'DHCP address changes are shown live');
+    assert.equal(detail.querySelector('input'), input, 'status updates preserve the existing form');
+    assert.equal(input.value, 'http://unsaved.local:8080', 'an unsaved proxy draft survives status refreshes');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 {
   const {advancedPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/advanced.js')).href);
   const realFetch = globalThis.fetch;

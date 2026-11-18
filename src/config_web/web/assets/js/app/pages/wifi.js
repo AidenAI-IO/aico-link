@@ -260,6 +260,7 @@ export async function wifiPage(context) {
     const discoveredBySsid = new Map(discovered.map(network => [network.ssid, network]));
     const savedSsids = saved.map(network => network.ssid);
     const priorityOrdered = [
+      ...(connected && !savedSsids.includes(connected) ? [{ssid: connected}] : []),
       ...(connected ? saved.filter(network => network.ssid === connected) : []),
       ...saved.filter(network => !connected || network.ssid !== connected),
     ];
@@ -348,8 +349,8 @@ export async function wifiPage(context) {
       }},
     }, [icon('info', {size: 22})]);
     let state = null;
-    if (network.ssid === switching) state = el('span', {class: 'ds-row__spinner', attrs: {role: 'status', 'aria-label': resolve(msg('wifi.joining', '正在连接…'))}});
-    else if (network.ssid === connected) state = icon('checkCircle', {class: 'ds-row__icon ds-row__icon--success', size: 22});
+    if (network.ssid === connected) state = icon('checkCircle', {class: 'ds-row__icon ds-row__icon--success', size: 22});
+    else if (network.ssid === switching) state = el('span', {class: 'ds-row__spinner', attrs: {role: 'status', 'aria-label': resolve(msg('wifi.joining', '正在连接…'))}});
     return el('span', {class: 'ds-row__accessory-group'}, [state, info]);
   }
 
@@ -372,6 +373,7 @@ export async function wifiPage(context) {
     render();
     try {
       const result = await connect({ssid, keepProxy: true});
+      adoptResult(result.payload);
       if (result.ok) {
         toast(t('wifi.connected_to', {ssid, defaultValue: '已连接到“{{ssid}}”。'}));
       } else if (result.failureReason === 'wrong_password') {
@@ -389,7 +391,7 @@ export async function wifiPage(context) {
       toast(error && error.message ? error.message : resolve(msg('ui.connect_failed', '连接失败')), {durationMs: 5000});
     } finally {
       switching = '';
-      await refresh();
+      render();
     }
   }
 
@@ -398,10 +400,16 @@ export async function wifiPage(context) {
     return network && network.disabled ? msg('wifi.disabled', '已停用') : null;
   }
 
-  async function refresh() {
-    snapshot = await fetchSnapshot().catch(() => snapshot);
+  function adoptResult(payload) {
+    snapshot = {...snapshot, ...(payload?.wifi ? {wifi: payload.wifi} : {}), ...(payload?.wifi_status ? {wifi_status: payload.wifi_status} : {})};
     render();
   }
+
+  function refresh(payload) {
+    adoptResult(payload);
+  }
+
+  context.onWiFiChange?.(value => { snapshot = value; render(); });
 
   async function runScan() {
     if (scanning) return;
@@ -409,8 +417,6 @@ export async function wifiPage(context) {
     render();
     try {
       discovered = await scan();
-      // Refresh the profiles too: a successful association shows up here.
-      snapshot = await fetchSnapshot().catch(() => snapshot);
     } catch (error) {
       toast(error && error.message ? error.message : resolve(msg('wifi.scan_failed', '扫描失败')));
     } finally {
@@ -449,7 +455,6 @@ export async function wifiDetailPage(context) {
   }
 
   const profile = savedNetwork(snapshot, ssid) || {ssid};
-  const connected = connectedSsid(snapshot) === ssid;
 
   const savedProxyUrl = profile.proxy_url || '';
   let proxyEnabled = (profile.proxy_mode || 'system') === 'proxy';
@@ -558,15 +563,17 @@ export async function wifiDetailPage(context) {
     }
   }
 
-  const infoRows = [row({label: msg('ui.network_name', '网络名称'), value: ssid, tone: 'strong'})];
-  // Only the connected profile has an address; a saved one out of range has none.
-  const ipAddress = connected ? ((snapshot && snapshot.wifi_status) || {}).ip_address : '';
-  if (ipAddress) {
-    infoRows.push(row({label: msg('ui.ip_address', 'IP 地址'), value: ipAddress}));
+  const infoHost = el('div');
+  function renderInfo() {
+    const infoRows = [row({label: msg('ui.network_name', '网络名称'), value: ssid, tone: 'strong'})];
+    // Only the connected profile has an address; remove it as soon as it leaves.
+    const ipAddress = connectedSsid(snapshot) === ssid ? snapshot?.wifi_status?.ip_address : '';
+    if (ipAddress) infoRows.push(row({label: msg('ui.ip_address', 'IP 地址'), value: ipAddress}));
+    if (profile.has_psk) infoRows.push(row({label: msg('wifi.password', '密码'), value: '••••••••'}));
+    replace(infoHost, [group({caption: msg('ui.section_network_info', '网络信息'), rows: infoRows})]);
   }
-  if (profile.has_psk) {
-    infoRows.push(row({label: msg('wifi.password', '密码'), value: '••••••••'}));
-  }
+  renderInfo();
+  context.onWiFiChange?.(value => { snapshot = value; renderInfo(); });
 
   const forgetRow = row({
     label: msg('ui.forget_network', '忽略此网络'),
@@ -598,7 +605,7 @@ export async function wifiDetailPage(context) {
     // The design leads with the destructive action as a blue row, not a button
     // parked at the bottom of the page.
     group({rows: [forgetRow]}),
-    group({caption: msg('ui.section_network_info', '网络信息'), rows: infoRows}),
+    infoHost,
     group({
       joined: true,
       rows: [row({label: msg('ui.proxy_row_label', '配置代理'), accessory: proxySwitch}), proxyUrlField],
@@ -647,7 +654,7 @@ export function openJoinSheet(ssid, secured, onJoined) {
       }
       view.close();
       toast(t('wifi.connected_to', {ssid, defaultValue: '已连接到“{{ssid}}”。'}));
-      if (onJoined) onJoined();
+      if (onJoined) onJoined(result.payload);
     } catch (error) {
       form.setError({key: 'ui.connect_failed', fallback: error && error.message ? error.message : '连接失败'});
     } finally {
@@ -693,7 +700,7 @@ export function openCustomNetworkSheet(onJoined) {
       }
       view.close();
       toast(t('wifi.connected_to', {ssid, defaultValue: '已连接到“{{ssid}}”。'}));
-      if (onJoined) onJoined();
+      if (onJoined) onJoined(result.payload);
     } catch (error) {
       form.setError({key: 'ui.connect_failed', fallback: error && error.message ? error.message : '连接失败'});
     } finally {

@@ -688,6 +688,32 @@ func hexDigit(value byte) (byte, bool) {
 	}
 }
 
+// handleWiFiStatus avoids the Agent CLI, storage probes and scans in the full
+// device snapshot. Reads remain available while a connection task is running.
+func (s *Server) handleWiFiStatus(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	status := s.queryWiFiStatusContext(ctx)
+	if ctx.Err() != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "Wi-Fi status unavailable")
+		return
+	}
+	wifi, err := loadWiFiConfig(s.options.WiFiConfigPath)
+	if err != nil && !os.IsNotExist(err) {
+		writeJSONError(w, http.StatusServiceUnavailable, "Wi-Fi profiles unavailable")
+		return
+	}
+	proxy, err := wifiproxy.Load(s.options.WiFiProxyConfigPath)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "Wi-Fi proxy profiles unavailable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "wifi": wifi.publicValue(proxy), "wifi_status": status,
+	})
+}
+
 func (s *Server) handleWiFiScan(w http.ResponseWriter, _ *http.Request) {
 	var output strings.Builder
 	result := commandResult{ExitCode: 127}

@@ -19,6 +19,7 @@ import {createRouter} from './router.js';
 import {localApplicationStatus} from './pages/local.js';
 import {localRoutes, routes} from './routes.js';
 import {settingsList} from './settings-list.js';
+import {watchWiFi} from './wifi-status.js';
 import {el, replace} from '../ui/dom.js';
 import {applyEnvironmentClass, isEmbedded} from '../ui/environment.js';
 
@@ -52,6 +53,8 @@ export async function boot(rootId = 'app', options = {}) {
   const header = createHeader({embedded: isEmbedded(), localAgent: options.localAgent});
   /** Bumped per navigation, so a page that settles late cannot repaint the bar. */
   let generation = 0;
+  let liveWiFi = null;
+  let updateWiFi = () => {};
 
   const view = el('div', {class: 'app__scroll', data: {region: 'content'}});
   const railBody = el('div', {class: 'app__nav-body'});
@@ -81,13 +84,28 @@ export async function boot(rootId = 'app', options = {}) {
       };
       // One snapshot per navigation feeds the rail and the page, so the status
       // accessories in the two copies cannot disagree.
-      const snapshot = await loadSnapshot();
+      let snapshot = await loadSnapshot();
+      if (liveWiFi) snapshot = {...snapshot, ...liveWiFi};
+      const wifiListeners = [];
       // The device's configured language wins over the browser's stored choice.
       applyServerLocale(snapshot);
 
       view.className = context.name === 'home' ? 'app__scroll route-home' : 'app__scroll';
-      const content = await context.page({...context, snapshot, localAgent: options.localAgent, header: setHeader});
+      const content = await context.page({
+        ...context, snapshot, localAgent: options.localAgent, header: setHeader,
+        onWiFiChange: listener => wifiListeners.push(listener),
+      });
       if (current !== generation) return;
+      updateWiFi = value => {
+        const previous = snapshot?.wifi_status;
+        snapshot = {...snapshot, ...value};
+        if (previous?.connected !== snapshot.wifi_status?.connected || (previous?.state === 'UNKNOWN') !== (snapshot.wifi_status?.state === 'UNKNOWN')) {
+          renderRail(snapshot, context.path);
+        }
+        wifiListeners.forEach(listener => listener(snapshot));
+      };
+      // A status read can finish while an asynchronous page is being built.
+      if (liveWiFi) updateWiFi(liveWiFi);
       replace(view, [content]);
       mounted = true;
       header.set(pending);
@@ -113,5 +131,12 @@ export async function boot(rootId = 'app', options = {}) {
   );
 
   await router.start();
+  if (!options.localAgent) {
+    const stopWiFi = watchWiFi(value => {
+      if (!root.isConnected) { stopWiFi(); return; }
+      liveWiFi = {...liveWiFi, ...value};
+      updateWiFi(value);
+    });
+  }
   return router;
 }

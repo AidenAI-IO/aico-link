@@ -1,0 +1,86 @@
+/** One lightweight Wi-Fi read at a time, shared by the shell and its page. */
+import {request} from '../config/api.js';
+
+const INTERVAL_MS = 1000;
+const REQUEST_TIMEOUT_MS = 4000;
+
+export function watchWiFi(changed) {
+  let stopped = false;
+  let timer;
+  let pending;
+  let revision = 0;
+  let signature = '';
+  let immediate = false;
+
+  function publish(payload) {
+    if (!payload?.wifi_status) return;
+    const value = {wifi_status: payload.wifi_status};
+    if (payload.wifi) value.wifi = payload.wifi;
+    const next = JSON.stringify(value);
+    if (next === signature) return;
+    signature = next;
+    changed(value);
+  }
+
+  async function poll() {
+    clearTimeout(timer);
+    if (stopped || document.hidden || pending) return;
+    immediate = false;
+    const version = revision;
+    const controller = new AbortController();
+    pending = controller;
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const payload = await request('/api/network/wifi/status', {cache: 'no-store', signal: controller.signal});
+      if (!stopped && version === revision) publish(payload);
+    } catch (_error) {
+      if (!stopped && version === revision && !document.hidden) {
+        // A lost HTTP connection cannot establish the radio's state.
+        publish({wifi_status: {connected: false, ssid: '', ip_address: '', state: 'UNKNOWN'}});
+      }
+    } finally {
+      clearTimeout(timeout);
+      pending = null;
+      if (!stopped && !document.hidden) timer = setTimeout(poll, immediate ? 0 : INTERVAL_MS);
+    }
+  }
+
+  function refresh() {
+    if (stopped) return;
+    revision += 1;
+    immediate = true;
+    clearTimeout(timer);
+    if (pending) pending.abort();
+    else timer = setTimeout(poll, 0);
+  }
+
+  function onResult(event) {
+    if (stopped) return;
+    revision += 1;
+    publish(event.detail);
+    refresh();
+  }
+
+  function onVisibility() {
+    if (!document.hidden) refresh();
+    else {
+      revision += 1;
+      clearTimeout(timer);
+      if (pending) pending.abort();
+    }
+  }
+
+  document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('online', refresh);
+  window.addEventListener('aico:wifi-changed', onResult);
+  refresh();
+
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    if (pending) pending.abort();
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('online', refresh);
+    window.removeEventListener('aico:wifi-changed', onResult);
+  };
+}

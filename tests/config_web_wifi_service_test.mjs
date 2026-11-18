@@ -9,12 +9,13 @@
  *   - the `iw` scan dump is the only place the security of a nearby network is
  *     known, and its records are order-dependent.
  *
- * The transport calls themselves are exercised on the board, not here.
+ * Live updates are exercised with delayed requests and a controllable clock.
  */
 
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
+import {test} from 'node:test';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const service = await import(
@@ -117,5 +118,98 @@ assert.deepEqual(
   'nothing is hidden when no profile is saved',
 );
 assert.deepEqual(otherNetworks(undefined, [], ''), []);
+
+/* ---------------------------------------------------------- live updates --- */
+
+const {watchWiFi} = await import(
+  pathToFileURL(path.join(repositoryRoot, 'src/config_web/web/assets/js/app/wifi-status.js')).href
+);
+
+test('Wi-Fi observations recover, pause in the background, and reject stale reads after a save', async t => {
+  const original = Object.fromEntries(['document', 'window', 'fetch', 'setTimeout', 'clearTimeout'].map(key => [key, globalThis[key]]));
+  const timers = new Set();
+  const reads = [];
+  const changes = [];
+  const browser = new EventTarget();
+  browser.CustomEvent = CustomEvent;
+  globalThis.window = browser;
+  globalThis.document = new EventTarget();
+  document.hidden = false;
+  globalThis.setTimeout = (callback, ms) => {
+    const timer = {callback, ms};
+    timers.add(timer);
+    return timer;
+  };
+  globalThis.clearTimeout = timer => timers.delete(timer);
+  globalThis.fetch = (url, options) => new Promise((resolve, reject) => {
+    reads.push({url, options, resolve: payload => resolve({ok: true, text: async () => JSON.stringify(payload)}), reject});
+  });
+  const stop = watchWiFi(value => changes.push(value));
+  t.after(() => { stop(); Object.assign(globalThis, original); });
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  async function tick(ms) {
+    for (const timer of [...timers]) {
+      if (timer.ms === ms) { timers.delete(timer); timer.callback(); }
+    }
+    await flush();
+  }
+  const disconnected = {wifi: {networks: []}, wifi_status: {connected: false, ssid: '', state: 'DISCONNECTED'}};
+  const connected = {wifi: {networks: [{ssid: 'Home'}]}, wifi_status: {connected: true, ssid: 'Home', state: 'COMPLETED', ip_address: '192.168.1.8'}};
+
+  await tick(0);
+  assert.equal(reads[0].url, '/api/network/wifi/status');
+  assert.equal(reads[0].options.cache, 'no-store');
+  reads[0].resolve(disconnected);
+  await flush();
+  assert.deepEqual(changes, [disconnected]);
+
+  await tick(1000);
+  await tick(1000);
+  assert.equal(reads.length, 2, 'a slow read never overlaps another poll');
+  reads[1].resolve(disconnected);
+  await flush();
+  assert.equal(changes.length, 1, 'unchanged observations do not repaint the UI');
+
+  await tick(1000);
+  browser.dispatchEvent(new CustomEvent('aico:wifi-changed', {detail: connected}));
+  assert.deepEqual(changes.at(-1), connected, 'a completed connection paints immediately');
+  reads[2].resolve(disconnected);
+  await flush();
+  assert.deepEqual(changes.at(-1), connected, 'a pre-save read cannot revert the new connection');
+
+  await tick(0);
+  reads.at(-1).reject(new Error('device unreachable'));
+  await flush();
+  assert.equal(changes.at(-1).wifi_status.state, 'UNKNOWN', 'an outage cannot keep a stale connection badge');
+  await tick(1000);
+  reads.at(-1).resolve(connected);
+  await flush();
+  assert.deepEqual(changes.at(-1), connected, 'polling recovers after an outage');
+
+  document.hidden = true;
+  document.dispatchEvent(new Event('visibilitychange'));
+  const count = reads.length;
+  await tick(1000);
+  assert.equal(reads.length, count, 'background tabs do not poll');
+  document.hidden = false;
+  document.dispatchEvent(new Event('visibilitychange'));
+  await tick(0);
+  assert.equal(reads.length, count + 1, 'returning to the page refreshes immediately');
+  reads.at(-1).resolve(disconnected);
+  await flush();
+  assert.deepEqual(changes.at(-1), disconnected, 'external disconnects update without scanning');
+
+  await tick(1000);
+  const pending = reads.at(-1);
+  stop();
+  assert.equal(pending.options.signal.aborted, true);
+  const painted = changes.length;
+  pending.resolve(connected);
+  await flush();
+  browser.dispatchEvent(new CustomEvent('aico:wifi-changed', {detail: connected}));
+  await tick(1000);
+  assert.equal(changes.length, painted, 'a stopped watcher cannot repaint or restart');
+  assert.equal(timers.size, 0);
+});
 
 process.stdout.write('config web Wi-Fi service tests passed\n');

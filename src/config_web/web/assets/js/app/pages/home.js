@@ -8,11 +8,20 @@
  */
 
 import {settingsList} from '../settings-list.js';
+import {el, replace} from '../../ui/dom.js';
 
 /**
  * @param {{snapshot: object|null, navigate: Function}} context
  * @returns {Node}
  */
 export function homePage(context) {
-  return settingsList(context.snapshot || null, context.navigate);
+  const host = el('div', {}, [settingsList(context.snapshot || null, context.navigate)]);
+  const status = snapshot => JSON.stringify([snapshot?.wifi_status?.connected, snapshot?.wifi_status?.state === 'UNKNOWN']);
+  let state = status(context.snapshot);
+  context.onWiFiChange?.(snapshot => {
+    if (state === status(snapshot)) return;
+    state = status(snapshot);
+    replace(host, [settingsList(snapshot, context.navigate)]);
+  });
+  return host;
 }
