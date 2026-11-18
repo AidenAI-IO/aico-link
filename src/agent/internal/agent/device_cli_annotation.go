@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -17,8 +16,7 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
-// Bound the log and legend together, rather than silently omitting operations
-// from the image. The screenshot count and UTG log have independent limits.
+// Bound the number of operations dispatched by one shell call.
 const maxDeviceCLIActions = 64
 
 type deviceCLIAction struct {
@@ -59,148 +57,103 @@ func newDeviceCLIAction(command string, call devicecli.Call) deviceCLIAction {
 	return action
 }
 
-func (a deviceCLIAction) label(number int) string {
-	label := fmt.Sprintf("%02d %s", number, a.name)
-	for _, p := range a.points[:a.pointCount] {
-		label += fmt.Sprintf(" %d,%d", p.X, p.Y)
+// renderDeviceCLISheet composes presentation copies only. Raw frames remain
+// available to the UTG classifier without any overlays or resizing here.
+func renderDeviceCLISheet(frames []deviceCLIFrame, actions []deviceCLIAction) ([]byte, image.Rectangle) {
+	type panel struct {
+		src    image.Image
+		action int
 	}
-	if a.failed {
-		label += " [failed]"
-	}
-	return label
-}
-
-// Annotate a presentation copy only. The original frame, screen dimensions,
-// and UTG image signature stay untouched. The ledger contains no text inputs,
-// URLs, keyboard payloads, or other non-coordinate arguments.
-func annotateDeviceCLIFrame(v visualScreenshotObservation, actions []deviceCLIAction) (visualScreenshotObservation, string) {
-	src, _, err := image.Decode(bytes.NewReader(v.ImageBytes))
-	if err != nil || src.Bounds().Empty() || len(actions) == 0 {
-		return v, ""
-	}
-	screen := image.Rect(0, 0, src.Bounds().Dx(), src.Bounds().Dy())
-	face := basicfont.Face7x13
-	const padding, rowHeight, headerHeight = 8, 16, 24
-	labels := make([]string, len(actions))
-	colWidth := 0
-	for i, action := range actions {
-		labels[i] = action.label(i + 1)
-		colWidth = max(colWidth, font.MeasureString(face, labels[i]).Ceil()+2*padding)
-	}
-	const heading = "DEVICE CLI / ACTIONS IN ORDER"
-	// Keep the device frame readable on long chains and the composite within
-	// the same height budget as plain CLI frames.
-	minColumns := (len(actions) + 31) / 32
-	fitScreen := func(columns int) (image.Rectangle, int) {
-		rows := (len(actions) + columns - 1) / columns
-		ledgerHeight := headerHeight + rows*rowHeight + padding
-		height := min(screen.Dy(), 1080-ledgerHeight)
-		return image.Rect(0, 0, max(1, screen.Dx()*height/screen.Dy()), height), ledgerHeight
-	}
-	columns := minColumns
-	for candidate := minColumns + 1; candidate <= min(len(actions), screen.Dx()/colWidth); candidate++ {
-		area, _ := fitScreen(candidate)
-		if candidate*colWidth <= area.Dx() {
-			columns = candidate
-		}
-	}
-	fitted, ledgerHeight := fitScreen(columns)
-	screen = fitted
-	width := max(screen.Dx(), columns*colWidth, font.MeasureString(face, heading).Ceil()+2*padding)
-	annotated := image.NewRGBA(image.Rect(0, 0, width, screen.Dy()+ledgerHeight))
-	dark := image.NewUniform(color.RGBA{19, 25, 32, 255})
-	light := image.NewUniform(color.RGBA{255, 255, 255, 255})
-	draw.Draw(annotated, annotated.Bounds(), dark, image.Point{}, draw.Src)
-	if screen.Size() == src.Bounds().Size() {
-		draw.Draw(annotated, screen, src, src.Bounds().Min, draw.Src)
-	} else {
-		xdraw.ApproxBiLinear.Scale(annotated, screen, src, src.Bounds(), draw.Src, nil)
-	}
-	d := font.Drawer{Dst: annotated, Src: light, Face: face}
-	d.Dot = fixed.P(padding, screen.Dy()+16)
-	d.DrawString(heading)
-	for i, label := range labels {
-		d.Dot = fixed.P(padding+i%columns*colWidth, screen.Dy()+headerHeight+11+i/columns*rowHeight)
-		d.DrawString(label)
-	}
-	layer := annotated.SubImage(screen).(*image.RGBA)
-	const markRadius = 8
-	positions := make([]image.Point, len(actions))
-	badges := make([]image.Rectangle, 0, len(actions))
-	pixel := func(p image.Point) image.Point {
-		return image.Pt((p.X*(screen.Dx()-1)+500)/1000, (p.Y*(screen.Dy()-1)+500)/1000)
-	}
-	for i, a := range actions {
-		if a.pointCount == 0 {
+	var panels []panel
+	var cell image.Point
+	for _, frame := range frames {
+		src, _, err := image.Decode(bytes.NewReader(frame.visual.ImageBytes))
+		if err != nil || src.Bounds().Empty() {
 			continue
 		}
-		start := pixel(a.points[0])
-		end := start
-		if a.pointCount == 2 {
-			end = pixel(a.points[1])
-			drawDeviceCLIArrow(layer, start, end)
-		}
-		if a.name == "drag-release" && i > 0 && actions[i-1].name == "drag-start" && !actions[i-1].failed && actions[i-1].pointCount > 0 {
-			drawDeviceCLIArrow(layer, pixel(actions[i-1].points[0]), end)
-		}
-		drawMarkerRing(layer, start.X, start.Y, markRadius, 2, dark.C)
-		drawMarkerRing(layer, start.X, start.Y, markRadius-2, 2, light.C)
-		positions[i] = end
+		panels = append(panels, panel{src, frame.action})
+		cell.X = max(cell.X, src.Bounds().Dx())
+		cell.Y = max(cell.Y, src.Bounds().Dy())
 	}
-	// Draw numbers above all lines and try nearby slots for repeated taps.
-	d.Dst = layer
-	for i, a := range actions {
-		if a.pointCount == 0 {
-			continue
+	if len(panels) == 0 {
+		return nil, image.Rectangle{}
+	}
+	const gutter = 4
+	// Pick the grid that preserves the most detail within the image budget;
+	// break ties with the least empty space. Portrait chains usually use one row.
+	cols, rows, bestScale := 1, len(panels), 0.0
+	for c := 1; c <= len(panels); c++ {
+		r := (len(panels) + c - 1) / c
+		scale := min(1.0, float64(1920-gutter*(c-1))/float64(cell.X*c), float64(1080-gutter*(r-1))/float64(cell.Y*r))
+		if scale > bestScale || (scale == bestScale && c*r < cols*rows) {
+			cols, rows, bestScale = c, r, scale
 		}
-		p := positions[i]
-		label := strconv.Itoa(i + 1)
-		w, h := font.MeasureString(face, label).Ceil()+6, 15
-		badge := image.Rectangle{}
-	findSlot:
-		for distance := markRadius + 2; distance <= markRadius+62; distance += 16 {
-			for _, offset := range []image.Point{{X: distance, Y: -h}, {X: -distance - w, Y: -h}, {X: distance, Y: 0}, {X: -distance - w, Y: 0}, {X: -w / 2, Y: distance}, {X: -w / 2, Y: -distance - h}} {
-				origin := p.Add(offset)
-				origin.X = max(0, min(origin.X, screen.Max.X-w))
-				origin.Y = max(0, min(origin.Y, screen.Max.Y-h))
-				candidate := image.Rectangle{Min: origin, Max: origin.Add(image.Pt(w, h))}.Intersect(screen)
-				if badge.Empty() {
-					badge = candidate
-				}
-				overlaps := false
-				for _, used := range badges {
-					if candidate.Overlaps(used) {
-						overlaps = true
-						break
-					}
-				}
-				if !overlaps {
-					badge = candidate
-					break findSlot
+	}
+	cellSize := image.Pt(max(1, int(float64(cell.X)*bestScale)), max(1, int(float64(cell.Y)*bestScale)))
+	sheet := image.NewRGBA(image.Rect(0, 0, cellSize.X*cols+gutter*(cols-1), cellSize.Y*rows+gutter*(rows-1)))
+	draw.Draw(sheet, sheet.Bounds(), image.NewUniform(color.RGBA{19, 25, 32, 255}), image.Point{}, draw.Src)
+	var rect image.Rectangle
+	for i, panel := range panels {
+		origin := image.Pt(i%cols*(cellSize.X+gutter), i/cols*(cellSize.Y+gutter))
+		size := panel.src.Bounds().Size()
+		w, h := max(1, int(float64(size.X)*bestScale)), max(1, int(float64(size.Y)*bestScale))
+		rect = image.Rectangle{Min: origin, Max: origin.Add(image.Pt(w, h))}
+		if size == rect.Size() {
+			draw.Draw(sheet, rect, panel.src, panel.src.Bounds().Min, draw.Src)
+		} else {
+			xdraw.ApproxBiLinear.Scale(sheet, rect, panel.src, panel.src.Bounds(), draw.Src, nil)
+		}
+		if panel.action >= 0 && panel.action < len(actions) {
+			action := actions[panel.action]
+			if action.name == "drag-release" && action.pointCount == 1 && panel.action > 0 {
+				start := actions[panel.action-1]
+				if start.name == "drag-start" && start.pointCount == 1 && !start.failed {
+					action.points = [2]image.Point{start.points[0], action.points[0]}
+					action.pointCount = 2
 				}
 			}
+			markDeviceCLIPanel(sheet.SubImage(rect).(*image.RGBA), action, panel.action+1)
 		}
-		badges = append(badges, badge)
-		draw.Draw(layer, badge, light, image.Point{}, draw.Src)
-		draw.Draw(layer, badge.Inset(1), dark, image.Point{}, draw.Src)
-		d.Dot = fixed.P(badge.Min.X+3, badge.Min.Y+11)
-		d.DrawString(label)
 	}
 	var out bytes.Buffer
-	if err := jpeg.Encode(&out, annotated, &jpeg.Options{Quality: 86}); err != nil {
-		return v, ""
+	if err := jpeg.Encode(&out, sheet, &jpeg.Options{Quality: 86}); err != nil {
+		return nil, image.Rectangle{}
 	}
-	v.ImageBytes = out.Bytes()
-	v.MIMEType = "image/jpeg"
-	// Keep the normalized coordinate target unambiguous when the ledger changes
-	// the overall image aspect ratio. Preserve stability/change status too.
-	status := v.Result
-	status.Width, status.Height = 0, 0
-	caption := fmt.Sprintf(" Device screen: top-left %d×%d px of this %d×%d px image. Normalize against only that region; do not include margins or the action ledger. Numbered marks and arrows are action history, not UI targets.", screen.Dx(), screen.Dy(), width, annotated.Bounds().Dy())
-	if notes := screenshotObservationStatusSummary("shell", status); notes != "" {
-		caption += " " + notes
+	return out.Bytes(), rect
+}
+
+func markDeviceCLIPanel(img *image.RGBA, action deviceCLIAction, number int) {
+	bounds := img.Bounds()
+	dark := color.RGBA{19, 25, 32, 255}
+	light := color.RGBA{255, 255, 255, 255}
+	origin := bounds.Min.Add(image.Pt(4, 4))
+	if action.pointCount > 0 {
+		pixel := func(p image.Point) image.Point {
+			return bounds.Min.Add(image.Pt((p.X*(bounds.Dx()-1)+500)/1000, (p.Y*(bounds.Dy()-1)+500)/1000))
+		}
+		start := pixel(action.points[0])
+		end := start
+		if action.pointCount == 2 {
+			end = pixel(action.points[1])
+			drawDeviceCLIArrow(img, start, end)
+		}
+		drawMarkerRing(img, start.X, start.Y, 8, 2, dark)
+		drawMarkerRing(img, start.X, start.Y, 6, 2, light)
+		origin = end.Add(image.Pt(9, -15))
 	}
-	return v, caption
+	label := strconv.Itoa(number)
+	if action.failed {
+		label += "!"
+	}
+	face := basicfont.Face7x13
+	w, h := font.MeasureString(face, label).Ceil()+6, 15
+	origin.X = max(bounds.Min.X, min(origin.X, bounds.Max.X-w))
+	origin.Y = max(bounds.Min.Y, min(origin.Y, bounds.Max.Y-h))
+	badge := image.Rectangle{Min: origin, Max: origin.Add(image.Pt(w, h))}
+	draw.Draw(img, badge, image.NewUniform(light), image.Point{}, draw.Src)
+	draw.Draw(img, badge.Inset(1), image.NewUniform(dark), image.Point{}, draw.Src)
+	d := font.Drawer{Dst: img, Src: image.NewUniform(light), Face: face, Dot: fixed.P(origin.X+3, origin.Y+11)}
+	d.DrawString(label)
 }
 
 func drawDeviceCLIArrow(img *image.RGBA, from, to image.Point) {

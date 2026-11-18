@@ -39,7 +39,7 @@ func TestDeviceCLIShellCapturesRealRequestsNotText(t *testing.T) {
 		t.Fatal("stdout triggered screenshot")
 	}
 	got := call(`curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["look"]' "$AICO_DEVICE_CLI_URL/command" && exit 7`)
-	if !got.Result.IsError() || len(got.Result.deviceFrames) != 1 || len(deviceCLIStateMessages(ctx, got.Result.deviceFrames, got.Result.deviceActions)) != 1 {
+	if !got.Result.IsError() || len(got.Result.deviceFrames) != 1 || len(deviceCLIStateMessages(got.Result.deviceFrames, got.Result.deviceActions)) != 1 {
 		t.Fatalf("failed shell discarded accepted observation: %+v", got.Result)
 	}
 	if got := call(`curl -fsS -d '["look"]' "$AICO_DEVICE_CLI_URL/command"`); !got.Result.IsError() || len(got.Result.deviceFrames) != 0 {
@@ -56,7 +56,7 @@ func TestDeviceCLIChainAnnotatesOnlyDispatchedOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := rawFrame.Bytes()
-	changed := true
+	changed := false
 	output, _ := json.Marshal(postActionScreenshotResult{
 		screenshotResult: screenshotResult{Width: 400, Height: 600, Data: base64.StdEncoding.EncodeToString(raw)}, ScreenChanged: &changed,
 	})
@@ -78,50 +78,47 @@ func TestDeviceCLIChainAnnotatesOnlyDispatchedOperations(t *testing.T) {
 	if len(got.deviceActions) != 4 {
 		t.Fatalf("recorded actions: %+v", got.deviceActions)
 	}
-	for i, want := range []string{"01 tap 200,400", "02 swipe 500,800 500,300", "03 type", "04 back [failed]"} {
-		if label := got.deviceActions[i].label(i + 1); label != want {
-			t.Errorf("operation %d: %s", i, label)
+	for i, want := range []string{"tap", "swipe", "type", "back"} {
+		if action := got.deviceActions[i]; action.name != want || action.failed != (i == 3) {
+			t.Errorf("unexpected operation %d: %+v", i, action)
 		}
 	}
-	states := deviceCLIStateMessages(ctx, got.deviceFrames, got.deviceActions)
-	if len(states) < 2 {
-		t.Fatalf("missing intermediate/final states: %d", len(states))
+	states := deviceCLIStateMessages(got.deviceFrames, got.deviceActions)
+	if len(states) != 1 || len(states[0].Parts) != 2 {
+		t.Fatalf("expected one screenshot attachment, got %d states", len(states))
 	}
-	for i, state := range states {
-		caption := state.Parts[0].(llms.TextContent).Text
-		_, data, ok := telemetryDataURL(state.Parts[1].(llms.ImageURLContent).URL)
-		if !ok {
-			t.Fatal("invalid screenshot attachment")
-		}
-		if i < len(states)-1 {
-			if !bytes.Equal(raw, data) {
-				t.Fatal("intermediate frame was changed")
-			}
-			continue
-		}
-		decoded, err := jpeg.Decode(bytes.NewReader(data))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if decoded.Bounds().Dx() != 400 || decoded.Bounds().Dy() <= 600 || !strings.Contains(caption, "400×600") {
-			t.Fatalf("wrong annotation geometry/caption: %v %s", decoded.Bounds(), caption)
-		}
-		for _, check := range []image.Point{{X: 84, Y: 239}, {X: 199, Y: 340}} {
-			// Inspect a small neighborhood: the nominal points lie on the tap ring and swipe shaft.
-			visible := false
-			for y := check.Y - 3; y <= check.Y+3; y++ {
-				for x := check.X - 3; x <= check.X+3; x++ {
-					r, _, _, _ := decoded.At(x, y).RGBA()
-					visible = visible || r > 0x9000
-				}
-			}
-			if !visible {
-				t.Errorf("missing gesture mark near %v", check)
-			}
+	caption := states[0].Parts[0].(llms.TextContent).Text
+	_, data, ok := telemetryDataURL(states[0].Parts[1].(llms.ImageURLContent).URL)
+	if !ok {
+		t.Fatal("invalid screenshot attachment")
+	}
+	decoded, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Bounds().Size() != image.Pt(1612, 600) || !strings.Contains(caption, "1212,0; size 400×600") {
+		t.Fatalf("wrong sheet geometry or last panel caption: %v %s", decoded.Bounds(), caption)
+	}
+	for _, check := range []struct {
+		point  image.Point
+		marked bool
+	}{
+		{image.Pt(84, 239), true},    // tap ring in panel 1
+		{image.Pt(488, 239), false},  // tap not repeated in panel 2
+		{image.Pt(604, 340), true},   // swipe shaft in panel 2
+		{image.Pt(200, 340), false},  // swipe not drawn in panel 1
+		{image.Pt(1008, 340), false}, // swipe not drawn on the text-entry panel
+		{image.Pt(411, 4), false},    // swipe only has an endpoint label, not a corner badge
+		{image.Pt(814, 4), true},     // text entry has a number badge inside its own panel
+	} {
+		r, _, _, _ := decoded.At(check.point.X, check.point.Y).RGBA()
+		if (r > 0x9000) != check.marked {
+			t.Errorf("incorrect marker at %v: bright=%v", check.point, r > 0x9000)
 		}
 	}
+
 	last := turn.steps[len(turn.steps)-1]
-	if !bytes.Equal(last.frame.ImageBytes, raw) || last.shown {
+	if !bytes.Equal(last.frame.ImageBytes, raw) {
 		t.Fatal("annotated frame would replace the raw UTG evidence")
 	}
 }

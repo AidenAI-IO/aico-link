@@ -18,12 +18,12 @@ device-cli type 'Hello' && device-cli enter
 ```
 
 Coordinates are normalized to 0–1000 on both axes. After a foreground shell has
-actually invoked the scoped CLI, its result is followed by the final screenshot
-and up to four useful intermediate screenshots. The final image shows numbered
-marks for coordinate actions and an ordered ledger for all dispatched operations,
-including actions dispatched by UTG replay. The ledger marks failures and omits
-text, URL, and key arguments. Use only the device region, not the ledger, when
-normalizing coordinates. A foreground shell can record up to 64 operations.
+actually invoked the scoped CLI, the shell result is followed by one screenshot
+sheet containing up to the last five captured frames, in order from left to
+right, then top to bottom. Each panel marks only its own operation, including
+steps dispatched by UTG replay. There is no footer; a `!` next to a marker
+indicates a failed operation. Normalize new coordinates within the last panel,
+not across the entire sheet. A foreground shell can dispatch up to 64 operations.
 An unchanged display is not an error. A CLI failure exits nonzero, so `&&` stops
 the chain. Without an active shell scope, the executable accepts `--url` to
 target a daemon directly (default

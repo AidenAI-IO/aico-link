@@ -26,7 +26,7 @@ type deviceCLIRuntimeKey struct{}
 type deviceCLICaptureKey struct{}
 
 type deviceCLIFrame struct {
-	step   int
+	action int // zero-based index into this shell call’s action log
 	visual visualScreenshotObservation
 }
 
@@ -112,10 +112,10 @@ func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string
 		capture.actions = append(capture.actions, deviceCLIAction{name: args[0]})
 		result, err := r.runUTGCommand(ctx, s, args, capture)
 		capture.actions[index].failed = err != nil || result.IsError
-		if len(capture.frames) == 0 && ctx.Err() == nil {
+		if len(capture.actions) == index+1 && ctx.Err() == nil {
 			result, _ := invokeDeviceHTTP(context.WithValue(ctx, deviceCLICaptureKey{}, capture), s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
 			frame, _ := parseScreenshotObservation(result.Output)
-			capture.add(-1, compressCLIFrame(frame))
+			capture.add(index, compressCLIFrame(frame))
 		}
 		return result, err
 	}
@@ -141,11 +141,9 @@ func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string
 			last, _ = parseScreenshotObservation(fallback.Output)
 		}
 		last = compressCLIFrame(last)
+		capture.add(len(capture.actions)-1, last)
 		if turn != nil && len(turn.steps) < maxUTGSteps {
-			capture.add(len(turn.steps), last)
 			turn.steps = append(turn.steps, utgObservation{args: args, frame: last, successful: err == nil && !result.IsError})
-		} else {
-			capture.add(-1, last)
 		}
 	}()
 	for i, call := range calls {
@@ -167,10 +165,15 @@ func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string
 		if result.IsError {
 			return result, nil
 		}
-		if len(calls) > 1 && i == 0 && (!ok || visual.Result.ScreenStable != nil && !*visual.Result.ScreenStable) {
-			capture.actions[len(capture.actions)-1].failed = true
-			err = fmt.Errorf("drag did not reach a stable screen; inspect the screenshot before retrying")
-			return result, err
+		if i+1 < len(calls) {
+			if !ok || visual.Result.ScreenStable != nil && !*visual.Result.ScreenStable {
+				capture.actions[len(capture.actions)-1].failed = true
+				err = fmt.Errorf("drag did not reach a stable screen; inspect the screenshot before retrying")
+				return result, err
+			}
+			// Preserve the drag-start frame separately from drag-release. The
+			// turn's UTG still records the complete drag as one raw action.
+			capture.add(len(capture.actions)-1, compressCLIFrame(visual))
 		}
 	}
 	return result, nil
@@ -228,48 +231,39 @@ func compressCLIFrame(v visualScreenshotObservation) visualScreenshotObservation
 	return v
 }
 
-func (c *deviceCLICapture) add(step int, v visualScreenshotObservation) {
+func (c *deviceCLICapture) add(action int, v visualScreenshotObservation) {
 	c.last = v
 	if len(v.ImageBytes) == 0 {
 		return
 	}
-	// Retain the final observation and up to four visually useful transitions.
-	if n := len(c.frames); n > 0 {
-		changed := c.frames[n-1].visual.Result.ScreenChanged
-		if changed != nil && !*changed {
-			c.frames = c.frames[:n-1]
-		}
-	}
+	// Keep the last five captured frames, even if a step did not change the
+	// screen: its panel is the only place to see that step's marker.
 	if len(c.frames) == 5 {
 		c.frames = c.frames[1:]
 	}
-	c.frames = append(c.frames, deviceCLIFrame{step: step, visual: v})
+	c.frames = append(c.frames, deviceCLIFrame{action: action, visual: v})
 }
 
-func deviceCLIStateMessages(ctx context.Context, frames []deviceCLIFrame, actions []deviceCLIAction) []llms.MessageContent {
-	var messages []llms.MessageContent
-	turn, _ := ctx.Value(utgTurnKey{}).(*utgTurn)
-	for i, frame := range frames {
-		v := frame.visual
-		if i < len(frames)-1 && v.Result.ScreenChanged != nil && !*v.Result.ScreenChanged {
-			continue
-		}
-		label := "Device CLI screenshot"
-		var annotation string
-		if i == len(frames)-1 && len(actions) > 0 {
-			v, annotation = annotateDeviceCLIFrame(v, actions)
-		}
-		if frame.step >= 0 && turn != nil && frame.step < len(turn.steps) {
-			label += fmt.Sprintf(", Step #%d", frame.step)
-			// The annotated frame is for the agent; classification still uses the clean image.
-			turn.steps[frame.step].shown = annotation == ""
-		}
-		caption := label + ". Coordinates are normalized 0–1000, not pixels."
-		if annotation == "" {
-			caption += " " + screenshotObservationStatusSummary("shell", v.Result)
-		}
-		caption += annotation
-		messages = append(messages, llms.MessageContent{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{llms.TextPart(caption), buildImagePart(v.MIMEType, v.ImageBytes)}})
+func deviceCLIStateMessages(frames []deviceCLIFrame, actions []deviceCLIAction) []llms.MessageContent {
+	if len(frames) == 0 {
+		return nil
 	}
-	return messages
+	last := frames[len(frames)-1].visual
+	imageBytes, latestPanel := renderDeviceCLISheet(frames, actions)
+	mimeType := "image/jpeg"
+	caption := "Device CLI screenshot sheet. Panels are ordered left to right, then top to bottom. Markers show past actions, not UI targets."
+	if len(imageBytes) == 0 {
+		imageBytes, mimeType = last.ImageBytes, last.MIMEType
+		caption = "Device CLI screenshot. Use this image for the latest available device state."
+	} else {
+		caption += fmt.Sprintf(" Normalize new coordinates to 0–1000 within the last panel only (top-left pixel %d,%d; size %d×%d px), not across the sheet.", latestPanel.Min.X, latestPanel.Min.Y, latestPanel.Dx(), latestPanel.Dy())
+	}
+	status := last.Result
+	status.Width, status.Height = 0, 0
+	if notes := screenshotObservationStatusSummary("shell", status); notes != "" {
+		caption += " " + notes
+	}
+	return []llms.MessageContent{{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{
+		llms.TextPart(caption), buildImagePart(mimeType, imageBytes),
+	}}}
 }

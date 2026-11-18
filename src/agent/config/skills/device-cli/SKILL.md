@@ -12,7 +12,7 @@ Use `shell` with a foreground command such as `device-cli tap 514 263`. The tool
 - `drag X1 Y1 X2 Y2` for a fixed visible destination; use `drag-start X Y` and `drag-release X Y` in separate calls if the layout may move after the drag starts.
 - `type TEXT` inserts text into the focused field. Quote it as a single shell argument (in POSIX shell, single-quote it and encode a literal apostrophe as `'\''`). Do not interpolate screen text as shell syntax. `enter` submits when appropriate; `key backspace` deletes.
 - `home`, `back`, `wait [milliseconds]`, `open APP`, `url URL`, and `quick ACTION` wrap platform navigation. Prefer tapping a clearly visible app icon over `open`.
-- Prefer to chain known, layout-independent steps with `&&`, e.g. `device-cli type 'hello' && device-cli enter`. Do not chain speculative taps across pages or steps that require confirmation. Check the final image and any intermediate frames; a no-change warning is not a command failure. The final screenshot includes numbered operation marks and a ledger. Choose new coordinates using only the device region specified in its caption, excluding the ledger.
+- Prefer to chain known, layout-independent steps with `&&`, e.g. `device-cli type 'hello' && device-cli enter`. Do not chain speculative taps across pages or steps that require confirmation. Read the screenshot sheet left to right, then top to bottom. Each panel marks only its own action. Use the last panel for current state and normalize new coordinates within that panel, not across the sheet. A no-change warning is not a command failure.
 - Do not use controller commands or external automation to bypass this visual workflow. Never leave device commands running in background shell sessions.
 
 ## Learned navigation

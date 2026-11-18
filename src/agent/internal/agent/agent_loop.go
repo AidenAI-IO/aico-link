@@ -594,7 +594,7 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		})
 	}
 	prepared.IsError = toolExecution.Result.IsError()
-	appendErr := appendToolExecutionMessages(llmExecutor, parser, toolCallMessage, toolExecution.Step, prepared, deviceCLIStateMessages(ctx, toolExecution.Result.deviceFrames, toolExecution.Result.deviceActions)...)
+	appendErr := appendToolExecutionMessages(llmExecutor, parser, toolCallMessage, toolExecution.Step, prepared, deviceCLIStateMessages(toolExecution.Result.deviceFrames, toolExecution.Result.deviceActions)...)
 	if err := ctx.Err(); err != nil {
 		if appendErr != nil {
 			return "", iterationContinue, errors.Join(err, appendErr)
