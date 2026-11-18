@@ -1366,6 +1366,20 @@ were called or which environment executed the task:
 | Device integration | `aico_app_connection_capabilities_v1`, `aico_app_phone_bridge_data_policy_v1`, `aico_app_notes_entry_policy_v1` | Device interfaces, connection behavior, and routing policies |
 | Shell utilities | `shell_utility_v1` | Time, timezone, and deterministic shell calculations |
 
+For focused workflow checks, select a task with `--task-id`.
+
+- `app_workflow_v1`: `wechat_search_and_send_new_message` requires WeChat on
+  the external test device, signed in to a test account. It sends only to File
+  Transfer Assistant and alternates between two messages so older chat
+  history cannot satisfy the new-message check.
+- `aico_app_android_bridge_capabilities_v1`: the mixed text replacement case
+  checks the final editable field exactly. The batch calendar case writes to
+  the reserved emulator calendar, which the harness removes after each run.
+- `tool_recovery_v1`: the ambiguous calendar create case checks read-back and
+  duplicate prevention with a scripted response timeout.
+- `perception_v1`: the appointment picker uses a synthetic screenshot and
+  scores the first tap on the row matching both the requested date and time.
+
 Many areas exercise tool calls. Shell utilities does not represent general tool
 use proficiency. Each suite belongs to one area; unknown suites appear in Other.
 The internal JSON keys `capabilities` and `capability` are retained for existing
