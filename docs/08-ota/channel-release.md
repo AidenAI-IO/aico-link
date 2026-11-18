@@ -108,6 +108,18 @@ After merging the workflow into the GitHub default branch:
 3. Build with `plan_only=false`; set `publish=false` to generate downloadable validation artifacts only.
 4. Set `publish=true` for the actual release. The release job runs through the channel's GitHub Environment.
 
+Both business and OTA releases publish the Aico Link container image from the planned
+source commit using `docker/dev/Dockerfile`. The image supports `linux/amd64` and
+`linux/arm64` and uses the GitHub release tag, for example
+`ghcr.io/aidenai-io/aico-link:dev-v0.0.2`. Use the image reference from the Actions run
+summary with Docker directly or in the Launcher's **New instance** dialog. If the GHCR
+package is private, authenticate Docker with an account that has read access before
+pulling the image.
+
+The image is pushed before the GitHub release is published. A failed image push blocks
+publication; if a later release step fails, the image tag may already exist in GHCR.
+Plan-only and build-only runs do not push an image.
+
 The primary **Debian Build (scheduled / primary)** (`build-scheduled.yml`) and backup
 **Debian Build (backup / self-hosted-02)** (`build-backup.yml`) expose the same
 `channel`, `source_ref`, `version`, `force_ota`, `plan_only`, and `publish` parameters.
@@ -140,10 +152,11 @@ calls will wait on one another. A new run does not cancel a running build.
 
 The repository requires `OTA_ED25519_PRIVATE_KEY` (Ed25519 PEM, OTA builds only) and
 optionally `AGENT_CONFIG_TOML`. Business-package builds need neither secret. Publishing
-uses the workflow's `GITHUB_TOKEN`; only the publish job has `contents: write`. Calling
-jobs in the primary and backup workflows must also declare that maximum permission so
-it can be passed to the called publish job; planning and build jobs remain read-only.
-Repository Actions permissions must allow it. Configuring approvers and allowed release
+uses the workflow's `GITHUB_TOKEN`; only the publish job has `contents: write` and
+`packages: write`. Calling jobs in the primary and backup workflows must also declare
+these permissions so they can be passed to the called publish job; planning and build
+jobs remain read-only. Repository Actions permissions must allow publication to GitHub
+Releases and GHCR. Configuring approvers and allowed release
 branches for the `staging` and `prod` Environments is recommended.
 
 Firmware can use `aico-hosted-01`, `aico-hosted-02`, or `ubuntu-24.04`; business
