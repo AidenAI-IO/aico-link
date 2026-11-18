@@ -38,6 +38,10 @@ for each state. The outlined state is the last learned state, not a live match.
 The graph file (`device-utg.json` in the agent data directory) contains device
 screenshots. Treat it as sensitive and do not share or commit it.
 
+**Reset graph** clears the saved states and transitions after confirmation. It
+leaves the chat history and device data unchanged. In-progress and queued
+learning from before the reset is discarded; new turns can learn a fresh graph.
+
 - `utg-status` identifies the live screen and lists reachable keys.
 - `utg-goto KEY` plans a directed shortest path. It can fall back to a known Home
   anchor. It verifies source and destination at each edge. If destination

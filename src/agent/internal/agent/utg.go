@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -48,16 +49,18 @@ type utgGraph struct {
 	Current string    `json:"current,omitempty"`
 }
 type utgStore struct {
-	mu      sync.Mutex
-	path    string
-	graph   utgGraph
-	pending chan struct{}
-	queued  int
-	cancel  context.CancelFunc
-	closed  bool
+	mu         sync.Mutex
+	path       string
+	graph      utgGraph
+	pending    chan struct{}
+	queued     int
+	cancel     context.CancelFunc
+	closed     bool
+	generation uint64
 }
 type utgTurnKey struct{}
 type utgTurn struct {
+	generation uint64
 	graph      utgGraph
 	steps      []utgObservation
 	tags       map[string]string
@@ -91,6 +94,10 @@ func newUTGStore(dir string) *utgStore {
 func (s *utgStore) snapshot() utgGraph {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.snapshotLocked()
+}
+
+func (s *utgStore) snapshotLocked() utgGraph {
 	g := s.graph
 	g.Nodes = slices.Clone(g.Nodes)
 	g.Edges = slices.Clone(g.Edges)
@@ -98,7 +105,7 @@ func (s *utgStore) snapshot() utgGraph {
 }
 func (s *utgStore) startTurn(ctx context.Context) *utgTurn {
 	s.mu.Lock()
-	pending := s.pending
+	pending, generation := s.pending, s.generation
 	s.mu.Unlock()
 	if pending != nil {
 		timer := time.NewTimer(250 * time.Millisecond)
@@ -109,8 +116,31 @@ func (s *utgStore) startTurn(ctx context.Context) *utgTurn {
 		case <-ctx.Done():
 		}
 	}
-	return &utgTurn{graph: s.snapshot(), tags: map[string]string{}}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &utgTurn{generation: generation, graph: s.snapshotLocked(), tags: map[string]string{}}
 }
+
+// reset persists the empty graph before publishing it. Turns and jobs from
+// before this reset can no longer publish, even if their model ignores cancellation.
+func (s *utgStore) reset() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errors.New("UTG store is closed")
+	}
+	if err := s.save(utgGraph{}); err != nil {
+		return err
+	}
+	s.graph = utgGraph{}
+	s.generation++
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.cancel, s.pending, s.queued = nil, nil, 0
+	return nil
+}
+
 func (s *utgStore) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -148,8 +178,12 @@ func (s *utgStore) finish(turn *utgTurn, prefix []messages.Message, model llms.M
 		return
 	}
 	s.mu.Lock()
-	if s.closed || s.queued >= 2 {
-		if !s.closed && logger != nil {
+	if s.closed || turn.generation != s.generation {
+		s.mu.Unlock()
+		return
+	}
+	if s.queued >= 2 {
+		if logger != nil {
 			logger.Warn("UTG update skipped: background queue full")
 		}
 		s.mu.Unlock()
@@ -164,9 +198,12 @@ func (s *utgStore) finish(turn *utgTurn, prefix []messages.Message, model llms.M
 		defer func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			s.queued--
-			if s.pending == done {
-				s.pending = nil
+			if turn.generation == s.generation {
+				s.queued--
+				if s.pending == done {
+					s.pending = nil
+					s.cancel = nil
+				}
 			}
 			close(done)
 		}()
@@ -174,16 +211,16 @@ func (s *utgStore) finish(turn *utgTurn, prefix []messages.Message, model llms.M
 			<-previous
 		}
 		s.mu.Lock()
-		if s.closed {
+		if s.closed || turn.generation != s.generation {
 			s.mu.Unlock()
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		s.cancel = cancel
+		// Rebase onto any prior turn that finished while this one was executing.
+		turn.graph = s.snapshotLocked()
 		s.mu.Unlock()
 		defer cancel()
-		// Rebase onto any prior turn that finished while this one was executing.
-		turn.graph = s.snapshot()
 
 		var labels []utgClassification
 		var err error
@@ -196,7 +233,7 @@ func (s *utgStore) finish(turn *utgTurn, prefix []messages.Message, model llms.M
 		g := compileUTG(turn, labels)
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if s.closed || (len(labels) == 0 && len(turn.tags) == 0) {
+		if s.closed || turn.generation != s.generation || (len(labels) == 0 && len(turn.tags) == 0) {
 			return
 		}
 		if err = s.save(g); err != nil {
