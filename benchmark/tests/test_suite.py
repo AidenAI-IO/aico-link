@@ -1665,8 +1665,11 @@ def test_aico_app_connection_capabilities_suite_covers_real_proxy_contract():
     ({"$lte": None}, "must be a finite number"),
     ({"$gte": True}, "must be a finite number"),
     ({"$gte": 10, "$lte": 5}, "must not exceed"),
+    ({"$rfc3339_gte": "2037-11-20T07:30:00"}, "must be timestamps with a timezone"),
+    ({"$rfc3339_gte": "2037-11-20T15:30:00+08:00", "$rfc3339_lte": "2037-11-20T07:29:59Z"}, "must not exceed"),
+    ({"$rfc3339_gte": "2037-11-20T07:30:00Z", "$lte": 5}, "cannot be mixed"),
 ])
-def test_numeric_matcher_bounds_are_validated_when_the_suite_loads(tmp_path, bounds, message):
+def test_matcher_bounds_are_validated_when_the_suite_loads(tmp_path, bounds, message):
     task = {
         "id": "t", "category": "perception", "prompt": "Tap", "rubric": [],
         "hard_assertions": {"required_tool_calls": [

@@ -1,6 +1,6 @@
 {
   "name": "tool_recovery_v1",
-  "version": "1.1",
+  "version": "1.2",
   "suite_category": "Agent Reliability",
   "description": "Scripted Phone Bridge failures for retry, bounded failure handling, and verification after an ambiguous write. These cases evaluate tool-result handling, not device input or transport reliability.",
   "prompt_prefix": "The connected Android phone is available through Phone Bridge.",
@@ -155,8 +155,8 @@
             {
               "input_contains": {
                 "action": "query",
-                "from": "2037-11-21T00:00:00+08:00",
-                "to": "2037-11-22T00:00:00+08:00"
+                "from": {"$rfc3339_lte": "2037-11-21T15:00:00+08:00"},
+                "to": {"$rfc3339_gte": "2037-11-21T15:30:00+08:00"}
               },
               "screen_contains": "fixture ready",
               "output": {
@@ -184,8 +184,8 @@
             {
               "input_contains": {
                 "action": "query",
-                "from": "2037-11-21T00:00:00+08:00",
-                "to": "2037-11-22T00:00:00+08:00"
+                "from": {"$rfc3339_lte": "2037-11-21T15:00:00+08:00"},
+                "to": {"$rfc3339_gte": "2037-11-21T15:30:00+08:00"}
               },
               "screen_contains": "response lost",
               "output": {
@@ -235,8 +235,8 @@
             "tool": "bridge_calendar",
             "input_contains": {
               "action": "query",
-              "from": "2037-11-21T00:00:00+08:00",
-              "to": "2037-11-22T00:00:00+08:00"
+              "from": {"$rfc3339_lte": "2037-11-21T15:00:00+08:00"},
+              "to": {"$rfc3339_gte": "2037-11-21T15:30:00+08:00"}
             }
           }
         ],

@@ -485,6 +485,13 @@ def test_keyboard_tap_text_engine_chords(bridge, monkeypatch, key, code):
     assert not any(call[0] == "keyevent" for call in device.calls)
 
 
+def test_keyboard_tap_forwards_android_language_switch(bridge):
+    _, device, base_url = bridge
+    status, body = _invoke(base_url, "keyboard_tap", {"keys": ["KEYCODE_LANGUAGE_SWITCH"]})
+    assert status == 200 and body["is_error"] is False
+    assert ("keyevent", "KEYCODE_LANGUAGE_SWITCH") in device.calls
+
+
 def test_keyboard_tap_reports_unsupported_native_chord(bridge, monkeypatch):
     from adbandroid.bridge.adb import ADBCommandError
 

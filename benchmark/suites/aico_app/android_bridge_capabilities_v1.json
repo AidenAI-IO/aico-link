@@ -236,11 +236,11 @@
       "rubric": [
         {
           "id": "exactly_three_distinct_writes",
-          "check": "Exactly three successful creates appear in the trace, one per requested title and date. There are no extra creates, updates or deletes."
+          "check": "Exactly three successful creates appear in the trace, one per requested title and date. Each create requests alarm_minutes_before=10. There are no extra creates, updates or deletes."
         },
         {
           "id": "all_events_verified",
-          "check": "After creating the events, a successful bridge_calendar query returns exactly one record for each requested title with the correct date, start time, end time and 10-minute alarm. No duplicate matching title is present."
+          "check": "After creating the events, a successful bridge_calendar query returns exactly one record for each requested title at the correct start and end instants. UTC-equivalent timestamps are valid. No duplicate matching title is present."
         },
         {
           "id": "finishes_after_verification",
@@ -265,8 +265,8 @@
             "tool": "bridge_calendar",
             "input_contains": {
               "action": "query",
-              "from": "2037-11-18T00:00:00+08:00",
-              "to": "2037-11-21T00:00:00+08:00"
+              "from": {"$rfc3339_lte": "2037-11-18T15:00:00+08:00"},
+              "to": {"$rfc3339_gte": "2037-11-20T15:30:00+08:00"}
             }
           }
         ]
@@ -288,7 +288,7 @@
           }
         }
       },
-      "prompt": "Replace the current Android Settings search query completely with exactly: 行程 A-17（周五）. Use enter_text to enter the new value. Leave it visible in the editable Settings search field. Do not submit the query or change any settings.",
+      "prompt": "In the current Android Settings search screen, clear the old query using the visible clear control or another supported edit action. Confirm the editable field is empty, then use enter_text to enter exactly: 行程 A-17（周五）. Leave the new query visible. Do not submit it or change any settings.",
       "android_bridge_input_text": "行程 A-17（周五）",
       "rubric": [
         {

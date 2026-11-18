@@ -275,6 +275,10 @@ the expected value. The same matcher works in mock responses and
 "+1 202-555-0147"}}` accepts both the bare number and `Biden: +1 202-555-0147`.
 For a numeric field, `{"$gte": min, "$lte": max}` accepts an inclusive range;
 either bound may be omitted.
+For a timestamp field, `$rfc3339_gte` and `$rfc3339_lte` apply inclusive bounds
+to the instant. UTC and offset forms of the same instant match equivalently.
+Calendar query cases can use these bounds to ensure the requested window covers
+the test events.
 
 A required call is satisfied only by a call whose result was not an error; the
 runner reads per-call error status from the recorded episode. Coordinates are
