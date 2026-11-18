@@ -557,10 +557,14 @@ func (w *webRealtimeAudio) write() {
 			// The browser plays speech back to back as it arrives, and
 			// starts again from now after a gap.
 			w.mu.Lock()
-			if now := time.Now(); w.playEnd.Before(now) {
-				w.playEnd = now
+			// Speech a barge-in dropped while it was being written does not
+			// move the end of playback the client was told to stop.
+			if speechGen == w.speechGen {
+				if now := time.Now(); w.playEnd.Before(now) {
+					w.playEnd = now
+				}
+				w.playEnd = w.playEnd.Add(frame.speech)
 			}
-			w.playEnd = w.playEnd.Add(frame.speech)
 			if w.unsent > 0 {
 				w.unsent--
 			}
