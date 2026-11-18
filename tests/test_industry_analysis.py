@@ -180,7 +180,7 @@ class FeedbackReviewTest(unittest.TestCase):
             self.assertEqual(["example-17-c3"], [comment["id"] for comment in issues[0]["comments"]])
             status, issues, _ = analysis.collect(api, CONFIG, state, SECOND)
         self.assertEqual("ok", status[0]["result"])
-        self.assertIn(("org/example/issues/comments", "2026-11-18T02:00:01Z", 1), calls)
+        self.assertIn(("org/example/issues/comments", times[2], 1), calls)
         self.assertEqual(["example-19-c4"], [comment["id"] for comment in issues[0]["comments"]])
 
     def test_feedback_and_scenarios_are_rendered_even_without_a_new_opportunity(self):
@@ -261,6 +261,17 @@ class SourceConfigTest(unittest.TestCase):
 
 
 class GitHubTest(unittest.TestCase):
+    def test_exclusive_feed_keeps_an_update_one_second_after_the_cursor(self):
+        github = analysis.GitHub(None)
+        when = "2026-11-18T01:00:01Z"
+
+        def get(path, *, since, **params):
+            return ([{"id": 1, "updated_at": when}] if when > since else []), False
+
+        with patch.object(github, "get", side_effect=get):
+            rows, _ = analysis.scan_updates(github, "org/example/issues", "2026-11-18T01:00:00Z", FIRST)
+        self.assertEqual([1], [row["id"] for row in rows])
+
     def test_moving_row_in_a_timestamp_bucket_cannot_advance_the_scan(self):
         github = analysis.GitHub(None)
         when = "2026-11-18T01:00:00Z"
@@ -379,6 +390,10 @@ class PublicationTest(unittest.TestCase):
                 "cutoff": FIRST, "coverage": [], "opportunities": [{"title": "Resume tasks", "impact": "Less rework"}],
             }})
             with patch.object(delivery, "send_lark", side_effect=TimeoutError) as send:
+                with patch.dict(os.environ, {"INDUSTRY_ANALYSIS_LARK_WEBHOOK_URL": "example.test/bot"}):
+                    with self.assertRaisesRegex(ValueError, "valid webhook URL"):
+                        delivery.notify(bucket, 1)
+                    self.assertNotIn(f"{delivery.PRIVATE}/runs/1/lark.json", bucket.objects)
                 with self.assertRaisesRegex(ValueError, "delivery status is unknown"):
                     delivery.notify(bucket, 1)
                 delivery.notify(bucket, 1)

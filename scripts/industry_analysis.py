@@ -241,13 +241,18 @@ class GitHub:
             page += 1
 
     def updated_between(self, path, since, cutoff, **params):
+        inclusive = False
         while since < cutoff:
-            # Both list endpoints include the supplied second in their results.
-            next_second = stamp(datetime.fromisoformat(since) + timedelta(seconds=1))
-            fetch = partial(self.get, path, per_page=100, sort="updated", direction="asc", since=next_second, **params)
+            query_since = stamp(datetime.fromisoformat(since) + timedelta(seconds=1)) if inclusive else since
+            fetch = partial(self.get, path, per_page=100, sort="updated", direction="asc", since=query_since, **params)
             rows, has_next = fetch(page=1)
             if not rows:
                 return
+            # The docs say "after", but the REST feeds can return the cursor second.
+            # Step past that second only after observing an inclusive response.
+            if not inclusive and rows[0]["updated_at"] == since:
+                inclusive = True
+                continue
             boundary = rows[-1]["updated_at"]
             if not has_next or boundary > cutoff:
                 yield from (row for row in rows if row["updated_at"] <= cutoff)

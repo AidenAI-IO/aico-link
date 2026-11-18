@@ -192,6 +192,16 @@ def notify(bucket, run):
     if receipt.get("state") in {"sent", "sending"}:
         summary(f"Lark notification already recorded as {receipt['state']} for this report.")
         return
+    try:
+        webhook = urlsplit(url)
+        valid_webhook = (
+            webhook.scheme in {"http", "https"} and webhook.hostname and webhook.username is None and webhook.port != 0
+            and not webhook.fragment and url.isascii() and all(32 < ord(char) < 127 for char in url)
+        )
+    except ValueError:
+        valid_webhook = False
+    if not valid_webhook:
+        raise ValueError("Configure INDUSTRY_ANALYSIS_LARK_WEBHOOK_URL as a valid webhook URL.")
 
     base = public_url(run)
 
