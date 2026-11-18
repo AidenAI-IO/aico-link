@@ -415,6 +415,9 @@ func (w *webRealtimeAudio) connectionLost(gen uint64, cause string, clean bool) 
 		go func() { _ = conn.Close(websocket.StatusGoingAway, "") }()
 		return
 	}
+	// Marked done under the lock serve attaches under, so a resume cannot
+	// join the session this close ends.
+	w.shutdown(cause)
 	w.mu.Unlock()
 	go func() { _ = conn.Close(websocket.StatusGoingAway, "") }()
 	w.gone(cause)
@@ -439,24 +442,43 @@ func (w *webRealtimeAudio) gone(cause string) {
 // that connection replaced this one while the write was in flight.
 func (w *webRealtimeAudio) write() {
 	var writingGen uint64
+	// restate is what this connection must be told before the held frames:
+	// the formats in effect. It belongs to one connection and never enters
+	// the held queue, so repeated drops cannot grow it.
+	var restate []webRealtimeFrame
 	for {
 		w.mu.Lock()
 		conn, gen := w.conn, w.connGen
 		if conn != nil && gen != writingGen {
+			restate = nil
 			if gen > 1 {
 				// A resumed client starts from nothing: tell it the formats
 				// of the frames that follow, then send what was held.
-				var restate []webRealtimeFrame
 				if w.sentCapture != nil {
 					restate = append(restate, captureStartFrame(*w.sentCapture))
 				}
 				if w.sentPlayback != nil {
 					restate = append(restate, playbackStartFrame(*w.sentPlayback))
 				}
-				w.out = append(restate, w.out...)
 				logging.Infof("agent", "realtime", "Voice client resumed its session: held_frames=%d", len(w.out))
 			}
 			writingGen = gen
+		}
+		if conn != nil && len(restate) > 0 {
+			frame := restate[0]
+			restate = restate[1:]
+			w.mu.Unlock()
+			ctx, cancel := context.WithTimeout(context.Background(), webRealtimeWriteTimeout)
+			err := conn.Write(ctx, frame.kind, frame.data)
+			cancel()
+			if err != nil {
+				// The next connection is told the formats afresh.
+				restate = nil
+				status := websocket.CloseStatus(err)
+				clean := status == websocket.StatusNormalClosure || status == websocket.StatusGoingAway
+				w.connectionLost(gen, fmt.Sprintf("write failed: %v", err), clean)
+			}
+			continue
 		}
 		if conn == nil {
 			if w.closed() {
@@ -666,13 +688,17 @@ func (r webRealtimeRecording) ReadRecordChunk(id uint64, timeoutMs uint32) (*Aud
 func (r webRealtimeRecording) StopRecording(id uint64) error {
 	w := r.w
 	w.mu.Lock()
+	// Only the current capture is stopped, and its stop is queued under the
+	// lock StartRecording queues under, so it cannot follow a newer start.
+	overflow := false
 	if id == w.recordingID {
 		w.stopRecordingLocked()
+		stop := controlFrame(map[string]string{"type": "capture_stop"})
+		stop.announces = announcesCaptureStop
+		overflow = w.enqueueLocked(stop)
 	}
 	w.mu.Unlock()
-	stop := controlFrame(map[string]string{"type": "capture_stop"})
-	stop.announces = announcesCaptureStop
-	w.enqueue(stop)
+	w.finishEnqueue(overflow)
 	return nil
 }
 
