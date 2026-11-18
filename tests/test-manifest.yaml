@@ -141,8 +141,10 @@ suites:
 
   - name: debian-systemd-overlay
     class: deterministic
-    paths: [overlay-debian, scripts/test_debian_systemd_overlay.sh]
-    command: bash scripts/test_debian_systemd_overlay.sh
+    paths: [overlay-debian, scripts/test_debian_systemd_overlay.sh, scripts/test_aico_service_incident.sh]
+    command: |
+      bash scripts/test_debian_systemd_overlay.sh
+      bash scripts/test_aico_service_incident.sh
     dependencies: [bash, sh, python3, rg, systemd-analyze]
     required: true
     timeout_seconds: 180

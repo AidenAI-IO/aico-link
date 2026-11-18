@@ -376,6 +376,23 @@ func (s *Server) startWebRealtimeVoice(web *webRealtimeAudio) error {
 	return nil
 }
 
+// resumableWebRealtimeVoice returns the session endpoint token rejoins: a
+// queued start or the running session, while it lasts.
+func (s *Server) resumableWebRealtimeVoice(token string) *webRealtimeAudio {
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pending != nil && c.pending.matchesResumeToken(token) {
+		return c.pending
+	}
+	if c.active != nil && !c.active.Stopped() {
+		if web, ok := c.active.audio.(*webRealtimeAudio); ok && web.matchesResumeToken(token) {
+			return web
+		}
+	}
+	return nil
+}
+
 // releaseWebRealtimeVoice ends whatever the disconnected browser endpoint was
 // part of: a queued start, or the running session that uses it.
 func (s *Server) releaseWebRealtimeVoice(web *webRealtimeAudio) {
