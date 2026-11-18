@@ -390,7 +390,10 @@ class PublicationTest(unittest.TestCase):
                 "cutoff": FIRST, "coverage": [], "opportunities": [{"title": "Resume tasks", "impact": "Less rework"}],
             }})
             with patch.object(delivery, "send_lark", side_effect=TimeoutError) as send:
-                for url in ("example.test/bot", "http://example.test/bot", "https://host%20name.test/bot"):
+                for url in (
+                    "example.test/bot", "http://example.test/bot", "https://host%20name.test/bot",
+                    "https://example..test/bot", "https://-example.test/bot", "https://[::1]extra/bot",
+                ):
                     with self.subTest(url=url), patch.dict(os.environ, {"INDUSTRY_ANALYSIS_LARK_WEBHOOK_URL": url}):
                         with self.assertRaisesRegex(ValueError, "valid HTTPS webhook URL"):
                             delivery.notify(bucket, 1)

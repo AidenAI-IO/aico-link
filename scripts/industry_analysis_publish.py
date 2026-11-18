@@ -108,6 +108,26 @@ def public_url(run):
     return f"{base}/{PUBLIC}/{run}"
 
 
+def valid_webhook_url(url):
+    if not all(32 < ord(char) < 127 for char in url):
+        return False
+    try:
+        webhook = urlsplit(url)
+        if webhook.scheme != "https" or webhook.fragment or webhook.port == 0:
+            return False
+    except ValueError:
+        return False
+    authority = re.fullmatch(r"(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::[0-9]+)?", webhook.netloc, re.I)
+    if not authority:
+        return False
+    host = authority[1]
+    if host.startswith("["):
+        return True  # urlsplit already validates bracketed IP addresses.
+    host = host.removesuffix(".")
+    label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    return len(host) <= 253 and all(re.fullmatch(label, part, re.I) for part in host.split("."))
+
+
 def verify(url, expected):
     for attempt in range(5):
         if attempt:
@@ -192,15 +212,7 @@ def notify(bucket, run):
     if receipt.get("state") in {"sent", "sending"}:
         summary(f"Lark notification already recorded as {receipt['state']} for this report.")
         return
-    try:
-        webhook = urlsplit(url)
-        valid_webhook = (
-            webhook.scheme == "https" and webhook.hostname and webhook.username is None and webhook.port != 0
-            and "%" not in webhook.netloc and not webhook.fragment and all(32 < ord(char) < 127 for char in url)
-        )
-    except ValueError:
-        valid_webhook = False
-    if not valid_webhook:
+    if not valid_webhook_url(url):
         raise ValueError("Configure INDUSTRY_ANALYSIS_LARK_WEBHOOK_URL as a valid HTTPS webhook URL.")
 
     base = public_url(run)
