@@ -69,6 +69,9 @@ func TestAnthropicModelAggregatesContentBlocksAndConvertsHistory(t *testing.T) {
 		if got := r.Header.Get("x-api-key"); got != "test-token" {
 			t.Errorf("x-api-key = %q, want test-token", got)
 		}
+		if got := r.UserAgent(); got != "Claude Code" {
+			t.Errorf("User-Agent = %q, want Claude Code", got)
+		}
 		if got := r.Header.Get("anthropic-version"); got != anthropicAPIVersion {
 			t.Errorf("anthropic-version = %q, want %q", got, anthropicAPIVersion)
 		}
@@ -1749,13 +1752,13 @@ func TestAnthropicModelUsesAsynchronouslyFetchedReasoningSpec(t *testing.T) {
 }
 
 func TestAnthropicModelLiveRelay(t *testing.T) {
-	baseURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL"))
-	token := strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN"))
+	baseURL := strings.TrimSpace(os.Getenv("AICO_RELAY_BASE_URL"))
+	token := strings.TrimSpace(os.Getenv("AICO_RELAY_AUTH_TOKEN"))
 	if baseURL == "" || token == "" {
-		t.Skip("Anthropic relay environment is not configured")
+		t.Skip("set AICO_RELAY_BASE_URL and AICO_RELAY_AUTH_TOKEN to run the live Anthropic relay check")
 	}
 
-	modelName := strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL"))
+	modelName := strings.TrimSpace(os.Getenv("AICO_RELAY_MODEL"))
 	if modelName == "" {
 		modelName = "claude-sonnet-4-6"
 	}
