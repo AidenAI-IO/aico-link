@@ -178,7 +178,7 @@ func TestWithdrawnWebRealtimeVoiceStartOpensNoSession(t *testing.T) {
 func TestClosedWebRealtimeVoiceStartDoesNotFallBackToDevice(t *testing.T) {
 	s := &Server{}
 	s.SetRealtimeVoiceActivation(func() {})
-	web := newWebRealtimeAudio(nil)
+	web := newWebRealtimeAudio(false)
 	if err := s.startWebRealtimeVoice(web); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestStalledBrowserDoesNotBlockRealtimePlayback(t *testing.T) {
 // reader of the earlier capture must end instead of taking microphone audio
 // meant for the new one.
 func TestWebRealtimeRecordingEndsReaderOfEarlierCapture(t *testing.T) {
-	web := newWebRealtimeAudio(nil)
+	web := newWebRealtimeAudio(false)
 	recording := web.Recording()
 	format := AudioFormat{SampleRate: 16000, Channels: 1, BitWidth: 16}
 	first, err := recording.StartRecording(format)
@@ -287,7 +287,7 @@ func TestWebRealtimeRecordingEndsReaderOfEarlierCapture(t *testing.T) {
 // leaves before that speech was written.
 func TestWebRealtimePlaybackDrainWaitsForUnsentSpeech(t *testing.T) {
 	// No writer runs, as when the browser has stopped taking data.
-	web := newWebRealtimeAudio(nil)
+	web := newWebRealtimeAudio(false)
 	playback := web.Playback()
 	id, err := playback.StartPlayback(tts.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16})
 	if err != nil {
@@ -325,7 +325,7 @@ func TestWebRealtimePlaybackDrainWaitsForUnsentSpeech(t *testing.T) {
 
 	// Speech submitted only after the endpoint closed is dropped, and a drain
 	// must not report it as played either.
-	late := newWebRealtimeAudio(nil)
+	late := newWebRealtimeAudio(false)
 	late.Close("")
 	latePlayback := late.Playback()
 	if err := latePlayback.WritePlayChunk(1, make([]byte, 480), false); err != nil {
@@ -370,5 +370,153 @@ func TestTextRealtimeSessionYieldsToBrowserVoice(t *testing.T) {
 	s.EndRealtimeVoiceSession(text, "")
 	if next := s.ClaimRealtimeVoiceSession(Config{}, RealtimeAudioRouteText); next == nil || next.Route() != RealtimeAudioRouteWeb {
 		t.Fatalf("claimed %+v, want the browser session", next)
+	}
+}
+
+// The phone App's session survives a dropped connection: speech produced
+// while it is away is held, and a socket that resumes with the token gets
+// the formats in use and that speech, while the session keeps running. A
+// clean close still ends it, and a stale token is told the session is over.
+func TestResumableWebRealtimeVoiceSurvivesDroppedConnection(t *testing.T) {
+	s := &Server{}
+	s.SetRealtimeVoiceActivation(func() {})
+	srv := httptest.NewServer(http.HandlerFunc(s.handleRealtimeVoiceSocket))
+	t.Cleanup(srv.Close)
+	base := "ws" + strings.TrimPrefix(srv.URL, "http")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	first, _, err := websocket.Dial(ctx, base+"?resumable=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := readWebVoiceControl(t, ctx, first)
+	token, _ := session["resume_token"].(string)
+	if session["type"] != "session" || token == "" {
+		t.Fatalf("first message = %v, want the resume token", session)
+	}
+	waitWebVoice(t, ctx, "the queued start", s.RealtimeVoicePending)
+	voice := s.ClaimRealtimeVoiceSession(Config{}, "")
+	recording := voice.Audio().Recording()
+	if _, err := recording.StartRecording(AudioFormat{SampleRate: 16000, Channels: 1, BitWidth: 16}); err != nil {
+		t.Fatal(err)
+	}
+	playback := voice.Audio().Playback()
+	id, err := playback.StartPlayback(tts.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readWebVoiceControl(t, ctx, first) // capture_start
+	readWebVoiceControl(t, ctx, first) // playback_start
+
+	// The link drops without a close frame, as a USB re-enumeration does.
+	first.CloseRead(ctx)
+	_ = first.Close(websocket.StatusAbnormalClosure, "")
+	time.Sleep(100 * time.Millisecond)
+	if err := playback.WritePlayChunk(id, []byte{7, 8}, false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-voice.StopRequested():
+		t.Fatal("a dropped connection ended a resumable session")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	second, _, err := websocket.Dial(ctx, base+"?resume="+token, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readWebVoiceControl(t, ctx, second)["type"]; got != "capture_start" {
+		t.Fatalf("resumed first message = %v, want capture_start", got)
+	}
+	if got := readWebVoiceControl(t, ctx, second)["type"]; got != "playback_start" {
+		t.Fatalf("resumed second message = %v, want playback_start", got)
+	}
+	kind, data, err := second.Read(ctx)
+	if err != nil || kind != websocket.MessageBinary || string(data) != string([]byte{7, 8}) {
+		t.Fatalf("held speech = %v %v, %v", kind, data, err)
+	}
+	if err := second.Write(ctx, websocket.MessageBinary, []byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	if chunk, err := recording.ReadRecordChunk(1, 2000); err != nil || string(chunk.PCM) != string([]byte{1, 2}) {
+		t.Fatalf("microphone after resume = %+v, %v", chunk, err)
+	}
+
+	stale, _, err := websocket.Dial(ctx, base+"?resume=not-the-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readWebVoiceControl(t, ctx, stale)["type"]; got != "ended" {
+		t.Fatalf("stale token got %v, want ended", got)
+	}
+
+	_ = second.Close(websocket.StatusNormalClosure, "")
+	select {
+	case <-voice.StopRequested():
+	case <-ctx.Done():
+		t.Fatal("a clean close did not end the session")
+	}
+}
+
+// The microphone opens as soon as the client connects, before the provider
+// is ready: what the user says meanwhile reaches the session's first capture,
+// in order and ahead of later audio, and a capture in another format starts
+// clean instead of mixing rates.
+func TestWebRealtimeVoiceKeepsSpeechSentWhileConnecting(t *testing.T) {
+	s := &Server{}
+	s.SetRealtimeVoiceActivation(func() {})
+	ctx, conn := dialWebVoice(t, s)
+	start := readWebVoiceControl(t, ctx, conn)
+	if format, _ := start["format"].(map[string]any); start["type"] != "capture_start" || format["sample_rate"] != float64(16000) {
+		t.Fatalf("first message = %v, want an early 16 kHz capture_start", start)
+	}
+	// Spoken while the provider connects.
+	for _, frame := range [][]byte{{1, 1}, {2, 2}} {
+		if err := conn.Write(ctx, websocket.MessageBinary, frame); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitWebVoice(t, ctx, "the queued start", s.RealtimeVoicePending)
+	voice := s.ClaimRealtimeVoiceSession(Config{}, "")
+	web := voice.Audio().(*webRealtimeAudio)
+	waitWebVoice(t, ctx, "the early speech", func() bool {
+		web.mu.Lock()
+		defer web.mu.Unlock()
+		return len(web.preroll) == 2
+	})
+
+	recording := voice.Audio().Recording()
+	if _, err := recording.StartRecording(AudioFormat{SampleRate: 16000, Channels: 1, BitWidth: 16}); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte{3, 3}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []byte{1, 2, 3} {
+		chunk, err := recording.ReadRecordChunk(1, 2000)
+		if err != nil || len(chunk.PCM) != 2 || chunk.PCM[0] != want {
+			t.Fatalf("chunk = %+v, %v; want frame %d", chunk, err, want)
+		}
+	}
+
+	// A capture in another format asks the client again and keeps nothing.
+	other := newWebRealtimeAudio(false)
+	other.startPreroll()
+	other.mu.Lock()
+	other.preroll = [][]byte{{9, 9}}
+	other.mu.Unlock()
+	id, err := webRealtimeRecording{other}.StartRecording(AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunk, _ := (webRealtimeRecording{other}).ReadRecordChunk(id.SessionID, 10); len(chunk.PCM) != 0 {
+		t.Fatalf("24 kHz capture got 16 kHz audio %v", chunk.PCM)
+	}
+	other.mu.Lock()
+	last := other.out[len(other.out)-1]
+	other.mu.Unlock()
+	if !strings.Contains(string(last.data), `"sample_rate":24000`) {
+		t.Fatalf("last control = %s, want a 24 kHz capture_start", last.data)
 	}
 }
