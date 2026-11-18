@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -15,6 +16,7 @@ import (
 
 	"aico-agent/internal/agent/messages"
 	"github.com/tmc/langchaingo/llms"
+	langtools "github.com/tmc/langchaingo/tools"
 )
 
 func testUTGFrame(t *testing.T, c color.Color) visualScreenshotObservation {
@@ -115,4 +117,75 @@ func TestUTGPublishesOnlyAfterBackgroundClassification(t *testing.T) {
 	if got := newUTGStore(dir).snapshot().Current; got != "home" {
 		t.Fatalf("persisted current = %q", got)
 	}
+}
+
+func TestUTGReplayStopsOnUnexpectedDestination(t *testing.T) {
+	home := testUTGFrame(t, color.Black)
+	settings := testUTGFrame(t, color.White)
+	unknown := testUTGFrame(t, color.RGBA{R: 210, A: 255})
+	graph := compileUTG(&utgTurn{steps: []utgObservation{
+		{frame: home}, {args: []string{"tap", "300", "400"}, frame: settings, successful: true},
+	}}, []utgClassification{{Frame: 0, Key: "home", Home: true}, {Frame: 1, Key: "settings"}})
+	for _, tc := range []struct {
+		name          string
+		start, finish visualScreenshotObservation
+		expectedCalls int
+		expectedError string
+	}{
+		{name: "confirmed", start: home, finish: settings, expectedCalls: 1},
+		{name: "unknown source", start: unknown, finish: settings, expectedError: "source"},
+		{name: "wrong destination", start: home, finish: unknown, expectedCalls: 1, expectedError: "TRAP"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			active := tc.start
+			response := func(v visualScreenshotObservation, changed bool) string {
+				result := v.Result
+				result.Data = base64.StdEncoding.EncodeToString(v.ImageBytes)
+				result.ScreenChanged = &changed
+				b, _ := json.Marshal(result)
+				return string(b)
+			}
+			r := &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{
+				"screenshot": utgReplayTestTool{"screenshot", func(string) string { return response(active, false) }},
+				"touch_gesture": utgReplayTestTool{"touch_gesture", func(input string) string {
+					calls++
+					var payload struct{ Point struct{ X, Y int } }
+					if json.Unmarshal([]byte(input), &payload) != nil || payload.Point.X != 300 || payload.Point.Y != 400 {
+						t.Errorf("wrong physical action: %s", input)
+					}
+					active = tc.finish
+					return response(active, true)
+				}},
+			}}}
+			turn := &utgTurn{graph: graph}
+			ctx := context.WithValue(context.Background(), utgTurnKey{}, turn)
+			capture := &deviceCLICapture{}
+			result, err := r.runUTGCommand(ctx, &Server{runtime: r}, []string{"utg-step", "1"}, capture)
+			if tc.expectedError == "" {
+				if err != nil || result.Output != "Confirmed state: settings" {
+					t.Fatalf("result %q, err %v", result.Output, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.expectedError) {
+				t.Fatalf("error = %v", err)
+			}
+			if calls != tc.expectedCalls {
+				t.Fatalf("device calls = %d, want %d", calls, tc.expectedCalls)
+			}
+			if len(capture.frames) == 0 {
+				t.Fatal("did not preserve final screenshot")
+			}
+		})
+	}
+}
+
+type utgReplayTestTool struct {
+	name string
+	fn   func(string) string
+}
+
+func (s utgReplayTestTool) Name() string        { return s.name }
+func (s utgReplayTestTool) Description() string { return s.name }
+func (s utgReplayTestTool) Call(_ context.Context, input string) (string, error) {
+	return s.fn(input), nil
 }

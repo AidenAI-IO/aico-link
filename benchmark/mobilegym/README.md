@@ -277,3 +277,10 @@ The phone-control rubric accepts a single successful long press. Device-info
 navigation accepts "About phone" or "My device" and requires scrolling only
 when necessary. Compare these rubric corrections separately from changes in
 Agent completion rates; suite hashes identify the changed evaluation inputs.
+
+## Device CLI parity
+
+Use `benchmark/suites/mobilegym_cli_parity.json` to compare the direct UI tools
+and the foreground `device-cli` without scoring the name of the chosen tool.
+The scroll task still asserts simulator state. See the
+[CLI parity report](cli-parity.md) for the configurations and results.

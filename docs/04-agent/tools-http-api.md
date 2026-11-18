@@ -180,3 +180,8 @@ For `touch_gesture`, use the standard `type` syntax for normal taps, long presse
 - When accessing via private IP or USB network adapter, note proxy bypass: set `NO_PROXY` / `no_proxy`
 - For long-running `shell` tasks, use background sessions as described in the tool documentation, and stop them when done
 - When the user says goodbye or asks to sleep / stop listening / go idle / wait for the next wakeup, call `wait_for_wakeup` in the same turn as a short farewell; do not pretend standby with a normal text reply alone
+
+The default backend agent operates the device through
+[`device-cli`](device-cli.md). The tool HTTP endpoints remain available to the
+CLI and external callers; catalog metadata describes the underlying tool
+registry, which the conversational runtime can further restrict.
