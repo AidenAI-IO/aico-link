@@ -165,6 +165,8 @@ def agent_binary(args):
     env.pop("GOOS", None)
     env.pop("GOARCH", None)
     subprocess.run(["go", "build", "-o", str(binary), "./cmd/daemon"], cwd=ROOT / "src/agent", env=env, check=True)
+    cli = binary.with_name("device-cli.exe" if os.name == "nt" else "device-cli")
+    subprocess.run(["go", "build", "-o", str(cli), "./cmd/device-cli"], cwd=ROOT / "src/agent", env=env, check=True)
     return str(binary)
 
 

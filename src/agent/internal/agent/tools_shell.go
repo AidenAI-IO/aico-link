@@ -29,9 +29,10 @@ type ShellTool struct {
 }
 
 type shellExecutionConfig struct {
-	proxy              ProxyConfig
-	temporaryDirectory string
-	screenshot         *shellScreenshotExport
+	proxy                        ProxyConfig
+	temporaryDirectory           string
+	screenshot                   *shellScreenshotExport
+	deviceCLIURL, deviceCLIToken string
 }
 
 func (t *ShellTool) Name() string { return "shell" }
@@ -98,7 +99,18 @@ func (t *ShellTool) Call(ctx context.Context, input string) (string, error) {
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs*float64(time.Second)))
 	defer cancel()
 
-	result, runErr := shellRunForeground(execCtx, command, workdir, usePTY, t.execution)
+	execution := t.execution
+	if rt, ok := ctx.Value(deviceCLIRuntimeKey{}).(*Runtime); ok {
+		if capture, ok := ctx.Value(deviceCLICaptureKey{}).(*deviceCLICapture); ok {
+			u, token, closeScope, err := openDeviceCLIScope(execCtx, rt, capture)
+			if err != nil {
+				return toolErrorResultf(ctx, CodeToolExecutionFailed, "device CLI setup: %v", err), nil
+			}
+			defer closeScope()
+			execution.deviceCLIURL, execution.deviceCLIToken = u, token
+		}
+	}
+	result, runErr := shellRunForeground(execCtx, command, workdir, usePTY, execution)
 	if contextErr := contextError(execCtx, runErr); errors.Is(contextErr, context.Canceled) {
 		return "", contextErr
 	}

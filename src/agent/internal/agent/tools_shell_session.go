@@ -415,6 +415,13 @@ func shellPlatformShellArg() string {
 func shellCommandEnv(usePTY bool, execution shellExecutionConfig) []string {
 	env := os.Environ()
 	env = shellApplyProxyEnv(env, execution.proxy)
+	if execution.deviceCLIURL != "" {
+		env = shellEnsureEnv(env, "AICO_DEVICE_CLI_URL", execution.deviceCLIURL)
+		env = shellEnsureEnv(env, "AICO_DEVICE_CLI_TOKEN", execution.deviceCLIToken)
+		if dir := deviceCLIPath(); dir != "" {
+			env = shellEnsureEnv(env, "PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		}
+	}
 	// PYTHONUSERBASE and pip flags are configured globally by /etc/profile.d/aico-python.sh
 	// and inherited from the parent environment. TMPDIR is injected command-scoped
 	// to use /userdata/tmp for agent shell commands, avoiding the small /tmp tmpfs (73 MB)

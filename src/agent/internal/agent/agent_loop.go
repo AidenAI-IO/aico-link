@@ -594,7 +594,7 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		})
 	}
 	prepared.IsError = toolExecution.Result.IsError()
-	appendErr := appendToolExecutionMessages(llmExecutor, parser, toolCallMessage, toolExecution.Step, prepared)
+	appendErr := appendToolExecutionMessages(llmExecutor, parser, toolCallMessage, toolExecution.Step, prepared, deviceCLIStateMessages(toolExecution.Result.deviceFrames)...)
 	if err := ctx.Err(); err != nil {
 		if appendErr != nil {
 			return "", iterationContinue, errors.Join(err, appendErr)
@@ -1105,7 +1105,7 @@ func responsesGenerationInfoForToolCall(info map[string]any, toolID string) map[
 	return cloned
 }
 
-func appendToolExecutionMessages(llmExecutor *executor.LLMExecutor, parser *FunctionAgent, toolCall messages.Message, step schema.AgentStep, prepared PreparedToolResult) error {
+func appendToolExecutionMessages(llmExecutor *executor.LLMExecutor, parser *FunctionAgent, toolCall messages.Message, step schema.AgentStep, prepared PreparedToolResult, extra ...llms.MessageContent) error {
 	if llmExecutor == nil {
 		return fmt.Errorf("llm executor is nil")
 	}
@@ -1130,7 +1130,7 @@ func appendToolExecutionMessages(llmExecutor *executor.LLMExecutor, parser *Func
 		contextMessages[1].ToolResults,
 		unexecutedInteractionToolResults(toolCall, step.Action.ToolID)...,
 	)
-	for _, followup := range followups {
+	for _, followup := range append(followups, extra...) {
 		contextMessages = append(contextMessages, visualFollowupMessageFromLLMContent(llmExecutor.ContextManager(), followup))
 	}
 	if err := llmExecutor.AppendMessages(contextMessages); err != nil {

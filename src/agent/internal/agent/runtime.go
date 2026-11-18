@@ -55,6 +55,7 @@ const (
 )
 
 type Runtime struct {
+	deviceCLI               bool
 	config                  Config
 	configReloadMu          sync.Mutex
 	configOperations        sync.RWMutex
@@ -569,6 +570,7 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 		toolSet.RegisterSkillToolsWithDeviceType(skillsDir, manifestPath, rt.deviceTypeFromState, rt.MarkSkillsDirty)
 	}
 	rt.logger = logger
+	rt.deviceCLI = os.Getenv("AICO_LEGACY_DEVICE_TOOLS") != "1"
 	rt.profileDebouncer = debouncer
 	rt.waitForWakeup = waitForWakeupController
 	rt.storageMonitor = newRuntimeStorageMonitor(cfg, logger)
@@ -1395,7 +1397,11 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 	agentLoop.ContextOverflowRecovery = contextBudget.recoverOverflow
 
-	output, err = agentLoop.Run(ctx, normalizedInput, callOptions...)
+	loopCtx := ctx
+	if r.deviceCLIEnabled() {
+		loopCtx = context.WithValue(ctx, deviceCLIRuntimeKey{}, r)
+	}
+	output, err = agentLoop.Run(loopCtx, normalizedInput, callOptions...)
 	// If the agent couldn't parse the LLM output format, extract the raw
 	// text and return it as the response instead of failing.
 	if errors.Is(err, agents.ErrUnableToParseOutput) {
@@ -1685,7 +1691,7 @@ func (r *Runtime) captureStateScreenshot(keep func() bool) (*messages.Attachment
 // usesVisualCoordinateProtocol reports whether the current model takes
 // screenshot pixels for touch_gesture (see AgentLoop.Run).
 func (r *Runtime) usesVisualCoordinateProtocol() bool {
-	if r == nil || r.models == nil {
+	if r == nil || r.models == nil || r.deviceCLIEnabled() {
 		return false
 	}
 	spec := r.models.Spec()
@@ -2001,6 +2007,15 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		return nil
 	}
 	tools := NewToolSpecs(r.toolSnapshot().All()).AgentToolsForPlatform(r.devicePlatformFromState())
+	if r.deviceCLIEnabled() && (r.ConfigSnapshot().InputModeOrDefault() != "realtime" || r.ConfigSnapshot().UseBackendAgentEffective()) {
+		filtered := tools[:0]
+		for _, tool := range tools {
+			if !builtInToolSpecMetadata[tool.Name()].UIOperation {
+				filtered = append(filtered, tool)
+			}
+		}
+		tools = filtered
+	}
 	return benchmarkHeadlessTools(r.ConfigSnapshot(), benchmarkMockTools(r.ConfigSnapshot(), r.filterPhoneBridgeAgentTools(tools)))
 }
 
@@ -2360,6 +2375,10 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 	// A new session has no earlier section to keep, so on a read failure the
 	// caller passes an empty profile; the next run's refresh adds it once the
 	// read works.
+	if r.deviceCLIEnabled() {
+		profile.SystemPrompt = strings.ReplaceAll(profile.SystemPrompt, "call skill_read for device-operator before the first screenshot or UI action", "call skill_read for device-cli before the first UI action")
+		profile.SystemPrompt += "\n\nOperate the target device only with device-cli commands in foreground shell calls. Read the attached screenshot state before choosing each next action. Coordinates are always normalized to 0–1000."
+	}
 	profile.SystemPrompt = withUserProfileSection(profile.SystemPrompt, userProfile)
 	return profile
 }

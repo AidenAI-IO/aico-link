@@ -3907,7 +3907,7 @@ func (s *Server) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	executionCtx := r.Context()
 	cancelExecution := context.CancelFunc(func() {})
-	if httpToolExecutionSurvivesClientDisconnect(toolName) {
+	if r.Context().Value(deviceCLICaptureKey{}) == nil && httpToolExecutionSurvivesClientDisconnect(toolName) {
 		executionCtx, cancelExecution = detachedHTTPToolExecutionContext(r.Context())
 	}
 	defer cancelExecution()

@@ -261,6 +261,7 @@ mkdir -p "${apps_dir}/bin" "${apps_dir}/lib"
 touch \
     "${apps_dir}/bin/abctl" \
     "${apps_dir}/bin/agent" \
+    "${apps_dir}/bin/device-cli" \
     "${apps_dir}/bin/ble_service" \
     "${apps_dir}/bin/mcu_service" \
     "${apps_dir}/bin/frame_service" \
@@ -276,6 +277,7 @@ touch \
 chmod +x \
     "${apps_dir}/bin/abctl" \
     "${apps_dir}/bin/agent" \
+    "${apps_dir}/bin/device-cli" \
     "${apps_dir}/bin/ble_service" \
     "${apps_dir}/bin/mcu_service" \
     "${apps_dir}/bin/ota"
@@ -304,7 +306,7 @@ mode=${1:-}
 file=${!#}
 is_go=no
 case "${file}" in
-*/bin/abctl | */bin/agent | */bin/ble_service | */bin/mcu_service | */bin/ota | */bin/ttyd) is_go=yes ;;
+*/bin/abctl | */bin/agent | */bin/device-cli | */bin/ble_service | */bin/mcu_service | */bin/ota | */bin/ttyd) is_go=yes ;;
 esac
 case "${mode}" in
 -hW)
@@ -445,6 +447,7 @@ bundle_payload=(
     bin/audio_service_cli
     bin/audio_stream
     bin/agent
+    bin/device-cli
     bin/cpu_vad
     bin/example_audio_capture
     bin/example_audio_play

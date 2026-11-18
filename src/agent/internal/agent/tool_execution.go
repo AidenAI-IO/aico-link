@@ -27,6 +27,7 @@ type ToolResult struct {
 	Error            *ToolError
 	Terminate        bool
 	Duration         time.Duration
+	deviceFrames     []deviceCLIFrame
 }
 
 func (r ToolResult) IsError() bool { return r.Error != nil }
@@ -133,6 +134,10 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 			progressHandler.HandleToolProgress(ctx, call, progress)
 		})
 	}
+	var capture deviceCLICapture
+	if _, ok := ctx.Value(deviceCLIRuntimeKey{}).(*Runtime); ok && spec.Name == "shell" {
+		ctx2 = context.WithValue(ctx2, deviceCLICaptureKey{}, &capture)
+	}
 	output, err := spec.Tool.Call(ctx2, input)
 	var toolErr *ToolError
 	hardErr := ctx.Err()
@@ -165,9 +170,10 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 		}
 	}
 	result := ToolResult{
-		Output:   output,
-		Error:    toolErr,
-		Duration: time.Since(call.StartedAt),
+		Output:       output,
+		deviceFrames: capture.frames,
+		Error:        toolErr,
+		Duration:     time.Since(call.StartedAt),
 	}
 	if err == nil && toolErr != nil && strings.TrimSpace(result.Output) == "" {
 		result.Output = toolErr.Message

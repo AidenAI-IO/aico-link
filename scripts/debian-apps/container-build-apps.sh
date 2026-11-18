@@ -100,6 +100,9 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
     -o "${DIST_DIR}/bin/agent" ./cmd/daemon
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
     go build -mod=readonly -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
+    -o "${DIST_DIR}/bin/device-cli" ./cmd/device-cli
+CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
+    go build -mod=readonly -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
     -o "${DIST_DIR}/bin/ble_service" ./cmd/ble_service
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
     go build -mod=readonly -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
