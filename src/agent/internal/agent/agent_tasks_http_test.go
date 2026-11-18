@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,9 +12,10 @@ import (
 )
 
 type fakeAgentTasks struct {
-	tasks     []agenttask.Task
-	cancelled string
-	reorder   error
+	tasks        []agenttask.Task
+	cancelled    string
+	cancelledAll bool
+	reorder      error
 }
 
 func (f *fakeAgentTasks) Active() []agenttask.Task { return f.tasks }
@@ -32,6 +35,10 @@ func (f *fakeAgentTasks) Cancel(id string) (agenttask.Task, bool, error) {
 	return agenttask.Task{ID: id, Status: agenttask.StatusCancelled}, false, nil
 }
 func (f *fakeAgentTasks) Reorder([]string) error { return f.reorder }
+func (f *fakeAgentTasks) CancelAll() []agenttask.Task {
+	f.cancelledAll = true
+	return f.tasks
+}
 
 func TestAgentTasksHTTP(t *testing.T) {
 	server := &Server{}
@@ -85,5 +92,76 @@ func TestTaskTimelineStepHidesPrivateToolOutput(t *testing.T) {
 	}
 	if _, ok := TaskTimelineStep(RunEvent{Type: "reasoning_delta"}); ok {
 		t.Fatal("reasoning deltas must not enter the timeline")
+	}
+}
+
+// A background task drives the Live Activity like a chat run: its tool steps
+// become the current step, the task ID keys it, and the stop button on it
+// cancels the task.
+func TestBackgroundTaskActivity(t *testing.T) {
+	server := &Server{logger: newTestLogger()}
+	server.liveActivity = NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
+	activity := server.BackgroundTaskActivity()
+
+	activity.Start("task_1", "Order a fruit tea")
+	activity.Event("task_1", RunEvent{Type: runEventToolCall, ToolName: "screenshot"})
+	state := server.liveActivity.SnapshotActive()
+	if state == nil || state.RequestID != "task_1" || state.TaskTitle != "Order a fruit tea" || state.CurrentStep != "Checking the screen" {
+		t.Fatalf("running task = %#v", state)
+	}
+
+	tasks := &fakeAgentTasks{tasks: []agenttask.Task{{ID: "task_1", Status: agenttask.StatusRunning}}}
+	server.SetAgentTasks(tasks)
+	recorder := httptest.NewRecorder()
+	server.handleChatCancel(recorder, httptest.NewRequest(http.MethodPost, "/api/chat/cancel", strings.NewReader(`{"request_id":"task_1"}`)))
+	if tasks.cancelled != "task_1" || !strings.Contains(recorder.Body.String(), `"status":"canceled"`) {
+		t.Fatalf("cancel from the Live Activity: cancelled=%q body=%s", tasks.cancelled, recorder.Body)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		err      error
+		canceled bool
+		want     string
+	}{
+		{name: "completed", want: LiveActivityStatusCompleted},
+		{name: "failed", err: errors.New("model unavailable"), want: LiveActivityStatusFailed},
+		{name: "canceled", err: context.Canceled, canceled: true, want: LiveActivityStatusCanceled},
+	} {
+		activity.Start(tc.name, "goal")
+		activity.Finish(tc.name, "done", tc.err, tc.canceled)
+		if got := server.liveActivity.Snapshot(tc.name); got == nil || got.Status != tc.want {
+			t.Fatalf("%s: state = %#v, want %s", tc.name, got, tc.want)
+		}
+	}
+
+	// Without a Live Activity there is nothing to report to.
+	var disabled *BackgroundTaskActivity
+	disabled.Start("task_2", "goal")
+	disabled.Event("task_2", RunEvent{Type: runEventToolCall, ToolName: "screenshot"})
+	disabled.Finish("task_2", "", nil, false)
+	if (&Server{}).BackgroundTaskActivity() != nil {
+		t.Fatal("a server without a Live Activity returned a reporter")
+	}
+}
+
+// Stopping voice mode with tasks=1 also stops the background work; without it
+// the tasks keep running, as before.
+func TestRealtimeVoiceStopCancelsBackgroundTasks(t *testing.T) {
+	for _, tc := range []struct {
+		target string
+		want   bool
+	}{
+		{"/api/realtime/voice/stop", false},
+		{"/api/realtime/voice/stop?tasks=1", true},
+	} {
+		server := &Server{logger: newTestLogger()}
+		tasks := &fakeAgentTasks{tasks: []agenttask.Task{{ID: "task_1", Status: agenttask.StatusRunning}}}
+		server.SetAgentTasks(tasks)
+		recorder := httptest.NewRecorder()
+		server.handleRealtimeVoiceStop(recorder, httptest.NewRequest(http.MethodPost, tc.target, nil))
+		if recorder.Code != http.StatusOK || tasks.cancelledAll != tc.want {
+			t.Fatalf("%s: code=%d cancelledAll=%t, want %t", tc.target, recorder.Code, tasks.cancelledAll, tc.want)
+		}
 	}
 }

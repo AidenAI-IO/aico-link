@@ -262,8 +262,11 @@ func (m *Manager) ObservationSnapshot(taskID string) Observation {
 }
 
 type entry struct {
-	task            Task
-	cancel          context.CancelFunc
+	task   Task
+	cancel context.CancelFunc
+	// silent marks a task the user stopped as a whole: its cancellation
+	// is not announced to the foreground.
+	silent          bool
 	nextPrompt      string
 	actionNotified  bool
 	resumeQueued    bool
@@ -686,6 +689,34 @@ func (m *Manager) Cancel(taskID string) (Task, bool, error) {
 		cancel()
 	}
 	return task, notificationCleared, nil
+}
+
+// CancelAll cancels every unfinished task: queued ones end at once and running
+// ones stop at their next cancellation point. The user asked to stop the
+// work, so none of their results is announced. It returns the tasks it
+// cancelled.
+func (m *Manager) CancelAll() []Task {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	ids := make([]string, 0, len(m.tasks))
+	for id, item := range m.tasks {
+		if !item.task.Status.terminal() {
+			item.silent = true
+			ids = append(ids, id)
+		}
+		// Results already waiting for the foreground are not announced either.
+		m.suppressTerminalNotificationLocked(id)
+	}
+	m.mu.Unlock()
+	cancelled := make([]Task, 0, len(ids))
+	for _, id := range ids {
+		if task, _, err := m.Cancel(id); err == nil {
+			cancelled = append(cancelled, task)
+		}
+	}
+	return cancelled
 }
 
 func (m *Manager) Update(taskID, prompt string) (Task, error) {
@@ -1199,7 +1230,9 @@ func (m *Manager) finishLocked(item *entry, status Status, result, taskError str
 	item.actionNotified = false
 	item.pendingSteer = nil
 	m.terminalSeq++
-	m.terminalNotifications[item.task.ID] = terminalNotificationQueued
+	if !item.silent {
+		m.terminalNotifications[item.task.ID] = terminalNotificationQueued
+	}
 	m.observeLocked(item, "terminal")
 	m.signalTerminalLocked()
 	m.signalWakeLocked()

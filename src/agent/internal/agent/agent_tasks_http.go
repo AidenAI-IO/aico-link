@@ -14,6 +14,7 @@ import (
 // The daemon installs it only while realtime mode runs a backend agent.
 type AgentTaskController interface {
 	Active() []agenttask.Task
+	CancelAll() []agenttask.Task
 	Query(taskID string) (agenttask.Task, bool)
 	Timeline(taskID string) (agenttask.Timeline, bool)
 	Cancel(taskID string) (agenttask.Task, bool, error)
@@ -166,4 +167,54 @@ func TaskTimelineStep(event RunEvent) (agenttask.Step, bool) {
 // timelines and cancelled-run summaries must not copy.
 func PrivateToolOutput(toolName string) bool {
 	return toolResultIsSensitive(toolName)
+}
+
+// BackgroundTaskActivity reports a background agent task's progress on the
+// phone's Live Activity, as a chat run's progress is. The task ID is the
+// Live Activity request ID, so the steps (checking the screen, tapping,
+// opening an app) use the same wording as a chat run. It is nil when the
+// Live Activity is disabled.
+type BackgroundTaskActivity struct {
+	server *Server
+}
+
+// BackgroundTaskActivity returns the reporter for background tasks, or nil
+// when the Live Activity is disabled.
+func (s *Server) BackgroundTaskActivity() *BackgroundTaskActivity {
+	if s == nil || s.liveActivity == nil {
+		return nil
+	}
+	return &BackgroundTaskActivity{server: s}
+}
+
+// Start shows the task with its goal as the title.
+func (a *BackgroundTaskActivity) Start(taskID, goal string) {
+	if a == nil {
+		return
+	}
+	phoneID := a.server.liveActivityPhoneID(ChatRequest{})
+	a.server.liveActivity.StartTask(taskID, goal, phoneID)
+}
+
+// Event advances the current step from one of the task's run events.
+func (a *BackgroundTaskActivity) Event(taskID string, event RunEvent) {
+	if a == nil {
+		return
+	}
+	a.server.liveActivity.UpdateFromRunEvent(taskID, event)
+}
+
+// Finish settles the task: completed with its result, canceled, or failed.
+func (a *BackgroundTaskActivity) Finish(taskID, result string, err error, canceled bool) {
+	if a == nil {
+		return
+	}
+	switch {
+	case canceled:
+		a.server.liveActivity.CancelTask(taskID)
+	case err != nil:
+		a.server.liveActivity.FailTaskUnlessSettled(taskID, err.Error())
+	default:
+		a.server.liveActivity.CompleteTask(taskID, result)
+	}
 }

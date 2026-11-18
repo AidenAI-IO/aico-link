@@ -959,3 +959,39 @@ func (f runnerFunc) Run(ctx context.Context, _ string) (string, error) {
 	f(ctx)
 	return "", nil
 }
+
+// Stopping everything cancels the running task and the queued one, and the
+// foreground is not told about either: the user asked for the work to stop.
+func TestManagerCancelAllStopsWorkSilently(t *testing.T) {
+	runner := &fakeRunner{started: make(chan string, 2), release: make(chan struct{})}
+	manager := newManager(runner, 4, time.Now)
+	defer manager.Close()
+
+	running, err := manager.Create("running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("task did not start")
+	}
+	queued, err := manager.Create("queued")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cancelled := manager.CancelAll(); len(cancelled) != 2 {
+		t.Fatalf("cancelled %d tasks, want 2", len(cancelled))
+	}
+	waitForStatus(t, manager, running.ID, StatusCancelled)
+	waitForStatus(t, manager, queued.ID, StatusCancelled)
+	if pending, _ := manager.TerminalState(); len(pending) != 0 {
+		t.Fatalf("stopped tasks would be announced: %+v", pending)
+	}
+	select {
+	case prompt := <-runner.started:
+		t.Fatalf("queued task ran after stop: %q", prompt)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
