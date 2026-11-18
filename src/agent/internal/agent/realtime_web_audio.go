@@ -159,6 +159,9 @@ type webRealtimeAudio struct {
 	recordingID   uint64
 	recordingStop chan struct{}
 	playbackID    uint64
+	// speechGen advances when queued speech is dropped (barge-in), so a
+	// frame that was being written then is not sent again after a failure.
+	speechGen uint64
 	// unsent counts speech frames not yet written to the browser: queued,
 	// being written, or dropped because the endpoint closed. playEnd is when
 	// the browser finishes playing the speech written so far.
@@ -325,6 +328,7 @@ func (w *webRealtimeAudio) dropQueuedSpeech() {
 	}
 	w.unsent -= len(w.out) - len(kept)
 	w.out = kept
+	w.speechGen++
 	w.mu.Unlock()
 }
 
@@ -464,6 +468,11 @@ func (w *webRealtimeAudio) write() {
 			}
 			writingGen = gen
 		}
+		if w.closing {
+			// The session is over: go straight to the goodbye in w.out
+			// instead of asking the client for its microphone first.
+			restate = nil
+		}
 		if conn != nil && len(restate) > 0 {
 			frame := restate[0]
 			restate = restate[1:]
@@ -509,6 +518,7 @@ func (w *webRealtimeAudio) write() {
 		}
 		frame := w.out[0]
 		w.out = w.out[1:]
+		speechGen := w.speechGen
 		switch frame.announces {
 		case announcesCaptureStart:
 			format := frame.format
@@ -531,7 +541,11 @@ func (w *webRealtimeAudio) write() {
 			status := websocket.CloseStatus(err)
 			clean := status == websocket.StatusNormalClosure || status == websocket.StatusGoingAway
 			w.mu.Lock()
-			if w.resumeToken != "" && !w.closing {
+			canceled := frame.kind == websocket.MessageBinary && speechGen != w.speechGen
+			if canceled {
+				// A barge-in dropped this speech while it was being written.
+				w.unsent--
+			} else if w.resumeToken != "" && !w.closing {
 				// Still counted in unsent: it is sent on the next connection.
 				w.out = append([]webRealtimeFrame{frame}, w.out...)
 			}
