@@ -56,6 +56,7 @@ const (
 
 type Runtime struct {
 	deviceCLI               bool
+	utg                     *utgStore
 	config                  Config
 	configReloadMu          sync.Mutex
 	configOperations        sync.RWMutex
@@ -571,6 +572,9 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 	}
 	rt.logger = logger
 	rt.deviceCLI = os.Getenv("AICO_LEGACY_DEVICE_TOOLS") != "1"
+	if rt.deviceCLI && cfg.ConfigDir != "" {
+		rt.utg = newUTGStore(cfg.ConfigDir)
+	}
 	rt.profileDebouncer = debouncer
 	rt.waitForWakeup = waitForWakeupController
 	rt.storageMonitor = newRuntimeStorageMonitor(cfg, logger)
@@ -1327,6 +1331,13 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 	// append user message to context manager
 	userMessage := userMessageFromInput(r.contextManager, turnInput.InputText, turnInput.Attachments)
+	var deviceTurn *utgTurn
+	if r.deviceCLIEnabled() && r.utg != nil {
+		deviceTurn = r.utg.startTurn(ctx)
+		if len(deviceTurn.graph.Nodes) > 0 {
+			userMessage.Content += "\n\n<device_navigation_map>\nLast learned state (may be stale): " + deviceTurn.graph.Current + deviceTurn.graph.summary(true) + "\n</device_navigation_map>"
+		}
+	}
 	appended, err := r.contextManager.AppendMessagesWithResult([]messages.Message{userMessage})
 	if err != nil {
 		return RunResult{}, err
@@ -1391,7 +1402,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	agentLoop.DevicePlatform = r.devicePlatformFromState()
 	agentLoop.PointerMode = r.devicePointerModeFromState()
 	agentLoop.ContextBudgetGuard = contextBudget.guard
-	if contextBudget.thresholdCompactionEnabled() {
+	if !r.deviceCLIEnabled() && contextBudget.thresholdCompactionEnabled() {
 		agentLoop.ContextCompactionTrigger = contextBudget.compactionTrigger
 		agentLoop.ContextThresholdCompaction = contextBudget.compactAtThreshold
 	}
@@ -1400,6 +1411,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	loopCtx := ctx
 	if r.deviceCLIEnabled() {
 		loopCtx = context.WithValue(ctx, deviceCLIRuntimeKey{}, r)
+		if deviceTurn != nil {
+			loopCtx = context.WithValue(loopCtx, utgTurnKey{}, deviceTurn)
+		}
 	}
 	output, err = agentLoop.Run(loopCtx, normalizedInput, callOptions...)
 	// If the agent couldn't parse the LLM output format, extract the raw
@@ -1421,6 +1435,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		return RunResult{}, err
 	}
 
+	if deviceTurn != nil && (len(deviceTurn.steps) > 0 || len(deviceTurn.tags) > 0) {
+		r.utg.finish(deviceTurn, agentLoop.contextManager.CloneMessageList(), r.models, r.logger)
+	}
 	output = strings.TrimSpace(output)
 	metrics.TotalDuration = float64(time.Since(startTime).Milliseconds())
 	if r.logger != nil && metrics.PromptTokens > 0 {
@@ -1662,6 +1679,9 @@ func (r *Runtime) captureStateScreenshot(keep func() bool) (*messages.Attachment
 		return nil, nil
 	}
 	observation, ok := parseScreenshotObservation(output)
+	if r.deviceCLIEnabled() {
+		observation = compressCLIFrame(observation)
+	}
 	if !ok {
 		if r.logger != nil {
 			r.logger.Debug("[state] screenshot output is not a valid visual observation")
@@ -2007,10 +2027,15 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		return nil
 	}
 	tools := NewToolSpecs(r.toolSnapshot().All()).AgentToolsForPlatform(r.devicePlatformFromState())
-	if r.deviceCLIEnabled() && (r.ConfigSnapshot().InputModeOrDefault() != "realtime" || r.ConfigSnapshot().UseBackendAgentEffective()) {
+	if r.deviceCLIEnabled() {
 		filtered := tools[:0]
 		for _, tool := range tools {
 			if !builtInToolSpecMetadata[tool.Name()].UIOperation {
+				if shell, ok := tool.(*ShellTool); ok {
+					copy := *shell
+					copy.deviceCLI = true
+					tool = &copy
+				}
 				filtered = append(filtered, tool)
 			}
 		}
@@ -2361,6 +2386,10 @@ func (r *Runtime) exportEpisodeBestEffort(episode TaskEpisode, promptCapture *te
 }
 
 func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool, userProfile string) RoleProfile {
+	rules := agentRoleRules()
+	if r.deviceCLIEnabled() {
+		rules = deviceCLIRoleRules()
+	}
 	profile := buildProfile(
 		AgentConfig{
 			Instruction: r.ConfigSnapshot().Instruction,
@@ -2370,14 +2399,15 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 		},
 		skills,
 		availableTools,
-		agentRoleRules(),
+		rules,
 	)
 	// A new session has no earlier section to keep, so on a read failure the
 	// caller passes an empty profile; the next run's refresh adds it once the
 	// read works.
 	if r.deviceCLIEnabled() {
+		profile.SystemPrompt = strings.ReplaceAll(profile.SystemPrompt, "device-operator instructions", "device-cli instructions")
 		profile.SystemPrompt = strings.ReplaceAll(profile.SystemPrompt, "call skill_read for device-operator before the first screenshot or UI action", "call skill_read for device-cli before the first UI action")
-		profile.SystemPrompt += "\n\nOperate the target device only with device-cli commands in foreground shell calls. Read the attached screenshot state before choosing each next action. Coordinates are always normalized to 0–1000."
+		profile.SystemPrompt = strings.ReplaceAll(profile.SystemPrompt, "they do not operate the target UI in screenshots", "only device-cli commands in the foreground shell operate the target UI")
 	}
 	profile.SystemPrompt = withUserProfileSection(profile.SystemPrompt, userProfile)
 	return profile
@@ -3059,6 +3089,9 @@ Memory entries:
 
 // Close releases resources held by the runtime
 func (r *Runtime) Close() error {
+	if r.utg != nil {
+		r.utg.close()
+	}
 	if r.routines != nil {
 		r.routines.Close()
 	}

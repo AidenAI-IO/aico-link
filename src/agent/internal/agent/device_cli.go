@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"net"
 	"net/http"
@@ -28,9 +30,14 @@ type deviceCLIFrame struct {
 	visual visualScreenshotObservation
 }
 
-type deviceCLICapture struct{ frames []deviceCLIFrame }
+type deviceCLICapture struct {
+	frames []deviceCLIFrame
+	last   visualScreenshotObservation
+}
 
-func (r *Runtime) deviceCLIEnabled() bool { return r.deviceCLI }
+func (r *Runtime) deviceCLIEnabled() bool {
+	return r.deviceCLI && (r.ConfigSnapshot().InputModeOrDefault() != "realtime" || r.ConfigSnapshot().UseBackendAgentEffective())
+}
 
 // Prefer the installed sibling on native launches; otherwise use the image PATH.
 func deviceCLIPath() string {
@@ -95,27 +102,55 @@ func openDeviceCLIScope(ctx context.Context, r *Runtime, capture *deviceCLICaptu
 }
 
 func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *deviceCLICapture) (ToolInvokeResponse, error) {
+	turn, _ := ctx.Value(utgTurnKey{}).(*utgTurn)
+	if len(args) > 0 && (args[0] == "utg-status" || args[0] == "utg-goto" || args[0] == "utg-step" || args[0] == "utg-tag") {
+		return r.runUTGCommand(ctx, s, args, capture)
+	}
 	calls, err := devicecli.Calls(args)
 	if err != nil {
 		return ToolInvokeResponse{}, err
 	}
+	scoped := context.WithValue(ctx, deviceCLICaptureKey{}, capture)
+	if turn != nil && len(turn.steps) == 0 && args[0] != "look" {
+		result, _ := invokeDeviceHTTP(scoped, s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
+		if v, ok := parseScreenshotObservation(result.Output); ok {
+			turn.steps = append(turn.steps, utgObservation{frame: compressCLIFrame(v)})
+		}
+	}
 	var result ToolInvokeResponse
+	var last visualScreenshotObservation
+	defer func() {
+		if len(last.ImageBytes) == 0 && ctx.Err() == nil {
+			fallback, _ := invokeDeviceHTTP(scoped, s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
+			last, _ = parseScreenshotObservation(fallback.Output)
+		}
+		last = compressCLIFrame(last)
+		if turn != nil && len(turn.steps) < maxUTGSteps {
+			capture.add(len(turn.steps), last)
+			turn.steps = append(turn.steps, utgObservation{args: args, frame: last, successful: err == nil && !result.IsError})
+		} else {
+			capture.add(-1, last)
+		}
+	}()
 	for i, call := range calls {
-		result, err = invokeDeviceHTTP(context.WithValue(ctx, deviceCLICaptureKey{}, capture), s, call)
+		result, err = invokeDeviceHTTP(scoped, s, call)
 		if err != nil {
 			return result, err
 		}
 		visual, ok := parseScreenshotObservation(result.Output)
+		last = visual
 		if ok {
-			capture.add(ctx, args, visual)
-			// The screenshot takes the normal state-message path, not stdout.
-			result.Output = stripScreenshotData(result.Output)
+			result.Output = visual.Result.ActionOutput
+			if visual.Result.ScreenChanged != nil && !*visual.Result.ScreenChanged {
+				result.Output += "\nNo meaningful screen change; verify visually."
+			}
 		}
 		if result.IsError {
 			return result, nil
 		}
 		if len(calls) > 1 && i == 0 && (!ok || visual.Result.ScreenStable != nil && !*visual.Result.ScreenStable) {
-			return result, fmt.Errorf("drag did not reach a stable screen; inspect the screenshot before retrying")
+			err = fmt.Errorf("drag did not reach a stable screen; inspect the screenshot before retrying")
+			return result, err
 		}
 	}
 	return result, nil
@@ -140,19 +175,71 @@ func invokeDeviceHTTP(ctx context.Context, s *Server, call devicecli.Call) (Tool
 	return result, err
 }
 
-func (c *deviceCLICapture) add(ctx context.Context, args []string, v visualScreenshotObservation) {
-	step := len(c.frames) + 1
+func compressCLIFrame(v visualScreenshotObservation) visualScreenshotObservation {
+	// Strip the duplicate base64 copy before retaining the frame.
+	v.Result.Data = ""
+	if v.Result.Height <= 1080 {
+		return v
+	}
+	src, _, err := image.Decode(bytes.NewReader(v.ImageBytes))
+	if err != nil {
+		return v
+	}
+	b := src.Bounds()
+	if b.Empty() {
+		return v
+	}
+	w := max(1, b.Dx()*1080/b.Dy())
+	dst := image.NewRGBA(image.Rect(0, 0, w, 1080))
+	for y := 0; y < 1080; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(x, y, src.At(b.Min.X+x*b.Dx()/w, b.Min.Y+y*b.Dy()/1080))
+		}
+	}
+	var out bytes.Buffer
+	if jpeg.Encode(&out, dst, &jpeg.Options{Quality: 78}) != nil {
+		return v
+	}
+	v.ImageBytes = out.Bytes()
+	v.MIMEType = "image/jpeg"
+	v.Result.Width = w
+	v.Result.Height = 1080
+	v.Result.Size = out.Len()
+	return v
+}
+
+func (c *deviceCLICapture) add(step int, v visualScreenshotObservation) {
+	c.last = v
+	if len(v.ImageBytes) == 0 {
+		return
+	}
+	// Retain the final observation and up to four visually useful transitions.
+	if n := len(c.frames); n > 0 {
+		changed := c.frames[n-1].visual.Result.ScreenChanged
+		if changed != nil && !*changed {
+			c.frames = c.frames[:n-1]
+		}
+	}
+	if len(c.frames) == 5 {
+		c.frames = c.frames[1:]
+	}
 	c.frames = append(c.frames, deviceCLIFrame{step: step, visual: v})
 }
 
-func deviceCLIStateMessages(frames []deviceCLIFrame) []llms.MessageContent {
+func deviceCLIStateMessages(ctx context.Context, frames []deviceCLIFrame) []llms.MessageContent {
 	var messages []llms.MessageContent
+	turn, _ := ctx.Value(utgTurnKey{}).(*utgTurn)
 	for i, frame := range frames {
 		v := frame.visual
-		if i < len(frames)-1 && (i < len(frames)-5 || v.Result.ScreenChanged != nil && !*v.Result.ScreenChanged) {
+		if i < len(frames)-1 && v.Result.ScreenChanged != nil && !*v.Result.ScreenChanged {
 			continue
 		}
-		caption := fmt.Sprintf("Device CLI screenshot, Step #%d. Coordinates are normalized 0–1000, not pixels. %s", frame.step, screenshotObservationStatusSummary("shell", v.Result))
+		label := "Device CLI screenshot"
+		if frame.step >= 0 && turn != nil && frame.step < len(turn.steps) {
+			label += fmt.Sprintf(", Step #%d", frame.step)
+			turn.steps[frame.step].shown = true
+		}
+		caption := fmt.Sprintf("%s. Coordinates are normalized 0–1000, not pixels. %s", label, screenshotObservationStatusSummary("shell", v.Result))
 		messages = append(messages, llms.MessageContent{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{llms.TextPart(caption), buildImagePart(v.MIMEType, v.ImageBytes)}})
 	}
 	return messages

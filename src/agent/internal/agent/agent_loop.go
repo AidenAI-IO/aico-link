@@ -176,7 +176,7 @@ func (l *AgentLoop) Run(ctx context.Context, input string, options ...chains.Cha
 	}
 	agentTools := l.Profile.Tools
 	var transforms []executor.OutboundMessageTransform
-	if IsAnthropicModel(l.Model.Spec().Provider, l.Model.Spec().Name) {
+	if ctx.Value(deviceCLIRuntimeKey{}) == nil && IsAnthropicModel(l.Model.Spec().Provider, l.Model.Spec().Name) {
 		frames := newVisualCoordinates(l.ScreenState)
 		transforms = append(transforms, frames)
 		agentTools = frames.wrap(agentTools)
@@ -594,7 +594,7 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		})
 	}
 	prepared.IsError = toolExecution.Result.IsError()
-	appendErr := appendToolExecutionMessages(llmExecutor, parser, toolCallMessage, toolExecution.Step, prepared, deviceCLIStateMessages(toolExecution.Result.deviceFrames)...)
+	appendErr := appendToolExecutionMessages(llmExecutor, parser, toolCallMessage, toolExecution.Step, prepared, deviceCLIStateMessages(ctx, toolExecution.Result.deviceFrames)...)
 	if err := ctx.Err(); err != nil {
 		if appendErr != nil {
 			return "", iterationContinue, errors.Join(err, appendErr)

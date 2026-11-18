@@ -144,7 +144,8 @@ func (b *runContextBudget) guard(ctx context.Context, manager *contextmanager.Co
 	messageTokens := activeMessageTokens(manager, options)
 	toolSchemaTokens := tokencounter.EstimateToolSchemaTokens(options)
 	decision := b.activePruneDecision(messageTokens, manager.ScreenshotStateCount(), activePromptTokens(manager, options), toolSchemaTokens)
-	if decision.target == 0 {
+	// Preserve the usable prefix within CLI turns unless the hard budget forces recovery.
+	if decision.target == 0 || (ctx.Value(deviceCLIRuntimeKey{}) != nil && !decision.hardBudgetExceeded) {
 		return manager, false, nil
 	}
 	if b.runtime.logger != nil {

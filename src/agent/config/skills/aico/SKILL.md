@@ -128,8 +128,8 @@ A normal task follows this loop:
 2. Inspect live state. For a visual task, obtain a fresh `screenshot` or wait for a stable screen
    before choosing a target. For a phone API task, inspect bridge status and the relevant permission
    or capability fields.
-3. Select the narrowest valid path: a bridge tool for supported structured data, an `open_app` or
-   `open_url` request for semantic launch, or screenshot plus HID tools for visible UI work.
+3. Select the narrowest valid path: a bridge tool for supported structured data, `device-cli open` or
+   `device-cli url` for semantic launch, or the `device-cli` skill for visible UI work.
 4. Make the smallest useful action, then observe again. Reuse a stable-screen wait when a launch or
    navigation is asynchronous.
 5. Verify the result using the evidence appropriate to the operation. If a path fails, classify the
@@ -156,8 +156,8 @@ A normal task follows this loop:
 | Create, query, or delete calendar events | `bridge_calendar` | Structured result and, for user-facing display, a screenshot |
 | Search or edit contacts | `bridge_contacts` | Structured result; confirm identity before writes |
 | Send a notification | `bridge_notification` with `action=send` | Result or scheduled status; do not claim delivery without event evidence |
-| Open an app or URL | `open_app` or `open_url` | Fresh screenshot of the destination |
-| Use an app's visible screen | `screenshot` plus HID/UI tools | Screenshot before and after the action |
+| Open an app or URL | `device-cli open` or `device-cli url` | Fresh screenshot of the destination |
+| Use an app's visible screen | `device-cli` in the foreground shell | Screenshot before and after the action |
 | Read phone notifications | `bridge_notification` with `action=query` | Notification ring generation and event IDs |
 | Recall notification-derived conclusions | `recall_memory` | Memory result; distinguish a derived conclusion from the exact source notification |
 

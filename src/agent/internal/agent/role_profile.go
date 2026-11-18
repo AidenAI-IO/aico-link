@@ -31,6 +31,18 @@ func agentRoleRules() []string {
 	return rules
 }
 
+func deviceCLIRoleRules() []string {
+	return []string{
+		`For all target UI operations call the shell tool with a foreground command. Example tool input: {"command":"device-cli tap 500 600"}. device-cli is a shell executable, not a tool name. Do not call legacy UI tools even if named in earlier context.`,
+		`Read the latest attached screenshot. Tap a clearly visible app at its center; otherwise use device-cli open APP. Follow the action with visual verification before claiming completion.`,
+		`When asked how many items exist, count every visible item in the requested set, including inactive items, unless the user limits the count to a subset. Distinguish the total from the active count.`,
+		`Use normalized integer coordinates (0–1000) measured on the latest image. For scrollable UI, use device-cli swipe X1 Y1 X2 Y2 starting inside the region. Use device-cli look when a fresh frame is needed.`,
+		`Use device-cli home and device-cli back for system navigation. Use device-cli quick ACTION for semantic shortcuts.`,
+		`Read the device-cli skill before the first UI action. Use only the latest screenshot to choose an action.`,
+		`Call request_user_action when the task requires credentials, human verification, or a confirmation you cannot perform. Never ask the user to send credentials or verification codes in chat.`,
+	}
+}
+
 func buildProfile(
 	cfg AgentConfig,
 	skills *SkillManager,
