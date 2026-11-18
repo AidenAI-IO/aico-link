@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from datetime import UTC, datetime, timedelta
+from functools import partial
 import hashlib
 from heapq import nlargest
 import html
+from http.client import IncompleteRead
 import json
 import os
 from pathlib import Path
@@ -22,8 +24,20 @@ from urllib.request import Request, urlopen
 from zipfile import ZIP_DEFLATED, ZipFile
 
 
-ISSUE_LIMIT = 32
+ANALYSIS_DEFAULTS = {
+    "focus_areas": (
+        "Success rate of real App operations",
+        "Control and recovery of long tasks",
+        "Attachments in the complete workflow",
+        "Predictable cost and outcome",
+    ),
+    "bootstrap_days": 30,
+    "max_issues": 24,
+    "max_opportunities": 5,
+}
 SCAN_LIMIT = 4000
+# Give other issues a turn in the next weekly run.
+DETAIL_RETRY_DELAY = timedelta(days=8)
 COMMENT_LIMIT = 4
 FEEDBACK_LIMIT = 12
 SCENARIO_LIMIT = 10
@@ -169,27 +183,19 @@ def sources_from(text):
     return sources
 
 
-def config_from(path, repositories):
-    config = read_json(path)
-    config["sources"] = sources_from(repositories)
-    if not config["sources"]:
+def config_from(repositories):
+    sources = sources_from(repositories)
+    if not sources:
         raise ValueError("Set INDUSTRY_ANALYSIS_REPOS to at least one GitHub repository")
     ids = set()
     repositories = set()
-    for source in config["sources"]:
+    for source in sources:
         source_id, repo = source["id"], source["repository"]
         if source_id in ids or repo.lower() in repositories:
             raise ValueError(f"Duplicate GitHub repository: {repo}")
         ids.add(source_id)
         repositories.add(repo.lower())
-    for key, limit in (("bootstrap_days", 366), ("max_issues", ISSUE_LIMIT), ("max_opportunities", 5)):
-        if type(config[key]) is not int or not 1 <= config[key] <= limit:
-            raise ValueError(f"Invalid {key} in configuration")
-    if not isinstance(config["focus_areas"], list) or not all(
-        isinstance(area, str) for area in config["focus_areas"]
-    ):
-        raise ValueError("Invalid focus_areas in configuration")
-    return config
+    return {**ANALYSIS_DEFAULTS, "sources": sources}
 
 
 def safe_text(value, limit):
@@ -218,9 +224,12 @@ class GitHub:
         url = f"https://api.github.com/repos/{path}"
         if params:
             url += "?" + urlencode(params)
-        with urlopen(Request(url, headers=self.headers), timeout=25) as response:
-            has_next = 'rel="next"' in response.headers.get("Link", "")
-            return json.load(response), has_next
+        try:
+            with urlopen(Request(url, headers=self.headers), timeout=25) as response:
+                has_next = 'rel="next"' in response.headers.get("Link", "")
+                return json.load(response), has_next
+        except IncompleteRead as error:
+            raise OSError("GitHub response ended before the body was complete") from error
 
     def pages(self, path, **params):
         page = 1
@@ -231,15 +240,54 @@ class GitHub:
                 return
             page += 1
 
+    def updated_between(self, path, since, cutoff, **params):
+        while since < cutoff:
+            # Both list endpoints include the supplied second in their results.
+            next_second = stamp(datetime.fromisoformat(since) + timedelta(seconds=1))
+            fetch = partial(self.get, path, per_page=100, sort="updated", direction="asc", since=next_second, **params)
+            rows, has_next = fetch(page=1)
+            if not rows:
+                return
+            boundary = rows[-1]["updated_at"]
+            if not has_next or boundary > cutoff:
+                yield from (row for row in rows if row["updated_at"] <= cutoff)
+                return
+
+            # Seek by timestamp so a moved row cannot shift an unread row behind an offset.
+            complete = [row for row in rows if row["updated_at"] < boundary]
+            if complete:
+                yield from complete
+                since = complete[-1]["updated_at"]
+            else:
+                yield from timestamp_bucket(fetch, rows, boundary)
+                since = boundary
+
+
+def timestamp_bucket(fetch, first, when):
+    # Offset pagination is needed only when one timestamp fills a page. Check
+    # the pages again before accepting that timestamp as complete.
+    pages = [first]
+    while True:
+        rows, _ = fetch(page=len(pages) + 1)
+        tied = [row for row in rows if row["updated_at"] == when]
+        pages.append(tied)
+        if not rows or len(tied) < len(rows):
+            break
+    seen = set()
+    for page, expected in enumerate(pages, 1):
+        rows, _ = fetch(page=page)
+        ids = {row["id"] for row in rows if row["updated_at"] == when}
+        if ids & seen or ids != {row["id"] for row in expected}:
+            raise OSError("GitHub updates changed while reading a timestamp")
+        seen.update(ids)
+    for rows in pages:
+        yield from rows
+
 
 def scan_updates(github, path, since, cutoff, **params):
     rows = []
-    for row in github.pages(path, sort="updated", direction="asc", since=since, **params):
+    for row in github.updated_between(path, since, cutoff, **params):
         when = row["updated_at"]
-        if when <= since:
-            continue
-        if when > cutoff:
-            break
         # Finish the timestamp at the boundary, including ties on the next page.
         if len(rows) >= SCAN_LIMIT and when > rows[-1]["updated_at"]:
             return rows, rows[-1]["updated_at"]
@@ -335,6 +383,7 @@ def collect(github, config, state, cutoff, only_source=None):
     queues = {}
     candidates = []
     evidence = {}
+    retry_at = stamp(datetime.fromisoformat(cutoff) + DETAIL_RETRY_DELAY)
     for source in config["sources"]:
         key = source["repository"].lower()
         if only_source and key != only_source:
@@ -348,11 +397,14 @@ def collect(github, config, state, cutoff, only_source=None):
             status.update(result="failed", pending=len(record.get("pending", {})))
             continue
         seen = dict(record.get("seen", {}))
+        deferred = {number: until for number, until in record.get("deferred", {}).items()
+                    if number in pending and until > cutoff}
         sources[key] = {"repository": source["repository"], "cursor": cutoff, "scan_resume": resume,
-                        "pending": pending, "seen": seen, "last_review": record.get("last_review", "")}
-        status.update(result="partial" if resume else "ok", since=start, changed=len(pending))
+                        "pending": pending, "seen": seen, "deferred": deferred,
+                        "last_review": record.get("last_review", "")}
+        status.update(result="partial" if resume or deferred else "ok", since=start, changed=len(pending))
         windows[key] = (source, pending, issues, seen, status)
-        queues[key] = deque(sorted(pending, key=lambda number: (pending[number], int(number))))
+        queues[key] = deque(sorted(pending.keys() - deferred.keys(), key=lambda number: (pending[number], int(number))))
 
     if not coverage:
         raise ValueError("No enabled source matches the selection")
@@ -379,14 +431,18 @@ def collect(github, config, state, cutoff, only_source=None):
         try:
             item, links, through = feedback(github, source, number, issues.get(number), cutoff, since)
         except (OSError, ValueError):
+            sources[key]["deferred"][number] = retry_at
             status["result"] = "partial"
             continue
-        digest = hashlib.sha256(json_text(item).encode()).hexdigest() if item else None
-        if item and seen.get(number, {}).get("digest") != digest:
-            candidates.append(item)
-            evidence.update(links)
-            status["analyzed"] += 1
-        seen[number] = {"through": max(pending[number], through), "digest": digest}
+        issue_digest = None
+        if item:
+            content = {field: item[field] for field in ("state", "title", "body")}
+            issue_digest = hashlib.sha256(json_text(content).encode()).hexdigest()
+            if seen.get(number, {}).get("issue_digest") != issue_digest or item["comments"]:
+                candidates.append(item)
+                evidence.update(links)
+                status["analyzed"] += 1
+        seen[number] = {"through": max(pending[number], through), "issue_digest": issue_digest}
         del pending[number]
     for _, pending, _, _, status in windows.values():
         status["pending"] = len(pending)
@@ -761,7 +817,6 @@ def render(report, folder):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=Path("config/industry-analysis.json"))
     parser.add_argument("--base", type=Path)
     parser.add_argument("--prepared", type=Path, help="Reuse output from a previous attempt of this run")
     parser.add_argument("--output", type=Path, required=True)
@@ -774,7 +829,7 @@ def main():
         base = read_json(args.base) if args.base else {}
         cutoff = base.get("cutoff") or stamp(datetime.now(UTC))
         state = base.get("checkpoint", {})
-        config = config_from(args.config, os.getenv("INDUSTRY_ANALYSIS_REPOS", ""))
+        config = config_from(os.getenv("INDUSTRY_ANALYSIS_REPOS", ""))
         only = None
         if args.source:
             selected = sources_from(args.source)

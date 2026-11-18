@@ -75,9 +75,7 @@ def restore(bucket, folder, run):
     if committed > run:
         raise ValueError("This run predates the latest publication. Use a preview for a historic review.")
     if committed:
-        latest = latest_pointer(committed)
-        if load(bucket, f"{PUBLIC}/latest.json") != latest:
-            store(bucket, f"{PUBLIC}/latest.json", json_text(latest).encode(), "application/json")
+        repair_latest_pointer(bucket, committed)
     if committed == run:
         return True
     folder.mkdir(parents=True, exist_ok=True)
@@ -95,8 +93,11 @@ def restore(bucket, folder, run):
     return False
 
 
-def latest_pointer(run):
-    return {"run_number": run, "report": f"{run}/index.html"}
+def repair_latest_pointer(bucket, run):
+    key = f"{PUBLIC}/latest.json"
+    latest = {"run_number": run, "report": f"{run}/index.html"}
+    if load(bucket, key) != latest:
+        store(bucket, key, json_text(latest).encode(), "application/json")
 
 
 def public_url(run):
@@ -138,6 +139,7 @@ def publish(bucket, folder, run):
     url = public_url(run)
     committed = load(bucket, f"{PRIVATE}/checkpoint.json", {}).get("published_run", 0)
     if committed == run:
+        repair_latest_pointer(bucket, run)
         summary(f"[Open the industry opportunity report]({url}/index.html)")
         return
     checkpoint = read_json(folder / "checkpoint.json")
@@ -160,7 +162,7 @@ def publish(bucket, folder, run):
         verify(f"{url}/{name}", report[name])
     checkpoint["published_run"] = run
     save_private(bucket, "checkpoint.json", checkpoint)
-    store(bucket, f"{PUBLIC}/latest.json", json_text(latest_pointer(run)).encode(), "application/json")
+    repair_latest_pointer(bucket, run)
     summary(f"[Open the industry opportunity report]({url}/index.html)")
 
 
@@ -223,8 +225,11 @@ def notify(bucket, run):
     except RuntimeError:
         save_private(bucket, path, {"state": "rejected"})
         raise ValueError("Lark rejected the notification") from None
-    except (OSError, ValueError):
-        raise ValueError("Lark delivery status is unknown. Check the target group before retrying.") from None
+    except (OSError, ValueError, IncompleteRead):
+        raise ValueError(
+            f"Lark delivery status is unknown. Clear {PRIVATE}/{path} only after confirming "
+            "the card did not arrive and the report is still the latest publication."
+        ) from None
     save_private(bucket, path, {"state": "sent"})
     summary("Lark notification sent.")
 

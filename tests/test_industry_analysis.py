@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 from zipfile import ZipFile
 
 import oss2
@@ -50,6 +50,9 @@ class Feedback:
              or row["issue_url"].rsplit("/", 1)[-1] == path.split("/")[-2]),
             key=lambda row: row["updated_at"],
         )
+
+    def updated_between(self, path, since, cutoff, **params):
+        return [row for row in self.pages(path, **params) if since < row["updated_at"] <= cutoff]
 
 
 class MemoryBucket:
@@ -98,6 +101,51 @@ class FeedbackReviewTest(unittest.TestCase):
         self.assertEqual(3, len(payloads))
         self.assertEqual("example-17-c123", payloads[2]["issues"][0]["comments"][0]["id"])
         self.assertEqual(["2026-11-18T03:00:00Z", "2026-11-19T02:00:00Z"], github.detail_since)
+        github.issue.update(labels=[{"name": "triaged"}], updated_at="2026-11-21T03:00:00Z")
+        analysis.run_review(CONFIG, state, "2026-11-21T04:00:00Z", github, review, "")
+        self.assertEqual(3, len(payloads))
+
+    def test_failing_oldest_issue_leaves_the_next_run_available_for_other_feedback(self):
+        github = Feedback()
+        config = {**CONFIG, "max_issues": 1}
+        state = {"sources": {"org/example": {
+            "repository": "org/example", "pending": {"16": "2026-11-18T01:00:00Z"},
+        }}}
+        original_get = github.get
+
+        def get(path):
+            if path.endswith("/issues/16"):
+                raise TimeoutError
+            return original_get(path)
+
+        with patch.object(github, "get", side_effect=get) as request:
+            coverage, issues, _ = analysis.collect(github, config, state, FIRST)
+            self.assertEqual("partial", coverage[0]["result"])
+            self.assertEqual([], issues)
+            _, issues, _ = analysis.collect(github, config, state, SECOND)
+            self.assertEqual(["example-17"], [issue["id"] for issue in issues])
+            self.assertIn("16", state["sources"]["org/example"]["pending"])
+            self.assertEqual(1, request.call_args_list.count(call("org/example/issues/16")))
+
+    def test_updated_feed_does_not_skip_a_row_when_an_earlier_row_moves(self):
+        github = analysis.GitHub(None)
+        rows = [
+            {"id": index, "updated_at": f"2026-11-18T0{index}:00:00Z"}
+            for index in (1, 2, 3)
+        ]
+
+        def get(path, *, page, since, **params):
+            available = sorted((row for row in rows if row["updated_at"] >= since), key=lambda row: row["updated_at"])
+            start = (page - 1) * 2
+            result = [dict(row) for row in available[start:start + 2]]
+            if len(available) == 3:
+                rows[0]["updated_at"] = SECOND
+            return result, len(available) > start + 2
+
+        with patch.object(github, "get", side_effect=get):
+            result, resume = analysis.scan_updates(github, "org/example/issues", "2026-11-18T00:00:00Z", FIRST)
+        self.assertEqual([1, 2, 3], [row["id"] for row in result])
+        self.assertIsNone(resume)
 
     def test_comment_scan_resumes_after_finishing_a_timestamp_across_pages(self):
         github = Feedback()
@@ -117,7 +165,7 @@ class FeedbackReviewTest(unittest.TestCase):
                 return dict(github.issue, number=19), False
             if not params:
                 return github.get(path)
-            rows = [row for row in github.pages(path, **params) if row["updated_at"] > params["since"]]
+            rows = [row for row in github.pages(path, **params) if row["updated_at"] >= params["since"]]
             # Keep pages small so the boundary timestamp spans two API requests.
             start = (params["page"] - 1) * 2
             calls.append((path, params["since"], params["page"]))
@@ -132,7 +180,7 @@ class FeedbackReviewTest(unittest.TestCase):
             self.assertEqual(["example-17-c3"], [comment["id"] for comment in issues[0]["comments"]])
             status, issues, _ = analysis.collect(api, CONFIG, state, SECOND)
         self.assertEqual("ok", status[0]["result"])
-        self.assertIn(("org/example/issues/comments", times[2], 1), calls)
+        self.assertIn(("org/example/issues/comments", "2026-11-18T02:00:01Z", 1), calls)
         self.assertEqual(["example-19-c4"], [comment["id"] for comment in issues[0]["comments"]])
 
     def test_feedback_and_scenarios_are_rendered_even_without_a_new_opportunity(self):
@@ -206,13 +254,43 @@ class SourceConfigTest(unittest.TestCase):
         for invalid in ("https://gitlab.com/org/app", "gitlab.com/org/app", "org", "org/.."):
             with self.assertRaisesRegex(ValueError, "Invalid GitHub repository"):
                 analysis.sources_from(invalid)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.json"
-            analysis.write_json(path, {key: CONFIG[key] for key in CONFIG if key != "sources"})
-            with self.assertRaisesRegex(ValueError, "Duplicate GitHub repository"):
-                analysis.config_from(path, "org/App https://github.com/org/app")
-            with self.assertRaisesRegex(ValueError, "INDUSTRY_ANALYSIS_REPOS"):
-                analysis.config_from(path, " ")
+        with self.assertRaisesRegex(ValueError, "Duplicate GitHub repository"):
+            analysis.config_from("org/App https://github.com/org/app")
+        with self.assertRaisesRegex(ValueError, "INDUSTRY_ANALYSIS_REPOS"):
+            analysis.config_from(" ")
+
+
+class GitHubTest(unittest.TestCase):
+    def test_moving_row_in_a_timestamp_bucket_cannot_advance_the_scan(self):
+        github = analysis.GitHub(None)
+        when = "2026-11-18T01:00:00Z"
+        rows = [{"id": index, "updated_at": when} for index in (1, 2, 3)]
+
+        def get(path, *, page, since, **params):
+            available = sorted((row for row in rows if row["updated_at"] >= since), key=lambda row: row["updated_at"])
+            start = (page - 1) * 2
+            result = [dict(row) for row in available[start:start + 2]]
+            rows[0]["updated_at"] = SECOND
+            return result, len(available) > start + 2
+
+        with patch.object(github, "get", side_effect=get):
+            args = (github, "org/example/issues", "2026-11-18T00:00:00Z", FIRST)
+            with self.assertRaisesRegex(OSError, "updates changed"):
+                analysis.scan_updates(*args)
+            result, resume = analysis.scan_updates(*args)
+        self.assertEqual([2, 3], [row["id"] for row in result])
+        self.assertIsNone(resume)
+
+    def test_truncated_response_is_a_transport_error(self):
+        class TruncatedResponse(io.BytesIO):
+            headers = {}
+
+            def read(self, size=-1):
+                raise IncompleteRead(b"part")
+
+        with patch.object(analysis, "urlopen", return_value=TruncatedResponse()):
+            with self.assertRaisesRegex(OSError, "response ended before the body was complete"):
+                analysis.GitHub(None).get("org/example/issues")
 
 
 class PublicationTest(unittest.TestCase):
@@ -264,6 +342,7 @@ class PublicationTest(unittest.TestCase):
             self.assertNotIn(latest_key, bucket.objects)
             before = dict(bucket.objects)
             with patch.object(bucket, "put_object", wraps=bucket.put_object) as put:
+                delivery.publish(bucket, folder / "retry", 1)
                 self.assertTrue(delivery.restore(bucket, folder / "retry", 1))
                 delivery.publish(bucket, folder / "retry", 1)
             self.assertEqual([latest_key], [args.args[0] for args in put.call_args_list])

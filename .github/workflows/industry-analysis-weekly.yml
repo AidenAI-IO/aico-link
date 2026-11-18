@@ -25,6 +25,7 @@ permissions:
 concurrency:
   # Previews never write to OSS, so they must not replace a queued publication.
   group: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'industry-analysis-preview' || 'industry-analysis-weekly' }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
