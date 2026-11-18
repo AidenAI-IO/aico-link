@@ -31,17 +31,17 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 	if tools := r.toolSnapshot(); tools != nil {
 		advisor = tools.decider
 	}
-	run := func(candidates []utgNode, action ...string) (string, error) {
+	run := func(candidates []utgNode, action ...string) (utgMatch, error) {
 		capture.last = visualScreenshotObservation{}
 		res, err := r.executeDeviceCLI(ctx, s, action, capture)
 		if err != nil {
-			return "", err
+			return utgMatch{}, err
 		}
 		if res.IsError {
-			return "", fmt.Errorf("%s: %s", action[0], res.Error)
+			return utgMatch{}, fmt.Errorf("%s: %s", action[0], res.Error)
 		}
 		if len(capture.last.ImageBytes) == 0 {
-			return "", fmt.Errorf("no screenshot after %s", action[0])
+			return utgMatch{}, fmt.Errorf("no screenshot after %s", action[0])
 		}
 		return advisor.matchUTG(ctx, capture.last, candidates)
 	}
@@ -55,6 +55,9 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 		}
 		for _, e := range graph.Edges {
 			if e.ID == id {
+				if e.MismatchState != "" {
+					return ToolInvokeResponse{}, fmt.Errorf("UTG edge #%d is disabled after a confirmed destination mismatch", id)
+				}
 				stepEdge = e
 				break
 			}
@@ -88,10 +91,11 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 	if stepEdge.From != "" {
 		candidates = graph.matchCandidates(stepEdge.From)
 	}
-	current, err := run(candidates, "look")
+	match, err := run(candidates, "look")
 	if err != nil {
 		return ToolInvokeResponse{}, err
 	}
+	current := match.key
 	if args[0] == "utg-status" {
 		var out strings.Builder
 		label := current
@@ -127,10 +131,11 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 				}
 			}
 			if homes := graph.matchCandidates(homeKeys...); len(homes) > 0 {
-				current, err = run(homes, "home")
+				match, err = run(homes, "home")
 				if err != nil {
 					return ToolInvokeResponse{}, err
 				}
+				current = match.key
 				plan, ok = graph.path(current, target)
 			}
 		}
@@ -149,11 +154,16 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 		if current != e.From || !isUTGAction(e.Action) {
 			return ToolInvokeResponse{}, fmt.Errorf("edge #%d source not confirmed", e.ID)
 		}
-		current, err = run(destination, e.Action...)
+		frame := len(turn.steps)
+		match, err = run(destination, e.Action...)
 		if err != nil {
 			return ToolInvokeResponse{}, err
 		}
+		current = match.key
 		if current != e.To {
+			if match.rejected && len(turn.steps) == frame+1 {
+				turn.mismatches = append(turn.mismatches, utgReplayMismatch{edge: e, frame: frame})
+			}
 			return ToolInvokeResponse{}, fmt.Errorf("TRAP: edge #%d destination not confirmed; inspect the final screenshot", e.ID)
 		}
 	}

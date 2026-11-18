@@ -58,17 +58,23 @@ func (g utgGraph) discoveryCandidates(target string) []utgNode {
 	return g.matchCandidates(keys...)
 }
 
-func (a *decisionAdvisor) matchUTG(ctx context.Context, screen visualScreenshotObservation, candidates []utgNode) (string, error) {
+type utgMatch struct {
+	key string
+	// rejected is set only for a confident negative against one expected state.
+	rejected bool
+}
+
+func (a *decisionAdvisor) matchUTG(ctx context.Context, screen visualScreenshotObservation, candidates []utgNode) (utgMatch, error) {
 	if len(candidates) == 0 {
-		return "", nil
+		return utgMatch{}, nil
 	}
 	cfg, client, ok := a.settings()
 	if !ok {
-		return "", fmt.Errorf("UTG state recognition requires an enabled decision model; navigate visually or configure model_settings.decision")
+		return utgMatch{}, fmt.Errorf("UTG state recognition requires an enabled decision model; navigate visually or configure model_settings.decision")
 	}
 	live, err := utgDecisionAsset(screen.ImageBytes)
 	if err != nil {
-		return "", fmt.Errorf("prepare UTG live screen: %w", err)
+		return utgMatch{}, fmt.Errorf("prepare UTG live screen: %w", err)
 	}
 	state := map[string]any{"screen": live.Ref}
 	req := decision.Request{State: state, Assets: map[string]decision.Asset{live.Ref: live.Asset}, Questions: map[string]decision.Question{}}
@@ -76,7 +82,7 @@ func (a *decisionAdvisor) matchUTG(ctx context.Context, screen visualScreenshotO
 	for i, n := range candidates {
 		ref, err := utgDecisionAsset(n.Thumbnail)
 		if err != nil {
-			return "", fmt.Errorf("prepare UTG reference: %w", err)
+			return utgMatch{}, fmt.Errorf("prepare UTG reference: %w", err)
 		}
 		id := fmt.Sprintf("reference_%d", i+1)
 		ids[i] = id
@@ -89,7 +95,7 @@ func (a *decisionAdvisor) matchUTG(ctx context.Context, screen visualScreenshotO
 	if err != nil {
 		logDecision("utg_state_match", cfg.ProviderOrDefault(), "error", 0, "-", "n/a", time.Since(start).Milliseconds(), 0, "visual_navigation")
 		// Do not expose upstream error bodies (which may echo screen inputs) to chat.
-		return "", fmt.Errorf("UTG decision model request failed; inspect the latest screenshot and navigate visually")
+		return utgMatch{}, fmt.Errorf("UTG decision model request failed; inspect the latest screenshot and navigate visually")
 	}
 	threshold := max(defaultDecisionMinConfidence, cfg.MinConfidenceOrDefault())
 	matched := ""
@@ -97,7 +103,7 @@ func (a *decisionAdvisor) matchUTG(ctx context.Context, screen visualScreenshotO
 	for i, id := range ids {
 		yes, sure, p, err := noulAnswer(res, id, threshold)
 		if err != nil || math.IsNaN(p) || p < 0 || p > 1 {
-			return "", fmt.Errorf("invalid UTG decision model response; navigate visually")
+			return utgMatch{}, fmt.Errorf("invalid UTG decision model response; navigate visually")
 		}
 		logDecision("utg_state_match", cfg.ProviderOrDefault(), fmt.Sprintf("candidate=%d match=%t decisive=%t", i+1, yes, sure), p, "-", "n/a", time.Since(start).Milliseconds(), 0, "")
 		if !sure {
@@ -112,9 +118,9 @@ func (a *decisionAdvisor) matchUTG(ctx context.Context, screen visualScreenshotO
 		}
 	}
 	if ambiguous {
-		return "", nil
+		return utgMatch{}, nil
 	}
-	return matched, nil
+	return utgMatch{key: matched, rejected: len(candidates) == 1 && matched == ""}, nil
 }
 
 // Older graphs only contain thumbnails. Keep them usable with the decision

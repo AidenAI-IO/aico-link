@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 )
 
 func (s *Server) handleUTG(w http.ResponseWriter, r *http.Request) {
@@ -14,6 +15,7 @@ func (s *Server) handleUTG(w http.ResponseWriter, r *http.Request) {
 	if s.runtime != nil && s.runtime.utg != nil {
 		g = s.runtime.utg.snapshot()
 	}
+	g.Edges = slices.DeleteFunc(g.Edges, func(e utgEdge) bool { return e.MismatchState != "" })
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(g)

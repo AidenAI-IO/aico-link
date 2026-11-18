@@ -58,7 +58,13 @@ Learning still happens after the turn even when the decision model is disabled.
 During a turn the agent records CLI observations, without invoking a graph
 classification model. After the loop returns, a background request reuses the
 conversation prefix and asks for semantic frame labels with tools disabled.
-Only validated step indices and recorded raw parameters can add edges. Graph
+Only validated step indices and recorded raw parameters can add edges. When
+replay confidently rejects an expected destination and the background classifier
+identifies a different landing state on that same frame, the update quarantines
+the failed edge. It retains the edge ID on disk for audit and deduplication, but
+excludes it from planning and `utg-step`. An uncertain match or service error
+alone does not quarantine an edge. The failed turn does not automatically
+replan; the next turn uses the corrected routes once the update commits. Graph
 writes are atomic; the next turn waits briefly for the latest update, then uses
 last committed graph if the update is still busy. Background work is bounded
 and a saturated queue can skip learning without interrupting device control.

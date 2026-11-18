@@ -71,6 +71,7 @@ type utgBlockingModel struct {
 	llms.Model
 	entered chan []llms.MessageContent
 	release chan struct{}
+	labels  string
 }
 
 func (m utgBlockingModel) GenerateContent(ctx context.Context, prefix []llms.MessageContent, opts ...llms.CallOption) (*llms.ContentResponse, error) {
@@ -80,7 +81,11 @@ func (m utgBlockingModel) GenerateContent(ctx context.Context, prefix []llms.Mes
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: `[{"frame":0,"key":"home","home":true}]`}}}, nil
+	labels := m.labels
+	if labels == "" {
+		labels = `[{"frame":0,"key":"home","home":true}]`
+	}
+	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: labels}}}, nil
 }
 func TestUTGPublishesOnlyAfterBackgroundClassification(t *testing.T) {
 	dir := t.TempDir()
@@ -127,17 +132,19 @@ func TestUTGReplayStopsOnUnexpectedDestination(t *testing.T) {
 		{frame: home}, {args: []string{"tap", "300", "400"}, frame: settings, successful: true},
 	}}, []utgClassification{{Frame: 0, Key: "home", Home: true}, {Frame: 1, Key: "settings"}})
 	for _, tc := range []struct {
-		name          string
-		start, finish visualScreenshotObservation
-		probabilities []float64
-		expectedCalls int
-		expectedError string
+		name                string
+		start, finish       visualScreenshotObservation
+		probabilities       []float64
+		expectedCalls       int
+		expectedError       string
+		rejectedDestination bool
 	}{
 		{name: "model confirms visually different source", start: unknown, finish: settings, probabilities: []float64{.97, .99}, expectedCalls: 1},
 		{name: "model rejects exact source image", start: home, finish: settings, probabilities: []float64{.03}, expectedError: "source"},
 		{name: "uncertain source", start: home, finish: settings, probabilities: []float64{.56}, expectedError: "source"},
 		{name: "disabled decision model", start: home, finish: settings, expectedError: "enabled decision model"},
-		{name: "wrong destination", start: home, finish: unknown, probabilities: []float64{.99, .01}, expectedCalls: 1, expectedError: "TRAP"},
+		{name: "wrong destination", start: home, finish: unknown, probabilities: []float64{.99, .01}, expectedCalls: 1, expectedError: "TRAP", rejectedDestination: true},
+		{name: "uncertain destination", start: home, finish: unknown, probabilities: []float64{.99, .46}, expectedCalls: 1, expectedError: "TRAP"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -197,6 +204,13 @@ func TestUTGReplayStopsOnUnexpectedDestination(t *testing.T) {
 			if len(capture.actions) != 1+tc.expectedCalls || capture.actions[0].name != "look" || (tc.expectedCalls > 0 && capture.actions[1].name != "tap") {
 				t.Fatalf("missing UTG sub-operations: %+v", capture.actions)
 			}
+			if tc.rejectedDestination {
+				if len(turn.mismatches) != 1 || turn.mismatches[0].edge.ID != 1 || turn.mismatches[0].frame != len(turn.steps)-1 {
+					t.Fatalf("missing replay evidence: %+v", turn.mismatches)
+				}
+			} else if len(turn.mismatches) != 0 {
+				t.Fatalf("unexpected replay evidence: %+v", turn.mismatches)
+			}
 			if len(capture.frames) == 0 {
 				t.Fatal("did not preserve final screenshot")
 			}
@@ -255,8 +269,8 @@ func TestUTGDiscoveryRejectsAmbiguousModelResults(t *testing.T) {
 					"reference_1": {Type: decision.TypeNoul, Noul: &tc.ps[0]}, "reference_2": {Type: decision.TypeNoul, Noul: &tc.ps[1]},
 				}}
 			})
-			if got, err := advisor.matchUTG(context.Background(), frame, nodes); err != nil || got != tc.want {
-				t.Fatalf("match=%q err=%v, want %q", got, err, tc.want)
+			if got, err := advisor.matchUTG(context.Background(), frame, nodes); err != nil || got.key != tc.want {
+				t.Fatalf("match=%q err=%v, want %q", got.key, err, tc.want)
 			}
 		})
 	}
@@ -313,6 +327,72 @@ func TestUTGAutoHomeRequiresModelConfirmation(t *testing.T) {
 			}
 			if tc.wantTap && (err != nil || res.Output != "Confirmed state: target") || !tc.wantTap && err == nil {
 				t.Fatalf("output=%q err=%v", res.Output, err)
+			}
+		})
+	}
+}
+
+func TestUTGBackgroundQuarantinesConfirmedWrongDestination(t *testing.T) {
+	for _, tc := range []struct {
+		name, labels string
+		quarantined  bool
+	}{
+		{"different landing state", `[{"frame":0,"key":"home"},{"frame":1,"key":"root"}]`, true},
+		{"unknown landing state", `[{"frame":0,"key":"home"}]`, false},
+		{"models disagree", `[{"frame":0,"key":"home"},{"frame":1,"key":"bluetooth"}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newUTGStore(t.TempDir())
+			defer store.close()
+			shortcut := utgEdge{ID: 15, From: "home", To: "bluetooth", Action: []string{"tap", "144", "690"}, Visits: 5}
+			store.graph = utgGraph{
+				Nodes: []utgNode{{Key: "home"}, {Key: "root"}, {Key: "bluetooth"}},
+				Edges: []utgEdge{{ID: 6, From: "home", To: "root", Action: shortcut.Action}, {ID: 9, From: "root", To: "bluetooth", Action: []string{"tap", "500", "565"}}, shortcut},
+			}
+			frame := testUTGFrame(t, color.White)
+			turn := store.startTurn(context.Background())
+			turn.steps = []utgObservation{{frame: frame}, {frame: frame, args: shortcut.Action, successful: true}}
+			turn.mismatches = []utgReplayMismatch{{edge: shortcut, frame: 1}}
+			model := utgBlockingModel{entered: make(chan []llms.MessageContent, 1), release: make(chan struct{}), labels: tc.labels}
+			store.finish(turn, nil, model, nil)
+			select {
+			case <-model.entered:
+			case <-time.After(time.Second):
+				t.Fatal("background classifier did not start")
+			}
+			if plan, _ := store.snapshot().path("home", "bluetooth"); len(plan) != 1 || plan[0].ID != 15 {
+				t.Fatalf("changed before background confirmation: %+v", plan)
+			}
+			store.mu.Lock()
+			done := store.pending
+			store.mu.Unlock()
+			close(model.release)
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("background update did not finish")
+			}
+			g := newUTGStore(filepath.Dir(store.path)).snapshot()
+			plan, _ := g.path("home", "bluetooth")
+			if !tc.quarantined {
+				if len(plan) != 1 || plan[0].ID != 15 {
+					t.Fatalf("inconclusive evidence removed edge: %+v", plan)
+				}
+				return
+			}
+			if len(plan) != 2 || plan[0].ID != 6 || plan[1].ID != 9 || g.Edges[2].MismatchState != "root" {
+				t.Fatalf("shortcut still usable or evidence missing: %+v", g.Edges)
+			}
+			// A later observation of the originally expected result must not silently
+			// restore a shortcut whose outcome depends on which page the app resumes.
+			g = compileUTG(&utgTurn{graph: g, steps: turn.steps}, []utgClassification{{Frame: 0, Key: "home"}, {Frame: 1, Key: "bluetooth"}})
+			if plan, _ := g.path("home", "bluetooth"); len(plan) != 2 || g.Edges[2].Visits != 5 {
+				t.Fatalf("quarantined edge was relearned: %+v", g.Edges)
+			}
+			ctx := context.WithValue(context.Background(), utgTurnKey{}, &utgTurn{graph: g})
+			r := &Runtime{}
+			if _, err := r.runUTGCommand(ctx, &Server{runtime: r}, []string{"utg-step", "15"}, &deviceCLICapture{}); err == nil || !strings.Contains(err.Error(), "disabled") {
+				t.Fatalf("quarantined edge accepted for manual replay: %v", err)
 			}
 		})
 	}
