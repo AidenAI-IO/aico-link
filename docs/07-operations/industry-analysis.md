@@ -26,6 +26,8 @@ resumes where it stopped. Set product priorities and limits in
 [the analysis settings](../../config/industry-analysis.json). A newly added
 repository looks back 30 days by default.
 Later runs resume from each source's stored checkpoint with a two-day overlap.
+If an issue or comment feed exceeds the scan budget, the report marks that
+source as partial and the next run resumes that feed from its saved position.
 A single call analyzes up to 24 changed issues by default, with up to five
 opportunities selected across sources. Recent changes get priority, with part of
 the budget reserved for older pending feedback. Excess items are queued for the next run.
@@ -61,19 +63,23 @@ The checkpoint, pending IDs and delivery receipts use private object ACLs under
 `industry-analysis/private/`. Verify anonymous reads of that prefix are denied
 by both the OSS and domain access policies before rollout.
 
-A rerun reuses its report address and resumes from the saved analysis once it
-exists. Publication advances the collection checkpoint after online verification.
+A rerun reuses its report address and can resume from saved analysis while the
+collection checkpoint matches the one used for that analysis. Publication
+advances the private checkpoint after online verification. Reruns repair
+an interrupted update to `latest.json` using the checkpoint and reuse the
+verified report files for notification.
 A confirmed Lark send is recorded once per report. A webhook timeout leaves
 delivery marked as unknown. Check the group before clearing that run's receipt and
-retrying. A later published run supersedes older runs for checkpoint updates.
+retrying while that run is the latest publication. Once a later run publishes,
+share the older report link manually.
 
-For a local preview, install the Claude Code CLI, make the model settings
-available in the environment, and optionally set `GH_TOKEN` for the GitHub read
-limit.
+For a local preview, use Python 3.12, install the Claude Code CLI, make the
+model settings available in the environment, and optionally set `GH_TOKEN` for
+the GitHub read limit.
 
 ```bash
 INDUSTRY_ANALYSIS_REPOS=https://github.com/wangzan101/Mika \
-  python3 -m scripts.industry_analysis --output /tmp/aico-industry-preview
+  python3.12 -m scripts.industry_analysis --output /tmp/aico-industry-preview
 ```
 
 The full test profile runs the `industry-analysis` suite. Run it alone with

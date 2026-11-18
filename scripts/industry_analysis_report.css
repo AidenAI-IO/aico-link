@@ -4,19 +4,19 @@
   --surface: #ffffff;
   --ink: #1b1d1c;
   --muted: #6b716e;
-  --faint: #9aa09d;
+  --faint: #6b716e;
   --line: #e6e7e4;
   --accent: #0f6b52;
   --accent-soft: #e5f1ec;
 }
 
-@media (prefers-color-scheme: dark) {
+@media screen and (prefers-color-scheme: dark) {
   :root {
     --bg: #111312;
     --surface: #191c1b;
     --ink: #e8eae9;
     --muted: #9ca39f;
-    --faint: #6f7672;
+    --faint: #8f9692;
     --line: #2a2e2c;
     --accent: #5fc3a0;
     --accent-soft: #1a2a24;
@@ -58,7 +58,7 @@ h2 {
 h3 { font-size: 1rem; font-weight: 650; line-height: 1.5; }
 
 .muted { color: var(--muted); }
-.refs { display: flex; flex-wrap: wrap; gap: .25rem .75rem; font-size: .8125rem; }
+.refs { display: flex; flex-wrap: wrap; gap: .25rem .75rem; font-size: .8125rem; overflow-wrap: anywhere; }
 .empty { color: var(--muted); }
 
 .overview {

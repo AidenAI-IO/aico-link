@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 import hashlib
+from http.client import IncompleteRead
 import json
 import os
 from pathlib import Path
@@ -67,19 +68,35 @@ def save_private(bucket, key, value):
 
 
 def restore(bucket, folder, run):
+    # The private checkpoint is the commit record. latest.json follows it and is
+    # repaired from it, so an interrupted pointer update cannot skip feedback.
     checkpoint = load(bucket, f"{PRIVATE}/checkpoint.json", {})
-    latest = load(bucket, f"{PUBLIC}/latest.json", {})
-    if max(checkpoint.get("published_run", 0), latest.get("run_number", 0)) > run:
+    committed = checkpoint.get("published_run", 0)
+    if committed > run:
         raise ValueError("This run predates the latest publication. Use a preview for a historic review.")
-    base_key = f"{PRIVATE}/runs/{run}/base.json"
-    base = load(bucket, base_key)
-    if base is None:
+    if committed:
+        latest = latest_pointer(committed)
+        if load(bucket, f"{PUBLIC}/latest.json") != latest:
+            store(bucket, f"{PUBLIC}/latest.json", json_text(latest).encode(), "application/json")
+    if committed == run:
+        return True
+    folder.mkdir(parents=True, exist_ok=True)
+    base = load(bucket, f"{PRIVATE}/runs/{run}/base.json")
+    if base is None or base["checkpoint"].get("published_run", 0) != committed:
         base = {"checkpoint": checkpoint, "cutoff": stamp(datetime.now(UTC))}
         save_private(bucket, f"runs/{run}/base.json", base)
-    folder.mkdir(parents=True, exist_ok=True)
     write_json(folder / "base.json", base)
+    prepared_path = folder / "prepared.json"
+    prepared_path.unlink(missing_ok=True)
     if prepared := load(bucket, f"{PRIVATE}/runs/{run}/prepared.json"):
-        write_json(folder / "prepared.json", prepared)
+        # A prepared checkpoint still records the run it was built from.
+        if prepared["checkpoint"].get("published_run", 0) == committed:
+            write_json(prepared_path, prepared)
+    return False
+
+
+def latest_pointer(run):
+    return {"run_number": run, "report": f"{run}/index.html"}
 
 
 def public_url(run):
@@ -112,13 +129,20 @@ def verify(url, expected):
                     content = re.sub(rb'<script[^>]*static\.cloudflareinsights\.com[^>]*>\s*</script>\n?', b"", content)
                 if hashlib.sha256(content).digest() == hashlib.sha256(expected).digest():
                     return
-        except OSError:
+        except (OSError, IncompleteRead):
             continue
     raise ValueError(f"Published {url.rsplit('/', 1)[-1]} did not match the verified local file")
 
 
 def publish(bucket, folder, run):
     url = public_url(run)
+    committed = load(bucket, f"{PRIVATE}/checkpoint.json", {}).get("published_run", 0)
+    if committed == run:
+        summary(f"[Open the industry opportunity report]({url}/index.html)")
+        return
+    checkpoint = read_json(folder / "checkpoint.json")
+    if committed > run or checkpoint.get("published_run", 0) != committed:
+        raise ValueError("The collection checkpoint advanced. Restore the run before publishing.")
     report_dir = folder / "report"
     report = {name: (report_dir / name).read_bytes() for name in TYPES}
     manifest = json.loads(report["manifest.json"])
@@ -127,7 +151,6 @@ def publish(bucket, folder, run):
         for name, data in report.items() if name != "manifest.json"
     ):
         raise ValueError("Report manifest does not match the generated files")
-    checkpoint = read_json(folder / "checkpoint.json")
     save_private(bucket, f"runs/{run}/prepared.json", {
         "report": json.loads(report["opportunities.json"]), "checkpoint": checkpoint,
     })
@@ -135,10 +158,9 @@ def publish(bucket, folder, run):
         store(bucket, f"{PUBLIC}/{run}/{name}", data, TYPES[name])
     for name in ("index.html", "team-share.zip"):
         verify(f"{url}/{name}", report[name])
-    latest = {"run_number": run, "report": f"{run}/index.html"}
-    store(bucket, f"{PUBLIC}/latest.json", json_text(latest).encode(), "application/json")
     checkpoint["published_run"] = run
     save_private(bucket, "checkpoint.json", checkpoint)
+    store(bucket, f"{PUBLIC}/latest.json", json_text(latest_pointer(run)).encode(), "application/json")
     summary(f"[Open the industry opportunity report]({url}/index.html)")
 
 
@@ -149,8 +171,10 @@ def summary(message):
             file.write(message + "\n")
 
 
-def notify(bucket, folder, run):
-    report = read_json(folder / "report" / "opportunities.json")
+def notify(bucket, run):
+    if load(bucket, f"{PRIVATE}/checkpoint.json", {}).get("published_run") != run:
+        raise ValueError("Only the latest committed publication can be notified.")
+    report = load(bucket, f"{PRIVATE}/runs/{run}/prepared.json")["report"]
     if not report["opportunities"]:
         summary("No material opportunity changes to notify.")
         return
@@ -213,7 +237,16 @@ def main():
     args = parser.parse_args()
     if args.run < 1:
         raise ValueError("The Actions run number must be positive")
-    {"restore": restore, "publish": publish, "notify": notify}[args.stage](oss_bucket(), args.workdir, args.run)
+    bucket = oss_bucket()
+    if args.stage == "restore":
+        committed = restore(bucket, args.workdir, args.run)
+        if path := os.getenv("GITHUB_OUTPUT"):
+            with open(path, "a", encoding="utf-8") as file:
+                file.write(f"committed={str(committed).lower()}\n")
+    elif args.stage == "publish":
+        publish(bucket, args.workdir, args.run)
+    else:
+        notify(bucket, args.run)
 
 
 if __name__ == "__main__":

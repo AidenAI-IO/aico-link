@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter, deque
+from collections import deque
 from datetime import UTC, datetime, timedelta
 import hashlib
 from heapq import nlargest
@@ -23,6 +23,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 
 ISSUE_LIMIT = 32
+SCAN_LIMIT = 4000
 COMMENT_LIMIT = 4
 FEEDBACK_LIMIT = 12
 SCENARIO_LIMIT = 10
@@ -161,11 +162,10 @@ def sources_from(text):
         if not match or {".", ".."} & set(match.groups()):
             raise ValueError(f"Invalid GitHub repository: {entry}")
         repo = "/".join(match.groups())
-        # The ID keys the checkpoint and evidence, so it only depends on the repository.
-        key = re.sub(r"[^a-z0-9]+", "-", repo.lower()).strip("-")
-        sources.append({
-            "id": (key if key[0].isalpha() else f"r-{key}")[:40], "name": match.group(2), "repository": repo,
-        })
+        # Citation IDs are HTML anchor-safe. Checkpoints use the full repository name.
+        slug = re.sub(r"[^a-z0-9]+", "-", repo.lower()).strip("-")
+        digest = hashlib.sha256(repo.lower().encode()).hexdigest()[:16]
+        sources.append({"id": f"r-{slug[:21]}-{digest}", "name": match.group(2), "repository": repo})
     return sources
 
 
@@ -223,18 +223,32 @@ class GitHub:
             return json.load(response), has_next
 
     def pages(self, path, **params):
-        for page in range(1, 41):
+        page = 1
+        while True:
             rows, has_next = self.get(path, per_page=100, page=page, **params)
             yield from rows
             if not has_next:
                 return
-        raise ValueError("GitHub pagination limit reached")
+            page += 1
+
+
+def scan_updates(github, path, since, cutoff, **params):
+    rows = []
+    for row in github.pages(path, sort="updated", direction="asc", since=since, **params):
+        when = row["updated_at"]
+        if when <= since:
+            continue
+        if when > cutoff:
+            break
+        # Finish the timestamp at the boundary, including ties on the next page.
+        if len(rows) >= SCAN_LIMIT and when > rows[-1]["updated_at"]:
+            return rows, rows[-1]["updated_at"]
+        rows.append(row)
+    return rows, None
 
 
 def scan(github, source, previous, cutoff, bootstrap_days):
     repo = source["repository"]
-    if previous and previous["repository"].lower() != repo.lower():
-        raise ValueError("Repository changed for an existing source ID")
     metadata, _ = github.get(repo)
     if metadata.get("visibility") != "public":
         raise ValueError("This report accepts only public GitHub repositories")
@@ -243,43 +257,46 @@ def scan(github, source, previous, cutoff, bootstrap_days):
         datetime.fromisoformat(cursor) - timedelta(days=2) if cursor
         else datetime.fromisoformat(cutoff) - timedelta(days=bootstrap_days)
     )
+    resumes = previous.get("scan_resume", {})
+    issue_start = resumes.get("issues", stamp(start))
+    comment_start = resumes.get("comments", stamp(start))
+    issue_rows, issue_resume = scan_updates(github, f"{repo}/issues", issue_start, cutoff, state="all")
+    comment_rows, comment_resume = scan_updates(github, f"{repo}/issues/comments", comment_start, cutoff)
+    next_resume = {name: when for name, when in (("issues", issue_resume), ("comments", comment_resume)) if when}
     pending = dict(previous.get("pending", {}))
     issues = {}
-    for row in github.pages(
-        f"{repo}/issues", state="all", sort="updated", direction="desc", since=stamp(start),
-    ):
-        if "pull_request" not in row and row["updated_at"] <= cutoff:
-            issues[str(row["number"])] = row
-            pending[str(row["number"])] = row["updated_at"]
-    for comment in github.pages(
-        f"{repo}/issues/comments", sort="updated", direction="desc", since=stamp(start),
-    ):
-        if comment["updated_at"] <= cutoff:
-            number = comment["issue_url"].rsplit("/", 1)[-1]
-            if number.isdecimal() and urlsplit(comment["html_url"]).path.endswith(f"/issues/{number}"):
-                pending[number] = max(pending.get(number, ""), comment["updated_at"])
+    for row in issue_rows:
+        if "pull_request" not in row:
+            number = str(row["number"])
+            issues[number] = row
+            pending[number] = max(pending.get(number, ""), row["updated_at"])
+    for comment in comment_rows:
+        number = comment["issue_url"].rsplit("/", 1)[-1]
+        if number.isdecimal() and urlsplit(comment["html_url"]).path.endswith(f"/issues/{number}"):
+            pending[number] = max(pending.get(number, ""), comment["updated_at"])
     seen = previous.get("seen", {})
     pending = {number: when for number, when in pending.items() if when > seen.get(number, {}).get("through", "")}
-    return pending, issues, stamp(start)
+    return pending, issues, min(issue_start, comment_start), next_resume
 
 
-def feedback(github, source, number, issue, cutoff):
+def feedback(github, source, number, issue, cutoff, since):
     repo = source["repository"]
     if issue is None:
         try:
             issue, _ = github.get(f"{repo}/issues/{number}")
         except HTTPError as error:
             if error.code in (404, 410):
-                return None, None
+                return None, None, ""
             raise
     if "pull_request" in issue:
-        return None, None
+        return None, None, ""
     if issue["updated_at"] > cutoff:
         raise ValueError("The issue changed after the collection cutoff")
 
     comments = nlargest(
         COMMENT_LIMIT,
-        (row for row in github.pages(f"{repo}/issues/{number}/comments") if row["updated_at"] <= cutoff),
+        (row for row in github.pages(f"{repo}/issues/{number}/comments", since=since)
+         if since < row["updated_at"] <= cutoff),
         key=lambda row: row["updated_at"],
     ) if issue["comments"] else []
     prefix = f"{source['id']}-{number}"
@@ -302,32 +319,38 @@ def feedback(github, source, number, issue, cutoff):
         "title": safe_text(issue["title"], 160), "body": safe_text(issue.get("body"), 700),
         "comments": detail, "comment_count": issue.get("comments", 0),
     }
-    return item, evidence
+    through = max((row["updated_at"] for row in comments), default="")
+    return item, evidence, max(issue["updated_at"], through)
 
 
 def collect(github, config, state, cutoff, only_source=None):
     sources = state.setdefault("sources", {})
+    for key, record in list(sources.items()):
+        repository = record["repository"].lower()
+        if key != repository:
+            sources.setdefault(repository, record)
+            del sources[key]
     coverage = []
     windows = {}
     queues = {}
     candidates = []
     evidence = {}
     for source in config["sources"]:
-        key = source["id"]
+        key = source["repository"].lower()
         if only_source and key != only_source:
             continue
         record = sources.get(key, {})
         status = {"source": source["name"], "until": cutoff, "changed": 0, "analyzed": 0, "pending": 0}
         coverage.append(status)
         try:
-            pending, issues, start = scan(github, source, record, cutoff, config["bootstrap_days"])
+            pending, issues, start, resume = scan(github, source, record, cutoff, config["bootstrap_days"])
         except (OSError, ValueError):
             status.update(result="failed", pending=len(record.get("pending", {})))
             continue
         seen = dict(record.get("seen", {}))
-        sources[key] = {"repository": source["repository"], "cursor": cutoff, "pending": pending, "seen": seen,
-                        "last_review": record.get("last_review", "")}
-        status.update(result="ok", since=start, changed=len(pending))
+        sources[key] = {"repository": source["repository"], "cursor": cutoff, "scan_resume": resume,
+                        "pending": pending, "seen": seen, "last_review": record.get("last_review", "")}
+        status.update(result="partial" if resume else "ok", since=start, changed=len(pending))
         windows[key] = (source, pending, issues, seen, status)
         queues[key] = deque(sorted(pending, key=lambda number: (pending[number], int(number))))
 
@@ -336,34 +359,35 @@ def collect(github, config, state, cutoff, only_source=None):
     if not windows:
         raise ValueError("All configured GitHub sources failed to collect")
     queues = dict(sorted(queues.items(), key=lambda entry: sources[entry[0]]["last_review"]))
-    reviewed = Counter()
-    inspected = 0
-    while queues and inspected < config["max_issues"]:
-        for key in list(queues):
-            if inspected >= config["max_issues"]:
-                break
-            queue = queues[key]
-            if not queue:
-                del queues[key]
-                continue
-            inspected += 1
-            sources[key]["last_review"] = cutoff
-            source, pending, issues, seen, status = windows[key]
-            # Prioritize fresh signals while giving older backlog a share of the budget.
-            number = queue.popleft() if reviewed[key] % 4 == 3 else queue.pop()
-            reviewed[key] += 1
-            try:
-                item, links = feedback(github, source, number, issues.get(number), cutoff)
-            except (OSError, ValueError):
-                status["result"] = "partial"
-                continue
-            digest = hashlib.sha256(json_text(item).encode()).hexdigest() if item else None
-            if item and seen.get(number, {}).get("digest") != digest:
-                candidates.append(item)
-                evidence.update(links)
-                status["analyzed"] += 1
-            seen[number] = {"through": pending[number], "digest": digest}
-            del pending[number]
+    # A quarter of the run goes to the oldest pending feedback across all sources,
+    # so a backlog drains even when every source keeps receiving new issues.
+    backlog = max(1, config["max_issues"] // 4)
+    picks = []
+    while len(picks) < backlog and any(queues.values()):
+        key = min((key for key in queues if queues[key]), key=lambda key: windows[key][1][queues[key][0]])
+        picks.append((key, queues[key].popleft()))
+    while len(picks) < config["max_issues"] and any(queues.values()):
+        for key in queues:
+            if queues[key] and len(picks) < config["max_issues"]:
+                picks.append((key, queues[key].pop()))
+    for key, number in picks:
+        sources[key]["last_review"] = cutoff
+        source, pending, issues, seen, status = windows[key]
+        since = seen.get(number, {}).get("through") or stamp(
+            datetime.fromisoformat(pending[number]) - timedelta(days=config["bootstrap_days"])
+        )
+        try:
+            item, links, through = feedback(github, source, number, issues.get(number), cutoff, since)
+        except (OSError, ValueError):
+            status["result"] = "partial"
+            continue
+        digest = hashlib.sha256(json_text(item).encode()).hexdigest() if item else None
+        if item and seen.get(number, {}).get("digest") != digest:
+            candidates.append(item)
+            evidence.update(links)
+            status["analyzed"] += 1
+        seen[number] = {"through": max(pending[number], through), "digest": digest}
+        del pending[number]
     for _, pending, _, _, status in windows.values():
         status["pending"] = len(pending)
     return coverage, candidates, evidence
@@ -474,6 +498,9 @@ def validate_review(result, evidence, issue_ids, maximum, catalog=None):
         if not isinstance(kind, str) or kind not in FEEDBACK_KINDS:
             raise ValueError("Model returned an invalid feedback kind")
         refs = [key for key in citations(row.get("evidence"), evidence) if owner[key] == issue]
+        if kind == "clarification" and not any(key != issue for key in refs):
+            # The row's claim rests on a comment, so without one it is not shown.
+            continue
         feedback[issue] = {
             "issue": issue, "kind": kind, **text_fields(row, ("summary", "follow_up"), ("follow_up",)),
             "sources": [evidence[key] for key in dict.fromkeys([issue, *refs])],
@@ -500,11 +527,11 @@ def validate_review(result, evidence, issue_ids, maximum, catalog=None):
         if not isinstance(overview, dict):
             raise ValueError("Model returned an invalid overview")
         refs = citations(overview.get("evidence"), shown)
-        related = list(dict.fromkeys(owner[key] for key in refs))
+        # A lead finding without a valid citation is not published.
         overview = {
             **text_fields(overview, ("finding", "next_step"), ("next_step",)),
-            "sources": [evidence[key] for key in refs], "feedback": related,
-        }
+            "sources": [evidence[key] for key in refs], "feedback": list(dict.fromkeys(owner[key] for key in refs)),
+        } if refs else None
     benchmarks = []
     for row in rows({"benchmark_candidates": result.get("benchmark_candidates", [])},
                     "benchmark_candidates", BENCHMARK_LIMIT):
@@ -599,11 +626,17 @@ def render(report, folder):
         body.append(f'<p class="empty">{LABELS["no_opportunities"]}</p>')
     for index, item in enumerate(opportunities, 1):
         related = [key for key in item.get("feedback", []) if key in feedback_by_id]
-        refs = feedback_links(related)[0] if related else html_links(cited(item["sources"]))
+        sources = [
+            {**link, "label": f'{link["label"]} · {LABELS["comment"]}'}
+            if "#issuecomment-" in link["url"] else link
+            for link in item["sources"]
+        ]
+        direct_links = [link for link in sources if "#issuecomment-" in link["url"]] if related else sources
+        refs = feedback_links(related)[0] + html_links(direct_links)
         fields = [(LABELS[key], item[key]) for key in ("impact", "aico_coverage", "validation")]
         markdown += ["", f"### {index}. {md(item['title'])}", "", md(item["scenario"]), "", md(item["proposal"]), ""]
         markdown += [f"- {label}：{md(value)}" for label, value in fields]
-        markdown.append(f"- {LABELS['sources']}：{md_links(cited(item['sources']))}")
+        markdown.append(f"- {LABELS['sources']}：{md_links(sources)}")
         body.append(
             f'<article class="card"><span class="index">{index:02d}</span><div>'
             f'<h3>{esc(item["title"])}</h3><p class="scenario">{esc(item["scenario"])}</p>'
@@ -742,7 +775,12 @@ def main():
         cutoff = base.get("cutoff") or stamp(datetime.now(UTC))
         state = base.get("checkpoint", {})
         config = config_from(args.config, os.getenv("INDUSTRY_ANALYSIS_REPOS", ""))
-        only = sources_from(args.source)[0]["id"] if args.source else None
+        only = None
+        if args.source:
+            selected = sources_from(args.source)
+            if len(selected) != 1:
+                raise ValueError("--source must name exactly one repository")
+            only = selected[0]["repository"].lower()
         context = Path(PRODUCT_CONTEXT).read_text(encoding="utf-8")
         report = run_review(config, state, cutoff, GitHub(os.getenv("GH_TOKEN")), model_review, context, only)
         sha = os.getenv("GITHUB_SHA", "")
