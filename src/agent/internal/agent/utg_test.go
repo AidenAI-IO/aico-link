@@ -8,6 +8,8 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/decision"
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
 )
@@ -57,9 +60,6 @@ func TestUTGCompilesOnlyObservedNavigation(t *testing.T) {
 	}
 	if len(g.Edges) != 2 {
 		t.Fatalf("edges: %+v", g.Edges)
-	}
-	if got := g.locate(home, "settings"); got != "home" {
-		t.Fatalf("matched %s", got)
 	}
 	encoded, _ := json.Marshal(g)
 	if bytes.Contains(encoded, []byte("private")) {
@@ -129,15 +129,34 @@ func TestUTGReplayStopsOnUnexpectedDestination(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		start, finish visualScreenshotObservation
+		probabilities []float64
 		expectedCalls int
 		expectedError string
 	}{
-		{name: "confirmed", start: home, finish: settings, expectedCalls: 1},
-		{name: "unknown source", start: unknown, finish: settings, expectedError: "source"},
-		{name: "wrong destination", start: home, finish: unknown, expectedCalls: 1, expectedError: "TRAP"},
+		{name: "model confirms visually different source", start: unknown, finish: settings, probabilities: []float64{.97, .99}, expectedCalls: 1},
+		{name: "model rejects exact source image", start: home, finish: settings, probabilities: []float64{.03}, expectedError: "source"},
+		{name: "uncertain source", start: home, finish: settings, probabilities: []float64{.56}, expectedError: "source"},
+		{name: "disabled decision model", start: home, finish: settings, expectedError: "enabled decision model"},
+		{name: "wrong destination", start: home, finish: unknown, probabilities: []float64{.99, .01}, expectedCalls: 1, expectedError: "TRAP"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
+			var advisor *decisionAdvisor
+			asks := 0
+			if len(tc.probabilities) > 0 {
+				advisor = newUTGTestAdvisor(t, func(req decision.Request) decision.Response {
+					if len(req.Assets) != 2 || len(req.Questions) != 1 {
+						t.Errorf("expected two images and one question: %d, %d", len(req.Assets), len(req.Questions))
+					}
+					if asks >= len(tc.probabilities) {
+						t.Error("unexpected extra decision")
+						return decision.Response{}
+					}
+					p := tc.probabilities[asks]
+					asks++
+					return decision.Response{Answers: map[string]decision.Answer{"reference_1": {Type: decision.TypeNoul, Noul: &p}}}
+				})
+			}
 			active := tc.start
 			response := func(v visualScreenshotObservation, changed bool) string {
 				result := v.Result
@@ -146,7 +165,7 @@ func TestUTGReplayStopsOnUnexpectedDestination(t *testing.T) {
 				b, _ := json.Marshal(result)
 				return string(b)
 			}
-			r := &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{
+			r := &Runtime{tools: &ToolSet{decider: advisor, tools: map[string]langtools.Tool{
 				"screenshot": utgReplayTestTool{"screenshot", func(string) string { return response(active, false) }},
 				"touch_gesture": utgReplayTestTool{"touch_gesture", func(input string) string {
 					calls++
@@ -168,6 +187,9 @@ func TestUTGReplayStopsOnUnexpectedDestination(t *testing.T) {
 				}
 			} else if err == nil || !strings.Contains(err.Error(), tc.expectedError) {
 				t.Fatalf("error = %v", err)
+			}
+			if asks != len(tc.probabilities) {
+				t.Fatalf("decision calls = %d, want %d", asks, len(tc.probabilities))
 			}
 			if calls != tc.expectedCalls {
 				t.Fatalf("device calls = %d, want %d", calls, tc.expectedCalls)
@@ -191,4 +213,107 @@ func (s utgReplayTestTool) Name() string        { return s.name }
 func (s utgReplayTestTool) Description() string { return s.name }
 func (s utgReplayTestTool) Call(_ context.Context, input string) (string, error) {
 	return s.fn(input), nil
+}
+
+func newUTGTestAdvisor(t *testing.T, answer func(decision.Request) decision.Response) *decisionAdvisor {
+	t.Helper()
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req decision.Request
+		if r.Method != http.MethodPost || r.URL.Path != "/systemone" || json.NewDecoder(r.Body).Decode(&req) != nil {
+			t.Error("invalid decision request")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(answer(req))
+	}))
+	t.Cleanup(endpoint.Close)
+	advisor := &decisionAdvisor{}
+	advisor.setConfig(func() DecisionModelConfig {
+		return DecisionModelConfig{Enabled: true, APIKey: "test-key", BaseURL: endpoint.URL}
+	})
+	return advisor
+}
+
+func TestUTGDiscoveryRejectsAmbiguousModelResults(t *testing.T) {
+	frame := testUTGFrame(t, color.Black)
+	nodes := []utgNode{{Key: "launcher/home", Thumbnail: frame.ImageBytes}, {Key: "launcher/other", Thumbnail: frame.ImageBytes}}
+	for _, tc := range []struct {
+		name string
+		ps   [2]float64
+		want string
+	}{
+		{"single match", [2]float64{.93, .06}, "launcher/home"},
+		{"two matches", [2]float64{.93, .91}, ""},
+		{"unresolved alternative", [2]float64{.93, .45}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			advisor := newUTGTestAdvisor(t, func(req decision.Request) decision.Response {
+				if len(req.Assets) != 3 || len(req.Questions) != 2 {
+					t.Error("discovery must send both reference images")
+				}
+				return decision.Response{Answers: map[string]decision.Answer{
+					"reference_1": {Type: decision.TypeNoul, Noul: &tc.ps[0]}, "reference_2": {Type: decision.TypeNoul, Noul: &tc.ps[1]},
+				}}
+			})
+			if got, err := advisor.matchUTG(context.Background(), frame, nodes); err != nil || got != tc.want {
+				t.Fatalf("match=%q err=%v, want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestUTGAutoHomeRequiresModelConfirmation(t *testing.T) {
+	home := testUTGFrame(t, color.Black)
+	target := testUTGFrame(t, color.White)
+	changedHome := testUTGFrame(t, color.Gray{Y: 42})
+	graph := utgGraph{
+		Nodes: []utgNode{{Key: "home", Home: true, Thumbnail: home.ImageBytes}, {Key: "target", Thumbnail: target.ImageBytes}},
+		Edges: []utgEdge{{ID: 1, From: "home", To: "target", Action: []string{"tap", "300", "400"}}},
+	}
+	for _, tc := range []struct {
+		name           string
+		homeConfidence float64
+		wantTap        bool
+	}{
+		{"clock change accepted", .98, true},
+		{"wrong launcher page rejected", .04, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asks := 0
+			advisor := newUTGTestAdvisor(t, func(req decision.Request) decision.Response {
+				asks++
+				answers := map[string]decision.Answer{}
+				for id := range req.Questions {
+					p := .01
+					if asks == 2 {
+						p = tc.homeConfidence
+					} else if asks == 3 {
+						p = .99
+					}
+					answers[id] = decision.Answer{Type: decision.TypeNoul, Noul: &p}
+				}
+				return decision.Response{Answers: answers}
+			})
+			shot := func(v visualScreenshotObservation) string {
+				payload := v.Result
+				payload.Data = base64.StdEncoding.EncodeToString(v.ImageBytes)
+				raw, _ := json.Marshal(payload)
+				return string(raw)
+			}
+			homeCalls, tapCalls := 0, 0
+			r := &Runtime{tools: &ToolSet{decider: advisor, tools: map[string]langtools.Tool{
+				"screenshot":    deviceCLITestScreenshot{output: shot(testUTGFrame(t, color.Gray{Y: 200}))},
+				"quick_action":  utgReplayTestTool{"quick_action", func(string) string { homeCalls++; return shot(changedHome) }},
+				"touch_gesture": utgReplayTestTool{"touch_gesture", func(string) string { tapCalls++; return shot(target) }},
+			}}}
+			ctx := context.WithValue(context.Background(), utgTurnKey{}, &utgTurn{graph: graph})
+			res, err := r.runUTGCommand(ctx, &Server{runtime: r}, []string{"utg-goto", "target"}, &deviceCLICapture{})
+			if homeCalls != 1 || (tapCalls == 1) != tc.wantTap || tapCalls > 1 {
+				t.Fatalf("home calls=%d tap calls=%d", homeCalls, tapCalls)
+			}
+			if tc.wantTap && (err != nil || res.Output != "Confirmed state: target") || !tc.wantTap && err == nil {
+				t.Fatalf("output=%q err=%v", res.Output, err)
+			}
+		})
+	}
 }

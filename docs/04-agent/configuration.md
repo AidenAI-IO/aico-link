@@ -790,7 +790,9 @@ Official references: [model capabilities and limits](https://api-docs.deepseek.c
 An optional decision model that answers fixed-choice questions (choice, yes/no,
 box in an image) inside deterministic workflows. It is separate from the main
 model: it never plans or generates text. It is off by default; turning it on
-requires `api_key`. When it is off every decision stays with the main model.
+requires `api_key`. When it is off, workflows with a main-model decision keep
+using it. [UTG state recognition](device-cli.md#debugging-learned-navigation)
+instead stops automatic replay and leaves navigation to the agent.
 One provider is active at a time; its key is independent of the main model key.
 Three providers are supported:
 

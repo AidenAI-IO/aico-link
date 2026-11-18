@@ -27,7 +27,11 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 	if (args[0] == "utg-status" && len(args) != 1) || (args[0] != "utg-status" && len(args) != 2) {
 		return ToolInvokeResponse{}, fmt.Errorf("invalid %s arguments", args[0])
 	}
-	run := func(action ...string) (string, error) {
+	var advisor *decisionAdvisor
+	if tools := r.toolSnapshot(); tools != nil {
+		advisor = tools.decider
+	}
+	run := func(candidates []utgNode, action ...string) (string, error) {
 		capture.last = visualScreenshotObservation{}
 		res, err := r.executeDeviceCLI(ctx, s, action, capture)
 		if err != nil {
@@ -39,40 +43,26 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 		if len(capture.last.ImageBytes) == 0 {
 			return "", fmt.Errorf("no screenshot after %s", action[0])
 		}
-		turn.position = graph.locate(capture.last, turn.position)
-		return turn.position, nil
+		return advisor.matchUTG(ctx, capture.last, candidates)
 	}
-	current, err := run("look")
-	if err != nil {
-		return ToolInvokeResponse{}, err
-	}
-	if args[0] == "utg-status" {
-		var out strings.Builder
-		fmt.Fprintf(&out, "Current state: %s\nReachable states:", current)
-		for _, node := range graph.Nodes {
-			if _, ok := graph.path(current, node.Key); ok {
-				fmt.Fprintf(&out, "\n%s: %s", node.Key, node.Name)
-			}
-		}
-		return ToolInvokeResponse{Output: out.String()}, nil
-	}
-	var plan []utgEdge
-	if args[0] == "utg-step" {
+	var target string
+	var stepEdge utgEdge
+	switch args[0] {
+	case "utg-step":
 		id, err := strconv.Atoi(strings.TrimPrefix(args[1], "#"))
 		if err != nil {
 			return ToolInvokeResponse{}, fmt.Errorf("invalid edge ID")
 		}
 		for _, e := range graph.Edges {
-			if e.ID == id && current == e.From {
-				plan = []utgEdge{e}
+			if e.ID == id {
+				stepEdge = e
 				break
 			}
 		}
-		if len(plan) == 0 {
-			return ToolInvokeResponse{}, fmt.Errorf("edge is unknown or current screen does not match its source")
+		if stepEdge.From == "" {
+			return ToolInvokeResponse{}, fmt.Errorf("unknown UTG edge: %d", id)
 		}
-	} else {
-		target := ""
+	case "utg-goto":
 		for _, n := range graph.Nodes {
 			if n.Key == args[1] {
 				target = n.Key
@@ -81,31 +71,63 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 		}
 		if target == "" {
 			for _, n := range graph.Nodes {
-				if strings.EqualFold(n.Name, args[1]) {
-					if target != "" {
-						return ToolInvokeResponse{}, fmt.Errorf("ambiguous target; use a state key")
-					}
-					target = n.Key
+				if !strings.EqualFold(n.Name, args[1]) {
+					continue
 				}
+				if target != "" {
+					return ToolInvokeResponse{}, fmt.Errorf("ambiguous target; use a state key")
+				}
+				target = n.Key
 			}
 		}
 		if target == "" {
 			return ToolInvokeResponse{}, fmt.Errorf("unknown state: %s", args[1])
 		}
+	}
+	candidates := graph.discoveryCandidates(target)
+	if stepEdge.From != "" {
+		candidates = graph.matchCandidates(stepEdge.From)
+	}
+	current, err := run(candidates, "look")
+	if err != nil {
+		return ToolInvokeResponse{}, err
+	}
+	if args[0] == "utg-status" {
+		var out strings.Builder
+		label := current
+		if label == "" {
+			label = "unknown (no confident match)"
+		}
+		fmt.Fprintf(&out, "Current state: %s\nReachable states:", label)
+		for _, n := range graph.Nodes {
+			if _, ok := graph.path(current, n.Key); ok {
+				fmt.Fprintf(&out, "\n%s: %s", n.Key, n.Name)
+			}
+		}
+		return ToolInvokeResponse{Output: out.String()}, nil
+	}
+	var plan []utgEdge
+	if stepEdge.From != "" {
+		if current != stepEdge.From {
+			return ToolInvokeResponse{}, fmt.Errorf("current screen does not match edge #%d source", stepEdge.ID)
+		}
+		plan = []utgEdge{stepEdge}
+	} else {
 		var ok bool
 		plan, ok = graph.path(current, target)
 		if !ok {
 			// Never substitute a visually similar but unverified source page.
 			// Reset only when the graph already has a home-to-target route.
+			var homeKeys []string
 			for _, n := range graph.Nodes {
 				if n.Home {
-					if _, ok = graph.path(n.Key, target); ok {
-						break
+					if _, reachable := graph.path(n.Key, target); reachable {
+						homeKeys = append(homeKeys, n.Key)
 					}
 				}
 			}
-			if ok {
-				current, err = run("home")
+			if homes := graph.matchCandidates(homeKeys...); len(homes) > 0 {
+				current, err = run(homes, "home")
 				if err != nil {
 					return ToolInvokeResponse{}, err
 				}
@@ -120,30 +142,16 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 		return ToolInvokeResponse{}, fmt.Errorf("replay exceeds 12 steps; navigate visually")
 	}
 	for _, e := range plan {
+		destination := graph.matchCandidates(e.To)
+		if len(destination) == 0 {
+			return ToolInvokeResponse{}, fmt.Errorf("edge #%d has no destination reference; navigate visually", e.ID)
+		}
 		if current != e.From || !isUTGAction(e.Action) {
 			return ToolInvokeResponse{}, fmt.Errorf("edge #%d source not confirmed", e.ID)
 		}
-		current, err = run(e.Action...)
+		current, err = run(destination, e.Action...)
 		if err != nil {
 			return ToolInvokeResponse{}, err
-		}
-		if current != e.To && capture.last.Result.ScreenChanged != nil && !*capture.last.Result.ScreenChanged {
-			for retry := 0; retry < 3; retry++ {
-				current, err = run("back")
-				if err != nil {
-					return ToolInvokeResponse{}, err
-				}
-				if current != e.From {
-					continue
-				}
-				current, err = run(e.Action...)
-				if err != nil {
-					return ToolInvokeResponse{}, err
-				}
-				if current == e.To || capture.last.Result.ScreenChanged == nil || *capture.last.Result.ScreenChanged {
-					break
-				}
-			}
 		}
 		if current != e.To {
 			return ToolInvokeResponse{}, fmt.Errorf("TRAP: edge #%d destination not confirmed; inspect the final screenshot", e.ID)

@@ -3,7 +3,6 @@ package agent
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -24,14 +23,12 @@ const maxUTGSteps = 60
 const maxUTGStates = 128
 
 type utgNode struct {
-	Key       string   `json:"key"`
-	Name      string   `json:"name"`
-	App       string   `json:"app"`
-	Home      bool     `json:"home,omitempty"`
-	Visits    int      `json:"visits"`
-	Thumbnail []byte   `json:"thumbnail"`
-	Signature []byte   `json:"signature"`
-	Exact     [32]byte `json:"exact"`
+	Key       string `json:"key"`
+	Name      string `json:"name"`
+	App       string `json:"app"`
+	Home      bool   `json:"home,omitempty"`
+	Visits    int    `json:"visits"`
+	Thumbnail []byte `json:"thumbnail"`
 }
 type utgEdge struct {
 	ID     int      `json:"id"`
@@ -56,10 +53,9 @@ type utgStore struct {
 }
 type utgTurnKey struct{}
 type utgTurn struct {
-	graph    utgGraph
-	steps    []utgObservation
-	tags     map[string]string
-	position string
+	graph utgGraph
+	steps []utgObservation
+	tags  map[string]string
 }
 type utgObservation struct {
 	args       []string
@@ -229,7 +225,7 @@ func classifyUTG(ctx context.Context, model llms.Model, prefix []messages.Messag
 	parts := []llms.ContentPart{llms.TextPart(log.String())}
 	for i, step := range turn.steps {
 		// Compact only additional frames; the visible prefix is reused unchanged.
-		thumb, _, _ := utgImage(step.frame)
+		thumb := utgImage(step.frame, 320)
 		if len(thumb) == 0 {
 			continue
 		}
@@ -280,13 +276,13 @@ func compileUTG(turn *utgTurn, labels []utgClassification) utgGraph {
 			if len(g.Nodes) >= maxUTGStates || len(label.Name) > 100 || len(label.App) > 100 {
 				continue
 			}
-			thumbnail, signature, exact := utgImage(turn.steps[label.Frame].frame)
+			thumbnail := utgImage(turn.steps[label.Frame].frame, 640)
 			if len(thumbnail) == 0 {
 				continue
 			}
 			i = len(g.Nodes)
 			nodes[key] = i
-			g.Nodes = append(g.Nodes, utgNode{Key: key, Name: label.Name, App: label.App, Home: label.Home, Thumbnail: thumbnail, Signature: signature, Exact: exact})
+			g.Nodes = append(g.Nodes, utgNode{Key: key, Name: label.Name, App: label.App, Home: label.Home, Thumbnail: thumbnail})
 		}
 		g.Nodes[i].Visits++
 		byFrame[label.Frame] = key
@@ -342,78 +338,29 @@ func isUTGAction(args []string) bool {
 	return false
 }
 
-func utgImage(v visualScreenshotObservation) (thumb, signature []byte, exact [32]byte) {
+func utgImage(v visualScreenshotObservation, maxSide int) []byte {
 	src, _, err := image.Decode(bytes.NewReader(v.ImageBytes))
 	if err != nil {
-		return nil, nil, exact
+		return nil
 	}
 	b := src.Bounds()
 	if b.Empty() {
-		return nil, nil, exact
+		return nil
 	}
-	small := image.NewRGBA(image.Rect(0, 0, max(1, min(240, 320*b.Dx()/b.Dy())), 320))
+	side := max(b.Dx(), b.Dy())
+	limit := min(side, maxSide)
+	w, h := max(1, b.Dx()*limit/side), max(1, b.Dy()*limit/side)
+	small := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < small.Bounds().Dy(); y++ {
 		for x := 0; x < small.Bounds().Dx(); x++ {
-			small.Set(x, y, src.At(b.Min.X+x*b.Dx()/small.Bounds().Dx(), b.Min.Y+y*b.Dy()/320))
+			small.Set(x, y, src.At(b.Min.X+x*b.Dx()/small.Bounds().Dx(), b.Min.Y+y*b.Dy()/h))
 		}
 	}
 	var buf bytes.Buffer
 	if jpeg.Encode(&buf, small, &jpeg.Options{Quality: 72}) != nil {
-		return nil, nil, exact
+		return nil
 	}
-	for _, y := range []int{25, 42, 59, 76, 260, 277, 294, 310} {
-		for x := 0; x < 24; x++ {
-			p := small.RGBAAt(x*small.Bounds().Dx()/24, y)
-			signature = append(signature, p.R, p.G, p.B)
-		}
-	}
-	return buf.Bytes(), signature, sha256.Sum256(v.ImageBytes)
-}
-
-func (g utgGraph) locate(v visualScreenshotObservation, prior string) string {
-	_, signature, exact := utgImage(v)
-	if len(signature) == 0 {
-		return ""
-	}
-	var exactKey string
-	for _, n := range g.Nodes {
-		if n.Exact == exact {
-			if exactKey != "" {
-				return ""
-			}
-			exactKey = n.Key
-		}
-	}
-	if exactKey != "" {
-		return exactKey
-	}
-	best, second, key := 1000., 1000., ""
-	for _, n := range g.Nodes {
-		if len(n.Signature) != len(signature) {
-			continue
-		}
-		sum := 0
-		for i, x := range signature {
-			d := int(x) - int(n.Signature[i])
-			if d < 0 {
-				d = -d
-			}
-			sum += d
-		}
-		score := float64(sum) / float64(len(signature))
-		if n.Key == prior && score < 8 {
-			score -= 0.5
-		}
-		if score < best {
-			second, best, key = best, score, n.Key
-		} else if score < second {
-			second = score
-		}
-	}
-	if best <= 8 && second-best >= 3 {
-		return key
-	}
-	return ""
+	return buf.Bytes()
 }
 
 func (g utgGraph) path(from, to string) ([]utgEdge, bool) {

@@ -44,6 +44,17 @@ screenshots. Treat it as sensitive and do not share or commit it.
 - `utg-step EDGE_ID` runs one edge from its verified source.
 - `utg-tag KEY LABEL` queues a display-label update for the end of the turn.
 
+UTG recognition uses the existing [decision model](configuration.md#model_settingsdecision)
+(e.g. TypeSafe Jev). Enable it in **Config Web → Models → Decision model** and
+supply credentials for the selected provider. The decision model receives the
+live screenshot and representative images from the graph. It compares the app,
+page, navigation layout and modal layer, ignoring clocks and other dynamic
+content. Initial discovery considers up to four candidate states; replay checks
+the expected destination of each edge. If the model is disabled, fails to
+respond, or cannot confirm the expected screen, use visual navigation. There is
+no pixel-matching fallback. UTG requires a confidence threshold of at least 0.8.
+Learning still happens after the turn even when the decision model is disabled.
+
 During a turn the agent records CLI observations, without invoking a graph
 classification model. After the loop returns, a background request reuses the
 conversation prefix and asks for semantic frame labels with tools disabled.

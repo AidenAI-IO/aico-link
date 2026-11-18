@@ -14,10 +14,6 @@ func (s *Server) handleUTG(w http.ResponseWriter, r *http.Request) {
 	if s.runtime != nil && s.runtime.utg != nil {
 		g = s.runtime.utg.snapshot()
 	}
-	for i := range g.Nodes {
-		g.Nodes[i].Signature = nil
-		g.Nodes[i].Exact = [32]byte{}
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(g)
