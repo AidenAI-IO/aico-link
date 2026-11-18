@@ -1,5 +1,6 @@
 [Unit]
 Description=Aico Link local configuration and recovery portal
+OnFailure=aico-service-incident@%p.service
 Requires=aico-userdata-migrate.service aico-environment.service
 Wants=aico-usb-dnsmasq.service aico-wifi-proxy.service
 After=aico-userdata-migrate.service aico-environment.service
