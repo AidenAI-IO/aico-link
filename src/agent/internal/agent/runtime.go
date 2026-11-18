@@ -1335,7 +1335,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if r.deviceCLIEnabled() && r.utg != nil {
 		deviceTurn = r.utg.startTurn(ctx)
 		if len(deviceTurn.graph.Nodes) > 0 {
-			userMessage.Content += "\n\n<device_navigation_map>\nLast learned state (may be stale): " + deviceTurn.graph.Current + deviceTurn.graph.summary(true) + "\n</device_navigation_map>"
+			userMessage.Content += "\n\n<device_navigation_map>\nLast learned state (may be stale): " + deviceTurn.graph.Current + deviceTurn.graph.stateSummary() + "\n</device_navigation_map>"
 		}
 	}
 	appended, err := r.contextManager.AppendMessagesWithResult([]messages.Message{userMessage})
