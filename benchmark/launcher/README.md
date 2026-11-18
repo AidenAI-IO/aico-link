@@ -327,6 +327,9 @@ such as `registry-mirrors` in Docker Desktop's Docker Engine configuration.
 - **"build or pull the image first".** The selected image does not exist
   locally and has no registry or namespace to pull from. Build it, or enter a
   full reference such as `registry.example/aico/aico-link:<tag>`.
+- **`device-cli: not found` in the Agent shell.** Use **Build from this checkout**
+  and select the new image for the instance. A running container keeps its old
+  image; recreate it with the rebuilt image and keep its saved data volume.
 - **A port is already in use.** Another program uses a fixed port you set.
   Clear the port fields to let the launcher choose, or pick other ports.
 - **The ADB device is unauthorized.** Unlock the phone and accept the USB

@@ -112,6 +112,7 @@ ttyd --version
 rg --version
 fq --version
 yq --version
+device-cli --help
 '
 
 config_page="$(request 'GET config web /' \

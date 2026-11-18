@@ -46,7 +46,9 @@ RUN set -eux; \
     CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
         go build -trimpath \
         -ldflags="-s -w -X aico-agent/internal/agent.buildVersion=${AICO_VERSION} -X aico-agent/internal/agent.buildCommit=${AICO_COMMIT}" \
-        -o /out/agent ./cmd/daemon
+        -o /out/agent ./cmd/daemon; \
+    CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
+        go build -trimpath -ldflags="-s -w" -o /out/device-cli ./cmd/device-cli
 
 FROM ${BASE_IMAGE} AS ttyd-builder
 
@@ -133,6 +135,7 @@ RUN set -eux; \
 FROM runtime-base AS runtime
 
 COPY --from=agent-builder /out/agent /usr/lib/aico/agent
+COPY --from=agent-builder /out/device-cli /usr/local/bin/device-cli
 COPY --from=ttyd-builder /out/ttyd /usr/local/bin/ttyd
 COPY --from=runtime-tools-builder /out/fq /usr/bin/fq
 COPY --from=runtime-tools-builder /out/rg /usr/bin/rg
