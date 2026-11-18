@@ -97,6 +97,7 @@ class Element {
   }
 
   removeChild(child) {
+    if (child.contains(document.activeElement)) document.activeElement = document.body;
     const index = this.childNodes.indexOf(child);
     if (index >= 0) this.childNodes.splice(index, 1);
     child.parentNode = null;
@@ -124,7 +125,13 @@ class Element {
     this._listeners.set(type, handlers);
   }
 
-  focus() {}
+  focus() { document.activeElement = this; }
+
+  contains(node) {
+    return this === node || this.children.some(child => child.contains(node));
+  }
+
+  get isConnected() { return document.body.contains(this); }
 
   /** Test helper: run the listeners registered for a type. */
   fire(type, event = {}) {
@@ -144,6 +151,12 @@ class Element {
     return walk(this);
   }
 
+  querySelectorAll(selector) {
+    return this.children.flatMap(child => [
+      ...(matches(child, selector) ? [child] : []), ...child.querySelectorAll(selector),
+    ]);
+  }
+
   closest(selector) {
     let node = this;
     while (node) {
@@ -160,17 +173,22 @@ function matches(node, selector) {
     .split(',')
     .map(part => part.trim())
     .filter(Boolean)
-    .some(part =>
-      part.startsWith('.') ? node._classes.has(part.slice(1)) : node.tagName === part.toLowerCase(),
-    );
+    .some(part => {
+      const attribute = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(part);
+      if (attribute) return attribute[2] == null ? node.getAttribute(attribute[1]) != null : node.getAttribute(attribute[1]) === attribute[2];
+      return part.startsWith('.') ? node._classes.has(part.slice(1)) : node.tagName === part.toLowerCase();
+    });
 }
 
 const body = new Element('body');
 globalThis.document = {
   body,
+  activeElement: body,
   documentElement: new Element('html'),
   createElement: tag => new Element(tag),
   createElementNS: (namespace, tag) => new Element(tag, namespace),
+  querySelectorAll: selector => body.querySelectorAll(selector),
+  getElementById: id => body.querySelectorAll('[id]').find(node => node.getAttribute('id') === id) || null,
   createTextNode: value => {
     const node = new Element('#text');
     node.textContent = value;
@@ -564,7 +582,7 @@ const countByClass = (node, className) => {
     assert.ok(page, 'the page is returned while the status request is still pending');
     const body = page.childNodes[0];
     // The shell attaches the returned page synchronously.
-    body.isConnected = true;
+    document.body.appendChild(page);
     await settle();
     assert.equal(timers.length, 1, 'the log read finished and scheduled the next poll');
     releaseStatus();
@@ -572,7 +590,7 @@ const countByClass = (node, className) => {
     assert.equal(calls.filter(url => url === '/api/logs/agent').length, 6, 'the log is polled while the page is shown');
     assert.equal(calls.filter(url => url === '/api/device/status').length, 2, 'the status is refreshed every fifth poll');
 
-    body.isConnected = false;
+    document.body.removeChild(page);
     await tick();
     assert.equal(timers.length, 0, 'polling stops once the page is left');
 
@@ -803,20 +821,42 @@ process.stdout.write('config web UI component tests passed\n');
     assert.ok(homeRow, 'the previous network remains in the saved list');
     assert.equal(countByClass(candidateRow, 'ds-row__icon--success'), 1, 'the candidate owns the connected checkmark');
     assert.equal(countByClass(homeRow, 'ds-row__icon--success'), 0, 'the previous network no longer has a connected checkmark');
+    body.appendChild(page);
+    const withSignal = dbm => ({...connected, wifi_status: {...connected.wifi_status, signal_dbm: dbm}});
+    updateList(withSignal(-60));
+    const info = page.querySelector('[data-action="wifi-info-Home"]');
+    info.focus();
+    updateList(withSignal(-61));
+    assert.equal(page.querySelector('[data-action="wifi-info-Home"]'), info, 'invisible signal changes preserve row nodes');
+    assert.equal(document.activeElement, info);
+    updateList(withSignal(-85));
+    assert.equal(document.activeElement, page.querySelector('[data-action="wifi-info-Home"]'), 'a changed signal level restores the same focused control');
+    const sheetInput = new Element('input');
+    body.appendChild(sheetInput);
+    sheetInput.focus();
     updateList(disconnected);
+    assert.equal(document.activeElement, sheetInput, 'polling never takes focus from the join sheet');
+    body.removeChild(sheetInput);
+    body.removeChild(page);
     assert.equal(countByClass(page, 'ds-row__icon--success'), 0, 'external disconnects remove the check');
     assert.equal(calls.length, 1, 'status updates never trigger a scan or aggregate snapshot');
 
     let updateHome;
     const home = homePage({snapshot: connected, navigate() {}, onWiFiChange: callback => { updateHome = callback; }});
+    body.appendChild(home);
+    const navigationRow = home.querySelector('[data-action="open-wifi"]');
+    navigationRow.focus();
     assert.ok(countByClass(home, 'ds-row__value--success') > 0);
     updateHome(disconnected);
     assert.equal(countByClass(home, 'ds-row__value--success'), 0, 'the settings home follows the same observation');
+    assert.equal(document.activeElement, navigationRow, 'badge changes preserve navigation focus');
+    body.removeChild(home);
 
     let updateDetail;
     const detail = await wifiDetailPage({snapshot: connected, params: {ssid: 'Home'}, navigate() {}, onWiFiChange: callback => { updateDetail = callback; }});
     const input = detail.querySelector('input');
     input.value = 'http://unsaved.local:8080';
+    input.fire('input');
     assert.ok(detail.textContent.includes('192.168.1.8'));
     updateDetail(disconnected);
     assert.ok(!detail.textContent.includes('192.168.1.8'), 'the old address disappears on disconnect');
@@ -824,8 +864,122 @@ process.stdout.write('config web UI component tests passed\n');
     assert.ok(detail.textContent.includes('192.168.1.9'), 'DHCP address changes are shown live');
     assert.equal(detail.querySelector('input'), input, 'status updates preserve the existing form');
     assert.equal(input.value, 'http://unsaved.local:8080', 'an unsaved proxy draft survives status refreshes');
+
+    let updateCandidate;
+    const candidate = await wifiDetailPage({snapshot: {...connected, wifi_status: {...connected.wifi_status, ssid: 'Candidate'}}, params: {ssid: 'Candidate'}, navigate() {}, onWiFiChange: callback => { updateCandidate = callback; }});
+    const forgetGroup = candidate.querySelector('[data-action="wifi-forget"]').parentNode;
+    const proxySwitch = candidate.querySelector('.ds-switch');
+    assert.equal(forgetGroup.hidden, true, 'an unsaved candidate has no Forget action');
+    assert.equal(proxySwitch.parentNode.parentNode.parentNode.hidden, true, 'unsaved profiles have no proxy actions');
+    const savedCandidate = {...connected, wifi: {networks: [{ssid: 'Candidate', has_psk: true, proxy_mode: 'proxy', proxy_url: 'http://saved.local:8080'}]}};
+    updateCandidate(savedCandidate);
+    assert.equal(forgetGroup.hidden, false, 'saving the candidate enables profile actions');
+    assert.ok(candidate.textContent.includes('••••••••'), 'a newly saved password appears without reopening details');
+    assert.equal(proxySwitch.getAttribute('aria-checked'), 'true');
+    const candidateInput = candidate.querySelector('input');
+    assert.equal(candidateInput.value, 'http://saved.local:8080', 'untouched proxy controls adopt the saved profile');
+    candidateInput.value = 'http://draft.local:8080';
+    candidateInput.fire('input');
+    updateCandidate({...savedCandidate, wifi: {networks: [{ssid: 'Candidate', proxy_mode: 'system'}]}});
+    assert.equal(candidateInput.value, 'http://draft.local:8080', 'profile changes preserve edited proxy drafts');
+    assert.equal(proxySwitch.getAttribute('aria-checked'), 'true', 'a draft toggle survives profile changes');
   } finally {
     globalThis.fetch = realFetch;
+  }
+}
+
+/* ----------------------------------------------- Shell navigation races --- */
+
+{
+  const {boot} = await import(pathToFileURL(path.join(uiRoot, '../app/shell.js')).href);
+  const {routes} = await import(pathToFileURL(path.join(uiRoot, '../app/routes.js')).href);
+  const original = Object.fromEntries(['window', 'fetch', 'setTimeout', 'clearTimeout'].map(key => [key, globalThis[key]]));
+  const timers = new Set();
+  const reads = [];
+  const pages = [];
+  const connected = {wifi: {networks: [{ssid: 'Home'}]}, wifi_status: {connected: true, ssid: 'Home', state: 'COMPLETED'}};
+  const disconnected = {...connected, wifi_status: {connected: false, ssid: '', state: 'DISCONNECTED'}};
+  let nextSnapshot = connected;
+  let pageGate;
+  const route = {path: '/wifi-observation-test', page: async context => {
+    const page = {initial: context.snapshot, updates: []};
+    pages.push(page);
+    context.onWiFiChange(value => page.updates.push(value));
+    if (pageGate) await pageGate;
+    return new Element('div');
+  }};
+  routes.unshift(route);
+  const root = new Element('div');
+  root.setAttribute('id', 'wifi-shell-test');
+  body.appendChild(root);
+  const browser = new EventTarget();
+  browser.location = {origin: 'http://board.local', pathname: route.path, search: ''};
+  browser.history = {pushState() {}, replaceState() {}};
+  globalThis.window = browser;
+  document.hidden = false;
+  globalThis.setTimeout = (callback, ms) => {
+    const timer = {callback, ms};
+    timers.add(timer);
+    return timer;
+  };
+  globalThis.clearTimeout = timer => timers.delete(timer);
+  const respond = payload => ({ok: true, status: 200, text: async () => JSON.stringify(payload)});
+  globalThis.fetch = url => {
+    if (url === '/api/device/snapshot') return Promise.resolve(respond(nextSnapshot));
+    assert.equal(url, '/api/network/wifi/status');
+    return new Promise(resolve => reads.push(payload => resolve(respond(payload))));
+  };
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  async function tick(ms) {
+    for (const timer of [...timers]) {
+      if (timer.ms === ms) { timers.delete(timer); timer.callback(); }
+    }
+    await flush();
+  }
+  try {
+    const router = await boot('wifi-shell-test');
+    await tick(0);
+    reads.at(-1)(connected);
+    await flush();
+    await tick(1000);
+    const oldRead = reads.at(-1);
+    nextSnapshot = disconnected;
+    await router.navigate(route.path, {silent: true});
+    assert.deepEqual(pages.at(-1).initial, disconnected, 'a fresh navigation snapshot supersedes retained live data');
+    oldRead(connected);
+    await flush();
+    assert.equal(pages.at(-1).updates.length, 0, 'a pre-snapshot poll is neither replayed nor allowed to overwrite it');
+    const rail = root.querySelector('.app__nav-body');
+    const navigationRow = rail.querySelector('[data-action="open-basic"]');
+    navigationRow.focus();
+    await tick(0);
+    reads.at(-1)(connected);
+    await flush();
+    assert.equal(pages.at(-1).updates.at(-1).wifi_status.connected, true, 'a new poll can supersede the navigation snapshot');
+    assert.equal(document.activeElement, navigationRow, 'rail badge updates keep the focused navigation node');
+
+    let releasePage;
+    pageGate = new Promise(resolve => { releasePage = resolve; });
+    const navigating = router.navigate(route.path, {silent: true});
+    await flush();
+    assert.deepEqual(pages.at(-1).initial, disconnected);
+    await tick(0);
+    reads.at(-1)(connected);
+    await flush();
+    releasePage();
+    await navigating;
+    assert.equal(pages.at(-1).updates.at(-1).wifi_status.connected, true, 'a poll observed during page construction is replayed to that page');
+    pageGate = null;
+    nextSnapshot = {config: {}};
+    await router.navigate(route.path, {silent: true});
+    assert.equal(pages.at(-1).initial.wifi_status.connected, true, 'retained observations remain a fallback when a snapshot lacks Wi-Fi');
+    body.removeChild(root);
+    await tick(1000);
+    assert.equal(timers.size, 0, 'detaching the shell disposes its watcher');
+  } finally {
+    if (root.parentNode) root.parentNode.removeChild(root);
+    routes.splice(routes.indexOf(route), 1);
+    Object.assign(globalThis, original);
   }
 }
 

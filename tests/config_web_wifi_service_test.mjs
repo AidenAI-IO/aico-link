@@ -142,9 +142,10 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
   };
   globalThis.clearTimeout = timer => timers.delete(timer);
   globalThis.fetch = (url, options) => new Promise((resolve, reject) => {
-    reads.push({url, options, resolve: payload => resolve({ok: true, text: async () => JSON.stringify(payload)}), reject});
+    reads.push({url, options, resolve: payload => resolve({ok: true, text: async () => typeof payload === 'string' ? payload : JSON.stringify(payload)}), reject});
   });
-  const stop = watchWiFi(value => changes.push(value));
+  let attached = true;
+  const stop = watchWiFi(value => changes.push(value), {isActive: () => attached});
   t.after(() => { stop(); Object.assign(globalThis, original); });
   const flush = () => new Promise(resolve => setImmediate(resolve));
   async function tick(ms) {
@@ -186,6 +187,30 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
   await flush();
   assert.deepEqual(changes.at(-1), connected, 'polling recovers after an outage');
 
+  for (const malformed of ['not JSON', {wifi_status: {}}, {wifi_status: {connected: true, state: 'COMPLETED'}}]) {
+    await tick(1000);
+    reads.at(-1).resolve(malformed);
+    await flush();
+    assert.equal(changes.at(-1).wifi_status.state, 'UNKNOWN', 'an unreadable status cannot retain a connected badge');
+    await tick(1000);
+    reads.at(-1).resolve(connected);
+    await flush();
+    assert.deepEqual(changes.at(-1), connected, 'a valid response recovers from malformed data');
+  }
+
+  await tick(1000);
+  const stale = reads.at(-1);
+  stop.refresh();
+  assert.equal(stale.options.signal.aborted, true, 'a fresh snapshot invalidates an older poll');
+  const beforeRefresh = changes.length;
+  stale.resolve(disconnected);
+  await flush();
+  assert.equal(changes.length, beforeRefresh);
+  await tick(0);
+  reads.at(-1).resolve(connected);
+  await flush();
+  assert.equal(changes.length, beforeRefresh + 1, 'the next observation is delivered even if it matches a pre-navigation poll');
+
   document.hidden = true;
   document.dispatchEvent(new Event('visibilitychange'));
   const count = reads.length;
@@ -199,17 +224,21 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
   await flush();
   assert.deepEqual(changes.at(-1), disconnected, 'external disconnects update without scanning');
 
-  await tick(1000);
-  const pending = reads.at(-1);
-  stop();
-  assert.equal(pending.options.signal.aborted, true);
+  attached = false;
+  const readsBeforeDetach = reads.length;
   const painted = changes.length;
-  pending.resolve(connected);
-  await flush();
+  await tick(1000);
+  assert.equal(reads.length, readsBeforeDetach, 'detaching stops polling even after repeated unchanged observations');
   browser.dispatchEvent(new CustomEvent('aico:wifi-changed', {detail: connected}));
   await tick(1000);
   assert.equal(changes.length, painted, 'a stopped watcher cannot repaint or restart');
   assert.equal(timers.size, 0);
+  document.hidden = true;
+  document.dispatchEvent(new Event('visibilitychange'));
+  document.hidden = false;
+  document.dispatchEvent(new Event('visibilitychange'));
+  browser.dispatchEvent(new Event('online'));
+  assert.equal(timers.size, 0, 'detachment also removes restart listeners');
 });
 
 process.stdout.write('config web Wi-Fi service tests passed\n');

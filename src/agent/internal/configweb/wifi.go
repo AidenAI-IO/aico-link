@@ -307,6 +307,11 @@ func (s *Server) queryWiFiStatus() map[string]any {
 }
 
 func (s *Server) queryWiFiStatusContext(ctx context.Context) map[string]any {
+	status, _ := s.observeWiFiStatusContext(ctx)
+	return status
+}
+
+func (s *Server) observeWiFiStatusContext(ctx context.Context) (map[string]any, bool) {
 	status := map[string]any{"connected": false, "ssid": "", "ip_address": "", "state": "DISCONNECTED", "detail": ""}
 	if commandExists("wpa_cli") {
 		result := runCommandContext(ctx, 5*time.Second, nil, nil, "wpa_cli", "-i", s.options.WiFiInterface, "status")
@@ -325,13 +330,17 @@ func (s *Server) queryWiFiStatusContext(ctx context.Context) map[string]any {
 				}
 			}
 			if values["wpa_state"] != "" || values["ssid"] != "" {
-				return status
+				return status, true
 			}
 		}
 	}
 	if commandExists("iw") {
 		result := runCommandContext(ctx, 5*time.Second, nil, nil, "iw", "dev", s.options.WiFiInterface, "link")
+		if result.ExitCode != 0 {
+			return status, false
+		}
 		detail := strings.TrimRight(string(result.Output), "\r\n")
+		status["state"] = "DISCONNECTED"
 		status["detail"] = detail
 		for _, line := range strings.Split(detail, "\n") {
 			line = strings.TrimSpace(line)
@@ -344,8 +353,9 @@ func (s *Server) queryWiFiStatusContext(ctx context.Context) map[string]any {
 				status["signal_dbm"] = signal
 			}
 		}
+		return status, status["connected"] == true || strings.TrimSpace(detail) == "Not connected."
 	}
-	return status
+	return status, false
 }
 
 func (s *Server) queryWiFiLinkSignalContext(ctx context.Context) (float64, bool) {
@@ -693,8 +703,8 @@ func hexDigit(value byte) (byte, bool) {
 func (s *Server) handleWiFiStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	status := s.queryWiFiStatusContext(ctx)
-	if ctx.Err() != nil {
+	status, observed := s.observeWiFiStatusContext(ctx)
+	if !observed || ctx.Err() != nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "Wi-Fi status unavailable")
 		return
 	}

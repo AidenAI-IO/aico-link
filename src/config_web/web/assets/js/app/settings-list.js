@@ -11,17 +11,19 @@ import {connectedSsid, storageStatus, voiceMode} from './data.js';
 import {shortVersion} from './ota-progress.js';
 import {LOCAL_ITEMS, PRIMARY_ITEMS, SECONDARY_ITEMS} from './nav-items.js';
 import {group, row, screen} from '../ui/list.js';
-import {msg} from '../ui/text.js';
+import {msg, resolve} from '../ui/text.js';
 
 /** Trailing value for an entry, or null when the design shows none. */
 function statusFor(item, snapshot) {
-  if (!item.status || !snapshot) return null;
+  if (!item.status) return null;
 
   if (item.status === 'wifi') {
-    if (snapshot.wifi_status?.state === 'UNKNOWN') return {value: msg('status.state.unknown', '未知'), tone: null};
+    if (!snapshot?.wifi_status || snapshot.wifi_status.state === 'UNKNOWN') return {value: msg('status.state.unknown', '未知'), tone: null};
     if (connectedSsid(snapshot)) return {value: msg('wifi.connected', '已连接'), tone: 'success'};
     return {value: msg('ui.not_connected', '未连接'), tone: null};
   }
+
+  if (!snapshot) return null;
 
   if (item.status === 'voice') {
     // The config has no `voice_mode`; the mode is `agent.input_mode`, or the
@@ -77,4 +79,15 @@ export function settingsList(snapshot, navigate, currentPath = '', localAgent = 
     group({rows: PRIMARY_ITEMS.map(build)}),
     group({rows: SECONDARY_ITEMS.map(build)}),
   ]);
+}
+
+/** Repaint only the badge, keeping navigation controls and their focus intact. */
+export function updateWiFiStatus(host, snapshot) {
+  const valueNode = host.querySelector('[data-action="open-wifi"]')?.querySelector('.ds-row__value');
+  if (!valueNode) return;
+  const {value, tone} = statusFor({status: 'wifi'}, snapshot);
+  valueNode.textContent = resolve(value);
+  valueNode.setAttribute('data-i18n', value.key);
+  valueNode.setAttribute('data-i18n-default', value.fallback);
+  valueNode.classList.toggle('ds-row__value--success', tone === 'success');
 }

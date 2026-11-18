@@ -95,8 +95,10 @@ share those observations. Connection and forget results update the page
 immediately, and a newly associated network appears before its profile is saved.
 Background tabs pause polling and refresh immediately on return or browser
 network recovery. Read failures clear the connection badge and mark the summary
-as unknown until a fresh observation arrives. Status updates preserve open join
-dialogs and unsaved proxy edits.
+as unknown until a fresh observation arrives. Status updates preserve keyboard
+focus, open join dialogs, and unsaved proxy edits. A connected SSID has read-only
+details until its profile is saved; the open detail page then enables profile
+actions and adopts saved settings without overwriting proxy drafts.
 
 The header switch saves only the top-level `locale` through
 `PUT /api/config/locale`. The UI updates immediately and rolls back if

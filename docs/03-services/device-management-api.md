@@ -250,6 +250,8 @@ serving previously migrated audio.
 proxy URLs) and `wifi_status` (current `connected`, `ssid`, `state`,
 `ip_address`, and optional `signal_dbm`). It is uncached, has a three-second
 probe deadline, and remains readable during connection and rollback tasks.
+If neither radio probe yields a usable observation, it returns HTTP 503;
+a successful probe confirming disconnection still returns HTTP 200.
 Radio association and the task outcome are separate: `connected` reflects
 association, while task success also requires address acquisition and
 persistence. A newly associated SSID may not be saved until its task succeeds.

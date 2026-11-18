@@ -1022,6 +1022,56 @@ func TestWiFiStatusRemainsLiveDuringConnection(t *testing.T) {
 	}
 }
 
+func TestWiFiStatusRequiresUsableObservation(t *testing.T) {
+	for _, test := range []struct {
+		name, wpa, iw string
+		want          int
+	}{
+		{"missing commands", "", "", http.StatusServiceUnavailable},
+		{"failed wpa", "exit 1", "", http.StatusServiceUnavailable},
+		{"failed probes", "exit 1", "exit 1", http.StatusServiceUnavailable},
+		{"unreadable probes", "echo FAIL", "echo unexpected", http.StatusServiceUnavailable},
+		{"wpa disconnected", "echo wpa_state=DISCONNECTED", "exit 1", http.StatusOK},
+		{"iw disconnected fallback", "echo FAIL", "echo 'Not connected.'", http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			options := testOptions(t)
+			binDir := t.TempDir()
+			t.Setenv("PATH", binDir)
+			for name, script := range map[string]string{"wpa_cli": test.wpa, "iw": test.iw} {
+				if script != "" {
+					if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			server, err := NewServer(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/network/wifi/status", nil))
+			if response.Code != test.want {
+				t.Fatalf("status=%d, want %d, body=%s", response.Code, test.want, response.Body.String())
+			}
+			if test.want == http.StatusOK {
+				var payload struct {
+					Status struct {
+						Connected bool
+						State     string
+					} `json:"wifi_status"`
+				}
+				if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+					t.Fatal(err)
+				}
+				if payload.Status.Connected || payload.Status.State != "DISCONNECTED" {
+					t.Fatalf("unexpected disconnected status: %+v", payload.Status)
+				}
+			}
+		})
+	}
+}
+
 func TestWiFiConnectionRunsAsBoundedBackgroundTask(t *testing.T) {
 	options := testOptions(t)
 	binDir := t.TempDir()
