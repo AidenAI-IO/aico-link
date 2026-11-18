@@ -110,43 +110,55 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 		}
 		return ToolInvokeResponse{Output: out.String()}, nil
 	}
+	const maxReplaySteps = 12
 	var plan []utgEdge
+	homeTried := false
+	planFromCurrent := func() ([]utgEdge, error) {
+		if path, found := graph.path(current, target); found {
+			return path, nil
+		}
+		if !homeTried {
+			var homeKeys []string
+			for _, n := range graph.Nodes {
+				if _, reachable := graph.path(n.Key, target); n.Home && reachable {
+					homeKeys = append(homeKeys, n.Key)
+				}
+			}
+			if homes := graph.matchCandidates(homeKeys...); len(homes) > 0 {
+				homeTried = true
+				observed, err := run(homes, "home")
+				if err != nil {
+					return nil, err
+				}
+				current = observed.key
+				if path, found := graph.path(current, target); found {
+					return path, nil
+				}
+			}
+		}
+		if current == "" {
+			return nil, fmt.Errorf("current UTG state not confirmed; navigate visually")
+		}
+		return nil, fmt.Errorf("target %q not reachable from confirmed state %q; navigate visually", target, current)
+	}
 	if stepEdge.From != "" {
 		if current != stepEdge.From {
 			return ToolInvokeResponse{}, fmt.Errorf("current screen does not match edge #%d source", stepEdge.ID)
 		}
 		plan = []utgEdge{stepEdge}
 	} else {
-		var ok bool
-		plan, ok = graph.path(current, target)
-		if !ok {
-			// Never substitute a visually similar but unverified source page.
-			// Reset only when the graph already has a home-to-target route.
-			var homeKeys []string
-			for _, n := range graph.Nodes {
-				if n.Home {
-					if _, reachable := graph.path(n.Key, target); reachable {
-						homeKeys = append(homeKeys, n.Key)
-					}
-				}
-			}
-			if homes := graph.matchCandidates(homeKeys...); len(homes) > 0 {
-				match, err = run(homes, "home")
-				if err != nil {
-					return ToolInvokeResponse{}, err
-				}
-				current = match.key
-				plan, ok = graph.path(current, target)
-			}
+		plan, err = planFromCurrent()
+		if err != nil {
+			return ToolInvokeResponse{}, err
 		}
-		if !ok {
-			return ToolInvokeResponse{}, fmt.Errorf("target not reachable; navigate visually")
+		graph.Edges = slices.Clone(graph.Edges) // exclusions apply only to this goto
+	}
+	for executed := 0; len(plan) > 0; executed++ {
+		if executed+len(plan) > maxReplaySteps {
+			return ToolInvokeResponse{}, fmt.Errorf("replay exceeds %d steps; navigate visually", maxReplaySteps)
 		}
-	}
-	if len(plan) > 12 {
-		return ToolInvokeResponse{}, fmt.Errorf("replay exceeds 12 steps; navigate visually")
-	}
-	for _, e := range plan {
+		e := plan[0]
+		plan = plan[1:]
 		destination := graph.matchCandidates(e.To)
 		if len(destination) == 0 {
 			return ToolInvokeResponse{}, fmt.Errorf("edge #%d has no destination reference; navigate visually", e.ID)
@@ -160,11 +172,39 @@ func (r *Runtime) runUTGCommand(ctx context.Context, s *Server, args []string, c
 			return ToolInvokeResponse{}, err
 		}
 		current = match.key
-		if current != e.To {
-			if match.rejected && len(turn.steps) == frame+1 {
+		if current == e.To {
+			continue
+		}
+		recordMismatch := func() {
+			if len(turn.steps) == frame+1 {
 				turn.mismatches = append(turn.mismatches, utgReplayMismatch{edge: e, frame: frame})
 			}
+		}
+		if stepEdge.From != "" {
+			if match.rejected {
+				recordMismatch()
+			}
 			return ToolInvokeResponse{}, fmt.Errorf("TRAP: edge #%d destination not confirmed; inspect the final screenshot", e.ID)
+		}
+		// Reuse the landing screenshot. Do not reissue the physical action to
+		// resolve uncertainty. The original destination is itself a candidate.
+		current, err = advisor.relocateUTG(ctx, capture.last, graph.relocationCandidates(e.From))
+		if current != e.To && (match.rejected || current != "") {
+			recordMismatch()
+		}
+		if err != nil {
+			return ToolInvokeResponse{}, err
+		}
+		if current == "" {
+			return ToolInvokeResponse{}, fmt.Errorf("TRAP: edge #%d destination not confirmed; cannot relocate among known states reachable from %s; inspect the final screenshot", e.ID, e.From)
+		}
+		if current == e.To {
+			continue
+		}
+		graph.Edges = slices.DeleteFunc(graph.Edges, func(edge utgEdge) bool { return edge.ID == e.ID })
+		plan, err = planFromCurrent()
+		if err != nil {
+			return ToolInvokeResponse{}, err
 		}
 	}
 	return ToolInvokeResponse{Output: "Confirmed state: " + current}, nil

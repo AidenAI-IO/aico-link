@@ -40,7 +40,11 @@ screenshots. Treat it as sensitive and do not share or commit it.
 
 - `utg-status` identifies the live screen and lists reachable keys.
 - `utg-goto KEY` plans a directed shortest path. It can fall back to a known Home
-  anchor. It verifies source and destination at each edge and stops on a mismatch.
+  anchor. It verifies source and destination at each edge. If destination
+  verification fails, it reuses the landing screenshot to check all known
+  states reachable from the edge's source, including the source itself and
+  recorded outcomes of quarantined outgoing edges. If it identifies a
+  different state, it replans without the failed edge for this command.
 - `utg-step EDGE_ID` runs one edge from its verified source.
 - `utg-tag KEY LABEL` queues a display-label update for the end of the turn.
 
@@ -50,9 +54,13 @@ supply credentials for the selected provider. The decision model receives the
 live screenshot and representative images from the graph. It compares the app,
 page, navigation layout and modal layer, ignoring clocks and other dynamic
 content. Initial discovery considers up to four candidate states; replay checks
-the expected destination of each edge. If the model is disabled, fails to
-respond, or cannot confirm the expected screen, use visual navigation. There is
-no pixel-matching fallback. UTG requires a confidence threshold of at least 0.8.
+the expected destination of each edge. Relocation batches references four at
+a time and requires a unique confident match across batches. New reference
+images are resized to 480 pixels high when the source is large enough; older
+smaller references are refreshed as those states are observed again. If the
+model is unavailable, the state cannot be identified, or no route remains
+from the confirmed state (including the Home fallback), use visual navigation.
+There is no pixel-matching fallback. UTG requires a confidence threshold of at least 0.8.
 Learning still happens after the turn even when the decision model is disabled.
 
 During a turn the agent records CLI observations, without invoking a graph
@@ -63,8 +71,8 @@ replay confidently rejects an expected destination and the background classifier
 identifies a different landing state on that same frame, the update quarantines
 the failed edge. It retains the edge ID on disk for audit and deduplication, but
 excludes it from planning and `utg-step`. An uncertain match or service error
-alone does not quarantine an edge. The failed turn does not automatically
-replan; the next turn uses the corrected routes once the update commits. Graph
+alone does not quarantine an edge. The current command can replan before
+that update; later turns use the corrected routes once the update commits. Graph
 writes are atomic; the next turn waits briefly for the latest update, then uses
 last committed graph if the update is still busy. Background work is bounded
 and a saturated queue can skip learning without interrupting device control.

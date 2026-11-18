@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/draw"
 	"image/jpeg"
 	"os"
 	"path/filepath"
@@ -17,10 +18,12 @@ import (
 
 	"aico-agent/internal/agent/messages"
 	"github.com/tmc/langchaingo/llms"
+	xdraw "golang.org/x/image/draw"
 )
 
 const maxUTGSteps = 60
 const maxUTGStates = 128
+const utgReferenceHeight = 480
 
 type utgNode struct {
 	Key       string `json:"key"`
@@ -61,7 +64,7 @@ type utgTurn struct {
 	mismatches []utgReplayMismatch
 }
 
-// A replayed edge whose destination was confidently rejected. The background
+// A replayed edge contradicted by the decision model. The background
 // classifier must independently identify the landed state before quarantine.
 type utgReplayMismatch struct {
 	edge  utgEdge
@@ -287,13 +290,20 @@ func compileUTG(turn *utgTurn, labels []utgClassification) utgGraph {
 			if len(g.Nodes) >= maxUTGStates || len(label.Name) > 100 || len(label.App) > 100 {
 				continue
 			}
-			thumbnail := utgImage(turn.steps[label.Frame].frame, 640)
+			thumbnail := utgReferenceImage(turn.steps[label.Frame].frame)
 			if len(thumbnail) == 0 {
 				continue
 			}
 			i = len(g.Nodes)
 			nodes[key] = i
 			g.Nodes = append(g.Nodes, utgNode{Key: key, Name: label.Name, App: label.App, Home: label.Home, Thumbnail: thumbnail})
+		} else if old, err := jpeg.DecodeConfig(bytes.NewReader(g.Nodes[i].Thumbnail)); err != nil || old.Height < utgReferenceHeight {
+			// Refresh legacy thumbnails from a new observation, not an upscale.
+			if shot := utgReferenceImage(turn.steps[label.Frame].frame); len(shot) > 0 {
+				if cfg, err := jpeg.DecodeConfig(bytes.NewReader(shot)); err == nil && cfg.Height > old.Height {
+					g.Nodes[i].Thumbnail = shot
+				}
+			}
 		}
 		g.Nodes[i].Visits++
 		byFrame[label.Frame] = key
@@ -368,25 +378,29 @@ func isUTGAction(args []string) bool {
 }
 
 func utgImage(v visualScreenshotObservation, maxSide int) []byte {
+	return resizeUTGImage(v, maxSide, maxSide)
+}
+
+func utgReferenceImage(v visualScreenshotObservation) []byte {
+	return resizeUTGImage(v, utgReferenceHeight, 0)
+}
+
+func resizeUTGImage(v visualScreenshotObservation, heightLimit, widthLimit int) []byte {
 	src, _, err := image.Decode(bytes.NewReader(v.ImageBytes))
-	if err != nil {
+	if err != nil || src.Bounds().Empty() {
 		return nil
 	}
 	b := src.Bounds()
-	if b.Empty() {
-		return nil
+	h := min(heightLimit, b.Dy())
+	w := max(1, b.Dx()*h/b.Dy())
+	if widthLimit > 0 && w > widthLimit {
+		w = widthLimit
+		h = max(1, b.Dy()*w/b.Dx())
 	}
-	side := max(b.Dx(), b.Dy())
-	limit := min(side, maxSide)
-	w, h := max(1, b.Dx()*limit/side), max(1, b.Dy()*limit/side)
-	small := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < small.Bounds().Dy(); y++ {
-		for x := 0; x < small.Bounds().Dx(); x++ {
-			small.Set(x, y, src.At(b.Min.X+x*b.Dx()/small.Bounds().Dx(), b.Min.Y+y*b.Dy()/h))
-		}
-	}
+	out := image.NewRGBA(image.Rect(0, 0, w, h))
+	xdraw.ApproxBiLinear.Scale(out, out.Bounds(), src, b, draw.Src, nil)
 	var buf bytes.Buffer
-	if jpeg.Encode(&buf, small, &jpeg.Options{Quality: 72}) != nil {
+	if jpeg.Encode(&buf, out, &jpeg.Options{Quality: 85}) != nil {
 		return nil
 	}
 	return buf.Bytes()

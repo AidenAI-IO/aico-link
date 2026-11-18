@@ -9,6 +9,7 @@ import (
 	"image/draw"
 	"image/jpeg"
 	"math"
+	"slices"
 	"time"
 
 	"aico-agent/internal/decision"
@@ -26,7 +27,7 @@ func (g utgGraph) matchCandidates(preferred ...string) []utgNode {
 	}
 	var candidates []utgNode
 	add := func(key string) {
-		if n, ok := nodes[key]; ok && len(n.Thumbnail) > 0 && len(candidates) < maxUTGMatchCandidates {
+		if n, ok := nodes[key]; ok && len(n.Thumbnail) > 0 {
 			candidates = append(candidates, n)
 			delete(nodes, key)
 		}
@@ -55,11 +56,58 @@ func (g utgGraph) discoveryCandidates(target string) []utgNode {
 			keys = append(keys, n.Key)
 		}
 	}
+	candidates := g.matchCandidates(keys...)
+	return candidates[:min(len(candidates), maxUTGMatchCandidates)]
+}
+
+// Include the source itself and every state reachable along active edges,
+// regardless of whether it leads to the target or fits the discovery budget.
+func (g utgGraph) relocationCandidates(from string) []utgNode {
+	keys := []string{from}
+	seen := map[string]bool{from: true}
+	for i := 0; i < len(keys); i++ {
+		for _, edge := range g.Edges {
+			if edge.From == keys[i] && edge.MismatchState == "" && !seen[edge.To] {
+				keys = append(keys, edge.To)
+				seen[edge.To] = true
+			}
+		}
+	}
+	// Quarantined outgoing edges can still provide evidence of where this
+	// screen's actions have landed; they are never eligible for planning.
+	for _, edge := range g.Edges {
+		if edge.From == from && edge.MismatchState != "" {
+			keys = append(keys, edge.To, edge.MismatchState)
+		}
+	}
 	return g.matchCandidates(keys...)
 }
 
+// Use bounded requests, but require a unique confident match across all batches.
+func (a *decisionAdvisor) relocateUTG(ctx context.Context, screen visualScreenshotObservation, candidates []utgNode) (string, error) {
+	matched := ""
+	ambiguous := false
+	for batch := range slices.Chunk(candidates, maxUTGMatchCandidates) {
+		result, err := a.matchUTG(ctx, screen, batch)
+		if err != nil {
+			return "", err
+		}
+		if result.ambiguous || (result.key != "" && matched != "") {
+			ambiguous = true
+		}
+		if result.key != "" {
+			matched = result.key
+		}
+	}
+	if ambiguous {
+		return "", nil
+	}
+	return matched, nil
+}
+
 type utgMatch struct {
-	key string
+	key       string
+	ambiguous bool
 	// rejected is set only for a confident negative against one expected state.
 	rejected bool
 }
@@ -118,7 +166,7 @@ func (a *decisionAdvisor) matchUTG(ctx context.Context, screen visualScreenshotO
 		}
 	}
 	if ambiguous {
-		return utgMatch{}, nil
+		return utgMatch{ambiguous: true}, nil
 	}
 	return utgMatch{key: matched, rejected: len(candidates) == 1 && matched == ""}, nil
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -12,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -395,5 +397,114 @@ func TestUTGBackgroundQuarantinesConfirmedWrongDestination(t *testing.T) {
 				t.Fatalf("quarantined edge accepted for manual replay: %v", err)
 			}
 		})
+	}
+}
+
+func TestUTGGotoRelocatesAfterFailedVerification(t *testing.T) {
+	frame := testUTGFrame(t, color.Black)
+	// Make root the fifth candidate (the first in the second model batch).
+	nodes := []utgNode{{Key: "home", Home: true}, {Key: "target"}, {Key: "other1"}, {Key: "other2"}, {Key: "root"}}
+	for i := range nodes {
+		nodes[i].Thumbnail = frame.ImageBytes
+	}
+	edges := []utgEdge{
+		{ID: 15, From: "home", To: "target", Action: []string{"tap", "144", "690"}},
+		{ID: 1, From: "home", To: "other1"}, {ID: 2, From: "home", To: "other2"},
+		{ID: 6, From: "home", To: "root", Action: []string{"tap", "145", "690"}},
+		{ID: 9, From: "root", To: "target", Action: []string{"tap", "500", "565"}},
+	}
+	for _, tc := range []struct {
+		name          string
+		first, second int
+		taps          string
+		wantMismatch  bool
+		wantError     string
+	}{
+		{name: "alternate landing in second batch", second: 1, taps: "144,500", wantMismatch: true},
+		{name: "stayed on source", first: 1, taps: "144,145,500", wantMismatch: true},
+		{name: "expected landing confirmed on second check", first: 2, taps: "144"},
+		{name: "unknown landing", taps: "144", wantError: "cannot relocate"},
+		{name: "ambiguous across batches", first: 2, second: 1, taps: "144", wantError: "cannot relocate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asks := 0
+			advisor := newUTGTestAdvisor(t, func(req decision.Request) decision.Response {
+				asks++
+				pick := 1
+				switch asks {
+				case 1:
+					pick = 2 // target, Home, root
+				case 2:
+					pick = 0 // uncertain at the expected destination
+				case 3:
+					pick = tc.first
+				case 4:
+					pick = tc.second
+				}
+				wantQuestions := map[int]int{1: 3, 2: 1, 3: 4, 4: 1}
+				if want, ok := wantQuestions[asks]; ok && len(req.Questions) != want {
+					t.Errorf("request %d: expected %d reference images, got %d", asks, want, len(req.Questions))
+				}
+				answers := map[string]decision.Answer{}
+				for id := range req.Questions {
+					p := .01
+					if asks == 2 {
+						p = .6
+					} else if id == fmt.Sprintf("reference_%d", pick) {
+						p = .99
+					}
+					answers[id] = decision.Answer{Type: decision.TypeNoul, Noul: &p}
+				}
+				return decision.Response{Answers: answers}
+			})
+			payload := frame.Result
+			payload.Data = base64.StdEncoding.EncodeToString(frame.ImageBytes)
+			encoded, _ := json.Marshal(payload)
+			var taps []string
+			r := &Runtime{tools: &ToolSet{decider: advisor, tools: map[string]langtools.Tool{
+				"screenshot": deviceCLITestScreenshot{output: string(encoded)},
+				"touch_gesture": utgReplayTestTool{"touch_gesture", func(input string) string {
+					var p struct{ Point struct{ X int } }
+					_ = json.Unmarshal([]byte(input), &p)
+					taps = append(taps, strconv.Itoa(p.Point.X))
+					return string(encoded)
+				}},
+			}}}
+			turn := &utgTurn{graph: utgGraph{Nodes: nodes, Edges: edges}}
+			ctx := context.WithValue(context.Background(), utgTurnKey{}, turn)
+			capture := &deviceCLICapture{}
+			res, err := r.runUTGCommand(ctx, &Server{runtime: r}, []string{"utg-goto", "target"}, capture)
+			if tc.wantError == "" {
+				if err != nil || res.Output != "Confirmed state: target" {
+					t.Fatalf("output=%q, error=%v", res.Output, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) || len(capture.last.ImageBytes) == 0 {
+				t.Fatalf("missing fallback error or frame: %v", err)
+			}
+			if got := strings.Join(taps, ","); got != tc.taps {
+				t.Fatalf("taps=%s, want %s", got, tc.taps)
+			}
+			if (len(turn.mismatches) == 1) != tc.wantMismatch {
+				t.Fatalf("mismatches=%+v", turn.mismatches)
+			}
+			if path, _ := turn.graph.path("home", "target"); len(path) != 1 || path[0].ID != 15 {
+				t.Fatalf("goto changed persisted graph snapshot: %+v", path)
+			}
+		})
+	}
+}
+
+func TestUTGRefreshesLegacyReferenceFromNewFrame(t *testing.T) {
+	var raw bytes.Buffer
+	if err := jpeg.Encode(&raw, image.NewRGBA(image.Rect(0, 0, 450, 1000)), nil); err != nil {
+		t.Fatal(err)
+	}
+	frame := visualScreenshotObservation{ImageBytes: raw.Bytes()}
+	legacy := utgImage(frame, 320)
+	in := utgGraph{Nodes: []utgNode{{Key: "home", Thumbnail: legacy}}}
+	out := compileUTG(&utgTurn{graph: in, steps: []utgObservation{{frame: frame}}}, []utgClassification{{Frame: 0, Key: "home"}})
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(out.Nodes[0].Thumbnail))
+	if err != nil || cfg.Height != 480 || cfg.Width != 216 {
+		t.Fatalf("reference dimensions=%+v, error=%v", cfg, err)
 	}
 }
