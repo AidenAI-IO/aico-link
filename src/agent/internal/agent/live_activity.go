@@ -586,7 +586,12 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 			}), 120)
 		} else if hasError {
 			errText := liveActivityEventErrorText(event)
-			state.LastError = truncateLiveActivityText(errText, 160)
+			// Private tools (clipboard, contacts, ...) can echo their data in
+			// the error; the phone's lock screen must not show it.
+			state.LastError = ""
+			if !toolResultIsSensitive(event.ToolName) {
+				state.LastError = truncateLiveActivityText(errText, 160)
+			}
 			if liveActivityResultNeedsApp(event, errText) {
 				state.Status = LiveActivityStatusNeedsApp
 				state.Phase = LiveActivityPhaseWaitingApp
@@ -756,7 +761,11 @@ func (m *LiveActivityManager) finishTask(requestID, status, step, errText string
 	state.UpdatedAt = now
 	state.EndedAt = &now
 	m.states[requestID] = state
-	m.activeRequestID = requestID
+	// A finished activity must not replace another one that is still running,
+	// or the phone loses that activity's stop control.
+	if active, ok := m.states[m.activeRequestID]; !ok || active.EndedAt != nil || m.activeRequestID == requestID {
+		m.activeRequestID = requestID
+	}
 	m.mu.Unlock()
 	m.publish(requestID, true)
 	m.scheduleCleanup(requestID, now, liveActivityFinalStateRetention)

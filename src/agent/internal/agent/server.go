@@ -1044,18 +1044,17 @@ func (s *Server) handleChatCancel(w http.ResponseWriter, r *http.Request) {
 	source := chatCancelRequestSource(r)
 
 	// A Live Activity can show a background task, keyed by its task ID; its
-	// stop button then cancels the task itself. A finished task is left alone:
-	// cancelling it would only drop its pending announcement.
-	if tasks := s.agentTaskController(); tasks != nil {
-		if task, ok := tasks.Query(requestID); ok && task.CompletedAt == nil {
-			if _, _, err := tasks.Cancel(requestID); err == nil {
-				if s.logger != nil {
-					s.logger.Info("Background task canceled from chat cancel: task_id=%s source=%s", requestID, source)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(ChatCancelResponse{RequestID: requestID, Status: "canceled"})
-				return
+	// stop button then cancels the task itself. A chat run registered under the
+	// same ID takes precedence, so one cancel stops exactly one work item. A
+	// finished task is left alone: its result is still announced.
+	if tasks := s.agentTaskController(); tasks != nil && !s.hasActiveRun(requestID) {
+		if _, err := tasks.CancelUnfinished(requestID); err == nil {
+			if s.logger != nil {
+				s.logger.Info("Background task canceled from chat cancel: task_id=%s source=%s", requestID, source)
 			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(ChatCancelResponse{RequestID: requestID, Status: "canceled"})
+			return
 		}
 	}
 
@@ -1329,6 +1328,17 @@ func (s *Server) handleChatActive(w http.ResponseWriter, r *http.Request) {
 
 // cancelActiveRun marks an active request before invoking its cancellation
 // callback, preventing new request-scoped output from registering meanwhile.
+// hasActiveRun reports whether a chat run is registered under requestID.
+func (s *Server) hasActiveRun(requestID string) bool {
+	if s == nil || requestID == "" {
+		return false
+	}
+	s.activeRunsMu.Lock()
+	defer s.activeRunsMu.Unlock()
+	_, active := s.activeRuns[requestID]
+	return active
+}
+
 func (s *Server) cancelActiveRun(requestID string) bool {
 	if s == nil || requestID == "" {
 		return false

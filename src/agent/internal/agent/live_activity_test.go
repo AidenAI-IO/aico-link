@@ -318,6 +318,31 @@ func TestLiveActivityManagerSnapshotActive(t *testing.T) {
 	if active == nil || active.RequestID != "req-2" || active.Status != LiveActivityStatusCompleted {
 		t.Fatalf("active terminal state = %#v, want completed req-2", active)
 	}
+
+	// A task that ends while another one still runs must not take over the
+	// active slot, or the running one loses its stop control.
+	manager.StartTask("req-3", "Running task")
+	manager.StartTask("req-4", "Short task")
+	manager.UpdateFromRunEvent("req-3", RunEvent{Type: runEventToolCall, ToolName: "screenshot"})
+	manager.CancelTask("req-4")
+	if active = manager.SnapshotActive(); active == nil || active.RequestID != "req-3" || !active.CanStop {
+		t.Fatalf("active state = %#v, want running req-3", active)
+	}
+}
+
+// A failed private tool can echo the user's data in its error; the Live
+// Activity shows the failure without that text.
+func TestLiveActivityManagerHidesPrivateToolErrors(t *testing.T) {
+	manager := NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
+	manager.StartTask("req-1", "Read my clipboard")
+	state := manager.UpdateFromRunEvent("req-1", RunEvent{Type: "tool_result", ToolName: toolBridgeClipboard, IsError: true, Content: "clipboard holds 4111 1111 1111 1111"})
+	if state == nil || state.LastError != "" {
+		t.Fatalf("private tool error = %#v", state)
+	}
+	state = manager.UpdateFromRunEvent("req-1", RunEvent{Type: "tool_result", ToolName: "screenshot", IsError: true, Content: "screen capture timed out"})
+	if state == nil || !strings.Contains(state.LastError, "timed out") {
+		t.Fatalf("tool error = %#v", state)
+	}
 }
 
 func TestLiveActivityManagerSnapshotActiveForPhone(t *testing.T) {

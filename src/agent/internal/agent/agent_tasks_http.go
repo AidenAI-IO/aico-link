@@ -15,6 +15,7 @@ import (
 type AgentTaskController interface {
 	Active() []agenttask.Task
 	CancelAll() []agenttask.Task
+	CancelUnfinished(taskID string) (agenttask.Task, error)
 	Query(taskID string) (agenttask.Task, bool)
 	Timeline(taskID string) (agenttask.Timeline, bool)
 	Cancel(taskID string) (agenttask.Task, bool, error)

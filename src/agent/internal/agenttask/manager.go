@@ -675,27 +675,15 @@ func (m *Manager) Cancel(taskID string) (Task, bool, error) {
 		m.mu.Unlock()
 		return Task{}, false, errors.New("agent task not found")
 	}
-	var cancel context.CancelFunc
 	var notificationCleared bool
-	switch item.task.Status {
-	case StatusCreated, StatusQueued:
-		m.finishLocked(item, StatusCancelled, "", "")
-	case StatusRunning:
-		if item.task.PendingUserAction != nil || item.cancel == nil {
-			m.finishLocked(item, StatusCancelled, "", "")
-			break
-		}
-		item.task.Status = StatusCancelling
-		item.task.UpdatedAt = m.now().UTC()
-		m.observeLocked(item, "cancelling")
-		cancel = item.cancel
-	case StatusCancelling, StatusCancelled, StatusFailed, StatusCompleted:
-		// Cancellation is idempotent for tasks already stopping or terminal. For a
-		// terminal task it also means "do not announce this result" while delivery
-		// is still owned by the manager or claimed by a foreground session.
-		if item.task.Status.terminal() {
-			notificationCleared = m.suppressTerminalNotificationLocked(taskID)
-		}
+	var cancel context.CancelFunc
+	if item.task.Status.terminal() {
+		// Cancellation is idempotent for terminal tasks, and it also means "do
+		// not announce this result" while delivery is still owned by the
+		// manager or claimed by a foreground session.
+		notificationCleared = m.suppressTerminalNotificationLocked(taskID)
+	} else {
+		cancel = m.cancelLocked(item)
 	}
 	task := item.task
 	m.mu.Unlock()
@@ -705,30 +693,76 @@ func (m *Manager) Cancel(taskID string) (Task, bool, error) {
 	return task, notificationCleared, nil
 }
 
+// CancelUnfinished cancels a task only while it has not finished. The status
+// check and the cancellation share the manager lock, so a task that finishes
+// first keeps its pending announcement and the call reports an error.
+func (m *Manager) CancelUnfinished(taskID string) (Task, error) {
+	if m == nil {
+		return Task{}, errors.New("agent task manager is unavailable")
+	}
+	taskID = strings.TrimSpace(taskID)
+	m.mu.Lock()
+	item, ok := m.tasks[taskID]
+	if !ok || item.task.Status.terminal() {
+		m.mu.Unlock()
+		return Task{}, errors.New("no unfinished agent task")
+	}
+	cancel := m.cancelLocked(item)
+	task := item.task
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return task, nil
+}
+
+// cancelLocked moves an unfinished task towards cancellation. A queued task, or
+// one with no active run, finishes at once; a running one is marked cancelling
+// and the returned function, called after the lock is released, stops its run.
+// A task already cancelling is left as it is.
+func (m *Manager) cancelLocked(item *entry) context.CancelFunc {
+	switch item.task.Status {
+	case StatusCreated, StatusQueued:
+		m.finishLocked(item, StatusCancelled, "", "")
+	case StatusRunning:
+		if item.task.PendingUserAction != nil || item.cancel == nil {
+			m.finishLocked(item, StatusCancelled, "", "")
+			return nil
+		}
+		item.task.Status = StatusCancelling
+		item.task.UpdatedAt = m.now().UTC()
+		m.observeLocked(item, "cancelling")
+		return item.cancel
+	}
+	return nil
+}
+
 // CancelAll cancels every unfinished task: queued ones end at once and running
-// ones stop at their next cancellation point. The user asked to stop the
-// work, so none of their results is announced. It returns the tasks it
-// cancelled.
+// ones stop at their next cancellation point. Every state change happens under
+// one lock, so the worker cannot start a queued task halfway through. The user
+// asked to stop all the work, so nothing is announced afterwards: neither the
+// cancelled tasks nor results that already finished and still wait for the
+// foreground. It returns the tasks it cancelled.
 func (m *Manager) CancelAll() []Task {
 	if m == nil {
 		return nil
 	}
 	m.mu.Lock()
-	ids := make([]string, 0, len(m.tasks))
+	var cancelled []Task
+	var stops []context.CancelFunc
 	for id, item := range m.tasks {
 		if !item.task.Status.terminal() {
 			item.silent = true
-			ids = append(ids, id)
+			if stop := m.cancelLocked(item); stop != nil {
+				stops = append(stops, stop)
+			}
+			cancelled = append(cancelled, item.task)
 		}
-		// Results already waiting for the foreground are not announced either.
 		m.suppressTerminalNotificationLocked(id)
 	}
 	m.mu.Unlock()
-	cancelled := make([]Task, 0, len(ids))
-	for _, id := range ids {
-		if task, _, err := m.Cancel(id); err == nil {
-			cancelled = append(cancelled, task)
-		}
+	for _, stop := range stops {
+		stop()
 	}
 	return cancelled
 }

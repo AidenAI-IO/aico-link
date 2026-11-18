@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,6 +36,13 @@ func (f *fakeAgentTasks) Cancel(id string) (agenttask.Task, bool, error) {
 	return agenttask.Task{ID: id, Status: agenttask.StatusCancelled}, false, nil
 }
 func (f *fakeAgentTasks) Reorder([]string) error { return f.reorder }
+func (f *fakeAgentTasks) CancelUnfinished(id string) (agenttask.Task, error) {
+	if task, ok := f.Query(id); !ok || task.CompletedAt != nil {
+		return agenttask.Task{}, errors.New("no unfinished agent task")
+	}
+	f.cancelled = id
+	return agenttask.Task{ID: id, Status: agenttask.StatusCancelling}, nil
+}
 func (f *fakeAgentTasks) CancelAll() []agenttask.Task {
 	f.cancelledAll = true
 	return f.tasks
@@ -198,25 +206,32 @@ func TestBackgroundTaskActivity(t *testing.T) {
 	}
 }
 
-// The Live Activity's stop button cancels a running background task; a
-// finished one is left alone so its result is still announced.
+// The Live Activity's stop button cancels a running background task. A
+// finished one is left alone so its result is still announced, and a chat run
+// registered under the same ID is cancelled instead of the task.
 func TestChatCancelStopsBackgroundTask(t *testing.T) {
 	finished := time.Now()
 	for _, tc := range []struct {
-		name string
-		task agenttask.Task
-		want string
+		name    string
+		task    agenttask.Task
+		chatRun bool
+		want    string
 	}{
-		{"running", agenttask.Task{ID: "task_1", Status: agenttask.StatusRunning}, "task_1"},
-		{"finished", agenttask.Task{ID: "task_1", Status: agenttask.StatusCompleted, CompletedAt: &finished}, ""},
+		{"running", agenttask.Task{ID: "task_1", Status: agenttask.StatusRunning}, false, "task_1"},
+		{"finished", agenttask.Task{ID: "task_1", Status: agenttask.StatusCompleted, CompletedAt: &finished}, false, ""},
+		{"chat run with the same ID", agenttask.Task{ID: "task_1", Status: agenttask.StatusRunning}, true, ""},
 	} {
 		server := &Server{logger: newTestLogger()}
 		tasks := &fakeAgentTasks{tasks: []agenttask.Task{tc.task}}
 		server.SetAgentTasks(tasks)
+		runCancelled := false
+		if tc.chatRun {
+			server.activeRuns = map[string]context.CancelFunc{"task_1": func() { runCancelled = true }}
+		}
 		recorder := httptest.NewRecorder()
 		server.handleChatCancel(recorder, httptest.NewRequest(http.MethodPost, "/api/chat/cancel", strings.NewReader(`{"request_id":"task_1"}`)))
-		if tasks.cancelled != tc.want {
-			t.Fatalf("%s: cancelled=%q body=%s", tc.name, tasks.cancelled, recorder.Body)
+		if tasks.cancelled != tc.want || runCancelled != tc.chatRun {
+			t.Fatalf("%s: task cancelled=%q run cancelled=%t body=%s", tc.name, tasks.cancelled, runCancelled, recorder.Body)
 		}
 	}
 }
