@@ -650,6 +650,12 @@ func (m *LiveActivityManager) CompleteTask(requestID, output string) *LiveActivi
 	if state := m.pauseForHumanHandoff(requestID, output); state != nil {
 		return state
 	}
+	return m.completeTask(requestID, output)
+}
+
+// completeTask settles the task as completed without checking for a pending
+// human handoff.
+func (m *LiveActivityManager) completeTask(requestID, output string) *LiveActivityState {
 	text := m.getLiveActivityText()
 	return m.finishTask(requestID, LiveActivityStatusCompleted, firstNonEmptyString([]string{
 		truncateLiveActivityText(output, 120),

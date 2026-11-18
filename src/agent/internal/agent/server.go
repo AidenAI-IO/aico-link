@@ -1044,9 +1044,10 @@ func (s *Server) handleChatCancel(w http.ResponseWriter, r *http.Request) {
 	source := chatCancelRequestSource(r)
 
 	// A Live Activity can show a background task, keyed by its task ID; its
-	// stop button then cancels the task itself.
+	// stop button then cancels the task itself. A finished task is left alone:
+	// cancelling it would only drop its pending announcement.
 	if tasks := s.agentTaskController(); tasks != nil {
-		if _, ok := tasks.Query(requestID); ok {
+		if task, ok := tasks.Query(requestID); ok && task.CompletedAt == nil {
 			if _, _, err := tasks.Cancel(requestID); err == nil {
 				if s.logger != nil {
 					s.logger.Info("Background task canceled from chat cancel: task_id=%s source=%s", requestID, source)

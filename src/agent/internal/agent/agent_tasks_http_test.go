@@ -2,11 +2,11 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"aico-agent/internal/agenttask"
 )
@@ -95,53 +95,129 @@ func TestTaskTimelineStepHidesPrivateToolOutput(t *testing.T) {
 	}
 }
 
-// A background task drives the Live Activity like a chat run: its tool steps
-// become the current step, the task ID keys it, and the stop button on it
-// cancels the task.
+// scriptedTaskRunner hands each run to the test, which drives it through its
+// context and decides when it returns.
+type scriptedTaskRunner struct {
+	runs chan scriptedRun
+}
+
+type scriptedRun struct {
+	ctx    context.Context
+	prompt string
+	done   chan string
+}
+
+func (r *scriptedTaskRunner) Run(ctx context.Context, prompt string) (string, error) {
+	run := scriptedRun{ctx: ctx, prompt: prompt, done: make(chan string)}
+	r.runs <- run
+	select {
+	case result := <-run.done:
+		return result, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func (r *scriptedTaskRunner) next(t *testing.T) scriptedRun {
+	t.Helper()
+	select {
+	case run := <-r.runs:
+		return run
+	case <-time.After(2 * time.Second):
+		t.Fatal("the task did not run")
+		return scriptedRun{}
+	}
+}
+
+func waitLiveActivity(t *testing.T, server *Server, id string, ok func(*LiveActivityState) bool) *LiveActivityState {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state := server.liveActivity.Snapshot(id)
+		if state != nil && ok(state) {
+			return state
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Live Activity %s = %#v", id, state)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A background task drives the Live Activity like a chat run, for the task's
+// whole lifecycle: a rerun after a goal update keeps one running activity
+// under the task's title, and a task cancelled while it waits for the
+// user settles the activity even though no run is active.
 func TestBackgroundTaskActivity(t *testing.T) {
 	server := &Server{logger: newTestLogger()}
 	server.liveActivity = NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
 	activity := server.BackgroundTaskActivity()
+	runner := &scriptedTaskRunner{runs: make(chan scriptedRun, 1)}
+	manager := agenttask.NewManager(runner)
+	defer manager.Close()
+	manager.SetLifecycleObserver(activity.Observe)
 
-	activity.Start("task_1", "Order a fruit tea")
-	activity.Event("task_1", RunEvent{Type: runEventToolCall, ToolName: "screenshot"})
-	state := server.liveActivity.SnapshotActive()
-	if state == nil || state.RequestID != "task_1" || state.TaskTitle != "Order a fruit tea" || state.CurrentStep != "Checking the screen" {
+	task, err := manager.Create("Order a fruit tea")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := runner.next(t)
+	activity.Event(task.ID, RunEvent{Type: runEventToolCall, ToolName: "screenshot"})
+	if state := server.liveActivity.Snapshot(task.ID); state == nil || state.TaskTitle != "Order a fruit tea" || state.CurrentStep != "Checking the screen" {
 		t.Fatalf("running task = %#v", state)
 	}
 
-	tasks := &fakeAgentTasks{tasks: []agenttask.Task{{ID: "task_1", Status: agenttask.StatusRunning}}}
-	server.SetAgentTasks(tasks)
-	recorder := httptest.NewRecorder()
-	server.handleChatCancel(recorder, httptest.NewRequest(http.MethodPost, "/api/chat/cancel", strings.NewReader(`{"request_id":"task_1"}`)))
-	if tasks.cancelled != "task_1" || !strings.Contains(recorder.Body.String(), `"status":"canceled"`) {
-		t.Fatalf("cancel from the Live Activity: cancelled=%q body=%s", tasks.cancelled, recorder.Body)
+	// A goal update the run did not take reruns the task; the activity must
+	// neither settle in between nor take the rerun prompt as its title.
+	if _, err := manager.Update(task.ID, "Order a mango tea"); err != nil {
+		t.Fatal(err)
+	}
+	first.done <- "ordered fruit tea"
+	second := runner.next(t)
+	if state := server.liveActivity.Snapshot(task.ID); state == nil || state.EndedAt != nil || state.TaskTitle != "Order a fruit tea" {
+		t.Fatalf("rerun task = %#v", state)
 	}
 
-	for _, tc := range []struct {
-		name     string
-		err      error
-		canceled bool
-		want     string
-	}{
-		{name: "completed", want: LiveActivityStatusCompleted},
-		{name: "failed", err: errors.New("model unavailable"), want: LiveActivityStatusFailed},
-		{name: "canceled", err: context.Canceled, canceled: true, want: LiveActivityStatusCanceled},
-	} {
-		activity.Start(tc.name, "goal")
-		activity.Finish(tc.name, "done", tc.err, tc.canceled)
-		if got := server.liveActivity.Snapshot(tc.name); got == nil || got.Status != tc.want {
-			t.Fatalf("%s: state = %#v, want %s", tc.name, got, tc.want)
-		}
+	// The run asks the user to take over and returns; cancelling then has no
+	// run to report through.
+	agenttask.UserActionHandlerFromContext(second.ctx)(agenttask.UserAction{Reason: "pay"})
+	activity.Event(task.ID, RunEvent{Type: "tool_result", ToolName: toolUserActionStep, Content: "Confirm the payment"})
+	second.done <- ""
+	waitLiveActivity(t, server, task.ID, func(s *LiveActivityState) bool { return s.Status == LiveActivityStatusNeedsApp })
+	if _, _, err := manager.Cancel(task.ID); err != nil {
+		t.Fatal(err)
 	}
+	waitLiveActivity(t, server, task.ID, func(s *LiveActivityState) bool { return s.Status == LiveActivityStatusCanceled })
 
 	// Without a Live Activity there is nothing to report to.
 	var disabled *BackgroundTaskActivity
-	disabled.Start("task_2", "goal")
+	disabled.Observe(agenttask.Task{ID: "task_2", Prompt: "goal"}, "running")
 	disabled.Event("task_2", RunEvent{Type: runEventToolCall, ToolName: "screenshot"})
-	disabled.Finish("task_2", "", nil, false)
 	if (&Server{}).BackgroundTaskActivity() != nil {
 		t.Fatal("a server without a Live Activity returned a reporter")
+	}
+}
+
+// The Live Activity's stop button cancels a running background task; a
+// finished one is left alone so its result is still announced.
+func TestChatCancelStopsBackgroundTask(t *testing.T) {
+	finished := time.Now()
+	for _, tc := range []struct {
+		name string
+		task agenttask.Task
+		want string
+	}{
+		{"running", agenttask.Task{ID: "task_1", Status: agenttask.StatusRunning}, "task_1"},
+		{"finished", agenttask.Task{ID: "task_1", Status: agenttask.StatusCompleted, CompletedAt: &finished}, ""},
+	} {
+		server := &Server{logger: newTestLogger()}
+		tasks := &fakeAgentTasks{tasks: []agenttask.Task{tc.task}}
+		server.SetAgentTasks(tasks)
+		recorder := httptest.NewRecorder()
+		server.handleChatCancel(recorder, httptest.NewRequest(http.MethodPost, "/api/chat/cancel", strings.NewReader(`{"request_id":"task_1"}`)))
+		if tasks.cancelled != tc.want {
+			t.Fatalf("%s: cancelled=%q body=%s", tc.name, tasks.cancelled, recorder.Body)
+		}
 	}
 }
 

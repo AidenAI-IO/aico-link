@@ -309,6 +309,7 @@ type Manager struct {
 	closed                bool
 	observationSequence   uint64
 	streamSink            stream.EventSink // Optional nonblocking observer; never a network sink.
+	lifecycle             func(Task, string)
 	timelines             map[string]*Timeline
 	finishedTimelines     []string
 }
@@ -330,6 +331,9 @@ func (m *Manager) observeLocked(item *entry, phase string, cause ...Cause) {
 	if len(cause) > 0 {
 		observation.Cause = cause[0]
 	}
+	if m.lifecycle != nil {
+		m.lifecycle(observation.Task, phase)
+	}
 	if observation.StreamSink == nil {
 		return
 	}
@@ -344,6 +348,16 @@ func (m *Manager) observeLocked(item *entry, phase string, cause ...Cause) {
 	// The benchmark recorder only copies/enqueues here. Its queue owns overflow
 	// reporting and draining; no I/O or subscriber callbacks run under this lock.
 	_ = observation.StreamSink.Emit(context.Background(), event)
+}
+
+// SetLifecycleObserver installs a callback that sees every task transition
+// (phase "running", "terminal", ...) once per manager state change, not once
+// per runner call. It runs under the manager lock, so it must be quick and
+// must not call back into the manager. Install it before tasks are submitted.
+func (m *Manager) SetLifecycleObserver(observe func(task Task, phase string)) {
+	m.mu.Lock()
+	m.lifecycle = observe
+	m.mu.Unlock()
 }
 
 func NewManager(runner Runner) *Manager {

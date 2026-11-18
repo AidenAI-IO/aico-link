@@ -187,34 +187,37 @@ func (s *Server) BackgroundTaskActivity() *BackgroundTaskActivity {
 	return &BackgroundTaskActivity{server: s}
 }
 
-// Start shows the task with its goal as the title.
-func (a *BackgroundTaskActivity) Start(taskID, goal string) {
-	if a == nil {
+// Observe follows the task manager's lifecycle. A task can run the agent
+// several times (after a goal update or a human handoff), so the Live Activity
+// starts on the first "running" and settles only on "terminal", including for
+// a task cancelled while it waits for the user and no run is active.
+func (a *BackgroundTaskActivity) Observe(task agenttask.Task, phase string) {
+	if a == nil || task.ID == "" {
 		return
 	}
-	phoneID := a.server.liveActivityPhoneID(ChatRequest{})
-	a.server.liveActivity.StartTask(taskID, goal, phoneID)
+	live := a.server.liveActivity
+	switch phase {
+	case "running":
+		if state := live.Snapshot(task.ID); state != nil && state.EndedAt == nil {
+			return
+		}
+		live.StartTask(task.ID, task.Prompt, a.server.liveActivityPhoneID(ChatRequest{}))
+	case "terminal":
+		switch task.Status {
+		case agenttask.StatusCompleted:
+			live.completeTask(task.ID, task.Result)
+		case agenttask.StatusCancelled:
+			live.CancelTask(task.ID)
+		case agenttask.StatusFailed:
+			live.FailTask(task.ID, task.Error)
+		}
+	}
 }
 
 // Event advances the current step from one of the task's run events.
 func (a *BackgroundTaskActivity) Event(taskID string, event RunEvent) {
-	if a == nil {
+	if a == nil || taskID == "" {
 		return
 	}
 	a.server.liveActivity.UpdateFromRunEvent(taskID, event)
-}
-
-// Finish settles the task: completed with its result, canceled, or failed.
-func (a *BackgroundTaskActivity) Finish(taskID, result string, err error, canceled bool) {
-	if a == nil {
-		return
-	}
-	switch {
-	case canceled:
-		a.server.liveActivity.CancelTask(taskID)
-	case err != nil:
-		a.server.liveActivity.FailTaskUnlessSettled(taskID, err.Error())
-	default:
-		a.server.liveActivity.CompleteTask(taskID, result)
-	}
 }
