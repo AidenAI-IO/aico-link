@@ -789,7 +789,20 @@ process.stdout.write('config web UI component tests passed\n');
     updateList(connected);
     assert.equal(countByClass(page, 'ds-row__icon--success'), 1, 'association paints a check without another scan');
     updateList({...connected, wifi_status: {...connected.wifi_status, ssid: 'Candidate'}});
-    assert.equal(countByClass(page, 'ds-row__icon--success'), 1, 'a candidate is visible before its profile is persisted');
+    const findNetworkRow = (node, ssid) => {
+      if (node.getAttribute('data-action') === `wifi-open-${ssid}`) return node;
+      for (const child of node.children) {
+        const found = findNetworkRow(child, ssid);
+        if (found) return found;
+      }
+      return null;
+    };
+    const candidateRow = findNetworkRow(page, 'Candidate');
+    const homeRow = findNetworkRow(page, 'Home');
+    assert.ok(candidateRow, 'the candidate appears before its profile is persisted');
+    assert.ok(homeRow, 'the previous network remains in the saved list');
+    assert.equal(countByClass(candidateRow, 'ds-row__icon--success'), 1, 'the candidate owns the connected checkmark');
+    assert.equal(countByClass(homeRow, 'ds-row__icon--success'), 0, 'the previous network no longer has a connected checkmark');
     updateList(disconnected);
     assert.equal(countByClass(page, 'ds-row__icon--success'), 0, 'external disconnects remove the check');
     assert.equal(calls.length, 1, 'status updates never trigger a scan or aggregate snapshot');
