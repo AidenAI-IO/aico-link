@@ -338,7 +338,7 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		payload.StableWaitMs = &elapsed
 		payload.LastDiff = waitResult.LastDiff
 	}
-	if t.inner.Name() == "touch_gesture" {
+	if t.inner.Name() == "touch_gesture" && ctx.Value(deviceCLICaptureKey{}) == nil {
 		if marker, ok := parseTouchGesturePostMarker(input); ok {
 			applyTouchGesturePostMarkers(&payload.screenshotResult, []touchGesturePostMarkerInfo{marker})
 		} else if markers := parseTapSequencePostMarkers(input, actionOutput); len(markers) > 0 {

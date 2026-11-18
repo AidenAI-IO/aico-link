@@ -31,8 +31,9 @@ type deviceCLIFrame struct {
 }
 
 type deviceCLICapture struct {
-	frames []deviceCLIFrame
-	last   visualScreenshotObservation
+	frames  []deviceCLIFrame
+	last    visualScreenshotObservation
+	actions []deviceCLIAction
 }
 
 func (r *Runtime) deviceCLIEnabled() bool {
@@ -104,11 +105,26 @@ func openDeviceCLIScope(ctx context.Context, r *Runtime, capture *deviceCLICaptu
 func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *deviceCLICapture) (ToolInvokeResponse, error) {
 	turn, _ := ctx.Value(utgTurnKey{}).(*utgTurn)
 	if len(args) > 0 && (args[0] == "utg-status" || args[0] == "utg-goto" || args[0] == "utg-step" || args[0] == "utg-tag") {
-		return r.runUTGCommand(ctx, s, args, capture)
+		if len(capture.actions) == maxDeviceCLIActions {
+			return ToolInvokeResponse{}, fmt.Errorf("device-cli action limit per shell reached; continue in a new shell call")
+		}
+		index := len(capture.actions)
+		capture.actions = append(capture.actions, deviceCLIAction{name: args[0]})
+		result, err := r.runUTGCommand(ctx, s, args, capture)
+		capture.actions[index].failed = err != nil || result.IsError
+		if len(capture.frames) == 0 && ctx.Err() == nil {
+			result, _ := invokeDeviceHTTP(context.WithValue(ctx, deviceCLICaptureKey{}, capture), s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
+			frame, _ := parseScreenshotObservation(result.Output)
+			capture.add(-1, compressCLIFrame(frame))
+		}
+		return result, err
 	}
 	calls, err := devicecli.Calls(args)
 	if err != nil {
 		return ToolInvokeResponse{}, err
+	}
+	if len(capture.actions)+len(calls) > maxDeviceCLIActions {
+		return ToolInvokeResponse{}, fmt.Errorf("device-cli action limit per shell reached; continue in a new shell call")
 	}
 	scoped := context.WithValue(ctx, deviceCLICaptureKey{}, capture)
 	if turn != nil && len(turn.steps) == 0 && args[0] != "look" {
@@ -133,7 +149,10 @@ func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string
 		}
 	}()
 	for i, call := range calls {
+		action := newDeviceCLIAction(args[0], call)
 		result, err = invokeDeviceHTTP(scoped, s, call)
+		action.failed = err != nil || result.IsError
+		capture.actions = append(capture.actions, action)
 		if err != nil {
 			return result, err
 		}
@@ -149,6 +168,7 @@ func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string
 			return result, nil
 		}
 		if len(calls) > 1 && i == 0 && (!ok || visual.Result.ScreenStable != nil && !*visual.Result.ScreenStable) {
+			capture.actions[len(capture.actions)-1].failed = true
 			err = fmt.Errorf("drag did not reach a stable screen; inspect the screenshot before retrying")
 			return result, err
 		}
@@ -226,7 +246,7 @@ func (c *deviceCLICapture) add(step int, v visualScreenshotObservation) {
 	c.frames = append(c.frames, deviceCLIFrame{step: step, visual: v})
 }
 
-func deviceCLIStateMessages(ctx context.Context, frames []deviceCLIFrame) []llms.MessageContent {
+func deviceCLIStateMessages(ctx context.Context, frames []deviceCLIFrame, actions []deviceCLIAction) []llms.MessageContent {
 	var messages []llms.MessageContent
 	turn, _ := ctx.Value(utgTurnKey{}).(*utgTurn)
 	for i, frame := range frames {
@@ -235,11 +255,20 @@ func deviceCLIStateMessages(ctx context.Context, frames []deviceCLIFrame) []llms
 			continue
 		}
 		label := "Device CLI screenshot"
+		var annotation string
+		if i == len(frames)-1 && len(actions) > 0 {
+			v, annotation = annotateDeviceCLIFrame(v, actions)
+		}
 		if frame.step >= 0 && turn != nil && frame.step < len(turn.steps) {
 			label += fmt.Sprintf(", Step #%d", frame.step)
-			turn.steps[frame.step].shown = true
+			// The annotated frame is for the agent; classification still uses the clean image.
+			turn.steps[frame.step].shown = annotation == ""
 		}
-		caption := fmt.Sprintf("%s. Coordinates are normalized 0–1000, not pixels. %s", label, screenshotObservationStatusSummary("shell", v.Result))
+		caption := label + ". Coordinates are normalized 0–1000, not pixels."
+		if annotation == "" {
+			caption += " " + screenshotObservationStatusSummary("shell", v.Result)
+		}
+		caption += annotation
 		messages = append(messages, llms.MessageContent{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{llms.TextPart(caption), buildImagePart(v.MIMEType, v.ImageBytes)}})
 	}
 	return messages

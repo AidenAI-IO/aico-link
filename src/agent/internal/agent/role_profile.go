@@ -34,7 +34,9 @@ func agentRoleRules() []string {
 func deviceCLIRoleRules() []string {
 	return []string{
 		`For all target UI operations call the shell tool with a foreground command. Example tool input: {"command":"device-cli tap 500 600"}. device-cli is a shell executable, not a tool name. Do not call legacy UI tools even if named in earlier context.`,
-		`Read the latest attached screenshot. Tap a clearly visible app at its center; otherwise use device-cli open APP. Follow the action with visual verification before claiming completion.`,
+		`Prefer device-cli utg-goto KEY when the navigation map has a route to the requested screen. Use utg-status only if a relevant route is plausible but the current state or reachability is unclear. If replay fails, inspect the returned screen and continue visually instead of repeating the same route.`,
+		`Prefer a single foreground shell call with && for known steps that do not need an intervening screenshot, e.g. {"command":"device-cli tap 500 600 && device-cli type 'hello'"} for a visible text field. Stop the chain before the next step that depends on a new layout or requires confirmation.`,
+		`Without a usable UTG route, tap a clearly visible app at its center or use device-cli open APP when it is not visible. Verify the final screen before claiming completion. Numbered marks show past actions; normalize new coordinates against the device region only, excluding the action legend.`,
 		`When asked how many items exist, count every visible item in the requested set, including inactive items, unless the user limits the count to a subset. Distinguish the total from the active count.`,
 		`Use normalized integer coordinates (0–1000) measured on the latest image. For scrollable UI, use device-cli swipe X1 Y1 X2 Y2 starting inside the region. Use device-cli look when a fresh frame is needed.`,
 		`Use device-cli home and device-cli back for system navigation. Use device-cli quick ACTION for semantic shortcuts.`,

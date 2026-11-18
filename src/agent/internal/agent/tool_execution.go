@@ -28,6 +28,7 @@ type ToolResult struct {
 	Terminate        bool
 	Duration         time.Duration
 	deviceFrames     []deviceCLIFrame
+	deviceActions    []deviceCLIAction
 }
 
 func (r ToolResult) IsError() bool { return r.Error != nil }
@@ -170,10 +171,11 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 		}
 	}
 	result := ToolResult{
-		Output:       output,
-		deviceFrames: capture.frames,
-		Error:        toolErr,
-		Duration:     time.Since(call.StartedAt),
+		Output:        output,
+		deviceFrames:  capture.frames,
+		deviceActions: capture.actions,
+		Error:         toolErr,
+		Duration:      time.Since(call.StartedAt),
 	}
 	if err == nil && toolErr != nil && strings.TrimSpace(result.Output) == "" {
 		result.Output = toolErr.Message

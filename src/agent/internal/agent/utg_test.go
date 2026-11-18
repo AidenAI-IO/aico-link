@@ -172,6 +172,9 @@ func TestUTGReplayStopsOnUnexpectedDestination(t *testing.T) {
 			if calls != tc.expectedCalls {
 				t.Fatalf("device calls = %d, want %d", calls, tc.expectedCalls)
 			}
+			if len(capture.actions) != 1+tc.expectedCalls || capture.actions[0].name != "look" || (tc.expectedCalls > 0 && capture.actions[1].name != "tap") {
+				t.Fatalf("missing UTG sub-operations: %+v", capture.actions)
+			}
 			if len(capture.frames) == 0 {
 				t.Fatal("did not preserve final screenshot")
 			}
