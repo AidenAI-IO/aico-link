@@ -1031,8 +1031,12 @@ func TestWiFiStatusRequiresUsableObservation(t *testing.T) {
 		{"failed wpa", "exit 1", "", http.StatusServiceUnavailable},
 		{"failed probes", "exit 1", "exit 1", http.StatusServiceUnavailable},
 		{"unreadable probes", "echo FAIL", "echo unexpected", http.StatusServiceUnavailable},
+		{"partial wpa", "echo ssid=partial", "", http.StatusServiceUnavailable},
+		{"completed without ssid", "echo wpa_state=COMPLETED", "", http.StatusServiceUnavailable},
+		{"empty iw ssid", "exit 1", "echo 'SSID:   '", http.StatusServiceUnavailable},
 		{"wpa disconnected", "echo wpa_state=DISCONNECTED", "exit 1", http.StatusOK},
 		{"iw disconnected fallback", "echo FAIL", "echo 'Not connected.'", http.StatusOK},
+		{"partial wpa fallback", "echo ssid=partial; echo ip_address=192.168.1.8", "echo 'Not connected.'", http.StatusOK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			options := testOptions(t)
@@ -1054,21 +1058,68 @@ func TestWiFiStatusRequiresUsableObservation(t *testing.T) {
 			if response.Code != test.want {
 				t.Fatalf("status=%d, want %d, body=%s", response.Code, test.want, response.Body.String())
 			}
+			status := server.queryWiFiStatus()
+			wantState := "DISCONNECTED"
+			if test.want == http.StatusServiceUnavailable {
+				wantState = "UNKNOWN"
+			}
+			if status["state"] != wantState || status["connected"] != false || status["ssid"] != "" || status["ip_address"] != "" {
+				t.Fatalf("snapshot status=%+v, want %s without connection fields", status, wantState)
+			}
 			if test.want == http.StatusOK {
 				var payload struct {
 					Status struct {
 						Connected bool
 						State     string
+						SSID      string
+						IP        string `json:"ip_address"`
 					} `json:"wifi_status"`
 				}
 				if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 					t.Fatal(err)
 				}
-				if payload.Status.Connected || payload.Status.State != "DISCONNECTED" {
+				if payload.Status.Connected || payload.Status.State != "DISCONNECTED" || payload.Status.SSID != "" || payload.Status.IP != "" {
 					t.Fatalf("unexpected disconnected status: %+v", payload.Status)
 				}
 			}
 		})
+	}
+}
+
+func TestWiFiStatusKeepsAssociationWhenSignalReadStalls(t *testing.T) {
+	options := testOptions(t)
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	for name, script := range map[string]string{
+		"wpa_cli": "echo wpa_state=COMPLETED\necho ssid=Home\necho ip_address=192.168.1.8",
+		"iw":      "exec /bin/sleep 5",
+	} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server, err := NewServer(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	response := httptest.NewRecorder()
+	server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/network/wifi/status", nil).WithContext(ctx))
+	if response.Code != http.StatusOK || ctx.Err() != nil {
+		t.Fatalf("signal consumed primary observation: status=%d ctx=%v body=%s", response.Code, ctx.Err(), response.Body.String())
+	}
+	var payload struct {
+		Status map[string]any `json:"wifi_status"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status["connected"] != true || payload.Status["ssid"] != "Home" || payload.Status["ip_address"] != "192.168.1.8" {
+		t.Fatalf("lost primary status: %+v", payload.Status)
+	}
+	if _, ok := payload.Status["signal_dbm"]; ok {
+		t.Fatalf("unexpected signal from stalled read: %+v", payload.Status)
 	}
 }
 

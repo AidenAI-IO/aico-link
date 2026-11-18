@@ -127,6 +127,8 @@ class Element {
 
   focus() { document.activeElement = this; }
 
+  click() { if (!this.disabled) this.fire('click'); }
+
   contains(node) {
     return this === node || this.children.some(child => child.contains(node));
   }
@@ -830,7 +832,9 @@ process.stdout.write('config web UI component tests passed\n');
     assert.equal(page.querySelector('[data-action="wifi-info-Home"]'), info, 'invisible signal changes preserve row nodes');
     assert.equal(document.activeElement, info);
     updateList(withSignal(-85));
-    assert.equal(document.activeElement, page.querySelector('[data-action="wifi-info-Home"]'), 'a changed signal level restores the same focused control');
+    const replacementInfo = page.querySelector('[data-action="wifi-info-Home"]');
+    assert.notEqual(replacementInfo, info, 'a changed signal level replaces the focused control');
+    assert.equal(document.activeElement, replacementInfo, 'focus moves to the replacement control');
     const sheetInput = new Element('input');
     body.appendChild(sheetInput);
     sheetInput.focus();
@@ -888,6 +892,65 @@ process.stdout.write('config web UI component tests passed\n');
   }
 }
 
+/* ------------------------------------------------- Wi-Fi proxy saves --- */
+
+{
+  const {wifiDetailPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/wifi.js')).href);
+  const {dismiss} = await load('toast');
+  const realFetch = globalThis.fetch;
+  const pending = [];
+  const savedUrl = 'http://saved.local:8080';
+  const snapshot = mode => ({
+    wifi: {networks: [{ssid: 'Home', proxy_mode: mode, proxy_url: mode === 'proxy' ? savedUrl : ''}]},
+    wifi_status: {connected: true, ssid: 'Home', state: 'COMPLETED'},
+  });
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  globalThis.fetch = (url, options) => {
+    assert.equal(url, '/api/network/wifi/connection');
+    assert.equal(options.method, 'PUT');
+    return new Promise((resolve, reject) => pending.push({
+      body: JSON.parse(options.body), reject,
+      resolve: () => resolve({ok: true, text: async () => JSON.stringify({ok: true, ...snapshot('proxy')})}),
+    }));
+  };
+  try {
+    let update;
+    const page = await wifiDetailPage({snapshot: snapshot('proxy'), params: {ssid: 'Home'}, navigate() {}, onWiFiChange: callback => { update = callback; }});
+    const input = page.querySelector('input');
+    const control = page.querySelector('.ds-switch');
+    input.value = '';
+    input.fire('input');
+    input.fire('change');
+    assert.equal(pending.at(-1).body.proxy_url, savedUrl, 'clearing the field reuses the saved proxy URL');
+    assert.equal(control.disabled, true, 'a pending save disables the proxy switch');
+    control.click();
+    assert.equal(control.getAttribute('aria-checked'), 'true', 'disabled controls cannot display an unsent choice');
+    assert.equal(pending.length, 1);
+    pending.at(-1).resolve();
+    await flush();
+    assert.equal(input.value, savedUrl, 'a successful save displays the effective URL');
+    assert.equal(control.disabled, false);
+    assert.equal(input.disabled, false);
+
+    for (const draft of ['', 'http://draft.local:8080']) {
+      if (draft) { input.value = draft; input.fire('input'); }
+      control.click();
+      assert.equal(control.getAttribute('aria-checked'), 'false');
+      pending.at(-1).reject(new Error('save failed'));
+      await flush();
+      assert.equal(control.disabled, false, 'failed saves re-enable the switch');
+      assert.equal(control.getAttribute('aria-checked'), 'true', 'failed toggles roll back');
+      update(snapshot('system'));
+      assert.equal(control.getAttribute('aria-checked'), draft ? 'true' : 'false', 'rollback preserves URL drafts while allowing untouched controls to refresh');
+      assert.equal(input.value, draft, 'only genuine URL drafts survive subsequent profile updates');
+      if (!draft) update(snapshot('proxy'));
+    }
+  } finally {
+    dismiss();
+    globalThis.fetch = realFetch;
+  }
+}
+
 /* ----------------------------------------------- Shell navigation races --- */
 
 {
@@ -900,6 +963,7 @@ process.stdout.write('config web UI component tests passed\n');
   const connected = {wifi: {networks: [{ssid: 'Home'}]}, wifi_status: {connected: true, ssid: 'Home', state: 'COMPLETED'}};
   const disconnected = {...connected, wifi_status: {connected: false, ssid: '', state: 'DISCONNECTED'}};
   let nextSnapshot = connected;
+  let snapshotGate;
   let pageGate;
   const route = {path: '/wifi-observation-test', page: async context => {
     const page = {initial: context.snapshot, updates: []};
@@ -925,7 +989,10 @@ process.stdout.write('config web UI component tests passed\n');
   globalThis.clearTimeout = timer => timers.delete(timer);
   const respond = payload => ({ok: true, status: 200, text: async () => JSON.stringify(payload)});
   globalThis.fetch = url => {
-    if (url === '/api/device/snapshot') return Promise.resolve(respond(nextSnapshot));
+    if (url === '/api/device/snapshot') {
+      const sampled = nextSnapshot;
+      return Promise.resolve(snapshotGate).then(() => respond(sampled));
+    }
     assert.equal(url, '/api/network/wifi/status');
     return new Promise(resolve => reads.push(payload => resolve(respond(payload))));
   };
@@ -951,12 +1018,15 @@ process.stdout.write('config web UI component tests passed\n');
     assert.equal(pages.at(-1).updates.length, 0, 'a pre-snapshot poll is neither replayed nor allowed to overwrite it');
     const rail = root.querySelector('.app__nav-body');
     const navigationRow = rail.querySelector('[data-action="open-basic"]');
+    const wifiRow = rail.querySelector('[data-action="open-wifi"]');
     navigationRow.focus();
     await tick(0);
+    assert.equal(countByClass(wifiRow, 'ds-row__value--success'), 0, 'the rail Wi-Fi badge starts disconnected');
     reads.at(-1)(connected);
     await flush();
     assert.equal(pages.at(-1).updates.at(-1).wifi_status.connected, true, 'a new poll can supersede the navigation snapshot');
-    assert.equal(document.activeElement, navigationRow, 'rail badge updates keep the focused navigation node');
+    assert.equal(countByClass(wifiRow, 'ds-row__value--success'), 1, 'a live poll updates the rail Wi-Fi badge');
+    assert.equal(document.activeElement, navigationRow, 'a live poll keeps the focused navigation node');
 
     let releasePage;
     pageGate = new Promise(resolve => { releasePage = resolve; });
@@ -973,6 +1043,31 @@ process.stdout.write('config web UI component tests passed\n');
     nextSnapshot = {config: {}};
     await router.navigate(route.path, {silent: true});
     assert.equal(pages.at(-1).initial.wifi_status.connected, true, 'retained observations remain a fallback when a snapshot lacks Wi-Fi');
+
+    for (const taskResult of [connected, disconnected]) {
+      nextSnapshot = taskResult === connected ? disconnected : connected;
+      let releaseSnapshot;
+      snapshotGate = new Promise(resolve => { releaseSnapshot = resolve; });
+      const pendingNavigation = router.navigate(route.path, {silent: true});
+      await flush();
+      browser.dispatchEvent(new CustomEvent('aico:wifi-changed', {detail: taskResult}));
+      releaseSnapshot();
+      await pendingNavigation;
+      assert.deepEqual(pages.at(-1).initial.wifi_status, taskResult.wifi_status, 'connect and forget results supersede a navigation read started before the task finished');
+      assert.equal(countByClass(rail.querySelector('[data-action="open-wifi"]'), 'ds-row__value--success'), taskResult.wifi_status.connected ? 1 : 0);
+      snapshotGate = null;
+      await router.navigate(route.path, {silent: true});
+      assert.deepEqual(pages.at(-1).initial.wifi_status, nextSnapshot.wifi_status, 'a navigation started after the task uses the aggregate snapshot');
+    }
+    await tick(0);
+    reads.at(-1)(connected);
+    await flush();
+    nextSnapshot = null;
+    await router.navigate(route.path, {silent: true});
+    assert.equal(rail.querySelector('[data-action="open-voice"]').querySelector('.ds-row__value'), null, 'Wi-Fi-only fallback data cannot establish the voice mode');
+    nextSnapshot = {config: {}};
+    await router.navigate(route.path, {silent: true});
+    assert.ok(rail.querySelector('[data-action="open-voice"]').querySelector('.ds-row__value'), 'a loaded configuration with no voice mode still shows disabled');
     body.removeChild(root);
     await tick(1000);
     assert.equal(timers.size, 0, 'detaching the shell disposes its watcher');

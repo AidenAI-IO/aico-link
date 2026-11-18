@@ -307,7 +307,10 @@ func (s *Server) queryWiFiStatus() map[string]any {
 }
 
 func (s *Server) queryWiFiStatusContext(ctx context.Context) map[string]any {
-	status, _ := s.observeWiFiStatusContext(ctx)
+	status, observed := s.observeWiFiStatusContext(ctx)
+	if !observed {
+		status["state"] = "UNKNOWN"
+	}
 	return status
 }
 
@@ -317,19 +320,20 @@ func (s *Server) observeWiFiStatusContext(ctx context.Context) (map[string]any, 
 		result := runCommandContext(ctx, 5*time.Second, nil, nil, "wpa_cli", "-i", s.options.WiFiInterface, "status")
 		if result.ExitCode == 0 {
 			detail := strings.TrimRight(string(result.Output), "\r\n")
-			status["detail"] = detail
 			values := keyValueLines(detail)
-			status["state"], status["ssid"], status["ip_address"] = values["wpa_state"], decodeWiFiSSID(values["ssid"]), values["ip_address"]
-			status["connected"] = values["wpa_state"] == "COMPLETED" && values["ssid"] != ""
-			if status["connected"] == true && status["ip_address"] == "" {
-				status["ip_address"] = interfaceIPv4Context(ctx, s.options.WiFiInterface)
-			}
-			if status["connected"] == true {
-				if signal, ok := s.queryWiFiLinkSignalContext(ctx); ok {
-					status["signal_dbm"] = signal
+			ssid := decodeWiFiSSID(values["ssid"])
+			if values["wpa_state"] != "" && (values["wpa_state"] != "COMPLETED" || ssid != "") {
+				status["detail"] = detail
+				status["state"], status["ssid"], status["ip_address"] = values["wpa_state"], ssid, values["ip_address"]
+				status["connected"] = values["wpa_state"] == "COMPLETED"
+				if status["connected"] == true && status["ip_address"] == "" {
+					status["ip_address"] = interfaceIPv4Context(ctx, s.options.WiFiInterface)
 				}
-			}
-			if values["wpa_state"] != "" || values["ssid"] != "" {
+				if status["connected"] == true {
+					if signal, ok := s.queryWiFiLinkSignalContext(ctx); ok {
+						status["signal_dbm"] = signal
+					}
+				}
 				return status, true
 			}
 		}
@@ -345,7 +349,11 @@ func (s *Server) observeWiFiStatusContext(ctx context.Context) (map[string]any, 
 		for _, line := range strings.Split(detail, "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "SSID:") {
-				status["ssid"] = decodeWiFiSSID(strings.TrimSpace(strings.TrimPrefix(line, "SSID:")))
+				ssid := decodeWiFiSSID(strings.TrimSpace(strings.TrimPrefix(line, "SSID:")))
+				if ssid == "" {
+					continue
+				}
+				status["ssid"] = ssid
 				status["connected"], status["state"] = true, "COMPLETED"
 				status["ip_address"] = interfaceIPv4Context(ctx, s.options.WiFiInterface)
 			}
@@ -362,7 +370,21 @@ func (s *Server) queryWiFiLinkSignalContext(ctx context.Context) (float64, bool)
 	if !commandExists("iw") {
 		return 0, false
 	}
-	result := runCommandContext(ctx, 5*time.Second, nil, nil, "iw", "dev", s.options.WiFiInterface, "link")
+	// Signal is optional: leave time to return an already usable primary read.
+	timeout := 250 * time.Millisecond
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline) - 100*time.Millisecond
+		if remaining <= 0 {
+			return 0, false
+		}
+		if remaining < timeout {
+			timeout = remaining
+		}
+	}
+	result := runCommandContext(ctx, timeout, nil, nil, "iw", "dev", s.options.WiFiInterface, "link")
+	if result.ExitCode != 0 {
+		return 0, false
+	}
 	for _, line := range strings.Split(string(result.Output), "\n") {
 		if signal, ok := parseWiFiSignalDBM(strings.TrimSpace(line)); ok {
 			return signal, true

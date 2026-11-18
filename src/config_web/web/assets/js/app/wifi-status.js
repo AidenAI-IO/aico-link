@@ -17,7 +17,7 @@ export function watchWiFi(changed, {isActive = () => true} = {}) {
     return !stopped;
   }
 
-  function publish(payload) {
+  function publish(payload, source = 'poll') {
     const status = payload?.wifi_status;
     if (!status || typeof status.connected !== 'boolean' || typeof status.state !== 'string' || !status.state ||
         (status.connected && (typeof status.ssid !== 'string' || !status.ssid))) {
@@ -26,9 +26,10 @@ export function watchWiFi(changed, {isActive = () => true} = {}) {
     const value = {wifi_status: payload.wifi_status};
     if (payload.wifi) value.wifi = payload.wifi;
     const next = JSON.stringify(value);
-    if (next === signature) return;
+    // Task publications also establish ordering against pending navigation reads.
+    if (next === signature && source !== 'task') return;
     signature = next;
-    changed(value);
+    changed(value, {source});
   }
 
   async function poll() {
@@ -66,7 +67,7 @@ export function watchWiFi(changed, {isActive = () => true} = {}) {
   function onResult(event) {
     if (!active()) return;
     revision += 1;
-    if (event.detail?.wifi_status) publish(event.detail);
+    if (event.detail?.wifi_status) publish(event.detail, 'task');
     refresh();
   }
 

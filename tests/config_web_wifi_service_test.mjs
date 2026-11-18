@@ -130,6 +130,7 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
   const timers = new Set();
   const reads = [];
   const changes = [];
+  const sources = [];
   const browser = new EventTarget();
   browser.CustomEvent = CustomEvent;
   globalThis.window = browser;
@@ -145,7 +146,7 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
     reads.push({url, options, resolve: payload => resolve({ok: true, text: async () => typeof payload === 'string' ? payload : JSON.stringify(payload)}), reject});
   });
   let attached = true;
-  const stop = watchWiFi(value => changes.push(value), {isActive: () => attached});
+  const stop = watchWiFi((value, {source}) => { changes.push(value); sources.push(source); }, {isActive: () => attached});
   t.after(() => { stop(); Object.assign(globalThis, original); });
   const flush = () => new Promise(resolve => setImmediate(resolve));
   async function tick(ms) {
@@ -163,6 +164,7 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
   reads[0].resolve(disconnected);
   await flush();
   assert.deepEqual(changes, [disconnected]);
+  assert.equal(sources.at(-1), 'poll');
 
   await tick(1000);
   await tick(1000);
@@ -174,6 +176,10 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
   await tick(1000);
   browser.dispatchEvent(new CustomEvent('aico:wifi-changed', {detail: connected}));
   assert.deepEqual(changes.at(-1), connected, 'a completed connection paints immediately');
+  assert.equal(sources.at(-1), 'task');
+  const published = changes.length;
+  browser.dispatchEvent(new CustomEvent('aico:wifi-changed', {detail: connected}));
+  assert.equal(changes.length, published + 1, 'identical task results still establish ordering against navigation reads');
   reads[2].resolve(disconnected);
   await flush();
   assert.deepEqual(changes.at(-1), connected, 'a pre-save read cannot revert the new connection');

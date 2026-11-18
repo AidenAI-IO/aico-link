@@ -26,6 +26,7 @@ function statusFor(item, snapshot) {
   if (!snapshot) return null;
 
   if (item.status === 'voice') {
+    if (!snapshot.config) return null;
     // The config has no `voice_mode`; the mode is `agent.input_mode`, or the
     // one the configured providers imply when it is unset.
     const mode = voiceMode(snapshot);

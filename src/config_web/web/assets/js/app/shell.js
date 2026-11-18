@@ -57,6 +57,7 @@ export async function boot(rootId = 'app', options = {}) {
   let updateWiFi = () => {};
   let refreshWiFi = () => {};
   let wifiRevision = 0;
+  let wifiTaskRevision = 0;
 
   const view = el('div', {class: 'app__scroll', data: {region: 'content'}});
   const railBody = el('div', {class: 'app__nav-body'});
@@ -86,10 +87,12 @@ export async function boot(rootId = 'app', options = {}) {
       };
       // One snapshot per navigation feeds the rail and the page, so the status
       // accessories in the two copies cannot disagree.
+      const taskRevisionAtRead = wifiTaskRevision;
       let snapshot = await loadSnapshot();
       if (current !== generation) return;
-      if (snapshot?.wifi_status) {
-        // The successful navigation read wins over retained polling data.
+      if (snapshot?.wifi_status && taskRevisionAtRead === wifiTaskRevision) {
+        // A navigation read wins over retained polling data, but a task that
+        // finished after the read started must not be reverted by that read.
         // Invalidate in-flight polls too; the next one starts after this read.
         liveWiFi = null;
         refreshWiFi();
@@ -138,8 +141,9 @@ export async function boot(rootId = 'app', options = {}) {
 
   await router.start();
   if (!options.localAgent) {
-    const stopWiFi = watchWiFi(value => {
+    const stopWiFi = watchWiFi((value, {source}) => {
       wifiRevision += 1;
+      if (source === 'task') wifiTaskRevision += 1;
       liveWiFi = {...liveWiFi, ...value};
       updateWiFi(value);
     }, {isActive: () => root.isConnected});

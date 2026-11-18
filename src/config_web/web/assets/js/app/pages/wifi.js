@@ -471,7 +471,8 @@ export async function wifiDetailPage(context) {
   let savedProxyUrl = profile?.proxy_url || '';
   let proxyEnabled = profile?.proxy_mode === 'proxy';
   let proxyUrl = savedProxyUrl;
-  let proxyDirty = false;
+  let proxyUrlDirty = false;
+  let proxyModeDirty = false;
   let applyingProxy = false;
 
   const proxyErrorNode = el('div', {class: 'ds-field__error', attrs: {'aria-live': 'polite'}});
@@ -513,7 +514,7 @@ export async function wifiDetailPage(context) {
   }
 
   // A committed URL, or switching the proxy off, is what talks to the Agent.
-  proxyInput.addEventListener('input', () => { proxyDirty = true; });
+  proxyInput.addEventListener('input', () => { proxyUrlDirty = true; });
   proxyInput.addEventListener('change', () => {
     if (!proxyEnabled) return;
     commitProxy({enabled: true, url: proxyInput.value});
@@ -526,7 +527,7 @@ export async function wifiDetailPage(context) {
     checked: proxyEnabled,
     label: msg('ui.proxy_row_label', '配置代理'),
     onChange: next => {
-      proxyDirty = true;
+      proxyModeDirty = true;
       proxyEnabled = next;
       proxyUrlField.hidden = !next;
       setProxyError(null);
@@ -559,6 +560,7 @@ export async function wifiDetailPage(context) {
     setProxyError(null);
     applyingProxy = true;
     proxyInput.disabled = true;
+    proxySwitch.disabled = true;
     try {
       const result = await connect({
         ssid,
@@ -569,7 +571,10 @@ export async function wifiDetailPage(context) {
       proxyEnabled = enabled;
       proxyUrl = choice.proxyUrl;
       savedProxyUrl = choice.proxyUrl;
-      proxyDirty = false;
+      proxyUrlDirty = false;
+      proxyModeDirty = false;
+      proxyInput.value = choice.proxyUrl;
+      setChecked(proxySwitch, enabled);
       profile = {...profile, proxy_mode: choice.proxyMode, proxy_url: choice.proxyUrl};
       if (result.payload?.wifi) snapshot = {...snapshot, wifi: result.payload.wifi};
       proxyUrlField.hidden = !enabled;
@@ -578,11 +583,13 @@ export async function wifiDetailPage(context) {
       // The switch already moved; put it back so the control never claims a
       // state the device did not accept.
       proxyEnabled = profile?.proxy_mode === 'proxy';
+      proxyModeDirty = false;
       setChecked(proxySwitch, proxyEnabled);
       proxyUrlField.hidden = !proxyEnabled;
       setProxyError({key: 'ui.proxy_apply_failed', fallback: error && error.message ? error.message : '保存失败'});
     } finally {
       proxyInput.disabled = false;
+      proxySwitch.disabled = false;
       applyingProxy = false;
     }
   }
@@ -634,7 +641,7 @@ export async function wifiDetailPage(context) {
     savedProxyUrl = profile?.proxy_url || '';
     // A connected candidate can be observed before the connection task saves it.
     forgetGroup.hidden = proxyGroup.hidden = !profile;
-    if (!proxyDirty && !applyingProxy) {
+    if (!proxyUrlDirty && !proxyModeDirty && !applyingProxy) {
       proxyEnabled = profile?.proxy_mode === 'proxy';
       proxyUrl = savedProxyUrl;
       proxyInput.value = proxyUrl;
