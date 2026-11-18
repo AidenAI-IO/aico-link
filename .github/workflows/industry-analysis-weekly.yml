@@ -1,0 +1,104 @@
+name: Industry Analysis Weekly Report
+
+on:
+  schedule:
+    # Monday at 09:47 Asia/Shanghai.
+    - cron: '47 1 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Generate a preview without writing to OSS or sending to Lark
+        type: boolean
+        default: true
+      source:
+        description: Optional configured repository (link or owner/name) for a preview
+        type: string
+      send_notification:
+        description: Send the published report to the industry analysis Lark bot
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: industry-analysis-weekly
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: >-
+      (github.event_name == 'schedule' && vars.INDUSTRY_ANALYSIS_ENABLED == 'true') ||
+      (github.event_name == 'workflow_dispatch' &&
+        (inputs.dry_run || (github.ref_name == github.event.repository.default_branch && inputs.source == '')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set working directory
+        run: echo "WORK_DIR=$RUNNER_TEMP/industry-analysis" >> "$GITHUB_ENV"
+      - name: Install OSS client
+        if: env.PREVIEW == 'false'
+        run: python -m pip install 'oss2==2.19.1'
+      - name: Restore incremental checkpoint
+        if: env.PREVIEW == 'false'
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+        run: python -m scripts.industry_analysis_publish restore --workdir "$WORK_DIR" --run "$GITHUB_RUN_NUMBER"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+      - name: Install the review CLI
+        run: npm install --global --no-fund --no-audit '@anthropic-ai/claude-code@2.1.308'
+      - name: Analyze changed feedback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INDUSTRY_ANALYSIS_REPOS: ${{ vars.INDUSTRY_ANALYSIS_REPOS }}
+          AUTO_IMPROVE_REVIEW_MODEL: ${{ vars.AUTO_IMPROVE_REVIEW_MODEL }}
+          AUTO_IMPROVE_REVIEW_BASE_URL: ${{ vars.AUTO_IMPROVE_REVIEW_BASE_URL }}
+          AUTO_IMPROVE_REVIEW_API_KEY: ${{ secrets.AUTO_IMPROVE_REVIEW_API_KEY }}
+          SOURCE: ${{ inputs.source }}
+        run: |
+          set -euo pipefail
+          args=(--output "$WORK_DIR")
+          if [[ "$PREVIEW" == "false" ]]; then
+            args+=(--base "$WORK_DIR/base.json" --prepared "$WORK_DIR/prepared.json")
+          elif [[ -n "$SOURCE" ]]; then
+            args+=(--source "$SOURCE")
+          fi
+          python -m scripts.industry_analysis "${args[@]}"
+      - name: Upload preview artifact
+        if: env.PREVIEW == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: industry-analysis-preview
+          path: ${{ env.WORK_DIR }}/report/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Publish and verify OSS report
+        if: env.PREVIEW == 'false'
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          BENCHMARK_REPORT_BASE_URL: ${{ vars.BENCHMARK_REPORT_BASE_URL }}
+        run: python -m scripts.industry_analysis_publish publish --workdir "$WORK_DIR" --run "$GITHUB_RUN_NUMBER"
+      - name: Notify Lark
+        if: >-
+          env.PREVIEW == 'false' &&
+          (github.event_name == 'schedule' || inputs.send_notification)
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          BENCHMARK_REPORT_BASE_URL: ${{ vars.BENCHMARK_REPORT_BASE_URL }}
+          INDUSTRY_ANALYSIS_LARK_WEBHOOK_URL: ${{ secrets.INDUSTRY_ANALYSIS_LARK_WEBHOOK_URL }}
+          INDUSTRY_ANALYSIS_LARK_WEBHOOK_SECRET: ${{ secrets.INDUSTRY_ANALYSIS_LARK_WEBHOOK_SECRET }}
+        run: python -m scripts.industry_analysis_publish notify --workdir "$WORK_DIR" --run "$GITHUB_RUN_NUMBER"

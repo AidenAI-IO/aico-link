@@ -1,0 +1,11 @@
+{
+  "focus_areas": [
+    "Success rate of real App operations",
+    "Control and recovery of long tasks",
+    "Attachments in the complete workflow",
+    "Predictable cost and outcome"
+  ],
+  "bootstrap_days": 30,
+  "max_issues": 24,
+  "max_opportunities": 5
+}
