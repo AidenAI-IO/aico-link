@@ -416,6 +416,14 @@ func TestResumableWebRealtimeVoiceSurvivesDroppedConnection(t *testing.T) {
 	if err := playback.WritePlayChunk(id, []byte{7, 8}, false); err != nil {
 		t.Fatal(err)
 	}
+	// Speech held across a format change keeps its own format on resume.
+	next, err := playback.StartPlayback(tts.AudioFormat{SampleRate: 16000, Channels: 1, BitWidth: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := playback.WritePlayChunk(next, []byte{9, 9}, false); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-voice.StopRequested():
 		t.Fatal("a dropped connection ended a resumable session")
@@ -429,12 +437,22 @@ func TestResumableWebRealtimeVoiceSurvivesDroppedConnection(t *testing.T) {
 	if got := readWebVoiceControl(t, ctx, second)["type"]; got != "capture_start" {
 		t.Fatalf("resumed first message = %v, want capture_start", got)
 	}
-	if got := readWebVoiceControl(t, ctx, second)["type"]; got != "playback_start" {
-		t.Fatalf("resumed second message = %v, want playback_start", got)
+	playbackRate := func(message map[string]any) any {
+		format, _ := message["format"].(map[string]any)
+		return format["sample_rate"]
+	}
+	if got := readWebVoiceControl(t, ctx, second); got["type"] != "playback_start" || playbackRate(got) != float64(24000) {
+		t.Fatalf("resumed second message = %v, want playback_start at 24 kHz", got)
 	}
 	kind, data, err := second.Read(ctx)
 	if err != nil || kind != websocket.MessageBinary || string(data) != string([]byte{7, 8}) {
 		t.Fatalf("held speech = %v %v, %v", kind, data, err)
+	}
+	if got := readWebVoiceControl(t, ctx, second); got["type"] != "playback_start" || playbackRate(got) != float64(16000) {
+		t.Fatalf("after the first held speech = %v, want playback_start at 16 kHz", got)
+	}
+	if kind, data, err := second.Read(ctx); err != nil || kind != websocket.MessageBinary || string(data) != string([]byte{9, 9}) {
+		t.Fatalf("second held speech = %v %v, %v", kind, data, err)
 	}
 	if err := second.Write(ctx, websocket.MessageBinary, []byte{1, 2}); err != nil {
 		t.Fatal(err)

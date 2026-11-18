@@ -76,6 +76,37 @@ type webRealtimeFrame struct {
 	data []byte
 	// speech is how long a binary frame plays for.
 	speech time.Duration
+	// announces marks a capture_start, capture_stop or playback_start frame,
+	// and format is the format it announces. The writer keeps what it last
+	// sent, to tell a resumed client the formats of the frames that follow.
+	announces webRealtimeAnnouncement
+	format    webRealtimeFormat
+}
+
+type webRealtimeAnnouncement int
+
+const (
+	announcesNothing webRealtimeAnnouncement = iota
+	announcesCaptureStart
+	announcesCaptureStop
+	announcesPlaybackStart
+)
+
+func controlFrame(message any) webRealtimeFrame {
+	data, _ := json.Marshal(message)
+	return webRealtimeFrame{kind: websocket.MessageText, data: data}
+}
+
+func captureStartFrame(format webRealtimeFormat) webRealtimeFrame {
+	frame := controlFrame(map[string]any{"type": "capture_start", "format": format})
+	frame.announces, frame.format = announcesCaptureStart, format
+	return frame
+}
+
+func playbackStartFrame(format webRealtimeFormat) webRealtimeFrame {
+	frame := controlFrame(map[string]any{"type": "playback_start", "format": format})
+	frame.announces, frame.format = announcesPlaybackStart, format
+	return frame
 }
 
 // webRealtimeAudio is the audio endpoint of a browser voice session. The
@@ -103,10 +134,15 @@ type webRealtimeAudio struct {
 	release       func()
 	writerStarted bool
 	resumeTimer   *time.Timer
-	// captureFormat and playbackFormat are what the client was last told,
-	// repeated to a client that resumes the session.
-	captureFormat  *webRealtimeFormat
-	playbackFormat *webRealtimeFormat
+	// captureFormat is the format of the current capture (or preroll).
+	captureFormat *webRealtimeFormat
+	// sentCapture and sentPlayback are the formats in effect for the next
+	// frame the writer sends: the last capture_start (nil after a
+	// capture_stop) and playback_start it took from the queue. A resumed
+	// client is told these first, so speech held across a format change
+	// still plays in its own format.
+	sentCapture  *webRealtimeFormat
+	sentPlayback *webRealtimeFormat
 	// prerolling is true from the early capture request until the session's
 	// first capture; preroll holds the microphone audio received meanwhile,
 	// and then that capture's audio not yet read.
@@ -177,8 +213,11 @@ func (w *webRealtimeAudio) startPreroll() {
 	format := webRealtimePrerollFormat
 	w.captureFormat = &format
 	w.prerolling = true
+	// Queued under the lock that sets the format, so a capture the session
+	// starts meanwhile cannot be announced ahead of this one.
+	overflow := w.enqueueLocked(captureStartFrame(format))
 	w.mu.Unlock()
-	w.send(map[string]any{"type": "capture_start", "format": format})
+	w.finishEnqueue(overflow)
 }
 
 // Close tells the browser why the session ended and closes the socket once
@@ -242,23 +281,35 @@ func (w *webRealtimeAudio) send(message any) {
 // instead of a playback error. Dropped speech stays counted as unsent, so a
 // drain does not report it as heard.
 func (w *webRealtimeAudio) enqueue(frame webRealtimeFrame) {
-	speech := frame.kind == websocket.MessageBinary
 	w.mu.Lock()
-	if speech {
+	overflow := w.enqueueLocked(frame)
+	w.mu.Unlock()
+	w.finishEnqueue(overflow)
+}
+
+// enqueueLocked queues frame; the caller holds w.mu and passes the result to
+// finishEnqueue once it has let go of the lock. It reports whether the queue
+// was full.
+func (w *webRealtimeAudio) enqueueLocked(frame webRealtimeFrame) (overflow bool) {
+	if frame.kind == websocket.MessageBinary {
 		w.unsent++
 	}
 	if w.closing || w.closed() {
-		w.mu.Unlock()
-		return
+		return false
 	}
 	if len(w.out) >= webRealtimeSendQueue {
-		w.mu.Unlock()
+		return true
+	}
+	w.out = append(w.out, frame)
+	return false
+}
+
+func (w *webRealtimeAudio) finishEnqueue(overflow bool) {
+	if overflow {
 		logging.Warnf("agent", "realtime", "Browser voice connection is too slow: %d frames waiting; ending the session", webRealtimeSendQueue)
 		w.Close("The connection to the board is too slow for voice")
 		return
 	}
-	w.out = append(w.out, frame)
-	w.mu.Unlock()
 	w.signal()
 }
 
@@ -280,9 +331,15 @@ func (w *webRealtimeAudio) dropQueuedSpeech() {
 // serve carries one client connection until it ends. The first connection
 // starts the session; with a resume token a later one takes it over. It
 // returns when this connection is over, while a resumable session may live
-// on and wait for the next.
-func (w *webRealtimeAudio) serve(conn *websocket.Conn) {
+// on and wait for the next. A later connection is turned away (false) once
+// the session is ending: its writer may be gone, so nothing would tell the
+// client.
+func (w *webRealtimeAudio) serve(conn *websocket.Conn) bool {
 	w.mu.Lock()
+	if w.connGen > 0 && (w.closing || w.closed()) {
+		w.mu.Unlock()
+		return false
+	}
 	old := w.conn
 	w.conn = conn
 	w.connGen++
@@ -291,19 +348,7 @@ func (w *webRealtimeAudio) serve(conn *websocket.Conn) {
 		w.resumeTimer.Stop()
 		w.resumeTimer = nil
 	}
-	if gen > 1 {
-		// A resumed client starts from nothing: tell it the formats in use
-		// before the speech held for it.
-		var restate []webRealtimeFrame
-		if (w.recordingStop != nil || w.prerolling) && w.captureFormat != nil {
-			restate = append(restate, controlFrame(map[string]any{"type": "capture_start", "format": *w.captureFormat}))
-		}
-		if w.playbackFormat != nil {
-			restate = append(restate, controlFrame(map[string]any{"type": "playback_start", "format": *w.playbackFormat}))
-		}
-		w.out = append(restate, w.out...)
-		logging.Infof("agent", "realtime", "Voice client resumed its session: held_frames=%d", len(w.out))
-	} else if w.resumeToken != "" {
+	if gen == 1 && w.resumeToken != "" {
 		w.out = append([]webRealtimeFrame{controlFrame(map[string]string{"type": "session", "resume_token": w.resumeToken})}, w.out...)
 	}
 	startWriter := !w.writerStarted
@@ -317,11 +362,7 @@ func (w *webRealtimeAudio) serve(conn *websocket.Conn) {
 	}
 	w.signal()
 	w.read(conn, gen)
-}
-
-func controlFrame(message any) webRealtimeFrame {
-	data, _ := json.Marshal(message)
-	return webRealtimeFrame{kind: websocket.MessageText, data: data}
+	return true
 }
 
 // connectionLost handles the end of connection gen. A resumable session whose
@@ -355,11 +396,18 @@ func (w *webRealtimeAudio) connectionLost(gen uint64, cause string, clean bool) 
 	w.conn = nil
 	if w.resumeToken != "" && !clean {
 		w.resumeTimer = time.AfterFunc(webRealtimeResumeGrace, func() {
+			reason := "not resumed within " + webRealtimeResumeGrace.String() + " after: " + cause
 			w.mu.Lock()
-			waiting := w.conn == nil && w.connGen == gen
+			expired := w.conn == nil && w.connGen == gen
+			if expired {
+				// Decided under the lock serve attaches under: a resume that
+				// arrives now is turned away instead of joining a session
+				// that is ending.
+				w.shutdown(reason)
+			}
 			w.mu.Unlock()
-			if waiting {
-				w.gone("not resumed within " + webRealtimeResumeGrace.String() + " after: " + cause)
+			if expired {
+				w.gone(reason)
 			}
 		})
 		w.mu.Unlock()
@@ -387,11 +435,29 @@ func (w *webRealtimeAudio) gone(cause string) {
 
 // write sends queued frames in order to the current connection and closes it
 // after the last. While a resumable session waits for its client, frames are
-// held; a frame whose write failed is kept for the next connection.
+// held; a frame whose write failed is kept for the next connection, also when
+// that connection replaced this one while the write was in flight.
 func (w *webRealtimeAudio) write() {
+	var writingGen uint64
 	for {
 		w.mu.Lock()
 		conn, gen := w.conn, w.connGen
+		if conn != nil && gen != writingGen {
+			if gen > 1 {
+				// A resumed client starts from nothing: tell it the formats
+				// of the frames that follow, then send what was held.
+				var restate []webRealtimeFrame
+				if w.sentCapture != nil {
+					restate = append(restate, captureStartFrame(*w.sentCapture))
+				}
+				if w.sentPlayback != nil {
+					restate = append(restate, playbackStartFrame(*w.sentPlayback))
+				}
+				w.out = append(restate, w.out...)
+				logging.Infof("agent", "realtime", "Voice client resumed its session: held_frames=%d", len(w.out))
+			}
+			writingGen = gen
+		}
 		if conn == nil {
 			if w.closed() {
 				w.mu.Unlock()
@@ -421,6 +487,16 @@ func (w *webRealtimeAudio) write() {
 		}
 		frame := w.out[0]
 		w.out = w.out[1:]
+		switch frame.announces {
+		case announcesCaptureStart:
+			format := frame.format
+			w.sentCapture = &format
+		case announcesCaptureStop:
+			w.sentCapture = nil
+		case announcesPlaybackStart:
+			format := frame.format
+			w.sentPlayback = &format
+		}
 		w.mu.Unlock()
 		if frame.data == nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
@@ -430,12 +506,15 @@ func (w *webRealtimeAudio) write() {
 		err := conn.Write(ctx, frame.kind, frame.data)
 		cancel()
 		if err != nil {
+			status := websocket.CloseStatus(err)
+			clean := status == websocket.StatusNormalClosure || status == websocket.StatusGoingAway
 			w.mu.Lock()
-			if gen == w.connGen && w.resumeToken != "" {
+			if w.resumeToken != "" && !w.closing {
+				// Still counted in unsent: it is sent on the next connection.
 				w.out = append([]webRealtimeFrame{frame}, w.out...)
 			}
 			w.mu.Unlock()
-			w.connectionLost(gen, fmt.Sprintf("write failed: %v", err), false)
+			w.connectionLost(gen, fmt.Sprintf("write failed: %v", err), clean)
 			continue
 		}
 		if frame.kind == websocket.MessageBinary {
@@ -472,6 +551,10 @@ func (w *webRealtimeAudio) read(conn *websocket.Conn, gen uint64) {
 		// so a frame from a previous capture never lands after the reset.
 		w.mu.Lock()
 		if w.prerolling && w.recordingStop == nil && gen == w.connGen {
+			if len(pcm) > webRealtimePrerollLimit {
+				// Keep the newest audio; the limit is a whole number of samples.
+				pcm = pcm[len(pcm)-webRealtimePrerollLimit:]
+			}
 			w.preroll = append(w.preroll, pcm)
 			w.prerollBytes += len(pcm)
 			for w.prerollBytes > webRealtimePrerollLimit && len(w.preroll) > 1 {
@@ -522,13 +605,14 @@ func (r webRealtimeRecording) StartRecording(format AudioFormat) (*RecordStartRe
 	id := w.recordingID
 	w.recordingStop = make(chan struct{})
 	w.captureFormat = &captureFormat
+	overflow := false
 	if continuesPreroll {
 		w.preroll = held
+	} else {
+		overflow = w.enqueueLocked(captureStartFrame(captureFormat))
 	}
 	w.mu.Unlock()
-	if !continuesPreroll {
-		w.send(map[string]any{"type": "capture_start", "format": captureFormat})
-	}
+	w.finishEnqueue(overflow)
 	return &RecordStartResult{SessionID: id}, nil
 }
 
@@ -586,7 +670,9 @@ func (r webRealtimeRecording) StopRecording(id uint64) error {
 		w.stopRecordingLocked()
 	}
 	w.mu.Unlock()
-	w.send(map[string]string{"type": "capture_stop"})
+	stop := controlFrame(map[string]string{"type": "capture_stop"})
+	stop.announces = announcesCaptureStop
+	w.enqueue(stop)
 	return nil
 }
 
@@ -612,9 +698,9 @@ func (p webRealtimePlayback) StartPlayback(format tts.AudioFormat) (uint64, erro
 	playbackFormat := webRealtimeFormat{
 		SampleRate: uint32(format.SampleRate), Channels: uint32(format.Channels), BitWidth: uint32(format.BitWidth),
 	}
-	w.playbackFormat = &playbackFormat
+	overflow := w.enqueueLocked(playbackStartFrame(playbackFormat))
 	w.mu.Unlock()
-	w.send(map[string]any{"type": "playback_start", "format": playbackFormat})
+	w.finishEnqueue(overflow)
 	return id, nil
 }
 
@@ -696,16 +782,14 @@ func (s *Server) handleRealtimeVoiceSocket(w http.ResponseWriter, r *http.Reques
 	conn.SetReadLimit(webRealtimeMaxMessageSize)
 	query := r.URL.Query()
 	if token := query.Get("resume"); token != "" {
-		web := s.resumableWebRealtimeVoice(token)
-		if web == nil {
-			// The session ended while the client was away; say so, so it
-			// stops trying.
-			ended := newWebRealtimeAudio(false)
-			ended.Close("The voice session is over")
-			ended.serve(conn)
+		if web := s.resumableWebRealtimeVoice(token); web != nil && web.serve(conn) {
 			return
 		}
-		web.serve(conn)
+		// The session ended while the client was away; say so, so it stops
+		// trying.
+		ended := newWebRealtimeAudio(false)
+		ended.Close("The voice session is over")
+		ended.serve(conn)
 		return
 	}
 	web := newWebRealtimeAudio(query.Get("resumable") == "1")
