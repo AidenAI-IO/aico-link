@@ -19,6 +19,14 @@ interval=${USB_ECM_PROBE_INTERVAL:-5}
 # renewing DHCP client) while the ECM link is perfectly healthy.
 threshold=${USB_ECM_FAIL_THRESHOLD:-12}
 cooldown=${USB_ECM_COOLDOWN:-300}
+# A profile switch the board made itself (aico-dynamic-keyboard) re-enumerates
+# the phone, and iOS sometimes leaves the new ECM link down: no DHCP, no ARP.
+# Right after such a switch the host is known to have been talking a moment
+# ago, so a few failed probes are enough evidence, and waiting the idle
+# threshold would cut the phone off for minutes. The switch is recognised by
+# the grace deadline it publishes.
+replug_threshold=${USB_ECM_REPLUG_FAIL_THRESHOLD:-2}
+replug_window=${USB_ECM_REPLUG_WINDOW:-60}
 
 hosts() {
     {
@@ -158,16 +166,35 @@ case "${1:-watch}" in
         ;;
 esac
 
+# grace_deadline prints the published grace deadline, or 0.
+grace_deadline() {
+    until=$(cat "${grace_file}" 2>/dev/null || echo 0)
+    case "${until}" in ''|*[!0-9]*) until=0 ;; esac
+    echo "${until}"
+}
+
 failures=0
 last_reset=0
 last_rx=$(read_rx_packets)
+# Seconds since the epoch until which a failed probe counts against the short
+# post-switch threshold; 0 outside such a window.
+replug_until=0
+seen_grace=$(grace_deadline)
 while :; do
     sleep "${interval}"
     [ "$(cat "${udc_state_file}" 2>/dev/null || true)" = configured ] || {
         failures=0
         continue
     }
+    grace=$(grace_deadline)
+    if [ "${grace}" != "${seen_grace}" ]; then
+        # A new profile switch: once its grace ends, watch the link closely.
+        seen_grace=${grace}
+        replug_until=$((grace + replug_window))
+    fi
     grace_active && { failures=0; continue; }
+    limit=${threshold}
+    [ "$(date +%s)" -lt "${replug_until}" ] && limit=${replug_threshold}
 
     # No carrier means no host is attached to ECM at all.  That is not a stall,
     # and resetting the gadget over it would churn a perfectly idle device.
@@ -194,13 +221,17 @@ while :; do
     fi
     [ "${result}" -eq 2 ] && { failures=0; continue; }
     failures=$((failures + 1))
-    logger -t aico-usb-ecm-watchdog "ECM probe failed (${failures}/${threshold})"
+    logger -t aico-usb-ecm-watchdog "ECM probe failed (${failures}/${limit})"
     now=$(date +%s)
-    if [ "${failures}" -ge "${threshold}" ] && \
-        [ $((now - last_reset)) -ge "${cooldown}" ]; then
+    # The cooldown keeps an idle reset loop from churning the gadget. A link
+    # lost to a switch the board made is not that loop; repair it every time.
+    if [ "${failures}" -ge "${limit}" ] && \
+        { [ "${limit}" -eq "${replug_threshold}" ] || [ $((now - last_reset)) -ge "${cooldown}" ]; }; then
         logger -t aico-usb-ecm-watchdog "resetting stalled composite gadget"
         reset_composite "ECM stall" || logger -t aico-usb-ecm-watchdog "composite reset failed"
         last_reset=${now}
         failures=0
+        # The reset published no grace deadline; do not repeat it at once.
+        replug_until=0
     fi
 done

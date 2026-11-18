@@ -1962,7 +1962,27 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			tasks.RestoreUserActionTasks(tasks.PendingUserActionTasks())
 		}
 	}()
+	// rejectedResponseRetry is set when the provider refused a response the
+	// session asked for because its own response was running. The request is
+	// made again once the session is idle; what it was for (a task update, a
+	// notification) is already in the provider's conversation.
+	rejectedResponseRetry := false
+	tryRetryRejectedResponse := func() error {
+		if !rejectedResponseRetry || !currentAdmission().canInjectBackgroundResponse() {
+			return nil
+		}
+		rejectedResponseRetry = false
+		if err := textSession.CreateResponse(ctx); err != nil {
+			return markRealtimeProviderFailure(fmt.Errorf("retry rejected realtime response: %w", err))
+		}
+		requestResponse()
+		logging.Infof("agent", "realtime", "Retried a response the provider had refused while its own was running")
+		return nil
+	}
 	tryInjectTaskUpdates := func() error {
+		if err := tryRetryRejectedResponse(); err != nil || rejectedResponseRetry {
+			return err
+		}
 		if !currentAdmission().canInjectTaskUpdates() {
 			return nil
 		}
@@ -2917,6 +2937,16 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if semanticEmitter != nil {
 					semanticEmitter.emit(event)
 				}
+			case realtimevoice.EventResponseRejected:
+				// Our response.create lost a race with the provider's own
+				// response (usually to speech it just detected). The request
+				// we made will never start: forget it, and ask again once
+				// the provider's response has finished.
+				logging.Infof("agent", "realtime", "Provider refused a requested response while its own was running; will retry: %v", event.Error)
+				if turnState.responseRequestPending {
+					turnState.responseRequestPending = false
+				}
+				rejectedResponseRetry = true
 			case realtimevoice.EventError:
 				if event.Error != nil {
 					if semanticEmitter != nil {

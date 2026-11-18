@@ -897,3 +897,39 @@ func (s *lockedSemanticSink) snapshot() []streamcontract.Event {
 	defer s.mu.Unlock()
 	return append([]streamcontract.Event(nil), s.events...)
 }
+
+// A response the session asked for can lose a race with one the provider
+// started for speech it just detected; the provider refuses the request. That
+// is not a session failure: the session keeps running and asks again once
+// the provider's response is over.
+func TestRealtimeRejectedResponseIsRetriedAfterProviderResponse(t *testing.T) {
+	s, bridge, done := startBusyTestSession(t, time.Second)
+	events, err := bridge.Handle(context.Background(), agent.RealtimeChatRequest{RequestID: "chat-1", Message: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session exited before the response: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("response was not requested")
+	}
+	// The provider answers its own turn instead and refuses ours.
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "provider-resp"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseRejected, Error: errors.New("Cannot create response while another response is in progress.")}
+	select {
+	case err := <-done:
+		t.Fatalf("a refused response ended the session: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "provider-resp", Status: "completed"}
+	requireBusyEvent(t, events, agent.RealtimeChatEventDone)
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session exited instead of retrying: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("the refused response was not requested again")
+	}
+}
