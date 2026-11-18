@@ -390,10 +390,11 @@ class PublicationTest(unittest.TestCase):
                 "cutoff": FIRST, "coverage": [], "opportunities": [{"title": "Resume tasks", "impact": "Less rework"}],
             }})
             with patch.object(delivery, "send_lark", side_effect=TimeoutError) as send:
-                with patch.dict(os.environ, {"INDUSTRY_ANALYSIS_LARK_WEBHOOK_URL": "example.test/bot"}):
-                    with self.assertRaisesRegex(ValueError, "valid webhook URL"):
-                        delivery.notify(bucket, 1)
-                    self.assertNotIn(f"{delivery.PRIVATE}/runs/1/lark.json", bucket.objects)
+                for url in ("example.test/bot", "http://example.test/bot", "https://host%20name.test/bot"):
+                    with self.subTest(url=url), patch.dict(os.environ, {"INDUSTRY_ANALYSIS_LARK_WEBHOOK_URL": url}):
+                        with self.assertRaisesRegex(ValueError, "valid HTTPS webhook URL"):
+                            delivery.notify(bucket, 1)
+                        self.assertNotIn(f"{delivery.PRIVATE}/runs/1/lark.json", bucket.objects)
                 with self.assertRaisesRegex(ValueError, "delivery status is unknown"):
                     delivery.notify(bucket, 1)
                 delivery.notify(bucket, 1)
