@@ -198,6 +198,29 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: Check release freshness before pushing the image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.plan.outputs.source_commit }}
+        run: |
+          # Use the existing release helpers so older source refs do not need a new CLI command.
+          PYTHONPATH=scripts/release python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          from release import assert_current, github_history, github_releases, verify
+
+          record = verify(Path('output/release/assets'))
+          repo, tag = record['repo'], record['tag']
+          if (repo.lower(), tag, record['source_commit']) != (
+              os.environ['GITHUB_REPOSITORY'].lower(), os.environ['RELEASE_TAG'], os.environ['SOURCE_COMMIT']
+          ):
+              raise SystemExit('Release assets do not match the image repository, tag, or source commit')
+          assert_current(record, github_history(repo))
+          if any(r['tag_name'] == tag and not r['draft'] for r in github_releases(repo)):
+              raise SystemExit('Published releases are immutable')
+          PY
       # A failed image push must not leave a published release without its image.
       - name: Build and publish Aico Link image
         id: image
