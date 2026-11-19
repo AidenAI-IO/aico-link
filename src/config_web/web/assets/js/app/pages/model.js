@@ -24,8 +24,8 @@
  *
  * The decision model (`decision`) is a separate, optional classifier for fixed
  * workflow checks, so it has its own page rather than a group under the main
- * model's parameters. Its Base URL and model keep their defaults here;
- * they are edited in the TOML file when they ever need to change.
+ * model's parameters. OpenRouter exposes its model and Base URL here; the
+ * dedicated decision APIs keep those overrides in the TOML file.
  */
 
 import {adoptSaved, ensureSnapshot, request, t} from '../data.js';
@@ -152,6 +152,8 @@ export const DECISION_PROVIDERS = [
     help: msg('model.decision_provider_openai_help', '使用 OpenAI 的 Decisions API；它不能定位点击位置，这类判断仍交给主模型')},
   {value: 'gemini', label: msg('model.decision_provider_gemini', 'Gemini Decision 1'),
     help: msg('model.decision_provider_gemini_help', '使用 Google Gemini Decisions API；它不能定位点击位置，这类判断仍交给主模型。在 aistudio.google.com/apikey 获取 API Key')},
+  {value: 'openrouter', label: 'OpenRouter',
+    help: msg('model.decision_provider_openrouter_help', '在 openrouter.ai/keys 获取 API Key；使用原生 Decisions 模型，默认 Jev')},
 ];
 
 function decisionProvider(value) {
@@ -709,6 +711,7 @@ export async function decisionPage(context) {
     },
   });
   const decision = () => decisionConfig(snapshot);
+  let decisionModels;
 
   function apiKeyField() {
     const input = el('input', {
@@ -760,6 +763,51 @@ export async function decisionPage(context) {
       patch.decision.enabled = false;
     }
     await saver.change('decision.provider', patch);
+  }
+
+  function decisionValueField(key, label, placeholder, {type = 'text', help, suggestions = false} = {}) {
+    const listID = 'decision-model-suggestions';
+    const input = el('input', {
+      class: 'ds-input',
+      attrs: {
+        type, value: decision()[key] || '', inputmode: type === 'url' ? 'url' : 'text',
+        autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'done',
+        placeholder: resolve(placeholder), 'aria-label': resolve(label),
+        list: suggestions ? listID : null,
+      },
+      data: {action: `edit-decision.${key}`},
+    });
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') input.blur();
+    });
+    input.addEventListener('change', async () => {
+      const value = input.value.trim();
+      if (value === (decision()[key] || '')) return;
+      const outcome = await saver.change(`decision.${key}`, {decision: {[key]: value || null}});
+      if (outcome === 'invalid' || outcome === 'failed') input.value = decision()[key] || '';
+    });
+    const list = suggestions ? el('datalist', {attrs: {id: listID}}) : null;
+    if (list) {
+      const showSuggestions = models => replace(list, models.map(entry => el('option', {
+        attrs: {value: entry.id, label: entry.name || entry.id},
+      })));
+      const loadSuggestions = async () => {
+        if (!decisionModels) {
+          decisionModels = request('/api/models?provider=openrouter&output_modalities=decisions&order=top-weekly')
+            .then(payload => payload.models || [])
+            .catch(() => { decisionModels = null; return []; });
+        }
+        showSuggestions(await decisionModels);
+      };
+      // The catalog only suggests IDs; network errors never prevent free input.
+      input.addEventListener('focus', loadSuggestions);
+      if (decisionModels) loadSuggestions();
+    }
+    return el('div', {class: 'ds-form-card'}, [
+      text(label, 'ds-form-card__title'),
+      help ? text(help, 'ds-form-card__help') : null,
+      input, list,
+    ]);
   }
 
   /** Sends one small question with the saved settings and reports the reply. */
@@ -821,6 +869,18 @@ export async function decisionPage(context) {
         }),
       })]}),
       group({rows: [apiKeyField()]}),
+      provider.value === 'openrouter' ? group({rows: [decisionValueField(
+        'model', msg('config.fields.decision.model.label', '决策模型'), '~typesafe/jev-latest', {
+          suggestions: true,
+          help: msg('model.decision_openrouter_model_help', '留空默认使用 Jev；输入时显示模型建议，也可填写其他模型 ID'),
+        },
+      )]}) : null,
+      provider.value === 'openrouter' ? group({rows: [decisionValueField(
+        'base_url', msg('config.fields.decision.base_url.label', '决策模型 Base URL'),
+        'https://openrouter.ai/api/alpha', {
+          type: 'url', help: msg('model.decision_base_url_help', '留空使用官方地址'),
+        },
+      )]}) : null,
       group({
         rows: [inlineValueRow({
           key: 'decision.min_confidence',
