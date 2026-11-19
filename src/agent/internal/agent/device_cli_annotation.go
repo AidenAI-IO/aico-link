@@ -57,8 +57,7 @@ func newDeviceCLIAction(command string, call devicecli.Call) deviceCLIAction {
 	return action
 }
 
-// renderDeviceCLISheet composes presentation copies only. Raw frames remain
-// available to the UTG classifier without any overlays or resizing here.
+// renderDeviceCLISheet composes annotated presentation copies of captured frames.
 func renderDeviceCLISheet(frames []deviceCLIFrame, actions []deviceCLIAction) ([]byte, image.Rectangle) {
 	type panel struct {
 		src    image.Image

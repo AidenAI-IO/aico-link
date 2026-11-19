@@ -14,7 +14,3 @@ Use `shell` with a foreground command such as `device-cli tap 514 263`. The tool
 - `home`, `back`, `wait [milliseconds]`, `open APP`, `url URL`, and `quick ACTION` wrap platform navigation. Prefer tapping a clearly visible app icon over `open`.
 - Prefer to chain known, layout-independent steps with `&&`, e.g. `device-cli type 'hello' && device-cli enter`. Do not chain speculative taps across pages or steps that require confirmation. Read the screenshot sheet left to right, then top to bottom. Each panel marks only its own action. Use the last panel for current state and normalize new coordinates within that panel, not across the sheet. A no-change warning is not a command failure.
 - Do not use controller commands or external automation to bypass this visual workflow. Never leave device commands running in background shell sessions.
-
-## Learned navigation
-
-Prefer `device-cli utg-goto STATE` when the requested screen is listed in the supplied map. The map lists known states; `utg-goto` plans the route internally. Use `device-cli utg-status` if you need to check the current state or reachability. Use `device-cli utg-step EDGE_ID` to replay just one verified edge. If replay stops or cannot confirm a state, inspect the returned screenshot and navigate visually. `device-cli utg-tag STATE 'Label'` queues a display-name change at the end of the turn. The graph is learned in the background after the reply, not while you are operating the device.

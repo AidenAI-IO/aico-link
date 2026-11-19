@@ -652,8 +652,6 @@ func (s *Server) Handler() http.Handler {
 	// Coordinate debug tool. Live frames come from POST /api/providers/screenshot.
 	mux.HandleFunc("/api/coordinate-debug/tap", s.handleCoordinateDebugTap)
 	mux.HandleFunc("/coordinate-debug", s.handleCoordinateDebug)
-	mux.HandleFunc("/utg-debug", s.handleUTGDebug)
-	mux.HandleFunc("/api/debug/utg", s.handleUTG)
 	mux.HandleFunc("/coordinate-debug.html", s.handleCoordinateDebug)
 	mux.HandleFunc("/keyboard-tap-android-keys", s.handleKeyboardTapAndroidKeys)
 

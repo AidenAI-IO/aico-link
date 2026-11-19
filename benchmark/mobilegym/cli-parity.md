@@ -5,7 +5,7 @@ variants passed **6/6 attempts** (0 percentage-point gap, within the 10-point
 success-rate target on this sample). The three tasks are too few to establish a
 10-point bound for other tasks or devices.
 
-| Metric | Original direct tools | Device CLI + background UTG |
+| Metric | Original direct tools | Device CLI (historical candidate) |
 | --- | ---: | ---: |
 | Attempts passed | 6/6 | 6/6 |
 | Alarm count | 2/2 | 2/2 |
@@ -19,7 +19,8 @@ success-rate target on this sample). The three tasks are too few to establish a
 The 10-point target refers to task success, not latency. The existing benchmark
 counters do not attribute nested HTTP device calls or shell screenshot states to
 the same buckets as direct tools, so device-action and screenshot counts are not
-comparable. Background UTG inference is not counted in foreground model usage.
+comparable. This is a historical result for the candidate revision below, not a
+measurement of the current CLI.
 
 ## Setup and reproduction
 

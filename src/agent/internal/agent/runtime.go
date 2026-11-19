@@ -56,7 +56,6 @@ const (
 
 type Runtime struct {
 	deviceCLI               bool
-	utg                     *utgStore
 	config                  Config
 	configReloadMu          sync.Mutex
 	configOperations        sync.RWMutex
@@ -572,9 +571,6 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 	}
 	rt.logger = logger
 	rt.deviceCLI = os.Getenv("AICO_LEGACY_DEVICE_TOOLS") != "1"
-	if rt.deviceCLI && cfg.ConfigDir != "" {
-		rt.utg = newUTGStore(cfg.ConfigDir)
-	}
 	rt.profileDebouncer = debouncer
 	rt.waitForWakeup = waitForWakeupController
 	rt.storageMonitor = newRuntimeStorageMonitor(cfg, logger)
@@ -1331,13 +1327,6 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 	// append user message to context manager
 	userMessage := userMessageFromInput(r.contextManager, turnInput.InputText, turnInput.Attachments)
-	var deviceTurn *utgTurn
-	if r.deviceCLIEnabled() && r.utg != nil {
-		deviceTurn = r.utg.startTurn(ctx)
-		if len(deviceTurn.graph.Nodes) > 0 {
-			userMessage.Content += "\n\n<device_navigation_map>\nLast learned state (may be stale): " + deviceTurn.graph.Current + deviceTurn.graph.stateSummary() + "\n</device_navigation_map>"
-		}
-	}
 	appended, err := r.contextManager.AppendMessagesWithResult([]messages.Message{userMessage})
 	if err != nil {
 		return RunResult{}, err
@@ -1402,7 +1391,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	agentLoop.DevicePlatform = r.devicePlatformFromState()
 	agentLoop.PointerMode = r.devicePointerModeFromState()
 	agentLoop.ContextBudgetGuard = contextBudget.guard
-	if !r.deviceCLIEnabled() && contextBudget.thresholdCompactionEnabled() {
+	if contextBudget.thresholdCompactionEnabled() {
 		agentLoop.ContextCompactionTrigger = contextBudget.compactionTrigger
 		agentLoop.ContextThresholdCompaction = contextBudget.compactAtThreshold
 	}
@@ -1411,9 +1400,6 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	loopCtx := ctx
 	if r.deviceCLIEnabled() {
 		loopCtx = context.WithValue(ctx, deviceCLIRuntimeKey{}, r)
-		if deviceTurn != nil {
-			loopCtx = context.WithValue(loopCtx, utgTurnKey{}, deviceTurn)
-		}
 	}
 	output, err = agentLoop.Run(loopCtx, normalizedInput, callOptions...)
 	// If the agent couldn't parse the LLM output format, extract the raw
@@ -1435,9 +1421,6 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		return RunResult{}, err
 	}
 
-	if deviceTurn != nil && (len(deviceTurn.steps) > 0 || len(deviceTurn.tags) > 0) {
-		r.utg.finish(deviceTurn, agentLoop.contextManager.CloneMessageList(), r.models, r.logger)
-	}
 	output = strings.TrimSpace(output)
 	metrics.TotalDuration = float64(time.Since(startTime).Milliseconds())
 	if r.logger != nil && metrics.PromptTokens > 0 {
@@ -3089,9 +3072,6 @@ Memory entries:
 
 // Close releases resources held by the runtime
 func (r *Runtime) Close() error {
-	if r.utg != nil {
-		r.utg.close()
-	}
 	if r.routines != nil {
 		r.routines.Close()
 	}

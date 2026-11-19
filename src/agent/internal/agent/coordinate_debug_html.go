@@ -47,7 +47,6 @@ const coordinateDebugHTML = `<!DOCTYPE html>
 <body>
 <header class="topbar">
 <div class="topbar-title"><span class="brand-dot" aria-hidden="true"></span><div><h1>Coordinate Debug</h1><span class="topbar-subtitle">WORKSPACE</span></div></div>
-<a class="new-chat-btn" href="/utg-debug" style="text-decoration:none;">Device navigation graph</a>
 <a class="new-chat-btn" href="/" style="text-decoration:none;">Back to chat</a>
 </header>
 <main class="debug-layout">

@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"image"
-	"image/color"
 	"image/jpeg"
 	"os/exec"
 	"strings"
@@ -21,14 +20,14 @@ func TestDeviceCLIShellCapturesRealRequestsNotText(t *testing.T) {
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Skip("curl required")
 	}
-	frame := testUTGFrame(t, color.White)
-	result := frame.Result
-	result.Data = base64.StdEncoding.EncodeToString(frame.ImageBytes)
-	result.ActionOutput = "observed"
-	output, _ := json.Marshal(result)
+	var frame bytes.Buffer
+	if err := jpeg.Encode(&frame, image.NewRGBA(image.Rect(0, 0, 8, 12)), nil); err != nil {
+		t.Fatal(err)
+	}
+	output, _ := json.Marshal(screenshotResult{Width: 8, Height: 12, Data: base64.StdEncoding.EncodeToString(frame.Bytes())})
 	shell := &ShellTool{}
 	rt := &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{
-		"screenshot": deviceCLITestScreenshot{output: string(output)},
+		"screenshot": deviceCLITestTool{name: "screenshot", output: string(output)},
 	}}}
 	ctx := context.WithValue(context.Background(), deviceCLIRuntimeKey{}, rt)
 	call := func(command string) ToolCallExecutionResult {
@@ -62,13 +61,11 @@ func TestDeviceCLIChainAnnotatesOnlyDispatchedOperations(t *testing.T) {
 	})
 	shell := &ShellTool{}
 	rt := &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{
-		"screenshot":    deviceCLITestScreenshot{output: string(output)},
-		"touch_gesture": utgReplayTestTool{"touch_gesture", func(string) string { return string(output) }},
-		"enter_text":    utgReplayTestTool{"enter_text", func(string) string { return string(output) }},
+		"screenshot":    deviceCLITestTool{name: "screenshot", output: string(output)},
+		"touch_gesture": deviceCLITestTool{name: "touch_gesture", output: string(output)},
+		"enter_text":    deviceCLITestTool{name: "enter_text", output: string(output)},
 	}}}
 	ctx := context.WithValue(context.Background(), deviceCLIRuntimeKey{}, rt)
-	turn := &utgTurn{}
-	ctx = context.WithValue(ctx, utgTurnKey{}, turn)
 	input, _ := json.Marshal(map[string]string{"command": `cli() { curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d "$1" "$AICO_DEVICE_CLI_URL/command"; }
  cli '["tap","200","400"]' && cli '["swipe","500","800","500","300"]' && cli '["type","private-text"]' && cli '["back"]' && false && cli '["look"]'`})
 	got := executeToolCall(ctx, ToolCallExecution{Specs: NewToolSpecs([]langtools.Tool{shell}), Action: schema.AgentAction{Tool: "shell", ToolInput: string(input)}}).Result
@@ -117,14 +114,15 @@ func TestDeviceCLIChainAnnotatesOnlyDispatchedOperations(t *testing.T) {
 		}
 	}
 
-	last := turn.steps[len(turn.steps)-1]
-	if !bytes.Equal(last.frame.ImageBytes, raw) {
-		t.Fatal("annotated frame would replace the raw UTG evidence")
+	for _, frame := range got.deviceFrames {
+		if !bytes.Equal(frame.visual.ImageBytes, raw) {
+			t.Fatal("rendering changed a captured frame")
+		}
 	}
 }
 
-type deviceCLITestScreenshot struct{ output string }
+type deviceCLITestTool struct{ name, output string }
 
-func (deviceCLITestScreenshot) Name() string                                   { return "screenshot" }
-func (deviceCLITestScreenshot) Description() string                            { return "test screenshot" }
-func (s deviceCLITestScreenshot) Call(context.Context, string) (string, error) { return s.output, nil }
+func (s deviceCLITestTool) Name() string                                 { return s.name }
+func (s deviceCLITestTool) Description() string                          { return "test device tool" }
+func (s deviceCLITestTool) Call(context.Context, string) (string, error) { return s.output, nil }

@@ -12,7 +12,6 @@ const Usage = `device-cli [--url URL] COMMAND
   swipe X1 Y1 X2 Y2 [milliseconds] | drag X1 Y1 X2 Y2
   drag-start X Y | drag-release X Y | type TEXT | key KEY [KEY ...]
   open APP | url URL | quick ACTION | scroll DY | move X Y
-  utg-status | utg-goto TARGET | utg-step EDGE | utg-tag STATE LABEL
 Coordinates are integers from 0 to 1000. Quote text as one shell argument.`
 
 type Call struct {

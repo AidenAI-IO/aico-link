@@ -32,7 +32,6 @@ type deviceCLIFrame struct {
 
 type deviceCLICapture struct {
 	frames  []deviceCLIFrame
-	last    visualScreenshotObservation
 	actions []deviceCLIAction
 }
 
@@ -90,7 +89,7 @@ func openDeviceCLIScope(ctx context.Context, r *Runtime, capture *deviceCLICaptu
 		defer stop()
 		stopOnDisconnect := context.AfterFunc(req.Context(), stop)
 		defer stopOnDisconnect()
-		response, err := r.executeDeviceCLI(callCtx, toolServer, args, capture)
+		response, err := executeDeviceCLI(callCtx, toolServer, args, capture)
 		if err != nil {
 			response = ToolInvokeResponse{IsError: true, Error: err.Error()}
 		}
@@ -102,23 +101,7 @@ func openDeviceCLIScope(ctx context.Context, r *Runtime, capture *deviceCLICaptu
 	return "http://" + listener.Addr().String(), token, func() { cancel(); _ = srv.Close(); mu.Lock(); closed = true; mu.Unlock() }, nil
 }
 
-func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *deviceCLICapture) (ToolInvokeResponse, error) {
-	turn, _ := ctx.Value(utgTurnKey{}).(*utgTurn)
-	if len(args) > 0 && (args[0] == "utg-status" || args[0] == "utg-goto" || args[0] == "utg-step" || args[0] == "utg-tag") {
-		if len(capture.actions) == maxDeviceCLIActions {
-			return ToolInvokeResponse{}, fmt.Errorf("device-cli action limit per shell reached; continue in a new shell call")
-		}
-		index := len(capture.actions)
-		capture.actions = append(capture.actions, deviceCLIAction{name: args[0]})
-		result, err := r.runUTGCommand(ctx, s, args, capture)
-		capture.actions[index].failed = err != nil || result.IsError
-		if len(capture.actions) == index+1 && ctx.Err() == nil {
-			result, _ := invokeDeviceHTTP(context.WithValue(ctx, deviceCLICaptureKey{}, capture), s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
-			frame, _ := parseScreenshotObservation(result.Output)
-			capture.add(index, compressCLIFrame(frame))
-		}
-		return result, err
-	}
+func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *deviceCLICapture) (ToolInvokeResponse, error) {
 	calls, err := devicecli.Calls(args)
 	if err != nil {
 		return ToolInvokeResponse{}, err
@@ -127,12 +110,6 @@ func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string
 		return ToolInvokeResponse{}, fmt.Errorf("device-cli action limit per shell reached; continue in a new shell call")
 	}
 	scoped := context.WithValue(ctx, deviceCLICaptureKey{}, capture)
-	if turn != nil && len(turn.steps) == 0 && args[0] != "look" {
-		result, _ := invokeDeviceHTTP(scoped, s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
-		if v, ok := parseScreenshotObservation(result.Output); ok {
-			turn.steps = append(turn.steps, utgObservation{frame: compressCLIFrame(v)})
-		}
-	}
 	var result ToolInvokeResponse
 	var last visualScreenshotObservation
 	defer func() {
@@ -142,9 +119,6 @@ func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string
 		}
 		last = compressCLIFrame(last)
 		capture.add(len(capture.actions)-1, last)
-		if turn != nil && len(turn.steps) < maxUTGSteps {
-			turn.steps = append(turn.steps, utgObservation{args: args, frame: last, successful: err == nil && !result.IsError})
-		}
 	}()
 	for i, call := range calls {
 		action := newDeviceCLIAction(args[0], call)
@@ -171,8 +145,7 @@ func (r *Runtime) executeDeviceCLI(ctx context.Context, s *Server, args []string
 				err = fmt.Errorf("drag did not reach a stable screen; inspect the screenshot before retrying")
 				return result, err
 			}
-			// Preserve the drag-start frame separately from drag-release. The
-			// turn's UTG still records the complete drag as one raw action.
+			// Preserve the drag-start frame separately from drag-release.
 			capture.add(len(capture.actions)-1, compressCLIFrame(visual))
 		}
 	}
@@ -232,7 +205,6 @@ func compressCLIFrame(v visualScreenshotObservation) visualScreenshotObservation
 }
 
 func (c *deviceCLICapture) add(action int, v visualScreenshotObservation) {
-	c.last = v
 	if len(v.ImageBytes) == 0 {
 		return
 	}
