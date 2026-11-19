@@ -1,0 +1,295 @@
+#!/bin/sh
+# Capture a lightweight failure snapshot for a core Aico service.
+# Intended for systemd OnFailure=; must stay fast and never block restarts.
+set -eu
+
+SYSTEMCTL_BIN=${SYSTEMCTL_BIN:-/usr/bin/systemctl}
+JOURNALCTL_BIN=${JOURNALCTL_BIN:-/usr/bin/journalctl}
+DIAG_DIR=${AICO_DIAGNOSTICS_DIR:-/userdata/diagnostics}
+EVENTS_FILE=${AICO_DIAGNOSTICS_EVENTS:-${DIAG_DIR}/service-events.jsonl}
+LAST_DIR=${DIAG_DIR}/last
+STAMP_DIR=${DIAG_DIR}/stamps
+LOCK_FILE=${AICO_DIAGNOSTICS_LOCK:-${DIAG_DIR}/service-events.lock}
+MAX_DIR_BYTES=${AICO_DIAGNOSTICS_MAX_BYTES:-16777216}
+LOG_TAIL_BYTES=${AICO_DIAGNOSTICS_LOG_TAIL_BYTES:-32768}
+DEDUP_SECONDS=${AICO_DIAGNOSTICS_DEDUP_SECONDS:-60}
+
+unit_arg=${1:-}
+[ -n "${unit_arg}" ] || exit 0
+case "${unit_arg}" in
+    *.service) unit=${unit_arg} ;;
+    *) unit=${unit_arg}.service ;;
+esac
+unit_base=${unit%.service}
+
+mkdir -p "${DIAG_DIR}" "${LAST_DIR}" "${STAMP_DIR}"
+
+# Collapse restart storms (especially frame with unlimited retries).
+# Stamp is written only after a real event is recorded, so a skipped healthy
+# probe cannot suppress a later OnFailure within the dedup window.
+stamp=${STAMP_DIR}/${unit_base}
+now=$(date +%s)
+if [ -f "${stamp}" ]; then
+    prev=$(cat "${stamp}" 2>/dev/null || echo 0)
+    case "${prev}" in
+        ''|*[!0-9]*) prev=0 ;;
+    esac
+    # Ignore future stamps (clock skew / rollback); only dedup when now >= prev.
+    if [ "${now}" -ge "${prev}" ] && [ $((now - prev)) -lt "${DEDUP_SECONDS}" ]; then
+        exit 0
+    fi
+fi
+
+json_escape() {
+    # Strip remaining C0 controls, then escape JSON string metacharacters.
+    printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037' \
+        | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | tr '\n\r' '  '
+}
+
+# Emit a JSON number when value is -?[0-9]+; otherwise a quoted string.
+json_number_or_string() {
+    case "$1" in
+        ''|-)
+            printf '0'
+            ;;
+        *[!0-9-]*|-*[!0-9]*|*-)
+            printf '"%s"' "$(json_escape "$1")"
+            ;;
+        *)
+            printf '%s' "$1"
+            ;;
+    esac
+}
+
+read_kv() {
+    # stdin: systemctl show output; $1 key
+    sed -n "s/^$1=//p" | head -n 1
+}
+
+show=$(
+    "${SYSTEMCTL_BIN}" show "${unit}" \
+        -p ActiveState -p SubState -p Result -p ExecMainStatus -p ExecMainCode \
+        -p NRestarts -p MainPID 2>/dev/null || true
+)
+active_state=$(printf '%s\n' "${show}" | read_kv ActiveState)
+sub_state=$(printf '%s\n' "${show}" | read_kv SubState)
+result=$(printf '%s\n' "${show}" | read_kv Result)
+exec_main_status=$(printf '%s\n' "${show}" | read_kv ExecMainStatus)
+exec_main_code=$(printf '%s\n' "${show}" | read_kv ExecMainCode)
+n_restarts=$(printf '%s\n' "${show}" | read_kv NRestarts)
+main_pid=$(printf '%s\n' "${show}" | read_kv MainPID)
+
+# Prefer OnFailure monitor env when present: by the time this oneshot runs,
+# systemctl show may already describe the restarted (healthy) invocation.
+if [ -n "${MONITOR_SERVICE_RESULT:-}" ]; then
+    result=${MONITOR_SERVICE_RESULT}
+fi
+if [ -n "${MONITOR_EXIT_CODE:-}" ]; then
+    exec_main_code=${MONITOR_EXIT_CODE}
+fi
+if [ -n "${MONITOR_EXIT_STATUS:-}" ]; then
+    exec_main_status=${MONITOR_EXIT_STATUS}
+fi
+
+case "${n_restarts}" in ''|*[!0-9]*) n_restarts=0 ;; esac
+case "${main_pid}" in ''|*[!0-9]*) main_pid=0 ;; esac
+# Keep numeric exit status as a JSON number; keep signal names (KILL, SEGV, …)
+# as quoted strings instead of coercing them to 0.
+exec_main_status_json=$(json_number_or_string "${exec_main_status}")
+
+loadavg=""
+if [ -r /proc/loadavg ]; then
+    loadavg=$(tr -s ' ' </proc/loadavg | cut -d' ' -f1-3 || true)
+fi
+load1=$(printf '%s\n' "${loadavg}" | cut -d' ' -f1)
+load5=$(printf '%s\n' "${loadavg}" | cut -d' ' -f2)
+load15=$(printf '%s\n' "${loadavg}" | cut -d' ' -f3)
+[ -n "${load1}" ] || load1=0
+[ -n "${load5}" ] || load5=0
+[ -n "${load15}" ] || load15=0
+
+mem_total_kb=0
+mem_available_kb=0
+if [ -r /proc/meminfo ]; then
+    mem_total_kb=$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo || echo 0)
+    mem_available_kb=$(awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo || echo 0)
+fi
+case "${mem_total_kb}" in ''|*[!0-9]*) mem_total_kb=0 ;; esac
+case "${mem_available_kb}" in ''|*[!0-9]*) mem_available_kb=0 ;; esac
+
+# Best-effort board CPU% from a short /proc/stat sample.
+cpu_percent=null
+if [ -r /proc/stat ]; then
+    read_cpu() {
+        awk '/^cpu / {
+            idle=$5+$6; total=0;
+            for (i=2; i<=NF && i<=9; i++) total+=$i;
+            print total, idle; exit
+        }' /proc/stat
+    }
+    set -- $(read_cpu)
+    t1=$1 i1=$2
+    sleep 0.15 2>/dev/null || sleep 1
+    set -- $(read_cpu)
+    t2=$1 i2=$2
+    dt=$((t2 - t1))
+    di=$((i2 - i1))
+    if [ "${dt}" -gt 0 ] && [ "${di}" -ge 0 ] && [ "${di}" -le "${dt}" ]; then
+        cpu_percent=$(awk -v dt="${dt}" -v di="${di}" 'BEGIN { printf "%.1f", 100*(dt-di)/dt }')
+    fi
+fi
+
+service_pid=0
+service_cpu=null
+service_rss=null
+if [ "${main_pid}" -gt 1 ] && [ -r "/proc/${main_pid}/stat" ] && [ -r "/proc/${main_pid}/status" ]; then
+    service_pid=${main_pid}
+    service_rss=$(awk '/^VmRSS:/ {print $2; exit}' "/proc/${main_pid}/status" 2>/dev/null || true)
+    case "${service_rss}" in ''|*[!0-9]*) service_rss=null ;; esac
+fi
+
+# Prefer known file logs; fall back to a short journal slice.
+# Capture only after the recording guard so healthy probes cannot overwrite
+# an existing failure tail under last/<unit>.
+log_file=""
+case "${unit}" in
+    aico-agent.service) log_file=/userdata/agent/log/agent.log ;;
+    aico-frame.service) log_file=/var/log/frame_service/frame_service.log ;;
+    aico-audio.service) log_file=/var/log/audio_service/audio_service.log ;;
+    aico-ble.service) log_file=/var/log/ble_service/ble_service.log ;;
+    aico-wifi-proxy.service) log_file=/var/log/wifi_proxy/wifi_proxy.log ;;
+    aico-ttyd.service) log_file=/var/log/ttyd/ttyd.log ;;
+esac
+
+# Only persist real failures. OnFailure= should already imply this; the guard
+# also drops manual/spurious runs while the unit is still healthy.
+record=0
+severity=failed
+if [ "${active_state}" = "failed" ]; then
+    record=1
+fi
+case "${result}" in
+    signal|core-dump|oom-kill|start-limit-hit|timeout|resources|protocol|watchdog|abort)
+        record=1
+        ;;
+    exit-code)
+        if [ "${active_state}" != "active" ]; then
+            record=1
+        fi
+        ;;
+esac
+if [ -n "${MONITOR_SERVICE_RESULT:-}" ]; then
+    case "${MONITOR_SERVICE_RESULT}" in
+        success|"") ;;
+        *) record=1 ;;
+    esac
+fi
+if [ "${AICO_DIAGNOSTICS_FORCE:-0}" = 1 ]; then
+    record=1
+fi
+if [ "${record}" != 1 ]; then
+    exit 0
+fi
+
+tail_path=${LAST_DIR}/${unit}
+tail_bytes=0
+if [ -n "${log_file}" ] && [ -f "${log_file}" ]; then
+    tail -c "${LOG_TAIL_BYTES}" "${log_file}" >"${tail_path}" 2>/dev/null || true
+elif command -v "${JOURNALCTL_BIN}" >/dev/null 2>&1; then
+    "${JOURNALCTL_BIN}" -u "${unit}" -n 200 --no-pager -o short-iso 2>/dev/null \
+        | tail -c "${LOG_TAIL_BYTES}" >"${tail_path}" || true
+else
+    : >"${tail_path}"
+fi
+if [ -f "${tail_path}" ]; then
+    tail_bytes=$(wc -c <"${tail_path}" | tr -d ' ')
+fi
+case "${tail_bytes}" in ''|*[!0-9]*) tail_bytes=0 ;; esac
+
+ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)
+
+rel_tail=last/${unit}
+service_rss_json=${service_rss}
+if [ "${service_rss_json}" != "null" ]; then
+    service_rss_json=${service_rss}
+fi
+
+event_line=$(
+    printf '{'
+    printf '"ts":"%s",' "$(json_escape "${ts}")"
+    printf '"unit":"%s",' "$(json_escape "${unit}")"
+    printf '"severity":"%s",' "$(json_escape "${severity}")"
+    printf '"active_state":"%s",' "$(json_escape "${active_state}")"
+    printf '"sub_state":"%s",' "$(json_escape "${sub_state}")"
+    printf '"result":"%s",' "$(json_escape "${result}")"
+    printf '"exec_main_code":"%s",' "$(json_escape "${exec_main_code}")"
+    printf '"exec_main_status":%s,' "${exec_main_status_json}"
+    printf '"n_restarts":%s,' "${n_restarts}"
+    printf '"board":{'
+    printf '"loadavg":[%s,%s,%s],' "${load1}" "${load5}" "${load15}"
+    printf '"cpu_percent":%s,' "${cpu_percent}"
+    printf '"mem_total_kb":%s,' "${mem_total_kb}"
+    printf '"mem_available_kb":%s' "${mem_available_kb}"
+    printf '},'
+    printf '"service":{'
+    printf '"pid":%s,' "${service_pid}"
+    printf '"cpu_percent":%s,' "${service_cpu}"
+    printf '"mem_rss_kb":%s' "${service_rss_json}"
+    printf '},'
+    printf '"log_tail_file":"%s",' "$(json_escape "${rel_tail}")"
+    printf '"log_tail_bytes":%s' "${tail_bytes}"
+    printf '}'
+)
+
+append_and_trim_events() {
+    # Explicit failure: when this function runs under `if`, shell errexit is off.
+    printf '%s\n' "${event_line}" >>"${EVENTS_FILE}" || return 1
+
+    # Bound the events file quickly: keep the newest half when over budget.
+    events_bytes=$(wc -c <"${EVENTS_FILE}" 2>/dev/null | tr -d ' ' || echo 0)
+    case "${events_bytes}" in ''|*[!0-9]*) events_bytes=0 ;; esac
+    max_events_bytes=$((MAX_DIR_BYTES / 2))
+    if [ "${MAX_DIR_BYTES}" -gt 1048576 ]; then
+        max_events_bytes=$((MAX_DIR_BYTES - 1048576))
+    fi
+    if [ "${events_bytes}" -gt "${max_events_bytes}" ]; then
+        keep_bytes=$((max_events_bytes / 2))
+        if [ "${keep_bytes}" -lt 4096 ]; then
+            keep_bytes=4096
+        fi
+        # Only replace EVENTS_FILE after every trim step succeeds; otherwise keep
+        # the original history and drop temps (partial .tmp/.trim must not win).
+        trim_ready=0
+        if tail -c "${keep_bytes}" "${EVENTS_FILE}" >"${EVENTS_FILE}.tmp" \
+            && [ -s "${EVENTS_FILE}.tmp" ]; then
+            if sed '1d' "${EVENTS_FILE}.tmp" >"${EVENTS_FILE}.trim" 2>/dev/null \
+                && [ -s "${EVENTS_FILE}.trim" ]; then
+                trim_ready=1
+            elif cp "${EVENTS_FILE}.tmp" "${EVENTS_FILE}.trim" \
+                && [ -s "${EVENTS_FILE}.trim" ]; then
+                trim_ready=1
+            fi
+        fi
+        if [ "${trim_ready}" = 1 ] && mv "${EVENTS_FILE}.trim" "${EVENTS_FILE}"; then
+            rm -f "${EVENTS_FILE}.tmp"
+        else
+            rm -f "${EVENTS_FILE}.tmp" "${EVENTS_FILE}.trim"
+        fi
+    fi
+}
+
+# Stamp only after a successful append. A failed flock/append must not suppress
+# later OnFailure runs inside the dedup window.
+if command -v flock >/dev/null 2>&1; then
+    if ! (
+        flock 9 || exit 1
+        append_and_trim_events || exit 1
+    ) 9>"${LOCK_FILE}"; then
+        exit 0
+    fi
+else
+    append_and_trim_events || exit 0
+fi
+echo "${now}" >"${stamp}"
+
+exit 0

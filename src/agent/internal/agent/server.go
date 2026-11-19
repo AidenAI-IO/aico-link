@@ -647,6 +647,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/android-adb/pair", s.handleAndroidADBPair)
 	mux.HandleFunc("/api/storage/monitor/status", s.handleStorageMonitorStatus)
 	mux.HandleFunc("/api/resources", s.handleResources)
+	mux.HandleFunc("/api/diagnostics/services", s.handleServiceDiagnostics)
+	mux.HandleFunc("/api/diagnostics/incidents", s.handleServiceIncidents)
+	mux.HandleFunc("/api/diagnostics/incident-log", s.handleServiceIncidentLog)
 	mux.HandleFunc("/api/storage/cleanup", s.handleStorageCleanup)
 
 	// Coordinate debug tool. Live frames come from POST /api/providers/screenshot.

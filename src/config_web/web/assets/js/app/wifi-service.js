@@ -16,6 +16,12 @@ const POLL_INTERVAL_MS = 1000;
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+function publishWiFi(payload) {
+  if (payload?.wifi_status && typeof window !== 'undefined' && typeof window.CustomEvent === 'function') {
+    window.dispatchEvent(new window.CustomEvent('aico:wifi-changed', {detail: payload}));
+  }
+}
+
 /** Trigger a scan and return the discovered networks in scan order. */
 export async function scan() {
   const payload = await request(SCAN_URL, {method: 'POST'});
@@ -119,6 +125,7 @@ export async function connect(profile) {
   });
 
   const payload = started && started.status === 'running' ? await waitForTask(started) : started;
+  publishWiFi(payload);
   const status = (payload && payload.wifi_status) || {};
   const ok = Boolean(payload && payload.ok) && status.connected === true && status.ssid === profile.ssid;
   return {
@@ -133,6 +140,7 @@ export async function forget(ssid) {
   const payload = await request(`${CONNECTION_URL}?ssid=${encodeURIComponent(ssid)}`, {
     method: 'DELETE',
   });
+  publishWiFi(payload);
   return {ok: payload && payload.ok !== false, payload: payload || {}};
 }
 

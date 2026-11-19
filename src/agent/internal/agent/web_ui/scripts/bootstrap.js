@@ -12,6 +12,7 @@ setInterval(refreshCurrentLiveActivity, 2000);
 autoResizeInput();
 connectSSE();
 startResourcePolling();
+startCoreServicesPolling();
 startInspector();
 startSharedFileLinks();
 startRealtimeVoiceStatusPolling();

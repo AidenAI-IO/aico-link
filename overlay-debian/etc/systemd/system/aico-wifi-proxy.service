@@ -1,5 +1,6 @@
 [Unit]
 Description=Aico Link per-network loopback proxy
+OnFailure=aico-service-incident@%p.service
 Requires=aico-userdata-migrate.service aico-environment.service
 Wants=aico-wifi-driver.service network.target
 After=aico-userdata-migrate.service aico-environment.service
