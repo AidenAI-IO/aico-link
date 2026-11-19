@@ -38,6 +38,7 @@ device-cli look --dir /tmp --region 100 200 900 800     # Save a cropped JPEG
 
 `look` prints the absolute path to a new JPEG. The destination directory must
 already exist and be writable; `/tmp` is the default and recommended choice.
+The Agent can inspect the saved JPEG with `read_image` using the printed path.
 `--region X1 Y1 X2 Y2` sets the top-left and bottom-right corners in normalized
 integer coordinates (0–1000). `look` does not contribute a frame to the shell's
 screenshot sheet. If a chain also runs commands that attach frames, those

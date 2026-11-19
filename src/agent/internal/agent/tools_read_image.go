@@ -13,9 +13,10 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
-	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -32,7 +33,7 @@ const (
 	readImageJPEGQuality = 85
 )
 
-// ReadImageTool shows the model an image file from the shared directory. The
+// ReadImageTool shows the model an image file on the controller. The
 // result uses the screenshot observation shape, so the agent loop attaches the
 // image to the next model request as it does for screenshots.
 type ReadImageTool struct{}
@@ -44,15 +45,15 @@ func (t *ReadImageTool) Name() string { return toolReadImage }
 func (t *ReadImageTool) ReturnsVisualObservation() bool { return true }
 
 func (t *ReadImageTool) Description() string {
-	return "Look at an image file in the shared directory " + sharedFilesDir() + ", such as an uploaded photo, a downloaded picture, or a chart you generated. " +
-		"Input: {\"path\": \"" + sharedFilesDir() + "/photo.jpg\"}. Supports PNG, JPEG, and GIF (first frame). " +
+	return "Look at a local image file using its absolute path, such as a screenshot saved by device-cli look, an uploaded photo, or a chart. " +
+		"Input: {\"path\": \"/tmp/device-cli-example.jpg\"}. Supports PNG, JPEG, and GIF (first frame). " +
 		"The tool result is ok, and the image arrives in a follow-up state message, scaled down if its longer side exceeds " + fmt.Sprint(readImageMaxEdge) + " px. " +
 		"It is a file, not the connected display: do not use its coordinates for touch_gesture. Use screenshot to see the display."
 }
 
 func (t *ReadImageTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
-		"path": stringArgSchema("Absolute path of an image file inside "+sharedFilesDir()+".", sharedFilesDir()+"/photo.jpg"),
+		"path": stringArgSchema("Absolute path of a readable local image file.", "/tmp/device-cli-example.jpg"),
 	}, "path")
 }
 
@@ -67,11 +68,10 @@ func (t *ReadImageTool) Call(ctx context.Context, input string) (string, error) 
 	if err != nil {
 		return toolErrorResultString(ctx, CodeInvalidArguments, err.Error()), nil
 	}
-	rel, err := sharedRelativePath(filename)
-	if err != nil {
-		return toolErrorResultString(ctx, CodeInvalidArguments, err.Error()), nil
+	if !filepath.IsAbs(filename) {
+		return toolErrorResultString(ctx, CodeInvalidArguments, "image path must be absolute"), nil
 	}
-	data, err := readSharedImageFile(rel)
+	data, err := readLocalImageFile(filename)
 	if err != nil {
 		return toolErrorResultString(ctx, CodeInvalidArguments, fmt.Sprintf("cannot read %s: %v", filename, err)), nil
 	}
@@ -104,18 +104,19 @@ func parseReadImageArgs(input string) (string, error) {
 	return trimmed, nil
 }
 
-// readSharedImageFile reads a regular file below the shared directory with the
-// same rules as downloads: hidden entries, symbolic links, and paths outside
-// the root are treated as absent.
-func readSharedImageFile(rel string) ([]byte, error) {
-	root, err := os.OpenRoot(sharedFilesDir())
+// readLocalImageFile reads only regular files. Use a nonblocking open so a
+// path replaced by a FIFO between stat and open cannot stall the Agent.
+func readLocalImageFile(path string) ([]byte, error) {
+	before, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
-	file, err := openSharedFile(root, rel)
+	if !before.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, fs.ErrNotExist
+		return nil, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
@@ -128,7 +129,11 @@ func readSharedImageFile(rel string) ([]byte, error) {
 	if info.Size() > readImageMaxFileBytes {
 		return nil, fmt.Errorf("file is %d bytes; the limit is %d", info.Size(), readImageMaxFileBytes)
 	}
-	return io.ReadAll(io.LimitReader(file, readImageMaxFileBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, readImageMaxFileBytes+1))
+	if len(data) > readImageMaxFileBytes {
+		return nil, fmt.Errorf("file exceeds the %d byte limit", readImageMaxFileBytes)
+	}
+	return data, err
 }
 
 // encodeImageForModel decodes an image, scales it so its longer side is at
@@ -142,7 +147,7 @@ func encodeImageForModel(data []byte) (readImageResult, error) {
 	if config.Width <= 0 || config.Height <= 0 {
 		return readImageResult{}, errors.New("image has no pixels")
 	}
-	if config.Width*config.Height > readImageMaxPixels {
+	if config.Width > readImageMaxPixels/config.Height {
 		return readImageResult{}, fmt.Errorf("image is %dx%d; the limit is %d pixels", config.Width, config.Height, readImageMaxPixels)
 	}
 	result := readImageResult{SourceFormat: format}

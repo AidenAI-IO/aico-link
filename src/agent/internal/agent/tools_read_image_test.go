@@ -45,7 +45,7 @@ func writeTestPNG(t *testing.T, path string, width, height int, fill color.Color
 func TestReadImageToolReturnsImageObservation(t *testing.T) {
 	share := t.TempDir()
 	t.Setenv("AICO_SHARE_DIR", share)
-	small := filepath.Join(share, "small.png")
+	small := filepath.Join(t.TempDir(), "small.png")
 	writeTestPNG(t, small, 40, 20, color.NRGBA{R: 200, A: 255})
 	large := filepath.Join(share, "photos", "large.png")
 	// Fully transparent: scaling must flatten it onto white, not black.
@@ -108,28 +108,19 @@ func TestReadImageToolReturnsImageObservation(t *testing.T) {
 	}
 }
 
-func TestReadImageToolRejectsPathsOutsideShareAndNonImages(t *testing.T) {
-	share := t.TempDir()
-	t.Setenv("AICO_SHARE_DIR", share)
-	outside := filepath.Join(t.TempDir(), "outside.png")
-	writeTestPNG(t, outside, 4, 4, color.Black)
-	if err := os.Symlink(outside, filepath.Join(share, "link.png")); err != nil {
-		t.Fatal(err)
-	}
-	writeTestPNG(t, filepath.Join(share, ".hidden.png"), 4, 4, color.Black)
-	if err := os.WriteFile(filepath.Join(share, "notes.txt"), []byte("not an image"), 0o644); err != nil {
+func TestReadImageToolRejectsInvalidPathsAndNonImages(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("not an image"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	tool := NewReadImageTool()
 	for name, input := range map[string]string{
 		"missing path": `{}`,
-		"outside":      `{"path":"` + outside + `"}`,
-		"traversal":    `{"path":"` + share + `/../x.png"}`,
-		"symlink":      `{"path":"` + filepath.Join(share, "link.png") + `"}`,
-		"hidden":       `{"path":"` + filepath.Join(share, ".hidden.png") + `"}`,
-		"absent":       `{"path":"` + filepath.Join(share, "absent.png") + `"}`,
-		"not image":    `{"path":"` + filepath.Join(share, "notes.txt") + `"}`,
+		"relative":     `{"path":"sample.png"}`,
+		"directory":    `{"path":"` + dir + `"}`,
+		"absent":       `{"path":"` + filepath.Join(dir, "absent.png") + `"}`,
+		"not image":    `{"path":"` + filepath.Join(dir, "notes.txt") + `"}`,
 	} {
 		ctx, _ := WithToolError(context.Background())
 		out, err := tool.Call(ctx, input)

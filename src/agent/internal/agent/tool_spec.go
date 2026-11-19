@@ -234,7 +234,7 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 	toolReadImage: {
 		Category:     "observation",
 		InputMode:    toolInputModeJSON,
-		ExampleInput: `{"path":"/share/photo.jpg"}`,
+		ExampleInput: `{"path":"/tmp/device-cli-example.jpg"}`,
 	},
 	"wait_for_stable_screen": {
 		Category:     "observation",
