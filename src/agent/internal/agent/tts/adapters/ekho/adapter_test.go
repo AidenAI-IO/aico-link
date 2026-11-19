@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -78,6 +79,21 @@ func fakeEkho(t *testing.T, body string) (logPath, tempDir string) {
 	return logPath, tempDir
 }
 
+func fixtureProvider(t *testing.T, cfg tts.ProviderConfig) tts.TTSProvider {
+	t.Helper()
+	provider, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.(*Adapter).lookPath = func(name string) (string, error) {
+		if name != "ekho" {
+			return "", exec.ErrNotFound
+		}
+		return exec.LookPath(name)
+	}
+	return provider
+}
+
 func TestEkhoStreamSentencesAndTail(t *testing.T) {
 	logPath, tempDir := fakeEkho(t, `
 printf '%s\n' "$@" > "$EKHO_TEST_LOG.args"
@@ -89,10 +105,7 @@ done
 printf '\n' >> "$EKHO_TEST_LOG"
 /bin/cp "$EKHO_TEST_WAV" "$output"
 `)
-	provider, err := New(tts.ProviderConfig{SpeedRatio: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
+	provider := fixtureProvider(t, tts.ProviderConfig{SpeedRatio: 1})
 	sink := &testSink{}
 	stream, err := provider.BeginStream(context.Background(), sink)
 	if err != nil {
@@ -136,7 +149,7 @@ func TestEkhoCancellationKillsProcessAndCleansWAV(t *testing.T) {
 printf started > "$EKHO_TEST_LOG"
 exec /bin/sleep 30
 `)
-	provider, _ := New(tts.ProviderConfig{})
+	provider := fixtureProvider(t, tts.ProviderConfig{})
 	sink := &testSink{}
 	stream, err := provider.BeginStream(context.Background(), sink)
 	if err != nil {
@@ -173,7 +186,7 @@ exec /bin/sleep 30
 
 func TestEkhoFailureAndReset(t *testing.T) {
 	_, tempDir := fakeEkho(t, "echo synthesis-failed >&2\nexit 1\n")
-	provider, _ := New(tts.ProviderConfig{})
+	provider := fixtureProvider(t, tts.ProviderConfig{})
 	stream, _ := provider.BeginStream(context.Background(), &testSink{})
 	if err := stream.WriteText("discard me"); err != nil {
 		t.Fatal(err)
@@ -189,6 +202,20 @@ func TestEkhoFailureAndReset(t *testing.T) {
 		t.Fatal("synthesis failure was lost on close")
 	}
 	assertNoTempWAV(t, tempDir)
+}
+
+func TestEkhoSubprocessStderrIsBounded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var stderr boundedStderr
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", "printf '%8192s' '' >&2")
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(stderr.String()); got != 4096 {
+		t.Fatalf("retained %d stderr bytes, want 4096", got)
+	}
 }
 
 func assertNoTempWAV(t *testing.T, dir string) {
@@ -228,6 +255,23 @@ func TestEkhoChunkBoundaries(t *testing.T) {
 	for _, input := range []string{"3.14", "Dr. Smith", "e.g. apples"} {
 		if n := nextBoundary(input, false); n != 0 {
 			t.Fatalf("split decimal/abbreviation %q at %d", input, n)
+		}
+	}
+	for _, prefixSize := range []int{maxChunkRunes - 2, maxChunkRunes - 1} {
+		prefix := strings.Repeat("中", prefixSize)
+		for _, fragments := range [][]string{{prefix + "3.14元。"}, {prefix + "3.", "14元。"}, {prefix + "3", ".14元。"}} {
+			var buffer string
+			var chunks []string
+			for _, fragment := range fragments {
+				buffer += fragment
+				for n := nextBoundary(buffer, false); n > 0; n = nextBoundary(buffer, false) {
+					chunks = append(chunks, buffer[:n])
+					buffer = buffer[n:]
+				}
+			}
+			if len(chunks) != 2 || chunks[0] != prefix || chunks[1] != "3.14元。" || buffer != "" {
+				t.Fatalf("decimal split for prefix %d, fragments %q: chunks %q, tail %q", prefixSize, fragments, chunks, buffer)
+			}
 		}
 	}
 }

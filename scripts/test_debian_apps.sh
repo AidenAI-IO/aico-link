@@ -280,13 +280,23 @@ printf 'previous build\n' >"${TEST_ROOT}/ekho-output/apps/bin/ekho"
 if AICO_REPO_ROOT="${REPO_ROOT}" \
     DEBIAN_APPS_OUTPUT_DIR="${TEST_ROOT}/ekho-output" \
     DEBIAN_APPS_EKHO_CACHE="${TEST_ROOT}/ekho-cache" \
-    bash "${APPS_DIR}/container-build-ekho.sh" >"${TEST_ROOT}/ekho-error" 2>&1; then
+    bash -c '
+        source "${AICO_REPO_ROOT}/scripts/debian-apps/ekho/source.env"
+        # Simulate another container sharing our PID and source cache.
+        protected=${DEBIAN_APPS_EKHO_CACHE}/${EKHO_SOURCE_ARCHIVE}.tmp.$$
+        printf "another builder download\n" >"${protected}"
+        printf "%s\n" "${protected}" >"${DEBIAN_APPS_OUTPUT_DIR}/protected-download-path"
+        exec bash "${AICO_REPO_ROOT}/scripts/debian-apps/container-build-ekho.sh"
+    ' >"${TEST_ROOT}/ekho-error" 2>&1; then
     fail "Ekho accepted corrupt cached source"
 fi
 grep -q 'Ekho source checksum mismatch' "${TEST_ROOT}/ekho-error"
 [ ! -e "${TEST_ROOT}/ekho-cache/${EKHO_SOURCE_ARCHIVE}" ] \
     || fail "Ekho kept corrupt cached source"
 grep -qx 'previous build' "${TEST_ROOT}/ekho-output/apps/bin/ekho"
+protected_download=$(cat "${TEST_ROOT}/ekho-output/protected-download-path")
+grep -qx 'another builder download' "${protected_download}" \
+    || fail "Ekho removed another container's download"
 [ ! -e "${TEST_ROOT}/ekho-output/ekho-build" ] \
     || fail "Ekho extracted unverified source"
 

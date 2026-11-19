@@ -22,8 +22,9 @@ const sampleRate = 22050
 func init() { tts.Register("ekho", New) }
 
 type Adapter struct {
-	speed int
-	pace  bool
+	speed    int
+	pace     bool
+	lookPath func(string) (string, error)
 }
 
 func New(cfg tts.ProviderConfig) (tts.TTSProvider, error) {
@@ -65,8 +66,12 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 	// PATH need not include /usr/local/bin or /userdata.
 	var binary string
 	var err error
+	lookPath := a.lookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
 	for _, path := range []string{"/usr/lib/aico/ekho", "ekho", "/usr/local/bin/ekho", "/userdata/ekho/bin/ekho"} {
-		if binary, err = exec.LookPath(path); err == nil {
+		if binary, err = lookPath(path); err == nil {
 			break
 		}
 	}
@@ -222,15 +227,17 @@ func (s *session) synthesize(text string) error {
 }
 
 // Bound diagnostic output independently of the text and audio sizes.
-type boundedStderr struct{ bytes.Buffer }
+type boundedStderr struct{ buffer bytes.Buffer }
+
+func (b *boundedStderr) String() string { return b.buffer.String() }
 
 func (b *boundedStderr) Write(p []byte) (int, error) {
 	n := len(p)
-	if remaining := 4096 - b.Len(); remaining > 0 {
+	if remaining := 4096 - b.buffer.Len(); remaining > 0 {
 		if len(p) > remaining {
 			p = p[:remaining]
 		}
-		b.Buffer.Write(p)
+		b.buffer.Write(p)
 	}
 	return n, nil
 }

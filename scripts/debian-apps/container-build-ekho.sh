@@ -14,7 +14,8 @@ readonly ARCHIVE=${CACHE_DIR}/${EKHO_SOURCE_ARCHIVE}
 readonly PATCH_FILE=${PATCH_DIR}/english-female.patch
 
 mkdir -p "${CACHE_DIR}"
-download=${ARCHIVE}.tmp.$$
+# Containers sharing this cache can have identical process IDs.
+download=$(mktemp "${ARCHIVE}.tmp.XXXXXX")
 trap 'rm -f "${download}"' EXIT
 if [ ! -f "${ARCHIVE}" ]; then
     curl -fL --retry 3 --connect-timeout 20 --max-time 300 \

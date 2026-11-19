@@ -687,14 +687,14 @@ func TestConfigMeta_TTSFieldsFollowProviderCapabilities(t *testing.T) {
 		t.Fatal("tts_providers.model has no visibleWhen rule")
 	}
 	wantModelVisibility := VisibleRule{All: []Condition{{Field: "tts_providers.type", Op: "in", Values: []string{
-		"minimax", "minimax-cn", "fish-audio", "alicloud", "volcengine", "openrouter",
+		"minimax", "minimax-cn", "minimax-ws", "fish-audio", "alicloud", "volcengine", "openrouter",
 	}}}}
 	if !reflect.DeepEqual(*model.VisibleWhen, wantModelVisibility) {
 		t.Fatalf("tts_providers.model visibleWhen = %#v, want %#v", *model.VisibleWhen, wantModelVisibility)
 	}
 
 	wantModelProviders := map[string][]string{
-		"speech-2.8-hd":                       {"minimax", "minimax-cn"},
+		"speech-2.8-hd":                       {"minimax", "minimax-cn", "minimax-ws"},
 		"s2-pro":                              {"fish-audio"},
 		"qwen-tts-realtime":                   {"alicloud"},
 		"qwen3-tts-flash-realtime":            {"alicloud"},
@@ -720,7 +720,7 @@ func TestConfigMeta_TTSFieldsFollowProviderCapabilities(t *testing.T) {
 		value string
 		when  VisibleRule
 	}{
-		{"male-qn-qingse", VisibleRule{All: []Condition{in("tts_providers.type", "minimax", "minimax-cn")}}},
+		{"male-qn-qingse", VisibleRule{All: []Condition{in("tts_providers.type", "minimax", "minimax-cn", "minimax-ws")}}},
 		{"Cherry", VisibleRule{All: []Condition{in("tts_providers.type", "alicloud")}}},
 		{"zh_female_vv_uranus_bigtts", VisibleRule{All: []Condition{in("tts_providers.type", "volcengine")}}},
 		{"en-US-Neural2-C", VisibleRule{All: []Condition{in("tts_providers.type", "google-cloud")}}},
@@ -735,7 +735,7 @@ func TestConfigMeta_TTSFieldsFollowProviderCapabilities(t *testing.T) {
 	}
 
 	emotion := idx["tts_providers.emotion"]
-	minimaxEmotion := VisibleRule{All: []Condition{in("tts_providers.type", "minimax", "minimax-cn")}}
+	minimaxEmotion := VisibleRule{All: []Condition{in("tts_providers.type", "minimax", "minimax-cn", "minimax-ws")}}
 	if !hasPlaceholder(emotion, "happy", minimaxEmotion) {
 		t.Errorf("tts_providers.emotion missing MiniMax placeholder")
 	}
