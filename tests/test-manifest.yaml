@@ -97,6 +97,15 @@ suites:
     required: true
     timeout_seconds: 1200
 
+  - name: industry-analysis
+    class: deterministic
+    paths: [.github/workflows/industry-analysis-weekly.yml, scripts/industry_analysis.py, scripts/industry_analysis_publish.py, scripts/industry_analysis_report.css, benchmark/ci/notify_lark.py, tests/test_industry_analysis.py]
+    # The publisher imports oss2, the dependency pinned in the workflow.
+    command: uv run --no-project --python 3.12 --with oss2==2.19.1 python -m unittest tests.test_industry_analysis
+    dependencies: [uv]
+    required: true
+    timeout_seconds: 300
+
   - name: skillopt-python
     class: deterministic
     paths: [skillopt]
