@@ -280,7 +280,6 @@ Agent completion rates; suite hashes identify the changed evaluation inputs.
 
 ## Device CLI parity
 
-Use `benchmark/suites/mobilegym_cli_parity.json` to compare the direct UI tools
-and the foreground `device-cli` without scoring the name of the chosen tool.
-The scroll task still asserts simulator state. See the
-[CLI parity report](cli-parity.md) for the configurations and results.
+See the [historical CLI parity report](cli-parity.md) for the comparison of
+direct UI tools and the foreground `device-cli`, including how to reproduce
+the run with its archived suite.

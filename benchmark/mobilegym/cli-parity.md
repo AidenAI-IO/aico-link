@@ -38,8 +38,10 @@ measurement of the current CLI.
 
 ```sh
 cd benchmark
+mkdir -p runs/cli-utg
+git show 4154d65c5:benchmark/suites/mobilegym_cli_parity.json > runs/cli-utg/historical-suite.json
 AICO_BENCHMARK_JUDGE_API_KEY="$OPENROUTER_API_KEY" uv run python -m runner run \
-  --suite suites/mobilegym_cli_parity.json \
+  --suite runs/cli-utg/historical-suite.json \
   --agent-url "$AGENT_URL" --environment-url "$MOBILEGYM_URL" \
   --benchmark-task-id "$TASK_ROUTE" \
   --judge-base-url https://openrouter.ai/api/v1 \
@@ -47,7 +49,7 @@ AICO_BENCHMARK_JUDGE_API_KEY="$OPENROUTER_API_KEY" uv run python -m runner run \
   --repeats 2 --out runs/cli-utg --run-id "$RUN_ID"
 ```
 
-The parity suite preserves the three basic prompts, rubrics, and time limits.
+The archived parity suite preserves the three basic prompts, rubrics, and time limits.
 It drops the scroll task's requirement to invoke a literal `touch_gesture`
 conversational tool, while keeping the simulator assertion that later rows
 became visible. Both variants were evaluated with that same suite.
