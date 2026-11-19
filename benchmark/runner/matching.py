@@ -7,16 +7,26 @@ from typing import Any
 
 RFC3339_BOUNDS = {"$rfc3339_gte", "$rfc3339_lte"}
 _RFC3339 = re.compile(
-    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?"
-    r"(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
+    r"(?P<timestamp>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})"
+    r"(?:\.(?P<fraction>[0-9]+))?"
+    r"(?P<offset>Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
 )
 
 
 def parse_rfc3339(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not _RFC3339.fullmatch(value):
+    if not isinstance(value, str):
         return None
+    match = _RFC3339.fullmatch(value)
+    if match is None:
+        return None
+    timestamp = match["timestamp"]
+    fraction = match["fraction"]
+    if fraction is not None:
+        # Python 3.10 requires three or six fractional digits.
+        timestamp += "." + fraction[:6].ljust(6, "0")
+    offset = "+00:00" if match["offset"] == "Z" else match["offset"]
     try:
-        return datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+        return datetime.fromisoformat(timestamp + offset)
     except ValueError:
         return None
 

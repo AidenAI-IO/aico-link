@@ -168,8 +168,14 @@
               "input_contains": {
                 "action": "create",
                 "title": "Fixture parking reminder",
-                "start_at": "2037-11-21T15:00:00+08:00",
-                "end_at": "2037-11-21T15:30:00+08:00"
+                "start_at": {
+                  "$rfc3339_gte": "2037-11-21T15:00:00+08:00",
+                  "$rfc3339_lte": "2037-11-21T15:00:00+08:00"
+                },
+                "end_at": {
+                  "$rfc3339_gte": "2037-11-21T15:30:00+08:00",
+                  "$rfc3339_lte": "2037-11-21T15:30:00+08:00"
+                }
               },
               "screen_contains": "fixture ready",
               "output": {
