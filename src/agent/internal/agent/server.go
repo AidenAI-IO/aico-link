@@ -33,6 +33,7 @@ import (
 	"aico-agent/internal/agent/speech"
 	"aico-agent/internal/agent/tts"
 	_ "aico-agent/internal/agent/tts/adapters/alicloud"
+	_ "aico-agent/internal/agent/tts/adapters/ekho"
 	_ "aico-agent/internal/agent/tts/adapters/fishaudio"
 	_ "aico-agent/internal/agent/tts/adapters/google_cloud"
 	_ "aico-agent/internal/agent/tts/adapters/minimax"

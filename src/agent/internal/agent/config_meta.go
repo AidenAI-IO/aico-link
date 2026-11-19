@@ -414,7 +414,8 @@ func ConfigMeta() ConfigMetadata {
 				Fields: []FieldMeta{
 					{Key: "type", Widget: WidgetSelect,
 						Enum: enumOptions(tts.AvailableProviders()...)},
-					{Key: "api_key", Widget: WidgetText, Secret: true},
+					{Key: "api_key", Widget: WidgetText, Secret: true,
+						VisibleWhen: all(in("tts_providers.type", "minimax", "minimax-cn", "fish-audio", "alicloud", "volcengine", "openrouter", "google-cloud"))},
 					{Key: "model", Widget: WidgetText,
 						Enum: []EnumOption{
 							{Value: "speech-2.8-hd", Label: "MiniMax speech-2.8-hd", Providers: []string{"minimax", "minimax-cn"}},

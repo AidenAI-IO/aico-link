@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -329,12 +330,12 @@ func (c *realtimeVoiceController) running() *RealtimeVoiceSession {
 }
 
 // chatAudioEnabled reports whether a typed chat request may use audio: a
-// prompt tone and a spoken reply. A text message is text only; it is spoken
-// only while a voice conversation runs, where the reply is part of that
-// conversation and plays on its route (the device, or the browser that
-// started it).
+// prompt tone and a spoken reply. Outside a voice conversation, text remains
+// silent unless an operator temporarily enables AICO_TEXT_CHAT_TTS=1. The
+// override uses the standalone TTS backend without opening the microphone;
+// an active voice conversation still owns its audio route and mute state.
 func (s *Server) chatAudioEnabled() bool {
-	return s.runningVoiceSession() != nil
+	return s.runningVoiceSession() != nil || os.Getenv("AICO_TEXT_CHAT_TTS") == "1"
 }
 
 // runningVoiceSession returns the running voice conversation, or nil.
