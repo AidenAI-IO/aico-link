@@ -220,7 +220,7 @@ func TestRealtimeAgentTaskManagerFollowsUseBackendAgent(t *testing.T) {
 			VoiceModelProviders: map[string]agent.VoiceModelProvider{"moss-main": {Type: "moss"}},
 		},
 	} {
-		if manager := newRealtimeAgentTaskManager(cfg, nil); manager != nil {
+		if manager := newRealtimeAgentTaskManager(cfg, nil, nil); manager != nil {
 			manager.Close()
 			t.Fatalf("backend-disabled/Moss configuration unexpectedly created a backend-agent task manager: %+v", cfg.VoiceModel)
 		}
@@ -234,7 +234,7 @@ func TestRealtimeAgentTaskManagerFollowsUseBackendAgent(t *testing.T) {
 			VoiceModelProviders: map[string]agent.VoiceModelProvider{"gemini-main": {Type: "gemini", Model: "gemini-3.8-live-extended-thinking"}},
 		},
 	} {
-		manager := newRealtimeAgentTaskManager(cfg, nil)
+		manager := newRealtimeAgentTaskManager(cfg, nil, nil)
 		if manager == nil {
 			t.Fatalf("backend-agent configuration did not create its task manager: %+v", cfg.VoiceModel)
 		}

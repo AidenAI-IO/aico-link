@@ -14,6 +14,8 @@ import (
 // The daemon installs it only while realtime mode runs a backend agent.
 type AgentTaskController interface {
 	Active() []agenttask.Task
+	CancelAll() []agenttask.Task
+	CancelUnfinished(taskID string) (agenttask.Task, error)
 	Query(taskID string) (agenttask.Task, bool)
 	Timeline(taskID string) (agenttask.Timeline, bool)
 	Cancel(taskID string) (agenttask.Task, bool, error)
@@ -166,4 +168,57 @@ func TaskTimelineStep(event RunEvent) (agenttask.Step, bool) {
 // timelines and cancelled-run summaries must not copy.
 func PrivateToolOutput(toolName string) bool {
 	return toolResultIsSensitive(toolName)
+}
+
+// BackgroundTaskActivity reports a background agent task's progress on the
+// phone's Live Activity, as a chat run's progress is. The task ID is the
+// Live Activity request ID, so the steps (checking the screen, tapping,
+// opening an app) use the same wording as a chat run. It is nil when the
+// Live Activity is disabled.
+type BackgroundTaskActivity struct {
+	server *Server
+}
+
+// BackgroundTaskActivity returns the reporter for background tasks, or nil
+// when the Live Activity is disabled.
+func (s *Server) BackgroundTaskActivity() *BackgroundTaskActivity {
+	if s == nil || s.liveActivity == nil {
+		return nil
+	}
+	return &BackgroundTaskActivity{server: s}
+}
+
+// Observe follows the task manager's lifecycle. A task can run the agent
+// several times (after a goal update or a human handoff), so the Live Activity
+// starts on the first "running" and settles only on "terminal", including for
+// a task cancelled while it waits for the user and no run is active.
+func (a *BackgroundTaskActivity) Observe(task agenttask.Task, phase string) {
+	if a == nil || task.ID == "" {
+		return
+	}
+	live := a.server.liveActivity
+	switch phase {
+	case "running":
+		if state := live.Snapshot(task.ID); state != nil && state.EndedAt == nil {
+			return
+		}
+		live.StartTask(task.ID, task.Prompt, a.server.liveActivityPhoneID(ChatRequest{}))
+	case "terminal":
+		switch task.Status {
+		case agenttask.StatusCompleted:
+			live.completeTask(task.ID, task.Result)
+		case agenttask.StatusCancelled:
+			live.CancelTask(task.ID)
+		case agenttask.StatusFailed:
+			live.FailTask(task.ID, task.Error)
+		}
+	}
+}
+
+// Event advances the current step from one of the task's run events.
+func (a *BackgroundTaskActivity) Event(taskID string, event RunEvent) {
+	if a == nil || taskID == "" {
+		return
+	}
+	a.server.liveActivity.UpdateFromRunEvent(taskID, event)
 }

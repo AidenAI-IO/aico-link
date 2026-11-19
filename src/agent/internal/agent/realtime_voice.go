@@ -466,11 +466,20 @@ func (s *Server) handleRealtimeVoice(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRealtimeVoiceStop serves POST /api/realtime/voice/stop. It ends the
-// session whichever route it uses.
+// session whichever route it uses. With ?tasks=1 it also stops the work the
+// conversation handed to the background agent, so "stop" ends everything the
+// user started, and nothing is announced afterwards.
 func (s *Server) handleRealtimeVoiceStop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+	if r.URL.Query().Get("tasks") == "1" {
+		if tasks := s.agentTaskController(); tasks != nil {
+			if cancelled := tasks.CancelAll(); len(cancelled) > 0 && s.logger != nil {
+				s.logger.Info("Voice stop cancelled %d background task(s)", len(cancelled))
+			}
+		}
 	}
 	s.stopRealtimeVoice()
 	writeJSON(w, s.RealtimeVoiceStatus())

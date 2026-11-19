@@ -959,3 +959,68 @@ func (f runnerFunc) Run(ctx context.Context, _ string) (string, error) {
 	f(ctx)
 	return "", nil
 }
+
+// Stopping everything cancels the running task and the queued one, and the
+// foreground is not told about either: the user asked for the work to stop.
+func TestManagerCancelAllStopsWorkSilently(t *testing.T) {
+	runner := &fakeRunner{started: make(chan string, 2), release: make(chan struct{})}
+	manager := newManager(runner, 4, time.Now)
+	defer manager.Close()
+
+	running, err := manager.Create("running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("task did not start")
+	}
+	queued, err := manager.Create("queued")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cancelled := manager.CancelAll(); len(cancelled) != 2 {
+		t.Fatalf("cancelled %d tasks, want 2", len(cancelled))
+	}
+	waitForStatus(t, manager, running.ID, StatusCancelled)
+	waitForStatus(t, manager, queued.ID, StatusCancelled)
+	if pending, _ := manager.TerminalState(); len(pending) != 0 {
+		t.Fatalf("stopped tasks would be announced: %+v", pending)
+	}
+	select {
+	case prompt := <-runner.started:
+		t.Fatalf("queued task ran after stop: %q", prompt)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+// A stop that arrives after the run asked for the user but before it returned
+// must still stop that run; otherwise the worker stays blocked on it.
+func TestManagerCancelDuringHandoffStopsActiveRun(t *testing.T) {
+	asked := make(chan struct{})
+	returned := make(chan error, 1)
+	manager := newManager(runnerFunc(func(ctx context.Context) {
+		UserActionHandlerFromContext(ctx)(UserAction{Reason: "pay"})
+		close(asked)
+		<-ctx.Done()
+		returned <- ctx.Err()
+	}), 4, time.Now)
+	defer manager.Close()
+
+	task, err := manager.Create("order")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-asked
+	if _, _, err := manager.Cancel(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("the run was not stopped")
+	}
+	waitForStatus(t, manager, task.ID, StatusCancelled)
+}
