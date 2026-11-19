@@ -1086,40 +1086,57 @@ func TestWiFiStatusRequiresUsableObservation(t *testing.T) {
 	}
 }
 
-func TestWiFiStatusKeepsAssociationWhenSignalReadStalls(t *testing.T) {
-	options := testOptions(t)
-	binDir := t.TempDir()
-	t.Setenv("PATH", binDir)
-	for name, script := range map[string]string{
-		"wpa_cli": "echo wpa_state=COMPLETED\necho ssid=Home\necho ip_address=192.168.1.8",
-		"iw":      "exec /bin/sleep 5",
+func TestWiFiStatusKeepsUsableObservationWhenCommandsStall(t *testing.T) {
+	for _, test := range []struct {
+		name, wpa, iw, ifconfig, ssid, ip string
+	}{
+		{"optional signal", "echo wpa_state=COMPLETED; echo ssid=Home; echo ip_address=192.168.1.8", "exec /bin/sleep 5", "", "Home", "192.168.1.8"},
+		{"wpa fallback", "exec /bin/sleep 5", "echo 'Not connected.'", "", "", ""},
+		{"wpa address", "echo wpa_state=COMPLETED; echo ssid=Home", "echo 'Not connected.'", "exec /bin/sleep 5", "Home", ""},
+		{"iw address", "exit 1", "echo 'SSID: Home'", "exec /bin/sleep 5", "Home", ""},
 	} {
-		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	server, err := NewServer(options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	response := httptest.NewRecorder()
-	server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/network/wifi/status", nil).WithContext(ctx))
-	if response.Code != http.StatusOK || ctx.Err() != nil {
-		t.Fatalf("signal consumed primary observation: status=%d ctx=%v body=%s", response.Code, ctx.Err(), response.Body.String())
-	}
-	var payload struct {
-		Status map[string]any `json:"wifi_status"`
-	}
-	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.Status["connected"] != true || payload.Status["ssid"] != "Home" || payload.Status["ip_address"] != "192.168.1.8" {
-		t.Fatalf("lost primary status: %+v", payload.Status)
-	}
-	if _, ok := payload.Status["signal_dbm"]; ok {
-		t.Fatalf("unexpected signal from stalled read: %+v", payload.Status)
+		t.Run(test.name, func(t *testing.T) {
+			options := testOptions(t)
+			binDir := t.TempDir()
+			t.Setenv("PATH", binDir)
+			for name, script := range map[string]string{"wpa_cli": test.wpa, "iw": test.iw, "ifconfig": test.ifconfig} {
+				if script != "" {
+					if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			server, err := NewServer(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			started := time.Now().UnixMicro()
+			response := httptest.NewRecorder()
+			server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/network/wifi/status", nil).WithContext(ctx))
+			if response.Code != http.StatusOK || ctx.Err() != nil {
+				t.Fatalf("lost usable observation: status=%d ctx=%v body=%s", response.Code, ctx.Err(), response.Body.String())
+			}
+			var payload struct {
+				Status struct {
+					Connected  bool
+					SSID       string
+					IP         string   `json:"ip_address"`
+					Signal     *float64 `json:"signal_dbm"`
+					ObservedAt int64    `json:"observed_at_unix_us"`
+				} `json:"wifi_status"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Status.Connected != (test.ssid != "") || payload.Status.SSID != test.ssid || payload.Status.IP != test.ip || payload.Status.Signal != nil {
+				t.Fatalf("unexpected primary status: %+v", payload.Status)
+			}
+			if payload.Status.ObservedAt < started || payload.Status.ObservedAt > time.Now().UnixMicro() {
+				t.Fatalf("observation timestamp outside probe: %+v", payload.Status)
+			}
+		})
 	}
 }
 

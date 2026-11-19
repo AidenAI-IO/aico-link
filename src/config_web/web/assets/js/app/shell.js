@@ -37,6 +37,13 @@ export function defaultHeader(path, navigate) {
   return {title: item ? item.label : null, onBack: () => navigate(parentPath(path))};
 }
 
+/** Both timestamps come from the device, before optional enrichment or delivery. */
+function olderWiFi(value, reference) {
+  const time = value?.wifi_status?.observed_at_unix_us;
+  const referenceTime = reference?.wifi_status?.observed_at_unix_us;
+  return Number.isSafeInteger(time) && Number.isSafeInteger(referenceTime) && time < referenceTime;
+}
+
 /**
  * Mount the settings application.
  *
@@ -58,6 +65,7 @@ export async function boot(rootId = 'app', options = {}) {
   let refreshWiFi = () => {};
   let wifiRevision = 0;
   let wifiTaskRevision = 0;
+  let liveWiFiSource = 'poll';
 
   const view = el('div', {class: 'app__scroll', data: {region: 'content'}});
   const railBody = el('div', {class: 'app__nav-body'});
@@ -90,14 +98,16 @@ export async function boot(rootId = 'app', options = {}) {
       const taskRevisionAtRead = wifiTaskRevision;
       let snapshot = await loadSnapshot();
       if (current !== generation) return;
-      if (snapshot?.wifi_status && taskRevisionAtRead === wifiTaskRevision) {
+      if (snapshot?.wifi_status && taskRevisionAtRead === wifiTaskRevision && !olderWiFi(snapshot, liveWiFi)) {
         // A navigation read wins over retained polling data, but a task that
-        // finished after the read started must not be reverted by that read.
+        // finished after the read started, or a later radio observation, wins.
         // Invalidate in-flight polls too; the next one starts after this read.
-        liveWiFi = null;
+        liveWiFi = {wifi_status: snapshot.wifi_status, ...(snapshot.wifi ? {wifi: snapshot.wifi} : {})};
+        liveWiFiSource = 'snapshot';
         refreshWiFi();
       } else if (liveWiFi) snapshot = {...snapshot, ...liveWiFi};
       const snapshotRevision = wifiRevision;
+      const snapshotTaskRevision = wifiTaskRevision;
       const wifiListeners = [];
       // The device's configured language wins over the browser's stored choice.
       applyServerLocale(snapshot);
@@ -108,13 +118,16 @@ export async function boot(rootId = 'app', options = {}) {
         onWiFiChange: listener => wifiListeners.push(listener),
       });
       if (current !== generation) return;
-      updateWiFi = value => {
+      updateWiFi = (value, {source = 'poll'} = {}) => {
+        if (source === 'poll' && olderWiFi(value, snapshot)) return;
         snapshot = {...snapshot, ...value};
         updateWiFiStatus(railBody, snapshot);
         wifiListeners.forEach(listener => listener(snapshot));
       };
       // A status read can finish while an asynchronous page is being built.
-      if (liveWiFi && wifiRevision > snapshotRevision) updateWiFi(liveWiFi);
+      if (liveWiFi && wifiRevision > snapshotRevision) {
+        updateWiFi(liveWiFi, {source: wifiTaskRevision > snapshotTaskRevision ? 'task' : liveWiFiSource});
+      }
       replace(view, [content]);
       mounted = true;
       header.set(pending);
@@ -142,11 +155,18 @@ export async function boot(rootId = 'app', options = {}) {
   await router.start();
   if (!options.localAgent) {
     const stopWiFi = watchWiFi((value, {source}) => {
-      wifiRevision += 1;
-      if (source === 'task') wifiTaskRevision += 1;
-      liveWiFi = {...liveWiFi, ...value};
-      updateWiFi(value);
-    }, {isActive: () => root.isConnected});
+      if (source === 'poll' && olderWiFi(value, liveWiFi)) return;
+      updateWiFi(value, {source});
+    }, {
+      isActive: () => root.isConnected,
+      onObservation: (value, {source}) => {
+        if (source === 'poll' && olderWiFi(value, liveWiFi)) return;
+        wifiRevision += 1;
+        if (source === 'task') wifiTaskRevision += 1;
+        liveWiFi = {...liveWiFi, ...value};
+        liveWiFiSource = source;
+      },
+    });
     refreshWiFi = stopWiFi.refresh;
   }
   return router;

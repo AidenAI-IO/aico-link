@@ -248,8 +248,14 @@ serving previously migrated audio.
 
 `GET /api/network/wifi/status` returns `wifi` (saved profiles with redacted
 proxy URLs) and `wifi_status` (current `connected`, `ssid`, `state`,
-`ip_address`, and optional `signal_dbm`). It is uncached, has a three-second
-probe deadline, and remains readable during connection and rollback tasks.
+`ip_address`, optional `signal_dbm`, and `observed_at_unix_us`, the device's
+Unix timestamp in microseconds when the primary probe completed). The aggregate
+snapshot carries the same timestamp so clients can compare radio observations
+independently of response arrival order. The live endpoint is uncached, has a
+three-second probe deadline, and remains readable during connection and rollback
+tasks. A stalled `wpa_cli` read leaves time for the `iw` fallback. IPv4 and signal
+enrichment use separate short budgets; missing enrichment does not invalidate
+a confirmed radio association.
 If neither radio probe yields a usable observation, it returns HTTP 503 with
 `Wi-Fi status unavailable`. A successful probe confirming disconnection returns
 HTTP 200 when profile loading also succeeds. Profile-loading failures return

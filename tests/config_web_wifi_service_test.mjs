@@ -131,6 +131,7 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
   const reads = [];
   const changes = [];
   const sources = [];
+  const observations = [];
   const browser = new EventTarget();
   browser.CustomEvent = CustomEvent;
   globalThis.window = browser;
@@ -146,7 +147,9 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
     reads.push({url, options, resolve: payload => resolve({ok: true, text: async () => typeof payload === 'string' ? payload : JSON.stringify(payload)}), reject});
   });
   let attached = true;
-  const stop = watchWiFi((value, {source}) => { changes.push(value); sources.push(source); }, {isActive: () => attached});
+  const stop = watchWiFi((value, {source}) => { changes.push(value); sources.push(source); }, {
+    isActive: () => attached, onObservation: value => observations.push(value),
+  });
   t.after(() => { stop(); Object.assign(globalThis, original); });
   const flush = () => new Promise(resolve => setImmediate(resolve));
   async function tick(ms) {
@@ -155,7 +158,7 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
     }
     await flush();
   }
-  const disconnected = {wifi: {networks: []}, wifi_status: {connected: false, ssid: '', state: 'DISCONNECTED'}};
+  const disconnected = {wifi: {networks: []}, wifi_status: {connected: false, ssid: '', state: 'DISCONNECTED', observed_at_unix_us: 100}};
   const connected = {wifi: {networks: [{ssid: 'Home'}]}, wifi_status: {connected: true, ssid: 'Home', state: 'COMPLETED', ip_address: '192.168.1.8'}};
 
   await tick(0);
@@ -169,9 +172,10 @@ test('Wi-Fi observations recover, pause in the background, and reject stale read
   await tick(1000);
   await tick(1000);
   assert.equal(reads.length, 2, 'a slow read never overlaps another poll');
-  reads[1].resolve(disconnected);
+  reads[1].resolve({...disconnected, wifi_status: {...disconnected.wifi_status, observed_at_unix_us: 200}});
   await flush();
   assert.equal(changes.length, 1, 'unchanged observations do not repaint the UI');
+  assert.equal(observations.at(-1).wifi_status.observed_at_unix_us, 200, 'unchanged observations still refresh sampling order');
 
   await tick(1000);
   browser.dispatchEvent(new CustomEvent('aico:wifi-changed', {detail: connected}));

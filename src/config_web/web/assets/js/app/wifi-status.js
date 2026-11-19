@@ -4,7 +4,7 @@ import {request} from '../config/api.js';
 const INTERVAL_MS = 1000;
 const REQUEST_TIMEOUT_MS = 4000;
 
-export function watchWiFi(changed, {isActive = () => true} = {}) {
+export function watchWiFi(changed, {isActive = () => true, onObservation = () => {}} = {}) {
   let stopped = false;
   let timer;
   let pending;
@@ -25,7 +25,10 @@ export function watchWiFi(changed, {isActive = () => true} = {}) {
     }
     const value = {wifi_status: payload.wifi_status};
     if (payload.wifi) value.wifi = payload.wifi;
-    const next = JSON.stringify(value);
+    // Record ordering even when the visible state has not changed.
+    onObservation(value, {source});
+    const {observed_at_unix_us, ...visibleStatus} = value.wifi_status;
+    const next = JSON.stringify({...value, wifi_status: visibleStatus});
     // Task publications also establish ordering against pending navigation reads.
     if (next === signature && source !== 'task') return;
     signature = next;

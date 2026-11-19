@@ -886,7 +886,7 @@ process.stdout.write('config web UI component tests passed\n');
     candidateInput.fire('input');
     updateCandidate({...savedCandidate, wifi: {networks: [{ssid: 'Candidate', proxy_mode: 'system'}]}});
     assert.equal(candidateInput.value, 'http://draft.local:8080', 'profile changes preserve edited proxy drafts');
-    assert.equal(proxySwitch.getAttribute('aria-checked'), 'true', 'a draft toggle survives profile changes');
+    assert.equal(proxySwitch.getAttribute('aria-checked'), 'false', 'URL edits do not prevent the saved mode from refreshing');
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -900,8 +900,8 @@ process.stdout.write('config web UI component tests passed\n');
   const realFetch = globalThis.fetch;
   const pending = [];
   const savedUrl = 'http://saved.local:8080';
-  const snapshot = mode => ({
-    wifi: {networks: [{ssid: 'Home', proxy_mode: mode, proxy_url: mode === 'proxy' ? savedUrl : ''}]},
+  const snapshot = (mode, url = savedUrl) => ({
+    wifi: {networks: [{ssid: 'Home', proxy_mode: mode, proxy_url: mode === 'proxy' ? url : ''}]},
     wifi_status: {connected: true, ssid: 'Home', state: 'COMPLETED'},
   });
   const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -936,12 +936,16 @@ process.stdout.write('config web UI component tests passed\n');
       if (draft) { input.value = draft; input.fire('input'); }
       control.click();
       assert.equal(control.getAttribute('aria-checked'), 'false');
+      const latestUrl = 'http://changed-during-save.local:8080';
+      update(snapshot('proxy', latestUrl));
       pending.at(-1).reject(new Error('save failed'));
       await flush();
       assert.equal(control.disabled, false, 'failed saves re-enable the switch');
       assert.equal(control.getAttribute('aria-checked'), 'true', 'failed toggles roll back');
+      assert.equal(input.value, draft || latestUrl, 'failed saves apply the latest URL only when there is no URL draft');
       update(snapshot('system'));
-      assert.equal(control.getAttribute('aria-checked'), draft ? 'true' : 'false', 'rollback preserves URL drafts while allowing untouched controls to refresh');
+      assert.equal(control.getAttribute('aria-checked'), 'false', 'URL drafts do not prevent mode reconciliation after rollback');
+      assert.equal(input.parentNode.hidden, true, 'the latest system mode hides the URL field');
       assert.equal(input.value, draft, 'only genuine URL drafts survive subsequent profile updates');
       if (!draft) update(snapshot('proxy'));
     }
@@ -988,13 +992,16 @@ process.stdout.write('config web UI component tests passed\n');
   };
   globalThis.clearTimeout = timer => timers.delete(timer);
   const respond = payload => ({ok: true, status: 200, text: async () => JSON.stringify(payload)});
-  globalThis.fetch = url => {
+  globalThis.fetch = (url, options) => {
     if (url === '/api/device/snapshot') {
       const sampled = nextSnapshot;
       return Promise.resolve(snapshotGate).then(() => respond(sampled));
     }
     assert.equal(url, '/api/network/wifi/status');
-    return new Promise(resolve => reads.push(payload => resolve(respond(payload))));
+    return new Promise((resolve, reject) => {
+      reads.push(payload => resolve(respond(payload)));
+      options.signal.addEventListener('abort', () => reject(new Error('aborted')), {once: true});
+    });
   };
   const flush = () => new Promise(resolve => setImmediate(resolve));
   async function tick(ms) {
@@ -1062,8 +1069,46 @@ process.stdout.write('config web UI component tests passed\n');
     await tick(0);
     reads.at(-1)(connected);
     await flush();
+    const timed = (value, observedAt) => ({...value, wifi_status: {...value.wifi_status, observed_at_unix_us: observedAt}});
+    async function deliverPoll(value) {
+      await tick(0);
+      await tick(1000);
+      reads.at(-1)(value);
+      await flush();
+    }
+    for (const [aggregate, poll, expected] of [
+      [timed(connected, 100), timed(disconnected, 200), timed(disconnected, 200)],
+      [timed(disconnected, 400), timed(connected, 300), timed(disconnected, 400)],
+      [timed(connected, 500), timed(disconnected, 600), timed(disconnected, 600)],
+    ]) {
+      // A same-state observation must still advance ordering, without repainting.
+      await deliverPoll(timed(poll, poll.wifi_status.observed_at_unix_us - 150));
+      nextSnapshot = aggregate;
+      let releaseSnapshot;
+      snapshotGate = new Promise(resolve => { releaseSnapshot = resolve; });
+      const pendingNavigation = router.navigate(route.path, {silent: true});
+      await flush();
+      await deliverPoll(poll);
+      releaseSnapshot();
+      await pendingNavigation;
+      snapshotGate = null;
+      assert.deepEqual(pages.at(-1).initial.wifi_status, expected.wifi_status, 'sampling order decides between a delayed snapshot and a poll');
+      assert.equal(countByClass(rail.querySelector('[data-action="open-wifi"]'), 'ds-row__value--success'), expected.wifi_status.connected ? 1 : 0);
+    }
+    let finishPage;
+    pageGate = new Promise(resolve => { finishPage = resolve; });
+    nextSnapshot = timed(disconnected, 800);
+    const constructing = router.navigate(route.path, {silent: true});
+    await flush();
+    await deliverPoll(timed(connected, 700));
+    finishPage();
+    await constructing;
+    pageGate = null;
+    assert.deepEqual(pages.at(-1).initial.wifi_status, nextSnapshot.wifi_status);
+    assert.equal(pages.at(-1).updates.length, 0, 'an older observation received during page construction is not replayed');
     nextSnapshot = null;
     await router.navigate(route.path, {silent: true});
+    assert.equal(pages.at(-1).initial.wifi_status.connected, false, 'failed navigation retains the newest authoritative observation');
     assert.equal(rail.querySelector('[data-action="open-voice"]').querySelector('.ds-row__value'), null, 'Wi-Fi-only fallback data cannot establish the voice mode');
     nextSnapshot = {config: {}};
     await router.navigate(route.path, {silent: true});

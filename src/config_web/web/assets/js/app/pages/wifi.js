@@ -591,6 +591,7 @@ export async function wifiDetailPage(context) {
       proxyInput.disabled = false;
       proxySwitch.disabled = false;
       applyingProxy = false;
+      reconcileProxyControls();
     }
   }
 
@@ -635,19 +636,24 @@ export async function wifiDetailPage(context) {
     joined: true,
     rows: [row({label: msg('ui.proxy_row_label', '配置代理'), accessory: proxySwitch}), proxyUrlField],
   });
+  function reconcileProxyControls() {
+    if (!applyingProxy && !proxyModeDirty) {
+      proxyEnabled = profile?.proxy_mode === 'proxy';
+      proxyUrlField.hidden = !proxyEnabled;
+      setChecked(proxySwitch, proxyEnabled);
+    }
+    if (!applyingProxy && !proxyUrlDirty) {
+      proxyUrl = savedProxyUrl;
+      proxyInput.value = proxyUrl;
+    }
+  }
   function reconcileProfile(value) {
     snapshot = value;
     profile = savedNetwork(snapshot, ssid);
     savedProxyUrl = profile?.proxy_url || '';
     // A connected candidate can be observed before the connection task saves it.
     forgetGroup.hidden = proxyGroup.hidden = !profile;
-    if (!proxyUrlDirty && !proxyModeDirty && !applyingProxy) {
-      proxyEnabled = profile?.proxy_mode === 'proxy';
-      proxyUrl = savedProxyUrl;
-      proxyInput.value = proxyUrl;
-      proxyUrlField.hidden = !proxyEnabled;
-      setChecked(proxySwitch, proxyEnabled);
-    }
+    reconcileProxyControls();
     renderInfo();
   }
   reconcileProfile(snapshot);
