@@ -61,14 +61,13 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 	if sink == nil || sink.Format() != (tts.AudioFormat{SampleRate: sampleRate, Channels: 1, BitWidth: 16}) {
 		return nil, fmt.Errorf("ekho: sink must accept 22050 Hz mono PCM16")
 	}
-	binary, err := exec.LookPath("ekho")
-	if err != nil {
-		// systemd's PATH need not include /usr/local/bin or /userdata.
-		for _, path := range []string{"/usr/local/bin/ekho", "/userdata/ekho/bin/ekho"} {
-			if resolved, lookupErr := exec.LookPath(path); lookupErr == nil {
-				binary, err = resolved, nil
-				break
-			}
+	// Prefer the package-owned build over legacy manual installations. systemd's
+	// PATH need not include /usr/local/bin or /userdata.
+	var binary string
+	var err error
+	for _, path := range []string{"/usr/lib/aico/ekho", "ekho", "/usr/local/bin/ekho", "/userdata/ekho/bin/ekho"} {
+		if binary, err = exec.LookPath(path); err == nil {
+			break
 		}
 	}
 	if err != nil {

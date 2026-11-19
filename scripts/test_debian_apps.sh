@@ -15,6 +15,7 @@ apps_scripts=(
     "${APPS_DIR}/build-apps.sh"
     "${APPS_DIR}/container-build-opencv-mobile.sh"
     "${APPS_DIR}/container-build-apps.sh"
+    "${APPS_DIR}/container-build-ekho.sh"
     "${APPS_DIR}/container-build-rootfs-cli-tools.sh"
     "${APPS_DIR}/audit-apps.sh"
     "${APPS_DIR}/g0-remote-dir.sh"
@@ -256,11 +257,46 @@ cmp -s "${opencv_cache}/opencv-mobile-4.13.0.zip" \
     "${opencv_output}/cache/opencv-mobile-4.13.0.zip" \
     || fail "the cached OpenCV archive was not staged for the container"
 
+# The standalone Ekho action needs neither Go nor an OpenCV build.
+: >"${mock_log}"
+MOCK_DOCKER_LOG="${mock_log}" \
+PATH="${TEST_ROOT}/mock-bin:${PATH}" \
+DEBIAN_APPS_OUTPUT_DIR="${TEST_ROOT}/ekho-output" \
+DEBIAN_APPS_EKHO_CACHE="${TEST_ROOT}/ekho-cache" \
+DEBIAN_APPS_GO_ROOT="${TEST_ROOT}/missing-go" \
+    "${APPS_DIR}/build-apps.sh" ekho >/dev/null
+tr '\0' '\n' <"${mock_log}" >"${TEST_ROOT}/ekho-args.txt"
+grep -qx 'scripts/debian-apps/container-build-ekho.sh' "${TEST_ROOT}/ekho-args.txt"
+grep -qx "${TEST_ROOT}/ekho-cache:/ekho-cache" "${TEST_ROOT}/ekho-args.txt"
+if grep -q '/usr/local/go:ro' "${TEST_ROOT}/ekho-args.txt"; then
+    fail "standalone Ekho build mounted a Go toolchain"
+fi
+
+# A corrupt source must fail before extraction and preserve staged output.
+source "${APPS_DIR}/ekho/source.env"
+printf 'corrupt archive\n' >"${TEST_ROOT}/ekho-cache/${EKHO_SOURCE_ARCHIVE}"
+mkdir -p "${TEST_ROOT}/ekho-output/apps/bin"
+printf 'previous build\n' >"${TEST_ROOT}/ekho-output/apps/bin/ekho"
+if AICO_REPO_ROOT="${REPO_ROOT}" \
+    DEBIAN_APPS_OUTPUT_DIR="${TEST_ROOT}/ekho-output" \
+    DEBIAN_APPS_EKHO_CACHE="${TEST_ROOT}/ekho-cache" \
+    bash "${APPS_DIR}/container-build-ekho.sh" >"${TEST_ROOT}/ekho-error" 2>&1; then
+    fail "Ekho accepted corrupt cached source"
+fi
+grep -q 'Ekho source checksum mismatch' "${TEST_ROOT}/ekho-error"
+[ ! -e "${TEST_ROOT}/ekho-cache/${EKHO_SOURCE_ARCHIVE}" ] \
+    || fail "Ekho kept corrupt cached source"
+grep -qx 'previous build' "${TEST_ROOT}/ekho-output/apps/bin/ekho"
+[ ! -e "${TEST_ROOT}/ekho-output/ekho-build" ] \
+    || fail "Ekho extracted unverified source"
+
 apps_dir=${TEST_ROOT}/apps
-mkdir -p "${apps_dir}/bin" "${apps_dir}/lib"
+mkdir -p "${apps_dir}/bin" "${apps_dir}/lib" "${apps_dir}/metadata" \
+    "${apps_dir}/share/ekho-data"
 touch \
     "${apps_dir}/bin/abctl" \
     "${apps_dir}/bin/agent" \
+    "${apps_dir}/bin/ekho" \
     "${apps_dir}/bin/ble_service" \
     "${apps_dir}/bin/mcu_service" \
     "${apps_dir}/bin/frame_service" \
@@ -280,6 +316,12 @@ chmod +x \
     "${apps_dir}/bin/mcu_service" \
     "${apps_dir}/bin/ota"
 chmod +x "${apps_dir}/bin/ttyd"
+chmod +x "${apps_dir}/bin/ekho"
+printf 'Mandarin fixture\n' >"${apps_dir}/share/ekho-data/pinyin.voice"
+(
+    cd "${apps_dir}"
+    sha256sum bin/ekho share/ekho-data/pinyin.voice
+) >"${apps_dir}/metadata/ekho-files.sha256"
 printf '%s\n' \
     'librknnmrt version: 2.3.2 (429f97ae6b@2025-04-09T09:11:49)' \
     >"${apps_dir}/bin/rknn_vad"
@@ -414,7 +456,17 @@ expect_audit_failure() {
 
 run_audit "${TEST_ROOT}/report-pass"
 grep -qx 'status=pass' "${TEST_ROOT}/report-pass/summary.txt"
-grep -qx 'elf_count=14' "${TEST_ROOT}/report-pass/summary.txt"
+grep -qx 'elf_count=15' "${TEST_ROOT}/report-pass/summary.txt"
+
+printf 'tampered\n' >>"${apps_dir}/share/ekho-data/pinyin.voice"
+expect_audit_failure changed-ekho-data
+printf 'Mandarin fixture\n' >"${apps_dir}/share/ekho-data/pinyin.voice"
+mv "${apps_dir}/share/ekho-data/pinyin.voice" "${TEST_ROOT}/pinyin.voice"
+expect_audit_failure missing-ekho-data
+mv "${TEST_ROOT}/pinyin.voice" "${apps_dir}/share/ekho-data/pinyin.voice"
+chmod -x "${apps_dir}/bin/ekho"
+expect_audit_failure nonexecutable-ekho
+chmod +x "${apps_dir}/bin/ekho"
 
 chmod -x "${apps_dir}/bin/mcu_service"
 expect_audit_failure nonexecutable-mcu-service

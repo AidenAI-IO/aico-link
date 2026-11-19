@@ -187,11 +187,16 @@ If the LLM does not generate assistant content in the same response as the tool 
 
 ### Local Ekho (default)
 
-Ekho is the default TTS adapter. The Agent does not bundle the external
-[Ekho executable or voice data](https://github.com/hgneng/ekho). Install them
-and the executable's shared-library dependencies before enabling speech.
-The Agent finds `ekho` on `PATH`, then checks `/usr/local/bin/ekho` and
-`/userdata/ekho/bin/ekho`. Existing configurations that explicitly select a cloud
+Ekho is the default TTS adapter. The Debian application build cross-compiles
+[Ekho](https://github.com/hgneng/ekho) and stages its Mandarin voice data;
+`aico-business` installs the executable at `/usr/lib/aico/ekho` and data at
+`/usr/share/aico/ekho-data`. Debian supplies the eSpeak NG runtime and voice data,
+libsndfile, Sonic, and mpg123 dependencies. See the
+[build inputs and female-voice patch](../../scripts/debian-apps/ekho/README.md)
+and [package installation](../08-ota/debian-package.md).
+The Agent prefers `/usr/lib/aico/ekho`, then finds `ekho` on `PATH` or checks
+`/usr/local/bin/ekho` and `/userdata/ekho/bin/ekho` for manual installations.
+Existing configurations that explicitly select a cloud
 provider keep that selection; speech remains opt-in when no TTS section is declared.
 
 ```toml
@@ -205,8 +210,9 @@ type = "ekho"
 
 No API key is needed. The fixed bilingual preset is equivalent to
 `ekho -v Mandarin -s 20 --english-speed -10 -a 0`. Use Mandarin for mixed
-Chinese/English input as well. The English voice depends on the installed Ekho
-build; the comparison device uses the `en-us+f3` eSpeak voice patch. `speed` is
+Chinese/English input as well. The bundled patch selects the American English
+female variant `en-us+f3` through eSpeak NG's `espeak_SetVoiceByName()` in
+`src/english.cpp`, including English embedded in Mandarin input. `speed` is
 relative to this preset: Ekho's `-s` is `round(120 * speed - 100)`, while
 `--english-speed -10` stays fixed. Cloud-only voice/model fields are ignored.
 
@@ -217,15 +223,17 @@ user, with the same `PATH` and voice-data access:
 
 ```bash
 printf '%s\n' '你好。Hello, this is Ekho.' | \
-  ekho -v Mandarin -s 20 --english-speed -10 -a 0 \
+  /usr/lib/aico/ekho -v Mandarin -s 20 --english-speed -10 -a 0 \
     --samplerate 22050 -f - -o /tmp/ekho-smoke.wav
 ```
 
 This checks synthesis only. Verify speaker routing and volume separately with
 the configured audio backend, then remove `/tmp/ekho-smoke.wav`. Keep `-a 0`
 after `--english-speed`: Ekho 9.0's option parser otherwise applies the English
-speed value to volume as well. Installing an unpatched upstream Ekho does not
-automatically select the comparison device's female English voice.
+speed value to volume as well. The package includes the exact upstream source
+archive, patch, build inputs, and original code/voice licenses under
+`/usr/share/doc/aico-business/ekho/`. An independently installed upstream build
+does not automatically select this English voice.
 
 Incoming LLM fragments are buffered to Chinese/English sentence punctuation or
 newlines. English periods use lookahead to preserve decimals and common
