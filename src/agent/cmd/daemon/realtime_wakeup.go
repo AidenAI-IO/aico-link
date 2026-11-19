@@ -1990,18 +1990,22 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		retryCtx := ctx
 		if rejectedChat != nil {
 			// The chat itself is the one waiting; only the provider's
-			// response and the other gates must be clear.
+			// response and the other gates must be clear. A chat command
+			// still on the bridge does not wait for it: it is turned away as
+			// busy while this chat is open, so it must not hold the retry.
 			admission.activeChat = false
+			admission.bridgePending = false
 			retryCtx = rejectedChat.ctx
 		}
 		if !admission.canInjectBackgroundResponse() {
 			return nil
 		}
 		if rejectedChat != nil {
-			// Only the retried response answers the chat.
+			// Only the retried response answers the chat, under its turn.
 			chatMode = ""
 			chatText.Reset()
 			chatTranscript.Reset()
+			currentTurnID = rejectedChat.request.RequestID
 		}
 		requestOwner = rejectedChat
 		rejectedResponseRetry = false
@@ -2282,6 +2286,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if responseContinuer == nil {
 					return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
 				}
+				requestOwner = chatOutput()
 				if err := responseContinuer.CreateResponse(ctx); err != nil {
 					return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 				}
@@ -2391,6 +2396,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				logging.Warnf("agent", "realtime", "Chat rejected busy: request_id=%s active_request_id=%s", command.request.RequestID, realtimeChatRequestID(activeChat))
 				sendRealtimeChatEvent(command, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventError, Error: "realtime response is busy"})
 				close(command.events)
+				// The command may have been what held a refused response back.
+				if err := tryInjectTaskUpdates(); err != nil {
+					return err
+				}
 				continue
 			}
 			if sleep.abandon() {
@@ -2788,6 +2797,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					if responseContinuer == nil {
 						return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
 					}
+					requestOwner = chatOutput()
 					if err := responseContinuer.CreateResponse(ctx); err != nil {
 						return fmt.Errorf("continue realtime response after tool cancellation: %w", err)
 					}
@@ -2853,6 +2863,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						if responseContinuer == nil {
 							continue
 						}
+						requestOwner = chatOutput()
 						if err := responseContinuer.CreateResponse(ctx); err != nil {
 							return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 						}
@@ -2898,6 +2909,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					}
 					sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDone, Response: content, ResponseID: event.ResponseID, ProviderSessionID: info.ID})
 					close(activeChat.events)
+					if requestOwner == activeChat {
+						// Served; a later refusal is not this chat's.
+						requestOwner = nil
+					}
 					activeChat = nil
 				}
 				currentTurnID = ""
@@ -2993,7 +3008,8 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					turnState.responseRequestPending = false
 				}
 				if requestOwner != nil && requestOwner != activeChat {
-					// The chat that asked was cancelled; nothing is owed to it.
+					// The chat that asked was cancelled (a served chat clears
+					// its ownership); nothing is owed to it.
 					logging.Infof("agent", "realtime", "Dropping the refused response of a cancelled chat: request_id=%s", requestOwner.request.RequestID)
 					requestOwner = nil
 					break

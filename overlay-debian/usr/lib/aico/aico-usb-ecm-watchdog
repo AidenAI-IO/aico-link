@@ -227,8 +227,14 @@ while :; do
     fi
     [ "${result}" -eq 2 ] && { failures=0; continue; }
     failures=$((failures + 1))
-    logger -t aico-usb-ecm-watchdog "ECM probe failed (${failures}/${limit})"
     now=$(date +%s)
+    # The probe takes time; judge the window by when it failed, so a window
+    # that ended meanwhile no longer shortens the threshold or the cooldown.
+    if [ "${now}" -ge "${replug_until}" ]; then
+        limit=${threshold}
+        in_replug_window=0
+    fi
+    logger -t aico-usb-ecm-watchdog "ECM probe failed (${failures}/${limit})"
     # The cooldown keeps an idle reset loop from churning the gadget. A link
     # lost to a switch the board made is not that loop; repair it every time.
     if [ "${failures}" -ge "${limit}" ] && \

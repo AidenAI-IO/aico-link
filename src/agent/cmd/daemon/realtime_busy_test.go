@@ -966,3 +966,41 @@ func TestRealtimeRejectedResponseRetryEndsWithItsChat(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// A tool continuation the session asks for after a chat was served belongs to
+// no chat. If the provider refuses it, the session still asks again; the
+// finished chat is not mistaken for a cancelled one that is owed nothing.
+func TestRealtimeRejectedContinuationAfterServedChatIsRetried(t *testing.T) {
+	s, bridge, done := startBusyTestSessionConfigured(t, time.Second, false, nil, 0, true)
+	events := busyTestRequest(t, s, bridge, done, "served")
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, Status: "completed"}
+	requireBusyEvent(t, events, agent.RealtimeChatEventDone)
+
+	// A voice turn calls a tool; its result asks for a continuation.
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "voice"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventToolCall, ResponseID: "voice", CallID: "tool", Name: "unknown_tool", Arguments: "{}"}
+	select {
+	case <-s.toolResults:
+	case <-time.After(time.Second):
+		t.Fatal("tool result not sent")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "voice", Status: "completed"}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session exited: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("tool continuation not requested")
+	}
+	// The provider started its own response first and refuses ours.
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "provider-resp"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseRejected, Error: errors.New("Cannot create response while another response is in progress.")}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "provider-resp", Status: "completed"}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session exited instead of retrying: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("the refused continuation was not requested again")
+	}
+}
