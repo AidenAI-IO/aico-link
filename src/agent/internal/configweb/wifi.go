@@ -307,52 +307,91 @@ func (s *Server) queryWiFiStatus() map[string]any {
 }
 
 func (s *Server) queryWiFiStatusContext(ctx context.Context) map[string]any {
-	status := map[string]any{"connected": false, "ssid": "", "ip_address": "", "state": "DISCONNECTED", "detail": ""}
+	status, observed := s.observeWiFiStatusContext(ctx, 5*time.Second, 5*time.Second)
+	if !observed {
+		status["state"] = "UNKNOWN"
+	}
+	return status
+}
+
+func (s *Server) observeWiFiStatusContext(ctx context.Context, probeTimeout, addressTimeout time.Duration) (map[string]any, bool) {
+	status := map[string]any{"connected": false, "ssid": "", "ip_address": "", "state": "DISCONNECTED", "detail": "", "observed_at_unix_us": time.Now().UnixMicro()}
+	readAddress := func() string {
+		addressCtx, cancel := context.WithTimeout(ctx, addressTimeout)
+		defer cancel()
+		return interfaceIPv4Context(addressCtx, s.options.WiFiInterface)
+	}
 	if commandExists("wpa_cli") {
-		result := runCommandContext(ctx, 5*time.Second, nil, nil, "wpa_cli", "-i", s.options.WiFiInterface, "status")
+		result := runCommandContext(ctx, probeTimeout, nil, nil, "wpa_cli", "-i", s.options.WiFiInterface, "status")
+		status["observed_at_unix_us"] = time.Now().UnixMicro()
 		if result.ExitCode == 0 {
 			detail := strings.TrimRight(string(result.Output), "\r\n")
-			status["detail"] = detail
 			values := keyValueLines(detail)
-			status["state"], status["ssid"], status["ip_address"] = values["wpa_state"], decodeWiFiSSID(values["ssid"]), values["ip_address"]
-			status["connected"] = values["wpa_state"] == "COMPLETED" && values["ssid"] != ""
-			if status["connected"] == true && status["ip_address"] == "" {
-				status["ip_address"] = interfaceIPv4Context(ctx, s.options.WiFiInterface)
-			}
-			if status["connected"] == true {
-				if signal, ok := s.queryWiFiLinkSignalContext(ctx); ok {
-					status["signal_dbm"] = signal
+			ssid := decodeWiFiSSID(values["ssid"])
+			if values["wpa_state"] != "" && (values["wpa_state"] != "COMPLETED" || ssid != "") {
+				status["detail"] = detail
+				status["state"], status["ssid"], status["ip_address"] = values["wpa_state"], ssid, values["ip_address"]
+				status["connected"] = values["wpa_state"] == "COMPLETED"
+				if status["connected"] == true && status["ip_address"] == "" {
+					status["ip_address"] = readAddress()
 				}
-			}
-			if values["wpa_state"] != "" || values["ssid"] != "" {
-				return status
+				if status["connected"] == true {
+					if signal, ok := s.queryWiFiLinkSignalContext(ctx); ok {
+						status["signal_dbm"] = signal
+					}
+				}
+				return status, true
 			}
 		}
 	}
 	if commandExists("iw") {
-		result := runCommandContext(ctx, 5*time.Second, nil, nil, "iw", "dev", s.options.WiFiInterface, "link")
+		result := runCommandContext(ctx, probeTimeout, nil, nil, "iw", "dev", s.options.WiFiInterface, "link")
+		status["observed_at_unix_us"] = time.Now().UnixMicro()
+		if result.ExitCode != 0 {
+			return status, false
+		}
 		detail := strings.TrimRight(string(result.Output), "\r\n")
+		status["state"] = "DISCONNECTED"
 		status["detail"] = detail
 		for _, line := range strings.Split(detail, "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "SSID:") {
-				status["ssid"] = decodeWiFiSSID(strings.TrimSpace(strings.TrimPrefix(line, "SSID:")))
+				ssid := decodeWiFiSSID(strings.TrimSpace(strings.TrimPrefix(line, "SSID:")))
+				if ssid == "" {
+					continue
+				}
+				status["ssid"] = ssid
 				status["connected"], status["state"] = true, "COMPLETED"
-				status["ip_address"] = interfaceIPv4Context(ctx, s.options.WiFiInterface)
+				status["ip_address"] = readAddress()
 			}
 			if signal, ok := parseWiFiSignalDBM(line); ok {
 				status["signal_dbm"] = signal
 			}
 		}
+		return status, status["connected"] == true || strings.TrimSpace(detail) == "Not connected."
 	}
-	return status
+	return status, false
 }
 
 func (s *Server) queryWiFiLinkSignalContext(ctx context.Context) (float64, bool) {
 	if !commandExists("iw") {
 		return 0, false
 	}
-	result := runCommandContext(ctx, 5*time.Second, nil, nil, "iw", "dev", s.options.WiFiInterface, "link")
+	// Signal is optional: leave time to return an already usable primary read.
+	timeout := 250 * time.Millisecond
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline) - 100*time.Millisecond
+		if remaining <= 0 {
+			return 0, false
+		}
+		if remaining < timeout {
+			timeout = remaining
+		}
+	}
+	result := runCommandContext(ctx, timeout, nil, nil, "iw", "dev", s.options.WiFiInterface, "link")
+	if result.ExitCode != 0 {
+		return 0, false
+	}
 	for _, line := range strings.Split(string(result.Output), "\n") {
 		if signal, ok := parseWiFiSignalDBM(strings.TrimSpace(line)); ok {
 			return signal, true
@@ -686,6 +725,33 @@ func hexDigit(value byte) (byte, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// handleWiFiStatus avoids the Agent CLI, storage probes and scans in the full
+// device snapshot. Reads remain available while a connection task is running.
+func (s *Server) handleWiFiStatus(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	// Reserve a fallback read and keep optional address lookup within its own budget.
+	status, observed := s.observeWiFiStatusContext(ctx, time.Second, 250*time.Millisecond)
+	if !observed || ctx.Err() != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "Wi-Fi status unavailable")
+		return
+	}
+	wifi, err := loadWiFiConfig(s.options.WiFiConfigPath)
+	if err != nil && !os.IsNotExist(err) {
+		writeJSONError(w, http.StatusServiceUnavailable, "Wi-Fi profiles unavailable")
+		return
+	}
+	proxy, err := wifiproxy.Load(s.options.WiFiProxyConfigPath)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "Wi-Fi proxy profiles unavailable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "wifi": wifi.publicValue(proxy), "wifi_status": status,
+	})
 }
 
 func (s *Server) handleWiFiScan(w http.ResponseWriter, _ *http.Request) {
