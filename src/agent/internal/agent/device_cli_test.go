@@ -37,7 +37,11 @@ func TestDeviceCLIShellCapturesRealRequestsNotText(t *testing.T) {
 	if got := call(`printf 'device-cli look'`); len(got.Result.deviceFrames) != 0 {
 		t.Fatal("stdout triggered screenshot")
 	}
-	got := call(`curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["look"]' "$AICO_DEVICE_CLI_URL/command" && exit 7`)
+	look := call(`curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["look","--region","0","0","500","500"]' "$AICO_DEVICE_CLI_URL/command"`)
+	if look.Result.IsError() || len(look.Result.deviceFrames) != 0 || len(look.Result.deviceActions) != 0 || !strings.Contains(look.Result.Output, base64.StdEncoding.EncodeToString(frame.Bytes())) {
+		t.Fatal("look must return the image to the CLI without adding a shell screenshot")
+	}
+	got := call(`curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["wait","0"]' "$AICO_DEVICE_CLI_URL/command" && exit 7`)
 	if !got.Result.IsError() || len(got.Result.deviceFrames) != 1 || len(deviceCLIStateMessages(got.Result.deviceFrames, got.Result.deviceActions)) != 1 {
 		t.Fatalf("failed shell discarded accepted observation: %+v", got.Result)
 	}
@@ -67,7 +71,7 @@ func TestDeviceCLIChainAnnotatesOnlyDispatchedOperations(t *testing.T) {
 	}}}
 	ctx := context.WithValue(context.Background(), deviceCLIRuntimeKey{}, rt)
 	input, _ := json.Marshal(map[string]string{"command": `cli() { curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d "$1" "$AICO_DEVICE_CLI_URL/command"; }
- cli '["tap","200","400"]' && cli '["swipe","500","800","500","300"]' && cli '["type","private-text"]' && cli '["back"]' && false && cli '["look"]'`})
+ cli '["tap","200","400"]' && cli '["swipe","500","800","500","300"]' && cli '["look"]' >/dev/null && cli '["type","private-text"]' && cli '["back"]' && false && cli '["look"]'`})
 	got := executeToolCall(ctx, ToolCallExecution{Specs: NewToolSpecs([]langtools.Tool{shell}), Action: schema.AgentAction{Tool: "shell", ToolInput: string(input)}}).Result
 	if !got.IsError() {
 		t.Fatal("failed shell reported success")

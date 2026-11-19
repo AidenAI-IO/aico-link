@@ -7,12 +7,14 @@ import (
 )
 
 const Usage = `device-cli [--url URL] COMMAND
-  look | wait [milliseconds] | home | back | enter
+  look [--dir DIRECTORY] [--region X1 Y1 X2 Y2]
+  wait [milliseconds] | home | back | enter
   tap X Y | double-tap X Y | long-press X Y
   swipe X1 Y1 X2 Y2 [milliseconds] | drag X1 Y1 X2 Y2
   drag-start X Y | drag-release X Y | type TEXT | key KEY [KEY ...]
   open APP | url URL | quick ACTION | scroll DY | move X Y
-Coordinates are integers from 0 to 1000. Quote text as one shell argument.`
+Coordinates are integers from 0 to 1000. Quote text as one shell argument.
+look saves a JPEG (default: /tmp). wait 0 captures without waiting for stability.`
 
 type Call struct {
 	Tool  string
@@ -79,9 +81,10 @@ func Calls(args []string) ([]Call, error) {
 		}
 		return one("touch_gesture", v)
 	case "look":
-		if len(a) == 0 {
-			return one("screenshot", map[string]any{})
+		if _, err := ParseLookOptions(a); err != nil {
+			return nil, err
 		}
+		return one("screenshot", map[string]any{})
 	case "home", "back":
 		if len(a) == 0 {
 			return one("quick_action", map[string]any{"action": cmd})
@@ -123,8 +126,11 @@ func Calls(args []string) ([]Call, error) {
 			v := map[string]any{}
 			if len(a) == 1 {
 				ms, e := strconv.Atoi(a[0])
-				if e != nil || ms < 1 || ms > 30000 {
-					return nil, fmt.Errorf("wait must be 1–30000 ms")
+				if e != nil || ms < 0 || ms > 30000 {
+					return nil, fmt.Errorf("wait must be 0–30000 ms")
+				}
+				if ms == 0 {
+					return one("screenshot", map[string]any{})
 				}
 				v["timeout_ms"] = ms
 			}

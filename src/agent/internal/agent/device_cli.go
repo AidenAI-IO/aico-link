@@ -106,10 +106,14 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 	if err != nil {
 		return ToolInvokeResponse{}, err
 	}
+	scoped := context.WithValue(ctx, deviceCLICaptureKey{}, capture)
+	if args[0] == "look" {
+		// Return the raw screenshot only to the CLI process, which saves the file.
+		return invokeDeviceHTTP(scoped, s, calls[0])
+	}
 	if len(capture.actions)+len(calls) > maxDeviceCLIActions {
 		return ToolInvokeResponse{}, fmt.Errorf("device-cli action limit per shell reached; continue in a new shell call")
 	}
-	scoped := context.WithValue(ctx, deviceCLICaptureKey{}, capture)
 	var result ToolInvokeResponse
 	var last visualScreenshotObservation
 	defer func() {

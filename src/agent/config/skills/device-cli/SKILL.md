@@ -5,8 +5,9 @@ description: Operate and inspect the target device visually with device-cli in t
 
 # Device CLI
 
-Use `shell` with a foreground command such as `device-cli tap 514 263`. The tool attaches fresh screenshot state after the command; stdout is not a screenshot. A turn normally starts with an attached screenshot. Run `device-cli look` only if it is missing or you need a fresh observation.
+Use `shell` with a foreground command such as `device-cli tap 514 263`. The tool attaches fresh screenshot state after the command; stdout is not a screenshot. A turn normally starts with an attached screenshot. If you only need to see the screen, run `device-cli wait 0` to attach a fresh screenshot without waiting for stability.
 
+- Use `device-cli look` only when you need a JPEG file. It prints the saved path and does not attach an image to the shell result. Prefer the default directory `/tmp`; use `--dir DIRECTORY` to save elsewhere. For a crop, use `device-cli look --region 100 200 900 800`, with normalized integer coordinates for the top-left and bottom-right corners.
 - `tap X Y`, `double-tap X Y`, `long-press X Y`: use integers from 0 to 1000 on each axis, measured from the top left of the latest frame. Aim at the center of a visible target.
 - `swipe X1 Y1 X2 Y2 [milliseconds]`: start inside the region to scroll; the gesture follows your finger from start to end. Observe the result before repeating.
 - `drag X1 Y1 X2 Y2` for a fixed visible destination; use `drag-start X Y` and `drag-release X Y` in separate calls if the layout may move after the drag starts.
