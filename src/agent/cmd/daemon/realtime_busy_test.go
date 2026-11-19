@@ -897,3 +897,110 @@ func (s *lockedSemanticSink) snapshot() []streamcontract.Event {
 	defer s.mu.Unlock()
 	return append([]streamcontract.Event(nil), s.events...)
 }
+
+// A response the session asked for can lose a race with one the provider
+// started for speech it just detected; the provider refuses the request. That
+// is not a session failure: the session keeps running, asks again once the
+// provider's response is over, and the chat is answered by that retried
+// response, not by the provider's own.
+func TestRealtimeRejectedResponseIsRetriedAfterProviderResponse(t *testing.T) {
+	s, bridge, done := startBusyTestSession(t, time.Second)
+	events := busyTestRequest(t, s, bridge, done, "chat-1")
+	// The provider answers its own turn instead and refuses ours.
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "provider-resp"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseRejected, Error: errors.New("Cannot create response while another response is in progress.")}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptDelta, Role: "assistant", TextSource: "text", Text: "not for the chat", ResponseID: "provider-resp"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "provider-resp", Status: "completed"}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session exited instead of retrying: %v", err)
+	case event := <-events:
+		t.Fatalf("the provider's own response reached the chat: %+v", event)
+	case <-time.After(time.Second):
+		t.Fatal("the refused response was not requested again")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "retried"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptDelta, Role: "assistant", TextSource: "text", Text: "hello back", ResponseID: "retried"}
+	requireBusyEvent(t, events, agent.RealtimeChatEventDelta)
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "retried", Status: "completed"}
+	select {
+	case event := <-events:
+		if event.Type != agent.RealtimeChatEventDone || event.Response != "hello back" {
+			t.Fatalf("chat completion = %+v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the chat did not complete with its retried response")
+	}
+}
+
+// Cancelling the chat whose request was refused drops the retry: nothing is
+// requested on its behalf after the user stopped it.
+func TestRealtimeRejectedResponseRetryEndsWithItsChat(t *testing.T) {
+	var interruptErr error
+	s, bridge, done := startBusyTestSessionConfigured(t, time.Second, false, &interruptErr, time.Second, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := bridge.Handle(ctx, agent.RealtimeChatRequest{RequestID: "chat-1", Message: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.created:
+	case <-time.After(time.Second):
+		t.Fatal("response was not requested")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "provider-resp"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseRejected, Error: errors.New("Cannot create response while another response is in progress.")}
+	cancel()
+	select {
+	case <-s.interrupted:
+	case <-time.After(time.Second):
+		t.Fatal("the chat was not cancelled")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "provider-resp", Status: "cancelled"}
+	select {
+	case <-s.created:
+		t.Fatal("a cancelled chat's refused response was requested again")
+	case err := <-done:
+		t.Fatalf("session exited: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// A tool continuation the session asks for after a chat was served belongs to
+// no chat. If the provider refuses it, the session still asks again; the
+// finished chat is not mistaken for a cancelled one that is owed nothing.
+func TestRealtimeRejectedContinuationAfterServedChatIsRetried(t *testing.T) {
+	s, bridge, done := startBusyTestSessionConfigured(t, time.Second, false, nil, 0, true)
+	events := busyTestRequest(t, s, bridge, done, "served")
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, Status: "completed"}
+	requireBusyEvent(t, events, agent.RealtimeChatEventDone)
+
+	// A voice turn calls a tool; its result asks for a continuation.
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "voice"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventToolCall, ResponseID: "voice", CallID: "tool", Name: "unknown_tool", Arguments: "{}"}
+	select {
+	case <-s.toolResults:
+	case <-time.After(time.Second):
+		t.Fatal("tool result not sent")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "voice", Status: "completed"}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session exited: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("tool continuation not requested")
+	}
+	// The provider started its own response first and refuses ours.
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "provider-resp"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseRejected, Error: errors.New("Cannot create response while another response is in progress.")}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "provider-resp", Status: "completed"}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session exited instead of retrying: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("the refused continuation was not requested again")
+	}
+}
