@@ -381,8 +381,8 @@ llm_http_retention_days = 14
 	if dto.Device.DeviceType != "iOS" {
 		t.Fatalf("device.device_type = %q, want iOS (default when unset)", dto.Device.DeviceType)
 	}
-	if dto.HID.PointerMode != "absolute" {
-		t.Fatalf("hid.pointer_mode = %q, want absolute (derived from iOS device_type)", dto.HID.PointerMode)
+	if dto.HID.PointerMode != "touchpad" {
+		t.Fatalf("hid.pointer_mode = %q, want touchpad (derived from iOS device_type)", dto.HID.PointerMode)
 	}
 	if dto.HID.KeyboardLayout != "azerty" {
 		t.Fatalf("hid.keyboard_layout = %q, want azerty", dto.HID.KeyboardLayout)

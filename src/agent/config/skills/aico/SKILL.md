@@ -140,8 +140,10 @@ A normal task follows this loop:
 - HID coordinates are normalized `0..1000`, not screenshot pixels. Never guess a coordinate when the
   target is not visible in a current frame.
 - `[basic_settings.device].device_type` is the platform authority and selects the pointer mode: `Android` uses
-  touchscreen semantics; `iOS`, `macOS`, `windows`, and `linux` normally use absolute pointer
-  semantics. Changing it requires a full board reboot so the USB descriptor is re-enumerated; a
+  touchscreen semantics; `iOS` uses a touchpad that iOS treats as direct touch (no cursor, no
+  hover) and needs Zoom on and AssistiveTouch off; `macOS`, `windows`, and `linux` use absolute
+  pointer semantics. On iOS the board starts without a hardware keyboard so the software keyboard
+  stays usable; the keyboard attaches only while a task types and detaches when it ends. Changing it requires a full board reboot so the USB descriptor is re-enumerated; a
   process or hot gadget restart is not sufficient.
 - `hid_connection_id` identifies the current physical USB HID session. A WebSocket reconnect does
   not invalidate screen-size caches; a real USB host detach does.
@@ -400,9 +402,9 @@ backend = "auto"              # board audio_service
 - Enable a Live Activity when background return is required. A ready Dynamic Island card is a visible
   return entry; never guess a lock-screen card location. PiP can enable background-safe data work but
   can hide the Dynamic Island entry, and it does not make `open_app` a background operation.
-- A practical visible recovery path is AssistiveTouch: keep the floating control visible and bind a
-  double-tap or shortcut to opening the companion app. Before using it, confirm the control or Dynamic Island is
-  visible in a fresh screenshot.
+- AssistiveTouch must stay off: while it is on, iOS ignores the board's touchpad. Use the Dynamic
+  Island or the Home Screen icon as the visible way back to the companion app, and confirm it in a
+  fresh screenshot before tapping.
 - Opening another app normally backgrounds the companion app. Continue with HDMI plus HID when the target is
   visible; use BLE wake only for its allowlisted data operations. Clipboard operations and contact
   updates are not in the iOS BLE wake allowlist.

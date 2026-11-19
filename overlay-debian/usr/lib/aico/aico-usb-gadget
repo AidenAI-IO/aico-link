@@ -1,6 +1,12 @@
 #!/bin/sh
 #
 # Aico Link USB composite gadget: HID (keyboard + touch) + CDC ECM (usb0).
+# Pointer modes follow [basic_settings.device].device_type: iOS uses a
+# digitizer touchpad (direct touch with Zoom on and AssistiveTouch off),
+# Android a touchscreen, and desktop hosts an absolute mouse. In touchpad mode
+# the gadget starts without the keyboard: iOS hides its software keyboard while
+# one is attached, so the Agent attaches it only while a run types (see
+# aico-dynamic-keyboard).
 # ECM brings up usb0 at 192.168.42.1/24 so the device serves the config portal
 # to a phone/PC over USB while WiFi handles the data plane.
 #
@@ -35,7 +41,7 @@ reject_legacy_device_config() {
 }
 
 read_pointer_mode() {
-	POINTER_MODE=absolute
+	POINTER_MODE=touchpad
 	if [ ! -f "$AGENT_TOML" ]; then
 		return
 	fi
@@ -59,12 +65,14 @@ read_pointer_mode() {
 	' | tr '[:upper:]' '[:lower:]')
 	case "$device_line_lc" in
 		*\"android\"*|*\'android\'*|*android*) POINTER_MODE=touchscreen; return ;;
-		*\"ios\"*|*\'ios\'*|*ios*|*\"macos\"*|*\'macos\'*|*macos*|*\"windows\"*|*\'windows\'*|*windows*|*\"linux\"*|*\'linux\'*|*linux*) POINTER_MODE=absolute; return ;;
+		*\"macos\"*|*\'macos\'*|*macos*|*\"windows\"*|*\'windows\'*|*windows*|*\"linux\"*|*\'linux\'*|*linux*) POINTER_MODE=absolute; return ;;
+		*\"ios\"*|*\'ios\'*|*ios*) POINTER_MODE=touchpad; return ;;
 	esac
 
 	line=$(grep -E '^[[:space:]]*pointer_mode[[:space:]]*=' "$AGENT_TOML" | tail -n1)
 	case "$line" in
 		*\"touchscreen\"*|*\'touchscreen\'*|*touchscreen*) POINTER_MODE=touchscreen ;;
+		*\"touchpad\"*|*\'touchpad\'*|*touchpad*) POINTER_MODE=touchpad ;;
 		*\"absolute\"*|*\'absolute\'*|*absolute*) POINTER_MODE=absolute ;;
 	esac
 }
@@ -131,11 +139,20 @@ start() {
 		rmdir "$GADGET_DIR" 2>/dev/null
 	fi
 
+	read_pointer_mode
+
 	# Create gadget
 	mkdir -p "$GADGET_DIR"
 	echo 0x1d6b > "$GADGET_DIR/idVendor"
-	echo 0x0104 > "$GADGET_DIR/idProduct"
-	echo 0x0100 > "$GADGET_DIR/bcdDevice"
+	# Each linked function set has its own identity so the host never reuses
+	# descriptors cached for another set (aico-dynamic-keyboard switches them).
+	if [ "$POINTER_MODE" = "touchpad" ]; then
+		echo 0x0180 > "$GADGET_DIR/idProduct"
+		echo 0x0180 > "$GADGET_DIR/bcdDevice"
+	else
+		echo 0x0104 > "$GADGET_DIR/idProduct"
+		echo 0x0100 > "$GADGET_DIR/bcdDevice"
+	fi
 	echo 0x0200 > "$GADGET_DIR/bcdUSB"
 
 	# IAD-based multi-function device
@@ -144,18 +161,24 @@ start() {
 	echo 0x01 > "$GADGET_DIR/bDeviceProtocol"
 
 	mkdir -p "$GADGET_DIR/strings/0x409"
-	echo "0123456789ABCDEF" > "$GADGET_DIR/strings/0x409/serialnumber"
 	echo "Aico" > "$GADGET_DIR/strings/0x409/manufacturer"
-	echo "Aico Link HID+ECM" > "$GADGET_DIR/strings/0x409/product"
+	if [ "$POINTER_MODE" = "touchpad" ]; then
+		echo "AICOTOUCHPAD1" > "$GADGET_DIR/strings/0x409/serialnumber"
+		echo "Aico Link Touchpad+ECM" > "$GADGET_DIR/strings/0x409/product"
+	else
+		echo "0123456789ABCDEF" > "$GADGET_DIR/strings/0x409/serialnumber"
+		echo "Aico Link HID+ECM" > "$GADGET_DIR/strings/0x409/product"
+	fi
 
 	mkdir -p "$GADGET_DIR/configs/c.1/strings/0x409"
 	echo "HID + ECM Composite" > "$GADGET_DIR/configs/c.1/strings/0x409/configuration"
 	echo 500 > "$GADGET_DIR/configs/c.1/MaxPower"
 
 	# Keyboard HID function (8-byte boot keyboard report).
-	# Keep the boot subclass/protocol for broad host compatibility. Bind the
-	# completed composite only once: a same-identity soft disconnect/reconnect can
-	# leave iOS with mismatched keyboard and AssistiveTouch pointer session state.
+	# Keep the boot subclass/protocol for broad host compatibility. In touchpad
+	# mode the function exists but is not linked at boot; aico-dynamic-keyboard
+	# links it while the Agent types. Bind the completed composite only once: a
+	# same-identity soft disconnect/reconnect can leave iOS with a stale session.
 	mkdir -p "$GADGET_DIR/functions/hid.usb0"
 	echo 1 > "$GADGET_DIR/functions/hid.usb0/protocol"
 	echo 1 > "$GADGET_DIR/functions/hid.usb0/subclass"
@@ -169,14 +192,19 @@ start() {
 	mkdir -p "$GADGET_DIR/functions/hid.usb1"
 	echo 0 > "$GADGET_DIR/functions/hid.usb1/protocol"
 	echo 0 > "$GADGET_DIR/functions/hid.usb1/subclass"
-	read_pointer_mode
 	if [ "$POINTER_MODE" = "touchscreen" ]; then
 		echo 6 > "$GADGET_DIR/functions/hid.usb1/report_length"
 		printf '\005\015\011\004\241\001\011\042\241\002\005\015\011\102\011\062\025\000\045\001\165\001\225\002\201\002\165\006\225\001\201\003\011\121\165\010\225\001\025\000\045\017\201\002\005\001\011\060\011\061\026\000\000\046\377\177\165\020\225\002\201\002\300\300' \
 			> "$GADGET_DIR/functions/hid.usb1/report_desc"
-	else
+	elif [ "$POINTER_MODE" = "absolute" ]; then
 		echo 6 > "$GADGET_DIR/functions/hid.usb1/report_length"
 		printf '\005\001\011\002\241\001\011\001\241\000\005\011\031\001\051\010\025\000\045\001\225\010\165\001\201\002\005\001\011\060\011\061\026\000\000\046\377\177\165\020\225\002\201\002\011\070\025\201\045\177\165\010\225\001\201\006\300\300' \
+			> "$GADGET_DIR/functions/hid.usb1/report_desc"
+	else
+		# Digitizer touchpad (report id 5, two contacts, 1920x1080 logical).
+		# With iOS Zoom on and AssistiveTouch off, iOS takes it as direct touch.
+		echo 12 > "$GADGET_DIR/functions/hid.usb1/report_length"
+		printf '\005\015\011\005\241\001\205\005\045\001\165\001\011\127\261\002\046\377\177\165\017\011\241\261\002\047\377\377\000\000\011\126\165\020\225\001\201\002\005\011\045\001\031\001\051\001\225\002\165\001\201\002\225\006\201\001\005\015\011\042\241\000\011\102\011\107\165\001\225\002\201\002\045\005\011\070\165\006\225\001\201\002\005\001\106\151\005\065\000\046\177\007\165\014\125\016\145\021\011\060\201\002\106\110\003\046\067\004\011\061\201\002\300\005\015\011\042\241\000\045\001\011\102\011\107\165\001\225\002\201\002\011\070\045\005\165\006\225\001\201\002\005\001\106\151\005\046\177\007\165\014\011\060\201\002\106\110\003\046\067\004\011\061\201\002\300\300' \
 			> "$GADGET_DIR/functions/hid.usb1/report_desc"
 	fi
 
@@ -197,8 +225,11 @@ start() {
 	echo "$ECM_HOST_MAC" > "$GADGET_DIR/functions/ecm.usb0/host_addr"
 	echo "$ECM_DEV_MAC"  > "$GADGET_DIR/functions/ecm.usb0/dev_addr"
 
-	# Link all functions, THEN bind UDC (configfs requires this order)
-	ln -s "$GADGET_DIR/functions/hid.usb0" "$GADGET_DIR/configs/c.1/hid.usb0" 2>/dev/null
+	# Link all functions, THEN bind UDC (configfs requires this order). Every
+	# HID stays before ECM: a HID after the ECM IAD makes iOS reset the bus.
+	if [ "$POINTER_MODE" != "touchpad" ]; then
+		ln -s "$GADGET_DIR/functions/hid.usb0" "$GADGET_DIR/configs/c.1/hid.usb0" 2>/dev/null
+	fi
 	ln -s "$GADGET_DIR/functions/hid.usb2" "$GADGET_DIR/configs/c.1/hid.usb2" 2>/dev/null
 	ln -s "$GADGET_DIR/functions/hid.usb1" "$GADGET_DIR/configs/c.1/hid.usb1" 2>/dev/null
 	ln -s "$GADGET_DIR/functions/ecm.usb0" "$GADGET_DIR/configs/c.1/ecm.usb0" 2>/dev/null
@@ -225,11 +256,11 @@ start() {
 		return 1
 	fi
 
-	if [ "$POINTER_MODE" = "touchscreen" ]; then
-		echo "Aico Link USB composite ready: /dev/hidg0 (keyboard) /dev/hidg1 (pointer:$POINTER_MODE) /dev/hidg2 (android-extension) usb0 (ECM)"
-	else
-		echo "Aico Link USB composite ready: /dev/hidg0 (keyboard) /dev/hidg1 (pointer:$POINTER_MODE) /dev/hidg2 (media-keys) usb0 (ECM)"
-	fi
+	case "$POINTER_MODE" in
+		touchscreen) echo "Aico Link USB composite ready: /dev/hidg0 (keyboard) /dev/hidg1 (pointer:$POINTER_MODE) /dev/hidg2 (android-extension) usb0 (ECM)" ;;
+		touchpad) echo "Aico Link USB composite ready: /dev/hidg1 (pointer:$POINTER_MODE) /dev/hidg2 (media-keys) usb0 (ECM); /dev/hidg0 (keyboard) attaches on demand" ;;
+		*) echo "Aico Link USB composite ready: /dev/hidg0 (keyboard) /dev/hidg1 (pointer:$POINTER_MODE) /dev/hidg2 (media-keys) usb0 (ECM)" ;;
+	esac
 }
 
 stop() {

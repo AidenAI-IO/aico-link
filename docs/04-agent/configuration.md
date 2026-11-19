@@ -1070,7 +1070,7 @@ Config Web exposes `retention_days` in Memory Settings. The lifecycle and lease 
 
 | Field         | Default | Description |
 | ------------- | ------- | ----------- |
-| `device_type` | `iOS`   | Target host type for USB HID descriptors and Agent global device state. Accepted values: `iOS`, `Android`, `macOS`, `windows`, `linux`. `Android` derives HID `pointer_mode = "touchscreen"`; every other value derives `pointer_mode = "absolute"`. Switching between Android and a non-Android type requires a reboot so USB descriptors are re-enumerated; changes among non-Android types apply online. |
+| `device_type` | `iOS`   | Target host type for USB HID descriptors and Agent global device state. Accepted values: `iOS`, `Android`, `macOS`, `windows`, `linux`. `iOS` derives HID `pointer_mode = "touchpad"` (needs Zoom on and AssistiveTouch off on the iPhone), `Android` derives `"touchscreen"`, and `macOS`, `windows`, and `linux` derive `"absolute"`. A change that changes the pointer mode requires a reboot so USB descriptors are re-enumerated; changes among `macOS`, `windows`, and `linux` apply online. |
 
 ## `[basic_settings.device.hid]`
 

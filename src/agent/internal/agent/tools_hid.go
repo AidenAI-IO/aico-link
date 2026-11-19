@@ -55,20 +55,34 @@ const (
 	keyboardTextGapDelay  = 30 * time.Millisecond
 )
 
-// pointerController sends hid.usb1 reports in absolute mouse or touchscreen mode.
+// pointerController sends hid.usb1 reports in absolute mouse, touchscreen, or
+// touchpad mode.
 type pointerController struct {
 	dev                  *mnk.HIDDevice
 	state                *mnk.PointerState
 	touchscreen          bool
+	touchpad             bool
+	touchpadStart        time.Time
 	iosKeyboardIsolation *iosKeyboardIsolationController
 }
 
 func newPointerController(hid HIDConfig) *pointerController {
 	return &pointerController{
-		dev:         mnk.NewHIDDevice(hid.MouseDeviceOrDefault()),
-		state:       &mnk.PointerState{},
-		touchscreen: hid.PointerTouchscreen(),
+		dev:           mnk.NewHIDDevice(hid.MouseDeviceOrDefault()),
+		state:         &mnk.PointerState{},
+		touchscreen:   hid.PointerTouchscreen(),
+		touchpad:      hid.PointerModeOrDefault() == "touchpad",
+		touchpadStart: time.Now(),
 	}
+}
+
+// normalizedPoint maps a normalized 0-1000 point onto this pointer's surface.
+func (pc *pointerController) normalizedPoint(x, y float64) (int, int) {
+	if pc != nil && pc.touchpad {
+		absX, absY, _ := mnk.TouchpadPoint(x, y)
+		return absX, absY
+	}
+	return mnk.NormalizedToAbsolutePoint(x, y)
 }
 
 // KeyboardTapTool sends a key press then release via HID.
@@ -268,8 +282,6 @@ func (t *KeyboardTextTool) Call(ctx context.Context, input string) (string, erro
 // MouseMoveTool moves the mouse to coordinates without clicking.
 type MouseMoveTool struct {
 	mnkProvider mnk.Provider
-	// landscape corrects iOS landscape pointer orientation; nil disables it.
-	landscape *landscapePointerCorrector
 }
 
 func (t *MouseMoveTool) Name() string { return "mouse_move" }
@@ -286,16 +298,18 @@ func (t *MouseMoveTool) ArgsSchema() map[string]any {
 }
 
 func (t *MouseMoveTool) Call(ctx context.Context, input string) (string, error) {
-	adapter := mnk.NewMouseMoveToolAdapter(t.landscape.session(t.mnkProvider))
+	adapter := mnk.NewMouseMoveToolAdapter(t.mnkProvider)
 	output, err := adapter.Call(ctx, input)
 	return mapMNKAdapterResult(ctx, output, err)
 }
 
 // TouchGestureTool executes touch-like pointer gestures for mobile UI control.
 type TouchGestureTool struct {
-	mnkProvider        mnk.Provider
-	screen             *screen.ScreenState
-	touchscreen        bool
+	mnkProvider mnk.Provider
+	screen      *screen.ScreenState
+	touchscreen bool
+	// directTouch is true for touchscreen and touchpad: no cursor to park.
+	directTouch        bool
 	primeScreenMapping func(context.Context) error
 	deviceTypeFn       func() string
 	// captureFrame backs the tap_sequence screen-change check; nil disables it.
@@ -303,16 +317,20 @@ type TouchGestureTool struct {
 	// confirmTargets lets the decision model overrule a target change the
 	// pixel check saw; nil leaves the pixel check alone.
 	confirmTargets tapSequenceConfirmer
-	// landscape corrects iOS landscape pointer orientation; nil disables it.
-	landscape *landscapePointerCorrector
+	// turn keeps the iOS touchpad turned with a landscape screen; nil for
+	// other pointers.
+	turn *touchpadTurnCorrector
 }
+
+// touchpadOrientationProbeType is the touch_gesture type that learns which
+// way a landscape iPhone is turned before any other touch is sent.
+const touchpadOrientationProbeType = "orientation_probe"
 
 func (t *TouchGestureTool) Name() string { return "touch_gesture" }
 
 func (t *TouchGestureTool) SetDeviceTypeFunc(fn func() string) {
 	if t != nil {
 		t.deviceTypeFn = fn
-		t.landscape.setDeviceTypeFunc(fn)
 	}
 }
 
@@ -327,6 +345,11 @@ func (t *TouchGestureTool) Description() string {
 
 func (t *TouchGestureTool) ArgsSchema() map[string]any {
 	typeDescription := "Gesture type. tap, double_tap, long_press, drag_start, and drag_release require point. swipe requires start and either end or direction. tap_sequence requires points."
+	types := []string{"tap", "double_tap", "long_press", "drag_start", "drag_release", "swipe", "tap_sequence"}
+	if t.turn != nil {
+		typeDescription += ` orientation_probe requires point; use it only when a touch on a landscape iPhone was refused because the direction is unknown: it presses and releases point once, so choose a control that is harmless to press and shows a press highlight, whose mirror (1000-x, 1000-y) is also harmless.`
+		types = append(types, touchpadOrientationProbeType)
+	}
 	speedSchema := numberArgSchema("Swipe speed in normalized coordinate units per second. Defaults to 2500.", 2500)
 	speedSchema["exclusiveMinimum"] = 0
 	schema := objectArgsSchema(map[string]any{
@@ -346,7 +369,7 @@ func (t *TouchGestureTool) ArgsSchema() map[string]any {
 				"button":      stringEnumArgSchema("Pointer button held during the contact.", "left", "right", "middle"),
 			}, "action"),
 		},
-		"type": stringEnumArgSchema(typeDescription, "tap", "double_tap", "long_press", "drag_start", "drag_release", "swipe", "tap_sequence"),
+		"type": stringEnumArgSchema(typeDescription, types...),
 		"points": map[string]any{
 			"type":        "array",
 			"minItems":    mnk.MinTapSequencePoints,
@@ -392,7 +415,10 @@ func (t *TouchGestureTool) Call(ctx context.Context, input string) (string, erro
 	if err := t.ensureTouchscreenMapping(ctx); err != nil {
 		return toolErrorResultf(ctx, CodeToolExecutionFailed, "touchscreen mapping unavailable: %v", err), nil
 	}
-	provider := t.landscape.session(t.mnkProvider)
+	if out, handled := t.handleTouchpadTurn(ctx, input); handled {
+		return out, nil
+	}
+	provider := t.mnkProvider
 	adapter := mnk.NewTouchGestureToolAdapter(provider)
 	if points, guarded := tapSequenceInput(input); guarded && t.captureFrame != nil {
 		if err := mnk.ValidateTapSequenceInput(input); err != nil {
@@ -400,7 +426,7 @@ func (t *TouchGestureTool) Call(ctx context.Context, input string) (string, erro
 		}
 		// Park the absolute-mode pointer on the first target so its hover
 		// state is part of the baseline instead of a change at its old spot.
-		if !t.touchscreen && provider != nil {
+		if !t.directTouch && provider != nil {
 			if err := provider.Move(ctx, points[0].X, points[0].Y); err == nil {
 				if err := sleepWithContext(ctx, tapSequencePointerParkDelay); err != nil {
 					return toolErrorResultf(ctx, CodeToolExecutionFailed, "tap_sequence canceled before any tap: %v", err), nil
@@ -435,7 +461,7 @@ func (t *TouchGestureTool) recoverAfterUnstableScreen(ctx context.Context, input
 	if err != nil {
 		return fmt.Errorf("encode drag_start recovery: %w", err)
 	}
-	_, err = mnk.NewTouchGestureToolAdapter(t.landscape.session(t.mnkProvider)).Call(ctx, string(releaseInput))
+	_, err = mnk.NewTouchGestureToolAdapter(t.mnkProvider).Call(ctx, string(releaseInput))
 	return err
 }
 
@@ -549,6 +575,15 @@ func writeTouchscreenReport(dev *mnk.HIDDevice, state *mnk.PointerState, x, y in
 }
 
 func (pc *pointerController) moveTo(x, y int, buttons uint8) error {
+	if pc.touchpad {
+		scan := uint16(time.Since(pc.touchpadStart) / (100 * time.Microsecond))
+		report, absX, absY := mnk.TouchpadReport(x, y, buttons != 0, scan)
+		if err := pc.dev.Write(report); err != nil {
+			return err
+		}
+		pc.state.Update(absX, absY)
+		return nil
+	}
 	if pc.touchscreen {
 		return writeTouchscreenReport(pc.dev, pc.state, x, y, buttons != 0)
 	}
@@ -637,7 +672,7 @@ func tapPointerWithHold(pc *pointerController, x, y int, button uint8, holdMs in
 }
 
 func settlePointer(pc *pointerController, x, y int) error {
-	if pc.touchscreen {
+	if pc.touchscreen || pc.touchpad {
 		return nil
 	}
 	if err := movePointer(pc, x, y, 0); err != nil {

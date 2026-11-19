@@ -78,7 +78,7 @@ const (
 	defaultMouseDevice                = "/dev/hidg1"
 	defaultAndroidKeyboardDevice      = "/dev/hidg2"
 	defaultFrameServiceSocket         = "/run/frame_service/frame_service.sock"
-	defaultPointerMode                = "absolute"
+	defaultPointerMode                = "touchpad"
 	defaultDeviceType                 = "iOS"
 	defaultInputBackend               = "hid"
 	// defaultInputMode is empty on purpose: speech providers are opt-in (see

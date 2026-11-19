@@ -255,7 +255,7 @@ func ConfigMeta() ConfigMetadata {
 				Name: "device",
 				Fields: []FieldMeta{
 					{Key: "device_type", Widget: WidgetSelect,
-						Help:    "Android uses HID touchscreen mode. iOS, macOS, windows, and linux use absolute pointer mode.",
+						Help:    "iOS uses HID touchpad mode (turn on Zoom and turn off AssistiveTouch on the iPhone). Android uses HID touchscreen mode. macOS, windows, and linux use absolute pointer mode.",
 						Enum:    enumOptions("iOS", "Android", "macOS", "windows", "linux"),
 						Default: defaults.Device.DeviceTypeOrDefault()},
 				},

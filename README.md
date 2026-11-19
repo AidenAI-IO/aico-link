@@ -26,7 +26,7 @@ Aico Link connects to a phone or computer over USB-C:
 - the Go Agent sends screenshots to a configured multimodal model, decides the next action, and writes keyboard, pointer/touch, and Android extension or Consumer Control reports to `/dev/hidg0`, `/dev/hidg1`, and `/dev/hidg2`;
 - voice mode records audio on the board, applies VAD, then uses configured STT, LLM, and TTS providers.
 
-The basic control path does not require jailbreak, ADB, developer mode, or a custom app on the target device. It does require a target that can output video to the capture path and accept USB HID input. iOS control also requires AssistiveTouch to be enabled.
+The basic control path does not require jailbreak, ADB, developer mode, or a custom app on the target device. It does require a target that can output video to the capture path and accept USB HID input. iOS control also requires Zoom to be on and AssistiveTouch to be off.
 
 ## Key Features
 

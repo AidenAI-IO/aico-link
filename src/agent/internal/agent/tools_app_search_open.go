@@ -17,7 +17,6 @@ const appSearchResultSettleDelay = 350 * time.Millisecond
 
 // Restoring the pointer profile re-enumerates USB HID. iOS drops the hardware
 // keyboard for a moment and can show the software keyboard, shifting results.
-const appSearchPointerRestoreSettleDelay = 800 * time.Millisecond
 
 // On iOS, Caps Lock switches between the active IME and English. Switching
 // away commits pending pinyin as letters, so the query survives the later
@@ -284,7 +283,6 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		}
 		steps = append(steps, "opened system search")
 	}
-	isolation := iosKeyboardIsolationControllerFromContext(ctx)
 	type searchAttempt struct {
 		term       string
 		allowQuick bool
@@ -323,19 +321,11 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		} else {
 			steps = append(steps, fmt.Sprintf("searched %q", term))
 		}
-		// Switch profiles before the result screenshot: a tap point captured
-		// under the keyboard-only profile can be stale after re-enumeration.
-		restored, err := isolation.restoreForPointer(ctx)
-		if err != nil {
-			result.Steps = append(steps, "restore pointer profile failed")
-			return result, err
-		}
-		settleDelay := appSearchResultSettleDelay
-		if restored {
-			logging.Infof("agent", "app_search", "pointer profile restored before result lookup term=%q", term)
-			settleDelay = appSearchPointerRestoreSettleDelay
-		}
-		if err := sleep(ctx, settleDelay); err != nil {
+		// The keyboard stays attached until the app is open: detaching here
+		// brings the software keyboard back and re-lays out the results while
+		// they are located and tapped, which made the tap and the open check
+		// miss. The run detaches it when it ends.
+		if err := sleep(ctx, appSearchResultSettleDelay); err != nil {
 			result.Steps = append(steps, "wait for search results canceled")
 			return result, err
 		}
@@ -372,7 +362,7 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 					}
 					if reentered {
 						steps = append(steps, fmt.Sprintf("search field was empty after paste; re-entered %q", term))
-						if err := sleep(ctx, settleDelay); err != nil {
+						if err := sleep(ctx, appSearchResultSettleDelay); err != nil {
 							result.Steps = append(steps, "wait for search results canceled")
 							return result, err
 						}

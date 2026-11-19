@@ -406,10 +406,14 @@ func normalizeDeviceType(value string) string {
 }
 
 func pointerModeForDeviceType(value string) string {
-	if value == "windows" || value == "linux" {
-		return "relative"
+	switch value {
+	case "iOS":
+		return "touchpad"
+	case "Android":
+		return "touchscreen"
+	default:
+		return "absolute"
 	}
-	return "absolute"
 }
 
 func normalizeInputBackend(value string) string {

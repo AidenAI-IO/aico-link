@@ -25,6 +25,8 @@ func configForRunningUSB(cfg agent.Config) (agent.Config, error) {
 	switch {
 	case bytes.HasPrefix(descriptor, []byte{0x05, 0x0d, 0x09, 0x04}):
 		mode = "touchscreen"
+	case bytes.HasPrefix(descriptor, []byte{0x05, 0x0d, 0x09, 0x05}):
+		mode = "touchpad"
 	case bytes.HasPrefix(descriptor, []byte{0x05, 0x01, 0x09, 0x02}):
 		mode = "absolute"
 	default:

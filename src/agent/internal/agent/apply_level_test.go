@@ -6,7 +6,7 @@ import (
 )
 
 func TestConfigApplyLevel(t *testing.T) {
-	base := Config{Device: DeviceConfig{DeviceType: "iOS"}, HID: HIDConfig{KeyboardLayout: "qwerty"}}
+	base := Config{Device: DeviceConfig{DeviceType: "macOS"}, HID: HIDConfig{KeyboardLayout: "qwerty"}}
 	tests := []struct {
 		name        string
 		edit        func(*Config)
@@ -14,8 +14,9 @@ func TestConfigApplyLevel(t *testing.T) {
 		wantReasons []string
 	}{
 		{"unrelated change", func(c *Config) { c.Locale = "en-US" }, ApplyLive, nil},
-		// iOS and macOS share absolute pointer mode, so no USB descriptor change.
-		{"device type within pointer mode", func(c *Config) { c.Device.DeviceType = "macOS" }, ApplyLive, nil},
+		// macOS and windows share absolute pointer mode, so no USB descriptor change.
+		{"device type within pointer mode", func(c *Config) { c.Device.DeviceType = "windows" }, ApplyLive, nil},
+		{"device type to iOS touchpad", func(c *Config) { c.Device.DeviceType = "iOS" }, ApplyReboot, []string{ApplyReasonPointerMode}},
 		{"device type across pointer mode", func(c *Config) { c.Device.DeviceType = "Android" }, ApplyReboot, []string{ApplyReasonPointerMode}},
 		{"keyboard layout", func(c *Config) { c.HID.KeyboardLayout = "azerty" }, ApplyReboot, []string{ApplyReasonKeyboardLayout}},
 		{"both", func(c *Config) {

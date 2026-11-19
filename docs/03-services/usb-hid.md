@@ -33,13 +33,13 @@ It will:
 
 `aico-usb-gadget.service` is the authoritative production startup path. It also
 brings up `usb0` at `192.168.42.1` for the config page and local USB networking.
-The completed keyboard + pointer + Consumer Control + ECM composite is bound to
-the UDC exactly once. Do not add a same-identity startup unbind/rebind: while the
-cable remains attached, iOS can retain the physical USB session but rebuild the
-HID interfaces with inconsistent external-keyboard and AssistiveTouch pointer
-state, leaving the cursor operational while the on-screen keyboard stays
-suppressed. A physical unplug/replug fully tears down that host session, which
-is why it can recover the symptom.
+The completed composite is bound to the UDC exactly once. For iOS it is
+Consumer Control + touchpad + ECM, without the keyboard (see
+[iOS touchpad and on-demand keyboard](#ios-touchpad-and-on-demand-keyboard));
+other device types also link the keyboard. Do not add a same-identity startup
+unbind/rebind: while the cable remains attached, iOS can retain the physical USB
+session but rebuild the HID interfaces with an inconsistent state. A physical
+unplug/replug fully tears down that host session.
 
 Restarting the unit does drop the configfs group and recreate it. The vendor
 kernel mishandled that path: `CONFIG_USB_CONFIGFS_UEVENT` kept a global
@@ -122,20 +122,27 @@ android_keyboard_device = "/dev/hidg2"
 frame_socket = "/run/frame_service/frame_service.sock"
 ```
 
+`[basic_settings.device].device_type` selects the `hid.usb1` pointer:
+
+| `device_type` | `pointer_mode` | `hid.usb1` |
+| --- | --- | --- |
+| `iOS` | `touchpad` | Digitizer touchpad, used by iOS as direct touch |
+| `Android` | `touchscreen` | Digitizer touchscreen |
+| `macOS`, `windows`, `linux` | `absolute` | Absolute mouse |
+
 The firmware also binds `hid.usb2` as `/dev/hidg2`. This second keyboard-like
-interface advertises Consumer Control usages. When `[basic_settings.device].device_type =
-"Android"` derives `pointer_mode = "touchscreen"`, it is used for Android
-extension keys such as Back, Home, App Switch, Search, Power, and Volume. Other
-device types derive `pointer_mode = "absolute"` and expose a smaller bitmap
-media-key interface that advertises only volume mute/up/down, media playback
-controls, screenshot, and brightness up/down.
+interface advertises Consumer Control usages. With `pointer_mode =
+"touchscreen"` it is used for Android extension keys such as Back, Home, App
+Switch, Search, Power, and Volume. The `touchpad` and `absolute` modes expose a
+smaller bitmap media-key interface that advertises only volume mute/up/down,
+media playback controls, screenshot, and brightness up/down.
 
 Built-in Agent tools:
 
 - `keyboard_tap`
 - `keyboard_text`
-- `mouse_move`
-- `mouse_scroll`
+- `mouse_move` (absolute mouse only)
+- `mouse_scroll` (absolute mouse only; direct touch scrolls with a `touch_gesture` swipe)
 - `touch_gesture`
 
 `touch_gesture` uses standard `type` gestures for normal interaction. It also
@@ -163,40 +170,10 @@ The main curve also covers timed movements in predefined quick actions.
 The profile is shared in `mnk/motion_profile.go`; new touch tools should call
 `SwipeWithOptions` or `TouchActions` rather than implement their own curve.
 
-After an iPhone turns between portrait and landscape, iOS keeps the pointer
-bounds of the orientation the USB device was enumerated in: a phone enumerated
-in portrait cannot move the pointer past the portrait width in landscape. When
-`device_type = "iOS"`, `touch_gesture` and `mouse_move` therefore compare the
-screenshot active area's orientation with the one the gadget was last
-enumerated in and, when it changed, detach and reattach the pointer before the
-action through the same `aico-dynamic-keyboard isolate`/`restore` round trip
-that modified keyboard input uses. Without that helper the step is skipped. The first portrait sighting after the Agent starts is taken as the
-enumeration orientation; the first landscape sighting re-enumerates once,
-because the board cannot know the orientation at plug-in.
-
-An iPhone mirrors its landscape picture upright, but iOS can map the absolute
-pointer surface turned against that picture: a half turn sends `(x, y)` to
-`(1000-x, 1000-y)`, and a quarter turn sends it to `(y, 1000-x)`. Both have been
-seen, including in a landscape video picture on a phone held upright. The frame
-alone cannot show the turn. When `device_type = "iOS"` and the screenshot
-active area is wider than tall, `touch_gesture` and `mouse_move` therefore park
-the pointer, move it onto the call's first point, and compare the frames around
-the four places that point can land. Every point of the call is then sent
-through the inverse of the turn found. A `drag_release` reuses the turn found by
-its `drag_start` so the held contact is not moved. When the check cannot decide
-(for example a target near the screen centre, where the four places overlap),
-a decision from the last two minutes on the same active area is reused;
-otherwise the points are sent unchanged. When the companion app reports
-`phone_orientation`, an earlier decision is reused only while the phone is held
-the same way. While it reports the phone held in landscape (`landscape_left` or
-`landscape_right`), the interface follows gravity, so a decision from the last two
-minutes on the same active area is reused without moving the pointer again. A
-phone held upright or flat with a landscape picture means an app forced
-landscape, and is checked on every call. Separately, a `touch_gesture` or
-`mouse_move` is not sent when the screen turned between portrait and landscape
-after the screenshot the model chose its coordinates on; the tool returns the
-current screenshot so the model can choose the target again. Portrait screens, other device types, and the touchscreen pointer
-mode are not checked.
+A `touch_gesture` or `mouse_move` is not sent when the screen turned between
+portrait and landscape after the screenshot the model chose its coordinates on;
+the tool returns the current screenshot so the model can choose the target
+again.
 
 The Agent's ADB input backend executes standard swipes as one continuous
 DOWN/MOVE/UP program using `sendevent`, with `input motionevent` as a fallback.
@@ -256,75 +233,116 @@ The order matters: switch the language _before_ saving the configuration, becaus
 
 `keyboard_text` can only input ASCII typeable characters. For Chinese or other non-ASCII text, use `enter_text` (which leverages the phone's on-screen keyboard and IME candidates) instead of transliterating to pinyin or romanized approximations. The configured layouts cover common ASCII keys, but country-specific punctuation variants may still require device verification.
 
-## iOS AssistiveTouch modifier isolation
+## iOS touchpad and on-demand keyboard
 
-On iOS, AssistiveTouch can make modifier routing unstable when an external
-keyboard and pointer are advertised by the same USB composite. Plain key input
-may work while shortcuts such as `Cmd+A` or `Cmd+V` are ignored.
+### iPhone settings
 
-When `[basic_settings.device].device_type` derives `pointer_mode = "absolute"`, firmware builds that include
-`/usr/lib/aico/aico-dynamic-keyboard` automatically isolate keyboard actions
-whose HID reports contain Ctrl, Shift, Option/Alt, or Cmd/Meta. This includes
-`keyboard_text` values containing uppercase letters or symbols that require
-Shift or AltGr on the configured keyboard layout. Plain key taps, unmodified text, pointer input, and
-Consumer Control continue to use the normal keyboard + pointer + Consumer
-Control + ECM composite.
+```text
+Settings > Accessibility > Zoom                      On
+Settings > Accessibility > Touch > AssistiveTouch    Off
+```
 
-Immediately before a modifier-bearing keyboard action, the Agent switches the
-single USB gadget to a pointer-free keyboard + Consumer Control + ECM profile.
-After the action, including error and cancellation paths, it restores the normal
-composite. The isolated profile uses a distinct USB product ID and serial number
-so iOS does not reuse the pointer-bearing descriptor for the input.
+With Zoom on, iOS accepts the board's digitizer touchpad (`05 0d 09 05`,
+report id 5, two contacts, 1920x1080 logical range) as direct touch: a contact
+lands where it is sent, no pointer is drawn, and there is no hover. With Zoom
+off, or AssistiveTouch on, iOS ignores every touch while keyboard input keeps
+working. A digitizer touchscreen descriptor and the absolute mouse are not
+accepted this way.
 
-The normal composite must enumerate the pointer as the last HID interface:
-`keyboard -> Consumer Control -> pointer -> ECM`. iOS builds its keyboard and
-AssistiveTouch pointer subsystem state in interface order; a pointer that is
-enumerated immediately after the keyboard leaves the on-screen keyboard policy
-subject to an async race, so after an isolate/restore cycle the soft keyboard
-only reappears about 80% of the time. With the Consumer Control interface between
-them, the keyboard subsystem settles first and the pointer registers last, which
-closes that race: field tests showed 10/10 successful soft-keyboard restores.
-The pointer must stay before ECM: putting a HID interface after the ECM IAD
-causes continuous USB reset loops on iOS.
+The touchpad's logical range covers the phone screen itself, not the HDMI
+frame, so normalized `0..1000` coordinates map onto it directly and black bars
+around the mirrored picture do not matter. Each report is 12 bytes:
+`[0x05, scan_lo, scan_hi, buttons, finger1(4), finger2(4)]`, where a finger is
+`tip | confidence<<1 | contact_id<<2` followed by X (12 bits) and Y (12 bits)
+packed little endian. Only finger 1 is used.
 
-One conversational Agent run owns a shared isolation scope. The first
-modifier-bearing keyboard operation removes the pointer, and later keyboard or
-Consumer Control operations reuse that profile without another enumeration. A
-mouse, touch, scroll, or wheel operation restores the normal profile only when
-the pointer is currently absent. If a later keyboard operation needs a modifier,
-the run isolates again. Success, failure, cancellation, preemption, panic
-cleanup, and normal termination all leave the scope through a context-independent
-final restore.
+### On-demand keyboard
 
-Direct HTTP Tool API calls use the same rules within one invocation, but do not
-share isolation state across separate requests. A modifier-bearing HTTP call
-therefore isolates and restores once unless that invocation needs pointer input
-before it completes.
+iOS hides its software keyboard while a hardware keyboard is attached, so the
+iOS composite idles without one:
 
-When `search_launch_app` omits `platform`, an active iOS HID isolation
-controller is also treated as an iOS platform signal. This keeps the documented
+| Profile | Interfaces | PID |
+| --- | --- | --- |
+| detached (boot) | Consumer Control (`hid.usb2`) -> touchpad (`hid.usb1`) -> ECM | `0x0180` |
+| attached | keyboard (`hid.usb0`) -> Consumer Control -> touchpad -> ECM | `0x0181` |
+
+Every HID stays before ECM: a HID after the ECM IAD makes iOS reset the bus.
+Each profile has its own product ID and serial number so iOS never reuses
+descriptors cached for the other.
+
+One conversational Agent run owns the keyboard scope. Its first keyboard action
+(`keyboard_tap`, `keyboard_text`, `enter_text`, `quick_action` shortcuts, the
+`open_app` search query) attaches the keyboard; later keyboard, touch, and
+media-key actions in the run reuse that profile without another enumeration.
+The run detaches the keyboard when it ends: success, failure, cancellation,
+preemption, and panic cleanup all leave the scope through a
+context-independent final detach. A run that never types never re-enumerates.
+A failed attach detaches immediately, and a detach that failed is retried
+(after a 5-second cooldown) before the next HID input. Direct HTTP Tool API
+calls use the same rules within one invocation. Each switch takes about two
+seconds and is logged as `keyboard attach|detach ok=... ms=...`.
+
+While the keyboard is attached, the software keyboard is hidden; that is
+expected, and the Agent prompt says so. Modifier shortcuts (`Cmd+A`, `Cmd+V`,
+`Cmd+Space`, `Shift`) work next to the touchpad, so no modifier isolation is
+needed. Shortcuts that edit text need the text committed: with a Chinese IME
+the letters can still be in pinyin composition, where `Cmd+A` selects nothing.
+
+When `search_launch_app` omits `platform`, an active iOS keyboard controller is
+also treated as an iOS platform signal. This keeps the documented
 `{"app":"WeChat"}` input on the `Cmd+Space` Spotlight path even while Phone
 Bridge is unavailable or backgrounded.
 
-The Luckfox board has one UDC, so isolation and restore briefly disconnect the
+The Luckfox board has one UDC, so attach and detach briefly disconnect the
 complete composite, including ECM. The dynamic controller and ECM watchdog
 share `/run/aico_dynamic_keyboard.lock` to prevent overlapping UDC resets. The
 controller also publishes a short post-switch grace deadline so the watchdog
-does not count the planned ECM interruption toward its stall threshold. Normal
-watchdog probes resume after the grace window and still recover persistent ECM
-failures. HID node open recovery also honors this deadline: a transient
-`/dev/hidg*` `ENXIO` waits and retries instead of forcing another composite
-refresh during the planned switch.
+does not count the planned ECM interruption toward its stall threshold. HID
+node open recovery also honors this deadline: a transient `/dev/hidg*`
+`ENXIO` waits and retries instead of forcing another composite refresh. Before
+each switch the board sends a `usb_reenumeration` BLE notice so the companion
+app ignores the ECM gap.
 
 Inspect or exercise the profiles manually with:
 
 ```bash
 /usr/lib/aico/aico-dynamic-keyboard status
-/usr/lib/aico/aico-dynamic-keyboard isolate
-/usr/lib/aico/aico-dynamic-keyboard restore
+/usr/lib/aico/aico-dynamic-keyboard attach
+/usr/lib/aico/aico-dynamic-keyboard detach
 ```
 
-After any test, `status` should report `mode=normal` and list `hid.usb0`,
-`hid.usb1`, `hid.usb2`, and `ecm.usb0`. Use HDMI visual feedback to verify the
-shortcut effect; a successful `/dev/hidg0` write only proves that the gadget
-accepted the HID report.
+After any test, `status` should report `mode=detached` and list `hid.usb1`,
+`hid.usb2`, and `ecm.usb0`. The `/dev/hidgN` numbers follow the linked
+functions, so look them up in configfs (`functions/hid.usbN/dev`) instead of
+assuming `/dev/hidg1` is the touchpad. Use HDMI visual feedback to verify an
+effect; a successful write only proves that the gadget accepted the report.
+
+### iOS touchpad in landscape
+
+The touchpad reports in the phone panel's own coordinates, like a finger on
+the glass, while the HDMI picture is always upright. In landscape a point chosen
+on the screenshot therefore lands turned by a quarter, in a direction set by
+which way the phone is turned:
+
+| Phone | Sent `(x, y)` lands at |
+| --- | --- |
+| Portrait | `(x, y)` |
+| Landscape, `turned_left` | `(1000-y, x)` |
+| Landscape, `turned_right` | `(y, 1000-x)` |
+
+Unlike the AssistiveTouch pointer, the touchpad does not clamp at the portrait
+width, and re-enumerating does not change the mapping. The provider sends every
+point through the inverse of the current turn, so taps, swipes, drags, and
+`tap_sequence` all land where they were chosen.
+
+The screenshot cannot tell the two landscape directions apart. While the
+latest screenshot is landscape and the direction is unknown, `touch_gesture`
+refuses other gestures and asks for `{"type":"orientation_probe","point":...}`
+on a control that is harmless to press and shows a press highlight, whose
+mirror `(1000-x, 1000-y)` is also harmless. The probe presses that point,
+captures a frame while the contact is held, compares the press highlight at
+the point and at its mirror, and releases. The release completes one tap. The
+direction learned is kept until the screenshot is portrait again. Turning the
+phone directly from one landscape direction to the other keeps the screenshot
+landscape and is not noticed; touches then land mirrored until the screen
+leaves landscape.

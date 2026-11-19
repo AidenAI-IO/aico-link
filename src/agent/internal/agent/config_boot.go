@@ -17,7 +17,7 @@ type bootUSBConfig struct {
 // ConfigForUSBBoot keeps the runtime consistent with the bound USB descriptor
 // across Agent restarts. A new boot accepts the newly configured keyboard layout.
 func ConfigForUSBBoot(cfg Config, statePath, bootID, pointerMode string) (Config, error) {
-	if bootID == "" || (pointerMode != "absolute" && pointerMode != "touchscreen") {
+	if bootID == "" || (pointerMode != "absolute" && pointerMode != "touchscreen" && pointerMode != "touchpad") {
 		return Config{}, fmt.Errorf("invalid USB boot identity")
 	}
 	state := bootUSBConfig{}
@@ -35,9 +35,13 @@ func ConfigForUSBBoot(cfg Config, statePath, bootID, pointerMode string) (Config
 	// The descriptor is authoritative even on the first Agent start after an
 	// installation, when the config may already differ from the running gadget.
 	if (DeviceConfig{DeviceType: state.DeviceType}).PointerModeOrDefault() != pointerMode {
-		state.DeviceType = "iOS"
-		if pointerMode == "touchscreen" {
+		switch pointerMode {
+		case "touchscreen":
 			state.DeviceType = "Android"
+		case "absolute":
+			state.DeviceType = "macOS"
+		default:
+			state.DeviceType = "iOS"
 		}
 	}
 	encoded, err := json.Marshal(state)

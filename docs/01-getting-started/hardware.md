@@ -109,13 +109,21 @@ with no internal pull-up or pull-down. I2C4 runs at 100 kHz for reliable RK628D
 
 ## iOS HID Prerequisites
 
-To control an iOS device via USB HID, enable on the target iOS device:
+To control an iOS device via USB HID, set on the target iOS device:
 
 ```text
-Settings > Accessibility > Touch > AssistiveTouch
+Settings > Accessibility > Zoom                      On
+Settings > Accessibility > Touch > AssistiveTouch    Off
 ```
 
-It is also recommended to enable **Show Onscreen Keyboard** on the AssistiveTouch page for a more stable keyboard input experience.
+With Zoom on, iOS takes the board's HID touchpad as direct touch: a touch
+lands where it is sent and no pointer is drawn. With AssistiveTouch on, iOS
+ignores the touchpad.
+
+The board does not keep a hardware keyboard attached, so the iPhone's
+software keyboard stays available. The Agent attaches the keyboard only
+while a task types and detaches it when the task ends; see
+[USB HID](../03-services/usb-hid.md).
 
 ## Default Device Nodes
 
@@ -124,8 +132,8 @@ It is also recommended to enable **Show Onscreen Keyboard** on the AssistiveTouc
 | Video capture | `/dev/video0` | RK628D or TC358743 bridge output to the V4L2 capture device |
 | HDMI subdev | Auto-detected `rk628-csi` or `tc358743` node | EDID / DV timings / HDMI sync; the exact `/dev/v4l-subdevX` index can vary |
 | Keyboard HID | `/dev/hidg0` | Default keyboard device for Go Agent and example tools |
-| Mouse/touch HID | `/dev/hidg1` | Go Agent uses the same HID device for mouse/touch input |
-| Auxiliary control HID | `/dev/hidg2` | Android extension keys in touchscreen mode; Consumer Control media, volume, brightness, and screenshot keys in absolute mode |
+| Mouse/touch HID | `/dev/hidg1` | iOS touchpad, Android touchscreen, or desktop absolute mouse, following `device_type` |
+| Auxiliary control HID | `/dev/hidg2` | Android extension keys in touchscreen mode; Consumer Control media, volume, brightness, and screenshot keys in touchpad and absolute modes |
 | Frame socket | `/run/frame_service/frame_service.sock` | Default path for system service deployment |
 | Audio socket | `/run/audio_service/audio_service.sock` | Default path for system service deployment |
 

@@ -306,7 +306,9 @@ Try reinitializing:
 systemctl restart aico-usb-gadget.service
 ```
 
-For iOS target devices, confirm AssistiveTouch is enabled.
+For iOS target devices, confirm Zoom is on and AssistiveTouch is off
+(`Settings > Accessibility`). Touch input is ignored in any other combination;
+keyboard input still works, which makes it look like a pointer-only fault.
 
 If the host reports `unknown main item tag`, `item fetching failed`, or
 `hid-generic ... error -22`, the HID report descriptor was emitted as ASCII

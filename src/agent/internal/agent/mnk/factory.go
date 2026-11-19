@@ -54,6 +54,16 @@ func (f *ProviderFactory) CreateHIDProviderWithDevices(
 	), nil
 }
 
+// CreateTouchpadHIDProviderWithDevices builds an HID provider whose pointer
+// is the iOS digitizer touchpad.
+func (f *ProviderFactory) CreateTouchpadHIDProviderWithDevices(
+	pointerDev, keyboardDev, androidKeyboardDev Device,
+	keyboardLayout string,
+	gate ProfileGate,
+) (Provider, error) {
+	return NewTouchpadHIDProvider(pointerDev, keyboardDev, androidKeyboardDev, f.screenState, keyboardLayout, gate), nil
+}
+
 // CreateADBProvider builds an ADB Provider.
 // The error return is reserved for future validation; current construction always succeeds.
 func (f *ProviderFactory) CreateADBProvider() (Provider, error) {

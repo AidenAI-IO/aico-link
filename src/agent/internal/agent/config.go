@@ -672,9 +672,11 @@ type HIDConfig struct {
 	MouseDevice           string `toml:"mouse_device,omitempty"`
 	AndroidKeyboardDevice string `toml:"android_keyboard_device,omitempty"`
 	FrameSocket           string `toml:"frame_socket,omitempty"`
-	// PointerMode selects the hid.usb1 report format: "absolute" (iOS AssistiveTouch
-	// plus limited hid.usb2 media keys) or "touchscreen" (Android HID digitizer
-	// plus full hid.usb2 Android extension keys).
+	// PointerMode selects the hid.usb1 report format: "touchpad" (iOS digitizer
+	// touchpad, used as direct touch with Zoom on and AssistiveTouch off, plus
+	// limited hid.usb2 media keys; the keyboard attaches only while a run types),
+	// "touchscreen" (Android HID digitizer plus full hid.usb2 Android extension
+	// keys), or "absolute" (desktop absolute mouse plus media keys).
 	PointerMode string `toml:"pointer_mode,omitempty"`
 	// InputBackend selects the low-level input path for keyboard/touch tools:
 	// "hid" writes USB HID reports, "adb" sends Android adb shell input commands.
@@ -724,10 +726,14 @@ func (d DeviceConfig) PlatformOrDefault() string {
 }
 
 func (d DeviceConfig) PointerModeOrDefault() string {
-	if d.PlatformOrDefault() == "android" {
+	switch d.PlatformOrDefault() {
+	case "android":
 		return "touchscreen"
+	case "ios":
+		return "touchpad"
+	default:
+		return "absolute"
 	}
-	return "absolute"
 }
 
 func deviceTypePlatform(deviceType string) string {
@@ -821,13 +827,23 @@ func (h HIDConfig) PointerModeOrDefault() string {
 	switch strings.ToLower(strings.TrimSpace(h.PointerMode)) {
 	case "touchscreen":
 		return "touchscreen"
+	case "touchpad":
+		return "touchpad"
 	default:
 		return "absolute"
 	}
 }
 
+// PointerTouchscreen reports whether hid.usb1 is a touchscreen digitizer.
 func (h HIDConfig) PointerTouchscreen() bool {
 	return h.PointerModeOrDefault() == "touchscreen"
+}
+
+// PointerDirectTouch reports whether the pointer touches the screen directly
+// (touchscreen or touchpad): no on-screen cursor, no hover, no wheel.
+func (h HIDConfig) PointerDirectTouch() bool {
+	mode := h.PointerModeOrDefault()
+	return mode == "touchscreen" || mode == "touchpad"
 }
 
 func (h HIDConfig) InputBackendOrDefault() string {
@@ -2037,9 +2053,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("invalid hid.keyboard_layout: %s (expected %s)", c.HID.KeyboardLayout, mnk.KeyboardLayoutValuesText())
 	}
 	switch strings.ToLower(strings.TrimSpace(c.HID.PointerMode)) {
-	case "", "absolute", "touchscreen":
+	case "", "absolute", "touchscreen", "touchpad":
 	default:
-		return fmt.Errorf("invalid hid.pointer_mode: %s (expected absolute or touchscreen)", c.HID.PointerMode)
+		return fmt.Errorf("invalid hid.pointer_mode: %s (expected absolute, touchscreen, or touchpad)", c.HID.PointerMode)
 	}
 	switch strings.ToLower(strings.TrimSpace(c.HID.InputBackend)) {
 	case "", "hid", "adb":

@@ -317,7 +317,7 @@ func TestUpdateConfigFileRebootUsesEffectiveHIDConfig(t *testing.T) {
 		wantReboot    bool
 	}{
 		{name: "canonical spelling only", deviceType: "ios", wantCanonical: "iOS", wantReboot: false},
-		{name: "same pointer mode", deviceType: "macOS", wantCanonical: "macOS", wantReboot: false},
+		{name: "different pointer mode, desktop", deviceType: "macOS", wantCanonical: "macOS", wantReboot: true},
 		{name: "different pointer mode", deviceType: "Android", wantCanonical: "Android", wantReboot: true},
 	}
 	for _, tt := range tests {
@@ -1784,7 +1784,8 @@ keyboard_layout = "qwerty"
 		patch string
 		want  agent.ApplyLevel
 	}{
-		{`{"config":{"device":{"device_type":"macOS"}}}`, agent.ApplyLive},
+		{`{"config":{"device":{"device_type":"ios"}}}`, agent.ApplyLive},
+		{`{"config":{"device":{"device_type":"macOS"}}}`, agent.ApplyReboot},
 		{`{"config":{"device":{"device_type":"Android"}}}`, agent.ApplyReboot},
 		{`{"config":{"hid":{"keyboard_layout":"azerty"}}}`, agent.ApplyReboot},
 		{`{"config":{}}`, agent.ApplyLive},
