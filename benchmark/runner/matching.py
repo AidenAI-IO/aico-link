@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 import re
 from typing import Any
 
@@ -13,22 +14,20 @@ _RFC3339 = re.compile(
 )
 
 
-def parse_rfc3339(value: Any) -> datetime | None:
+def parse_rfc3339(value: Any) -> tuple[datetime, Decimal] | None:
+    """Return a comparison key with an aware whole second and exact fraction."""
     if not isinstance(value, str):
         return None
     match = _RFC3339.fullmatch(value)
     if match is None:
         return None
-    timestamp = match["timestamp"]
-    fraction = match["fraction"]
-    if fraction is not None:
-        # Python 3.10 requires three or six fractional digits.
-        timestamp += "." + fraction[:6].ljust(6, "0")
     offset = "+00:00" if match["offset"] == "Z" else match["offset"]
     try:
-        return datetime.fromisoformat(timestamp + offset)
+        whole_second = datetime.fromisoformat(match["timestamp"] + offset)
     except ValueError:
         return None
+    fraction = Decimal("0." + (match["fraction"] or "0"))
+    return whole_second, fraction
 
 
 def dict_contains(actual: dict[str, Any], expected: dict[str, Any]) -> bool:

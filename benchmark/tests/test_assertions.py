@@ -752,7 +752,12 @@ def test_rfc3339_bounds_match_equivalent_fractional_seconds():
         "$rfc3339_lte": "2037-11-20T15:30:00.10+08:00",
     }
     assert value_matches("2037-11-20T07:30:00.1Z", bounds)
+    assert value_matches("2037-11-20T07:30:00.1000000Z", bounds)
+    assert not value_matches("2037-11-20T07:30:00.1000009Z", bounds)
     assert not value_matches("2037-11-20T07:30:00.11Z", bounds)
+    assert value_matches("2037-11-20T07:30:00.1000009Z", {
+        "$rfc3339_gte": "2037-11-20T15:30:00.1000009+08:00",
+    })
 
 
 def test_required_calendar_query_matches_time_window_by_instant():
