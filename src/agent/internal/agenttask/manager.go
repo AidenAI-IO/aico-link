@@ -717,15 +717,16 @@ func (m *Manager) CancelUnfinished(taskID string) (Task, error) {
 }
 
 // cancelLocked moves an unfinished task towards cancellation. A queued task, or
-// one with no active run, finishes at once; a running one is marked cancelling
-// and the returned function, called after the lock is released, stops its run.
-// A task already cancelling is left as it is.
+// one with no active run (it waits for the user after its run returned),
+// finishes at once. A task with an active run is marked cancelling, even when it
+// has just asked for the user, and the returned function, called after the lock
+// is released, stops that run. A task already cancelling is left as it is.
 func (m *Manager) cancelLocked(item *entry) context.CancelFunc {
 	switch item.task.Status {
 	case StatusCreated, StatusQueued:
 		m.finishLocked(item, StatusCancelled, "", "")
 	case StatusRunning:
-		if item.task.PendingUserAction != nil || item.cancel == nil {
+		if item.cancel == nil {
 			m.finishLocked(item, StatusCancelled, "", "")
 			return nil
 		}

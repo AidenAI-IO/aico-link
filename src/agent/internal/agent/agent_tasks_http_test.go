@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -216,10 +217,11 @@ func TestChatCancelStopsBackgroundTask(t *testing.T) {
 		task    agenttask.Task
 		chatRun bool
 		want    string
+		status  string
 	}{
-		{"running", agenttask.Task{ID: "task_1", Status: agenttask.StatusRunning}, false, "task_1"},
-		{"finished", agenttask.Task{ID: "task_1", Status: agenttask.StatusCompleted, CompletedAt: &finished}, false, ""},
-		{"chat run with the same ID", agenttask.Task{ID: "task_1", Status: agenttask.StatusRunning}, true, ""},
+		{"running", agenttask.Task{ID: "task_1", Status: agenttask.StatusRunning}, false, "task_1", "canceled"},
+		{"finished", agenttask.Task{ID: "task_1", Status: agenttask.StatusCompleted, CompletedAt: &finished}, false, "", "not_running"},
+		{"chat run with the same ID", agenttask.Task{ID: "task_1", Status: agenttask.StatusRunning}, true, "", "canceled"},
 	} {
 		server := &Server{logger: newTestLogger()}
 		tasks := &fakeAgentTasks{tasks: []agenttask.Task{tc.task}}
@@ -230,8 +232,12 @@ func TestChatCancelStopsBackgroundTask(t *testing.T) {
 		}
 		recorder := httptest.NewRecorder()
 		server.handleChatCancel(recorder, httptest.NewRequest(http.MethodPost, "/api/chat/cancel", strings.NewReader(`{"request_id":"task_1"}`)))
-		if tasks.cancelled != tc.want || runCancelled != tc.chatRun {
-			t.Fatalf("%s: task cancelled=%q run cancelled=%t body=%s", tc.name, tasks.cancelled, runCancelled, recorder.Body)
+		var resp ChatCancelResponse
+		if err := json.NewDecoder(recorder.Body).Decode(&resp); err != nil || recorder.Code != http.StatusOK {
+			t.Fatalf("%s: code=%d err=%v", tc.name, recorder.Code, err)
+		}
+		if tasks.cancelled != tc.want || runCancelled != tc.chatRun || resp.Status != tc.status {
+			t.Fatalf("%s: task cancelled=%q run cancelled=%t status=%q", tc.name, tasks.cancelled, runCancelled, resp.Status)
 		}
 	}
 }

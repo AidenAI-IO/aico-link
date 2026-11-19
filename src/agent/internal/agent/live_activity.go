@@ -761,11 +761,7 @@ func (m *LiveActivityManager) finishTask(requestID, status, step, errText string
 	state.UpdatedAt = now
 	state.EndedAt = &now
 	m.states[requestID] = state
-	// A finished activity must not replace another one that is still running,
-	// or the phone loses that activity's stop control.
-	if active, ok := m.states[m.activeRequestID]; !ok || active.EndedAt != nil || m.activeRequestID == requestID {
-		m.activeRequestID = requestID
-	}
+	m.activeRequestID = requestID
 	m.mu.Unlock()
 	m.publish(requestID, true)
 	m.scheduleCleanup(requestID, now, liveActivityFinalStateRetention)
@@ -795,19 +791,7 @@ func (m *LiveActivityManager) SnapshotActive() *LiveActivityState {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.activeRequestID != "" {
-		if state, ok := m.states[m.activeRequestID]; ok {
-			return &state
-		}
-	}
-	var latest *LiveActivityState
-	for _, state := range m.states {
-		candidate := state
-		if latest == nil || candidate.UpdatedAt.After(latest.UpdatedAt) {
-			latest = &candidate
-		}
-	}
-	return latest
+	return m.selectActiveLocked(func(LiveActivityState) bool { return true })
 }
 
 func (m *LiveActivityManager) SnapshotActiveForPhone(phoneID string) *LiveActivityState {
@@ -820,22 +804,39 @@ func (m *LiveActivityManager) SnapshotActiveForPhone(phoneID string) *LiveActivi
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.activeRequestID != "" {
-		if state, ok := m.states[m.activeRequestID]; ok && liveActivityStateMatchesPhoneID(state, phoneID) {
-			return &state
+	return m.selectActiveLocked(func(state LiveActivityState) bool {
+		return liveActivityStateMatchesPhoneID(state, phoneID)
+	})
+}
+
+// selectActiveLocked picks the state the phone shows. Work that is still
+// running wins over a finished one, so a task or chat that ends while another
+// runs never hides the running one's stop control. Among equals the most
+// recently selected request wins, then the most recently updated one.
+func (m *LiveActivityManager) selectActiveLocked(match func(LiveActivityState) bool) *LiveActivityState {
+	var best *LiveActivityState
+	better := func(candidate LiveActivityState) bool {
+		if best == nil {
+			return true
 		}
+		if (candidate.EndedAt == nil) != (best.EndedAt == nil) {
+			return candidate.EndedAt == nil
+		}
+		if candidate.RequestID == m.activeRequestID || best.RequestID == m.activeRequestID {
+			return candidate.RequestID == m.activeRequestID
+		}
+		return candidate.UpdatedAt.After(best.UpdatedAt)
 	}
-	var latest *LiveActivityState
 	for _, state := range m.states {
-		if !liveActivityStateMatchesPhoneID(state, phoneID) {
+		if !match(state) {
 			continue
 		}
-		candidate := state
-		if latest == nil || candidate.UpdatedAt.After(latest.UpdatedAt) {
-			latest = &candidate
+		if better(state) {
+			candidate := state
+			best = &candidate
 		}
 	}
-	return latest
+	return best
 }
 
 func (m *LiveActivityManager) publish(requestID string, final bool) {
