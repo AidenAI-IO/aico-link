@@ -178,8 +178,10 @@ last_reset=0
 last_rx=$(read_rx_packets)
 # Seconds since the epoch until which a failed probe counts against the short
 # post-switch threshold; 0 outside such a window.
-replug_until=0
+# A watchdog (re)started during a switch's grace period still owes that switch
+# its window; an old deadline yields a window already in the past.
 seen_grace=$(grace_deadline)
+replug_until=$((seen_grace + replug_window))
 while :; do
     sleep "${interval}"
     [ "$(cat "${udc_state_file}" 2>/dev/null || true)" = configured ] || {
@@ -194,7 +196,11 @@ while :; do
     fi
     grace_active && { failures=0; continue; }
     limit=${threshold}
-    [ "$(date +%s)" -lt "${replug_until}" ] && limit=${replug_threshold}
+    in_replug_window=0
+    if [ "$(date +%s)" -lt "${replug_until}" ]; then
+        limit=${replug_threshold}
+        in_replug_window=1
+    fi
 
     # No carrier means no host is attached to ECM at all.  That is not a stall,
     # and resetting the gadget over it would churn a perfectly idle device.
@@ -226,7 +232,7 @@ while :; do
     # The cooldown keeps an idle reset loop from churning the gadget. A link
     # lost to a switch the board made is not that loop; repair it every time.
     if [ "${failures}" -ge "${limit}" ] && \
-        { [ "${limit}" -eq "${replug_threshold}" ] || [ $((now - last_reset)) -ge "${cooldown}" ]; }; then
+        { [ "${in_replug_window}" -eq 1 ] || [ $((now - last_reset)) -ge "${cooldown}" ]; }; then
         logger -t aico-usb-ecm-watchdog "resetting stalled composite gadget"
         reset_composite "ECM stall" || logger -t aico-usb-ecm-watchdog "composite reset failed"
         last_reset=${now}
