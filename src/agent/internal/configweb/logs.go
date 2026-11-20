@@ -346,7 +346,37 @@ func (s *Server) supportServiceLogs() []struct {
 		{"services/wifi-proxy.log", "/var/log/wifi_proxy/wifi_proxy.log"},
 		{"services/boot-timeline.log", "/var/log/aico_boot_timeline.log"},
 		{"services/ota-update.log", s.options.OTAUpdateLogPath},
+		{"diagnostics/service-events.jsonl", "/userdata/diagnostics/service-events.jsonl"},
 	}
+}
+
+func supportDiagnosticsLogTails() []struct {
+	name string
+	path string
+} {
+	dir := "/userdata/diagnostics/last"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	files := make([]struct {
+		name string
+		path string
+	}, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.Contains(name, "/") || strings.Contains(name, "..") {
+			continue
+		}
+		files = append(files, struct {
+			name string
+			path string
+		}{"diagnostics/last/" + name, filepath.Join(dir, name)})
+	}
+	return files
 }
 
 func unavailableSupportFile(name, source string, err error) supportArchiveFile {
@@ -451,7 +481,7 @@ func (s *Server) handleSupportLogsExport(w http.ResponseWriter, _ *http.Request)
 	} else {
 		files = append(files, unavailableSupportFile(llmName, llm, err))
 	}
-	for _, service := range s.supportServiceLogs() {
+	for _, service := range append(s.supportServiceLogs(), supportDiagnosticsLogTails()...) {
 		if data, err := tailFile(service.path, supportLogTailLimit); err == nil {
 			files = append(files, supportArchiveFile{name: service.name, data: data})
 		} else {

@@ -62,6 +62,7 @@ suites:
     command: go test -count=1 -timeout=10m ./...
     quick: true
     quick_command: |
+      go test -race -count=1 -timeout=2m ./internal/agent/tts/adapters/ekho
       go test -count=1 -timeout=2m -run '^TestShared' ./internal/ota
       go test -count=1 -timeout=2m -run '^TestSourceLstat' ./internal/backup
       go test -count=1 -timeout=2m -run '^Test(NativeText|NativeSystemAction|QuickAction|EnterText|HandleProviderMNK|HTTPHandler|HTTPProvider|GoEnvironmentBridge|EnvironmentBridge|IPhoneMirroring)' ./internal/agent ./internal/agent/mnk
@@ -96,6 +97,15 @@ suites:
     dependencies: [uv]
     required: true
     timeout_seconds: 1200
+
+  - name: industry-analysis
+    class: deterministic
+    paths: [.github/workflows/industry-analysis-weekly.yml, scripts/industry_analysis.py, scripts/industry_analysis_publish.py, scripts/industry_analysis_report.css, benchmark/ci/notify_lark.py, tests/test_industry_analysis.py]
+    # The publisher imports oss2, the dependency pinned in the workflow.
+    command: uv run --no-project --python 3.12 --with oss2==2.19.1 python -m unittest tests.test_industry_analysis
+    dependencies: [uv]
+    required: true
+    timeout_seconds: 300
 
   - name: skillopt-python
     class: deterministic
@@ -141,8 +151,10 @@ suites:
 
   - name: debian-systemd-overlay
     class: deterministic
-    paths: [overlay-debian, scripts/test_debian_systemd_overlay.sh]
-    command: bash scripts/test_debian_systemd_overlay.sh
+    paths: [overlay-debian, scripts/test_debian_systemd_overlay.sh, scripts/test_aico_service_incident.sh]
+    command: |
+      bash scripts/test_debian_systemd_overlay.sh
+      bash scripts/test_aico_service_incident.sh
     dependencies: [bash, sh, python3, rg, systemd-analyze]
     required: true
     timeout_seconds: 180

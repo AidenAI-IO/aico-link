@@ -66,6 +66,15 @@ hidden pages pause polling, and failed requests clear stale readings and retry.
 The resource snapshot is available over the same connections as the Web UI;
 the existing MCU control endpoints remain restricted to USB and loopback.
 
+Beside hardware resources, the inspector lists **Core services** (Agent, Frame,
+Audio, BLE, Config Web, MCU, Wi-Fi Proxy, Terminal). That panel polls
+`GET /api/diagnostics/services` every five seconds while visible and shows each
+unit's severity, CPU/memory sample, and restart count. Failure history comes
+from `GET /api/diagnostics/incidents`, backed by
+`/userdata/diagnostics/service-events.jsonl` written by
+`aico-service-incident` when a core unit's `OnFailure=` fires. Support log
+exports include that events file and the per-unit `last/` log tails.
+
 ## Run Modes
 
 The HTTP server and Web UI start in every input mode. `input_mode` controls whether the daemon also runs the device-side voice loop:

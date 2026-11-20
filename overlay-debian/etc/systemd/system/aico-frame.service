@@ -1,5 +1,6 @@
 [Unit]
 Description=Aico Link frame capture service
+OnFailure=aico-service-incident@%p.service
 Requires=aico-userdata-migrate.service aico-environment.service aico-media-modules.service
 After=aico-userdata-migrate.service aico-environment.service aico-media-modules.service
 # HDMI input may appear well after boot. Retry indefinitely, with RestartSec

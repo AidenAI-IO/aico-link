@@ -1,12 +1,14 @@
 package mnk
 
 import (
+	"aico-agent/internal/logging"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -191,6 +193,7 @@ func (d *HIDDevice) ensureOpenLocked() error {
 		// ENXIO means the device node exists but the USB gadget function is not enabled
 		// (e.g. USB host suspended the connection). Try to trigger a USB composite refresh.
 		if errors.Is(err, syscall.ENXIO) {
+			logging.Warnf("agent", "mnk", "HID open %s returned ENXIO; refreshing the USB composite (udc=%s)", d.path, readUDCStateForLog())
 			refreshErr := triggerUSBCompositeRefresh()
 			if refreshErr == nil {
 				// Wait briefly for the gadget to rebind and reach configured state
@@ -423,4 +426,17 @@ var androidExtensionUsageMap = map[string]uint16{
 	// 0x0c01A2 is mapped to ALL_APPS, while 0x0c029F is mapped to
 	// RECENT_APPS / KEYCODE_APP_SWITCH.
 	"app_switch": 0x029f,
+}
+
+// readUDCStateForLog reports the USB device controller state for a log line.
+func readUDCStateForLog() string {
+	matches, _ := filepath.Glob("/sys/class/udc/*/state")
+	if len(matches) == 0 {
+		return "unknown"
+	}
+	state, err := os.ReadFile(matches[0])
+	if err != nil {
+		return "unreadable"
+	}
+	return strings.TrimSpace(string(state))
 }

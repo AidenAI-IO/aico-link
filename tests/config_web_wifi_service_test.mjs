@@ -9,12 +9,13 @@
  *   - the `iw` scan dump is the only place the security of a nearby network is
  *     known, and its records are order-dependent.
  *
- * The transport calls themselves are exercised on the board, not here.
+ * Live updates are exercised with delayed requests and a controllable clock.
  */
 
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
+import {test} from 'node:test';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const service = await import(
@@ -117,5 +118,137 @@ assert.deepEqual(
   'nothing is hidden when no profile is saved',
 );
 assert.deepEqual(otherNetworks(undefined, [], ''), []);
+
+/* ---------------------------------------------------------- live updates --- */
+
+const {watchWiFi} = await import(
+  pathToFileURL(path.join(repositoryRoot, 'src/config_web/web/assets/js/app/wifi-status.js')).href
+);
+
+test('Wi-Fi observations recover, pause in the background, and reject stale reads after a save', async t => {
+  const original = Object.fromEntries(['document', 'window', 'fetch', 'setTimeout', 'clearTimeout'].map(key => [key, globalThis[key]]));
+  const timers = new Set();
+  const reads = [];
+  const changes = [];
+  const sources = [];
+  const observations = [];
+  const browser = new EventTarget();
+  browser.CustomEvent = CustomEvent;
+  globalThis.window = browser;
+  globalThis.document = new EventTarget();
+  document.hidden = false;
+  globalThis.setTimeout = (callback, ms) => {
+    const timer = {callback, ms};
+    timers.add(timer);
+    return timer;
+  };
+  globalThis.clearTimeout = timer => timers.delete(timer);
+  globalThis.fetch = (url, options) => new Promise((resolve, reject) => {
+    reads.push({url, options, resolve: payload => resolve({ok: true, text: async () => typeof payload === 'string' ? payload : JSON.stringify(payload)}), reject});
+  });
+  let attached = true;
+  const stop = watchWiFi((value, {source}) => { changes.push(value); sources.push(source); }, {
+    isActive: () => attached, onObservation: value => observations.push(value),
+  });
+  t.after(() => { stop(); Object.assign(globalThis, original); });
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  async function tick(ms) {
+    for (const timer of [...timers]) {
+      if (timer.ms === ms) { timers.delete(timer); timer.callback(); }
+    }
+    await flush();
+  }
+  const disconnected = {wifi: {networks: []}, wifi_status: {connected: false, ssid: '', state: 'DISCONNECTED', observed_at_unix_us: 100}};
+  const connected = {wifi: {networks: [{ssid: 'Home'}]}, wifi_status: {connected: true, ssid: 'Home', state: 'COMPLETED', ip_address: '192.168.1.8'}};
+
+  await tick(0);
+  assert.equal(reads[0].url, '/api/network/wifi/status');
+  assert.equal(reads[0].options.cache, 'no-store');
+  reads[0].resolve(disconnected);
+  await flush();
+  assert.deepEqual(changes, [disconnected]);
+  assert.equal(sources.at(-1), 'poll');
+
+  await tick(1000);
+  await tick(1000);
+  assert.equal(reads.length, 2, 'a slow read never overlaps another poll');
+  reads[1].resolve({...disconnected, wifi_status: {...disconnected.wifi_status, observed_at_unix_us: 200}});
+  await flush();
+  assert.equal(changes.length, 1, 'unchanged observations do not repaint the UI');
+  assert.equal(observations.at(-1).wifi_status.observed_at_unix_us, 200, 'unchanged observations still refresh sampling order');
+
+  await tick(1000);
+  browser.dispatchEvent(new CustomEvent('aico:wifi-changed', {detail: connected}));
+  assert.deepEqual(changes.at(-1), connected, 'a completed connection paints immediately');
+  assert.equal(sources.at(-1), 'task');
+  const published = changes.length;
+  browser.dispatchEvent(new CustomEvent('aico:wifi-changed', {detail: connected}));
+  assert.equal(changes.length, published + 1, 'identical task results still establish ordering against navigation reads');
+  reads[2].resolve(disconnected);
+  await flush();
+  assert.deepEqual(changes.at(-1), connected, 'a pre-save read cannot revert the new connection');
+
+  await tick(0);
+  reads.at(-1).reject(new Error('device unreachable'));
+  await flush();
+  assert.equal(changes.at(-1).wifi_status.state, 'UNKNOWN', 'an outage cannot keep a stale connection badge');
+  await tick(1000);
+  reads.at(-1).resolve(connected);
+  await flush();
+  assert.deepEqual(changes.at(-1), connected, 'polling recovers after an outage');
+
+  for (const malformed of ['not JSON', {wifi_status: {}}, {wifi_status: {connected: true, state: 'COMPLETED'}}]) {
+    await tick(1000);
+    reads.at(-1).resolve(malformed);
+    await flush();
+    assert.equal(changes.at(-1).wifi_status.state, 'UNKNOWN', 'an unreadable status cannot retain a connected badge');
+    await tick(1000);
+    reads.at(-1).resolve(connected);
+    await flush();
+    assert.deepEqual(changes.at(-1), connected, 'a valid response recovers from malformed data');
+  }
+
+  await tick(1000);
+  const stale = reads.at(-1);
+  stop.refresh();
+  assert.equal(stale.options.signal.aborted, true, 'a fresh snapshot invalidates an older poll');
+  const beforeRefresh = changes.length;
+  stale.resolve(disconnected);
+  await flush();
+  assert.equal(changes.length, beforeRefresh);
+  await tick(0);
+  reads.at(-1).resolve(connected);
+  await flush();
+  assert.equal(changes.length, beforeRefresh + 1, 'the next observation is delivered even if it matches a pre-navigation poll');
+
+  document.hidden = true;
+  document.dispatchEvent(new Event('visibilitychange'));
+  const count = reads.length;
+  await tick(1000);
+  assert.equal(reads.length, count, 'background tabs do not poll');
+  document.hidden = false;
+  document.dispatchEvent(new Event('visibilitychange'));
+  await tick(0);
+  assert.equal(reads.length, count + 1, 'returning to the page refreshes immediately');
+  reads.at(-1).resolve(disconnected);
+  await flush();
+  assert.deepEqual(changes.at(-1), disconnected, 'external disconnects update without scanning');
+
+  attached = false;
+  const readsBeforeDetach = reads.length;
+  const painted = changes.length;
+  await tick(1000);
+  assert.equal(reads.length, readsBeforeDetach, 'detaching stops polling even after repeated unchanged observations');
+  browser.dispatchEvent(new CustomEvent('aico:wifi-changed', {detail: connected}));
+  await tick(1000);
+  assert.equal(changes.length, painted, 'a stopped watcher cannot repaint or restart');
+  assert.equal(timers.size, 0);
+  document.hidden = true;
+  document.dispatchEvent(new Event('visibilitychange'));
+  document.hidden = false;
+  document.dispatchEvent(new Event('visibilitychange'));
+  browser.dispatchEvent(new Event('online'));
+  assert.equal(timers.size, 0, 'detachment also removes restart listeners');
+});
 
 process.stdout.write('config web Wi-Fi service tests passed\n');

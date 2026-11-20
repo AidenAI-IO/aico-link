@@ -1962,7 +1962,65 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			tasks.RestoreUserActionTasks(tasks.PendingUserActionTasks())
 		}
 	}()
+	// rejectedResponseRetry is set when the provider refused a response the
+	// session asked for because its own response was running. The request is
+	// made again once the provider is idle; what it was for (a chat, a task
+	// update, a notification) is already in the provider's conversation.
+	// rejectedChat is the chat that asked when one was active: it stays open,
+	// receives none of the provider's competing response, and completes only
+	// with its retried one. Cancelling that chat drops its retry.
+	rejectedResponseRetry := false
+	var rejectedChat *realtimeChatCommand
+	// requestOwner is the chat the last explicit response request was made
+	// for, nil for a task update or notification. A refusal names no request,
+	// so it is attributed to this one.
+	var requestOwner *realtimeChatCommand
+	// chatOutput is the chat the current response answers, if any.
+	chatOutput := func() *realtimeChatCommand {
+		if rejectedChat != nil {
+			return nil
+		}
+		return activeChat
+	}
+	tryRetryRejectedResponse := func() error {
+		if !rejectedResponseRetry {
+			return nil
+		}
+		admission := currentAdmission()
+		retryCtx := ctx
+		if rejectedChat != nil {
+			// The chat itself is the one waiting; only the provider's
+			// response and the other gates must be clear. A chat command
+			// still on the bridge does not wait for it: it is turned away as
+			// busy while this chat is open, so it must not hold the retry.
+			admission.activeChat = false
+			admission.bridgePending = false
+			retryCtx = rejectedChat.ctx
+		}
+		if !admission.canInjectBackgroundResponse() {
+			return nil
+		}
+		if rejectedChat != nil {
+			// Only the retried response answers the chat, under its turn.
+			chatMode = ""
+			chatText.Reset()
+			chatTranscript.Reset()
+			currentTurnID = rejectedChat.request.RequestID
+		}
+		requestOwner = rejectedChat
+		rejectedResponseRetry = false
+		rejectedChat = nil
+		if err := textSession.CreateResponse(retryCtx); err != nil {
+			return markRealtimeProviderFailure(fmt.Errorf("retry rejected realtime response: %w", err))
+		}
+		requestResponse()
+		logging.Infof("agent", "realtime", "Retried a response the provider had refused while its own was running: request_id=%s", realtimeChatRequestID(activeChat))
+		return nil
+	}
 	tryInjectTaskUpdates := func() error {
+		if err := tryRetryRejectedResponse(); err != nil || rejectedResponseRetry {
+			return err
+		}
 		if !currentAdmission().canInjectTaskUpdates() {
 			return nil
 		}
@@ -1996,6 +2054,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		pendingResponseRequestID = uuid.NewString()
 		recordForeground("task.result_injected", map[string]any{"updates": updates}, "",
 			&streamcontract.Collaboration{Version: 1, UpdateIDs: append([]string(nil), pendingResponseUpdateIDs...)})
+		requestOwner = nil
 		if err := textSession.CreateResponse(ctx); err != nil {
 			return markRealtimeProviderFailure(fmt.Errorf("respond to background task update: %w", err))
 		}
@@ -2032,6 +2091,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, err)
 			return markRealtimeProviderFailure(fmt.Errorf("inject realtime voice notification: %w", err))
 		}
+		requestOwner = nil
 		if err := textSession.CreateResponse(ctx); err != nil {
 			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, err)
 			return markRealtimeProviderFailure(fmt.Errorf("respond to realtime voice notification: %w", err))
@@ -2061,6 +2121,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		requestResponse()
 		pendingResponseRequestID = uuid.NewString()
 		pendingResponseUpdateIDs = nil
+		requestOwner = &command
 		if err := textSession.CreateResponse(command.ctx); err != nil {
 			// The write may have partially reached the provider. Only closing
 			// the session prevents a delayed answer from owning the next chat.
@@ -2225,6 +2286,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if responseContinuer == nil {
 					return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
 				}
+				requestOwner = chatOutput()
 				if err := responseContinuer.CreateResponse(ctx); err != nil {
 					return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 				}
@@ -2334,6 +2396,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				logging.Warnf("agent", "realtime", "Chat rejected busy: request_id=%s active_request_id=%s", command.request.RequestID, realtimeChatRequestID(activeChat))
 				sendRealtimeChatEvent(command, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventError, Error: "realtime response is busy"})
 				close(command.events)
+				// The command may have been what held a refused response back.
+				if err := tryInjectTaskUpdates(); err != nil {
+					return err
+				}
 				continue
 			}
 			if sleep.abandon() {
@@ -2364,6 +2430,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				return fmt.Errorf("stop canceled realtime playback: %w", err)
 			}
 			logging.Infof("agent", "realtime", "Chat canceled: request_id=%s response_id=%s; awaiting terminal acknowledgement", realtimeChatRequestID(activeChat), turnState.responseID)
+			if rejectedChat != nil && rejectedChat == activeChat {
+				// Its refused request must not be made after the cancel.
+				rejectedResponseRetry = false
+				rejectedChat = nil
+			}
 			cancelPending = true
 			startCancelAckTimer()
 			cancelForegroundTools(turnState.responseID)
@@ -2522,9 +2593,13 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					if event.Text != "" {
 						watchdog.progress()
 					}
-					if recordRealtimeFinalTranscript(event.Text, &responseTranscript, &chatText, &chatTranscript) && activeChat != nil {
-						chatMode = "transcript"
-						sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
+					if chat := chatOutput(); chat != nil {
+						if recordRealtimeFinalTranscript(event.Text, &responseTranscript, &chatText, &chatTranscript) {
+							chatMode = "transcript"
+							sendRealtimeChatEvent(*chat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
+						}
+					} else if responseTranscript.Len() == 0 {
+						responseTranscript.WriteString(event.Text)
 					}
 					if semanticEmitter != nil {
 						semanticEmitter.emit(event)
@@ -2616,24 +2691,24 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				}
 				if event.TextSource == "text" {
 					responseText.WriteString(event.Text)
-					if activeChat != nil {
+					if chat := chatOutput(); chat != nil {
 						if chatMode == "" {
 							chatMode = "text"
 						}
 						if chatMode == "text" && event.Text != "" {
 							chatText.WriteString(event.Text)
-							sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
+							sendRealtimeChatEvent(*chat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
 						}
 					}
 				} else {
 					responseTranscript.WriteString(event.Text)
-					if activeChat != nil {
+					if chat := chatOutput(); chat != nil {
 						if chatMode == "" {
 							chatMode = "transcript"
 						}
 						if chatMode == "transcript" && event.Text != "" {
 							chatTranscript.WriteString(event.Text)
-							sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
+							sendRealtimeChatEvent(*chat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
 						}
 					}
 				}
@@ -2722,6 +2797,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					if responseContinuer == nil {
 						return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
 					}
+					requestOwner = chatOutput()
 					if err := responseContinuer.CreateResponse(ctx); err != nil {
 						return fmt.Errorf("continue realtime response after tool cancellation: %w", err)
 					}
@@ -2787,6 +2863,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						if responseContinuer == nil {
 							continue
 						}
+						requestOwner = chatOutput()
 						if err := responseContinuer.CreateResponse(ctx); err != nil {
 							return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 						}
@@ -2824,14 +2901,18 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					"status": feedbackStatus}, "", &streamcontract.Collaboration{Version: 1,
 					ResponseRequestID: responseRequestID, UpdateIDs: responseUpdateIDs, ProviderSessionID: info.ID})
 				responseRequestID, responseUpdateIDs = "", nil
-				if activeChat != nil {
-					logging.Infof("agent", "realtime", "Chat completed: request_id=%s occupied_ms=%d", activeChat.request.RequestID, watchdog.age().Milliseconds())
+				if chat := chatOutput(); chat != nil {
+					logging.Infof("agent", "realtime", "Chat completed: request_id=%s occupied_ms=%d", chat.request.RequestID, watchdog.age().Milliseconds())
 					content := chatText.String()
 					if content == "" {
 						content = chatTranscript.String()
 					}
 					sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDone, Response: content, ResponseID: event.ResponseID, ProviderSessionID: info.ID})
 					close(activeChat.events)
+					if requestOwner == activeChat {
+						// Served; a later refusal is not this chat's.
+						requestOwner = nil
+					}
 					activeChat = nil
 				}
 				currentTurnID = ""
@@ -2917,6 +2998,24 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if semanticEmitter != nil {
 					semanticEmitter.emit(event)
 				}
+			case realtimevoice.EventResponseRejected:
+				// Our response.create lost a race with the provider's own
+				// response (usually to speech it just detected). The request
+				// we made will never start: forget it, and ask again once
+				// the provider's response has finished.
+				logging.Infof("agent", "realtime", "Provider refused a requested response while its own was running; will retry: %v", event.Error)
+				if turnState.responseRequestPending {
+					turnState.responseRequestPending = false
+				}
+				if requestOwner != nil && requestOwner != activeChat {
+					// The chat that asked was cancelled (a served chat clears
+					// its ownership); nothing is owed to it.
+					logging.Infof("agent", "realtime", "Dropping the refused response of a cancelled chat: request_id=%s", requestOwner.request.RequestID)
+					requestOwner = nil
+					break
+				}
+				rejectedResponseRetry = true
+				rejectedChat = requestOwner
 			case realtimevoice.EventError:
 				if event.Error != nil {
 					if semanticEmitter != nil {

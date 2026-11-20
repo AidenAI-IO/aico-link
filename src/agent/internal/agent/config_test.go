@@ -1446,8 +1446,8 @@ api_key = "tts-key"
 	if explicit.STT.Model != defaultSTTModel {
 		t.Fatalf("explicit STT.Model = %q, want default %q", explicit.STT.Model, defaultSTTModel)
 	}
-	if explicit.TTS.Provider != defaultTTSProvider {
-		t.Fatalf("explicit TTS.Provider = %q, want default %q", explicit.TTS.Provider, defaultTTSProvider)
+	if explicit.TTS.Provider != "minimax-cn" {
+		t.Fatalf("explicit TTS.Provider = %q, want minimax-cn alias", explicit.TTS.Provider)
 	}
 	if explicit.TTS.VoiceID != defaultTTSVoiceID {
 		t.Fatalf("explicit TTS.VoiceID = %q, want default %q", explicit.TTS.VoiceID, defaultTTSVoiceID)
