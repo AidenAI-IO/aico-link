@@ -48,6 +48,8 @@ func (*Adapter) Close() error { return nil }
 func (*Adapter) Capabilities() tts.Capabilities {
 	return tts.Capabilities{
 		SupportedSampleRates:     []int{sampleRate},
+		OutputChannels:           1,
+		OutputBitWidth:           16,
 		TextGranularity:          tts.TextGranularitySentence,
 		SupportsIncrementalAudio: true,
 		SupportsFlush:            true,

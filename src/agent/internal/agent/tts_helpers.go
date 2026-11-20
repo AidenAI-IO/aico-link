@@ -146,11 +146,18 @@ func ttsPlaybackFormat(cfg Config, caps tts.Capabilities) tts.AudioFormat {
 	} else if len(caps.SupportedSampleRates) > 1 && !containsInt(caps.SupportedSampleRates, sampleRate) {
 		sampleRate = caps.SupportedSampleRates[0]
 	}
-	return tts.AudioFormat{
+	format := tts.AudioFormat{
 		SampleRate: sampleRate,
 		Channels:   cfg.Audio.ChannelsOrDefault(),
 		BitWidth:   cfg.Audio.BitWidthOrDefault(),
 	}
+	if caps.OutputChannels > 0 {
+		format.Channels = caps.OutputChannels
+	}
+	if caps.OutputBitWidth > 0 {
+		format.BitWidth = caps.OutputBitWidth
+	}
+	return format
 }
 
 func ttsPlaybackTargetFormat(cfg Config, source tts.AudioFormat) tts.AudioFormat {

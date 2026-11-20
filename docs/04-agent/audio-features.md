@@ -245,8 +245,10 @@ played in order; cancellation kills the active subprocess and stops playback.
 The Agent invokes `ekho` directly with text on stdin. It creates one temporary
 seekable WAV per sentence, reads 22050 Hz mono PCM16 in small blocks, and removes
 the WAV on success, failure, or cancellation. The existing audio backend
-resamples to its configured playback rate. Device audio writes are paced near
-real time to respect the audio service's bounded queue; desktop file playback
+resamples to its configured playback rate. Ekho declares a fixed mono PCM16
+layout; its synthesis and playback sessions use that layout even when the
+general audio configuration selects stereo or another bit width. Device audio
+writes are paced near real time to respect the audio service's bounded queue; desktop file playback
 does not need this pacing. `ekho-say` and its separate `aplay`
 process are not used. This provides sentence streaming, rather than audio
 streaming within an unfinished sentence.
