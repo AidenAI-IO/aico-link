@@ -11,7 +11,7 @@ import (
 )
 
 func TestAskOpenRouterUsesNativeDecisions(t *testing.T) {
-	for _, model := range []string{"~typesafe/jev-latest", "google/gemini-decision-1"} {
+	for _, model := range []string{"~typesafe/jev-latest", "typesafe/jev-1.14", "typesafe/jev-1.13", "google/gemini-decision-1"} {
 		t.Run(model, func(t *testing.T) {
 			var got struct {
 				Model     string              `json:"model"`
@@ -59,8 +59,8 @@ func TestAskOpenRouterUsesNativeDecisions(t *testing.T) {
 				if err := json.Unmarshal(got.State, &state); err != nil {
 					t.Fatal(err)
 				}
-				if state["screen"] != "second" || got.Assets["second"].DataBase64 != "after" || got.Questions["where"].Type != TypeBox {
-					t.Fatalf("Jev assets or box question were lost: %+v", got)
+				if state["screen"] != "second" || got.Assets["second"].DataBase64 != "after" {
+					t.Fatalf("Jev assets were lost: %+v", got)
 				}
 			} else {
 				var state []json.RawMessage
@@ -85,11 +85,12 @@ func TestAskOpenRouterUsesNativeDecisions(t *testing.T) {
 				t.Fatalf("mode = %+v, %v", mode, err)
 			}
 			where, err := resp.Answer("where", TypeBox)
-			if openRouterJev(model) && (err != nil || !where.Box.Valid()) {
+			boxSupported := model == "~typesafe/jev-latest" || model == "typesafe/jev-1.14"
+			if boxSupported && (err != nil || !where.Box.Valid()) {
 				t.Fatalf("where = %+v, %v", where, err)
 			}
-			if !openRouterJev(model) && err == nil {
-				t.Fatal("non-Jev model produced a box answer")
+			if !boxSupported && err == nil {
+				t.Fatal("model without box support produced a box answer")
 			}
 			if resp.Model != model || resp.Usage.InputTokens != 12 || resp.Usage.OutputTokens != 20 {
 				t.Fatalf("metadata = %+v", resp)
@@ -98,13 +99,54 @@ func TestAskOpenRouterUsesNativeDecisions(t *testing.T) {
 	}
 }
 
-func TestOpenRouterNonJevBoxOnlyDoesNotSendRequest(t *testing.T) {
+func TestOpenRouterUnsupportedBoxOnlyDoesNotSendRequest(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++ }))
 	defer server.Close()
-	client := &Client{Provider: ProviderOpenRouter, BaseURL: server.URL, APIKey: "key", Model: "vendor/decision", HTTP: server.Client()}
-	_, err := client.Ask(context.Background(), Request{Questions: map[string]Question{"where": {Type: TypeBox, Instructions: "locate"}}})
-	if err == nil || calls != 0 {
-		t.Fatalf("box-only request was not rejected locally: calls=%d err=%v", calls, err)
+	for _, model := range []string{"vendor/decision", "typesafe/jev-1.13"} {
+		client := &Client{Provider: ProviderOpenRouter, BaseURL: server.URL, APIKey: "key", Model: model, HTTP: server.Client()}
+		_, err := client.Ask(context.Background(), Request{Questions: map[string]Question{"where": {Type: TypeBox, Instructions: "locate"}}})
+		if err == nil || calls != 0 {
+			t.Fatalf("%s box-only request was not rejected locally: calls=%d err=%v", model, calls, err)
+		}
+	}
+}
+
+func TestOpenRouterPreservesAssetsReferencedOutsideTopLevelState(t *testing.T) {
+	encoded, err := encodeOpenRouter(Request{
+		Model: "vendor/decision",
+		State: map[string]any{"query": "badge", "screen": "shot-1", "nested": map[string]any{"image": "shot-3"}},
+		Assets: map[string]Asset{
+			"shot-1": {Format: "png", DataBase64: "top-level"},
+			"shot-2": {Format: "jpg", DataBase64: "instruction-only"},
+			"shot-3": {Format: "png", DataBase64: "nested-state"},
+			"shot-4": {Format: "png", DataBase64: "criteria-only"},
+		},
+		Questions: map[string]Question{"found": {
+			Type: TypeChoice, Instructions: "Compare shot-1 and shot-2",
+			Criteria: map[string]any{"same": "matches shot-4", "different": "does not match"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		State  []json.RawMessage `json:"state"`
+		Assets map[string]Asset  `json:"assets"`
+	}
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Assets) != 0 {
+		t.Fatal("non-Jev received native assets")
+	}
+	state := ""
+	for _, part := range got.State {
+		state += string(part)
+	}
+	for _, part := range []string{"shot-1", "shot-2", "shot-3", "shot-4", "data:image/png;base64,top-level", "data:image/jpeg;base64,instruction-only", "data:image/png;base64,nested-state", "data:image/png;base64,criteria-only"} {
+		if !strings.Contains(state, part) {
+			t.Errorf("image reference or data %q was lost from state: %s", part, state)
+		}
 	}
 }

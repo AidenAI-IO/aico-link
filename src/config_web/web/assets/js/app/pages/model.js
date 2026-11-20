@@ -701,12 +701,15 @@ export async function modelsPage(context) {
 export async function decisionPage(context) {
   const snapshot = await ensureSnapshot(context);
   const body = el('div');
+  const drafts = new Map();
   const saver = createSaver(context, {
     title: msg('model.decision', '决策模型'),
     back: '/model',
     root: body,
     onSaved: payload => {
+      const provider = decision().provider;
       adoptSaved(snapshot)(payload);
+      if (provider !== decision().provider) drafts.clear();
       render();
     },
   });
@@ -770,7 +773,7 @@ export async function decisionPage(context) {
     const input = el('input', {
       class: 'ds-input',
       attrs: {
-        type, value: decision()[key] || '', inputmode: type === 'url' ? 'url' : 'text',
+        type, value: drafts.has(key) ? drafts.get(key) : decision()[key] || '', inputmode: type === 'url' ? 'url' : 'text',
         autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'done',
         placeholder: resolve(placeholder), 'aria-label': resolve(label),
         role: suggestions ? 'combobox' : null,
@@ -780,13 +783,18 @@ export async function decisionPage(context) {
       },
       data: {action: `edit-decision.${key}`},
     });
-    let submitted = input.value;
+    let submitted = decision()[key] || '';
     const commit = async () => {
       const value = input.value.trim();
       if (value === submitted) return;
       submitted = value;
+      const draft = input.value;
+      drafts.set(key, draft);
       const outcome = await saver.change(`decision.${key}`, {decision: {[key]: value || null}});
-      if (outcome === 'invalid' || outcome === 'failed') input.value = submitted = decision()[key] || '';
+      if (drafts.get(key) === draft && (outcome === 'saved' || outcome === 'invalid' || outcome === 'failed')) {
+        drafts.delete(key);
+        if (outcome !== 'saved') input.value = submitted = decision()[key] || '';
+      }
     };
     input.addEventListener('change', commit);
     const list = suggestions ? el('div', {
@@ -853,7 +861,7 @@ export async function decisionPage(context) {
       };
       // The catalog only suggests IDs; network errors never prevent free input.
       input.addEventListener('focus', () => { show = true; showSuggestions(); return loadSuggestions(); });
-      input.addEventListener('input', () => { show = true; showSuggestions(); });
+      input.addEventListener('input', () => { drafts.set(key, input.value); show = true; showSuggestions(); });
       input.addEventListener('blur', () => { show = false; close(); });
       // Keep focus on the input until the option's click commits its full ID.
       list.addEventListener('mousedown', event => event.preventDefault());
@@ -876,6 +884,7 @@ export async function decisionPage(context) {
       });
       if (decisionModels) loadSuggestions();
     } else {
+      input.addEventListener('input', () => drafts.set(key, input.value));
       input.addEventListener('keydown', event => {
         if (event.key === 'Enter' && !event.isComposing) input.blur();
       });

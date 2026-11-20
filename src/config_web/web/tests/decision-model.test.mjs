@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const pageSource = await readFile(new URL('../assets/js/app/pages/model.js', import.meta.url), 'utf8');
 const fieldsSource = await readFile(new URL('../assets/js/app/fields.js', import.meta.url), 'utf8');
 
-async function loadDecisionPage({catalogAvailable = true} = {}) {
+async function loadDecisionPage({catalogAvailable = true, beforeSave} = {}) {
   const snapshot = {config: {decision: {
     provider: 'openrouter', enabled: true, has_api_key: true,
     model: 'vendor/original', base_url: 'https://router.example/v1',
@@ -47,6 +47,7 @@ async function loadDecisionPage({catalogAvailable = true} = {}) {
       refreshChrome() {},
       async change(key, patch) {
         patches.push({key, patch});
+        if (beforeSave) await beforeSave(key);
         options.onSaved({config: {decision: {...snapshot.config.decision, ...patch.decision}}});
         return 'saved';
       },
@@ -125,6 +126,35 @@ test('OpenRouter model suggestions assist free input without changing the saved 
   resetModel.value = '';
   await resetModel.listeners.change();
   assert.equal(patches.at(-1).patch.decision.model, null, 'clearing the input must restore Jev');
+});
+
+test('finishing one field save preserves another field draft, including a cleared override', async t => {
+  for (const {savingKey, value, draftKey, draftValue} of [
+    {savingKey: 'model', value: 'vendor/new-decision', draftKey: 'base_url', draftValue: 'https://draft.example/alpha'},
+    {savingKey: 'base_url', value: 'https://new.example/alpha', draftKey: 'model', draftValue: 'vendor/draft'},
+    {savingKey: 'model', value: 'vendor/new-decision', draftKey: 'base_url', draftValue: ''},
+  ]) {
+    await t.test(`${savingKey} save preserves ${draftKey}=${draftValue}`, async () => {
+      let finishSave;
+      const saveDelay = new Promise(resolve => { finishSave = resolve; });
+      const {page, patches} = await loadDecisionPage({
+        beforeSave: key => key === `decision.${savingKey}` ? saveDelay : undefined,
+      });
+      const field = find(page, `edit-decision.${savingKey}`);
+      field.value = value;
+      const saving = field.listeners.change();
+      const other = find(page, `edit-decision.${draftKey}`);
+      other.value = draftValue;
+      other.listeners.input();
+      finishSave();
+      await saving;
+      const draft = find(page, `edit-decision.${draftKey}`);
+      assert.equal(draft.value, draftValue);
+      assert.equal(patches.length, 1, 'preserving a draft must not save it');
+      await draft.listeners.change();
+      assert.equal(patches.at(-1).patch.decision[draftKey], draftValue || null);
+    });
+  }
 });
 
 test('model suggestions support keyboard navigation, Escape, blur, and input composition', async () => {

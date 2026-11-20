@@ -808,10 +808,11 @@ The following providers are supported:
   Jev (`~typesafe/jev-latest`), which currently resolves to Jev 1.14 and answers
   choice, yes/no, score, and box questions. Other models are drawn from the
   [Decisions model catalog](https://openrouter.ai/models?output_modalities=decisions&order=top-weekly).
-  Entries that only serve Extractions are excluded. Non-Jev models omit box
-  questions, leaving tap-target decisions to the main model. Screenshot
-  decisions require image input; unsupported capabilities retain the existing
-  fallback behavior. The native Decisions endpoint is currently an alpha API.
+  Entries that only serve Extractions are excluded. Non-Jev models and Jev
+  versions before 1.14 omit box questions, leaving tap-target decisions to the
+  main model. Screenshot decisions require image input; unsupported
+  capabilities retain the existing fallback behavior. The native Decisions
+  endpoint is currently an alpha API.
 
 | Field            | Default                      | Description                                                                   |
 | ---------------- | ---------------------------- | ----------------------------------------------------------------------------- |
