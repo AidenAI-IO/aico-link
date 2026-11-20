@@ -14,6 +14,7 @@ connectSSE();
 startResourcePolling();
 startCoreServicesPolling();
 startInspector();
+startTaskHistory();
 startSharedFileLinks();
 startRealtimeVoiceStatusPolling();
 

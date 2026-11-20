@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -90,6 +91,9 @@ func enrichEpisodeTelemetry(episode *TaskEpisode, cfg Config) {
 	provider, model := telemetryModelInfo(cfg)
 	if provider != "" {
 		episode.Extra["model_provider"] = provider
+	}
+	if endpoint, err := url.Parse(cfg.Model.BaseURL); err == nil && endpoint.Hostname() != "" {
+		episode.Extra["model_provider_host"] = endpoint.Hostname()
 	}
 	if model != "" {
 		episode.Extra["model_name"] = model
