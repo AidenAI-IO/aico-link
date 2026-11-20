@@ -740,6 +740,7 @@ func ConfigMeta() ConfigMetadata {
 							{Value: DecisionProviderTypeSafe, Label: "TypeSafe Jev"},
 							{Value: DecisionProviderOpenAI, Label: "OpenAI Luna"},
 							{Value: DecisionProviderGemini, Label: "Gemini Decision 1"},
+							{Value: DecisionProviderOpenRouter, Label: "OpenRouter"},
 						},
 						Default: defaults.Decision.ProviderOrDefault()},
 					{Key: "enabled", Label: "Enable decision model", Widget: WidgetBoolean, Default: false,

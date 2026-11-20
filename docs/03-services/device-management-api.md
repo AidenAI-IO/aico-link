@@ -28,7 +28,7 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Configuration | `PUT /api/config/backup` | Validate, atomically restore, and apply a grouped TOML backup |
 | Memory | `POST /api/memory/reset` | Clear conversation history and persisted memory, then restart the Agent |
 | Conversation | `POST /api/conversation/reset` | Clear the current conversation history only; memory is kept and the Agent keeps running |
-| Models | `GET /api/models?provider=...&locale=...` | Return the localized model catalog |
+| Models | `GET /api/models?provider=...&locale=...` | Return the localized model catalog; `provider=openrouter&output_modalities=decisions` fetches native Decisions models from OpenRouter's public catalog |
 | STT test | `POST /api/config-test/stt/start` | Start a microphone recording test using the submitted unsaved settings |
 | STT test | `POST /api/config-test/stt/stop` | Stop recording and return the transcription result |
 | Storage | `GET /api/storage/status` | Read SD/eMMC state and formatting tasks |

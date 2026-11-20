@@ -196,15 +196,18 @@ model = "gpt-5.5"
 # model_max_output_tokens = 8192
 
 # Optional decision model: TypeSafe Jev ("typesafe"), OpenAI Luna ("openai"),
-# or Gemini Decision 1 ("gemini"). It answers fixed-choice checks in
-# deterministic workflows, asked together with the main model; confident
+# Gemini Decision 1 ("gemini"), or OpenRouter ("openrouter"). It answers
+# fixed-choice checks in deterministic workflows, asked together with the main model; confident
 # answers are used, the rest come from the main model. Off by default;
 # enabling it requires an API key. Pick one provider; the key is independent
 # of the main model key.
 # base_url and model default per provider (api.typesafe.ai/v1 + jev-preview,
 # api.openai.com/v1 + gpt-6-luna, or generativelanguage.googleapis.com/v1beta +
-# gemini-decision-1). OpenAI and Gemini have no box answers, so tap-target
-# decisions stay with the main model.
+# gemini-decision-1). OpenRouter ("openrouter") uses openrouter.ai/api/alpha +
+# ~typesafe/jev-latest through the native Decisions API. Its model list comes
+# from OpenRouter's decisions-output catalog.
+# OpenAI and Gemini have no box answers, so tap-target decisions stay with the
+# main model.
 [model_settings.decision]
 # enabled = false
 # provider = "typesafe"
