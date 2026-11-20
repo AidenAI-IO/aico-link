@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"aico-agent/internal/agent"
+	"aico-agent/internal/decision"
 )
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
@@ -17,6 +18,25 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runtimeConfig, configErr := agent.LoadRuntimeConfig(s.options.AgentConfigPath)
+	if r.URL.Query().Get("output_modalities") == "decisions" {
+		if provider != decision.ProviderOpenRouter {
+			writeJSONError(w, http.StatusBadRequest, "decisions catalog requires provider=openrouter")
+			return
+		}
+		client := s.decisionModelsClient
+		if client == nil {
+			client = &http.Client{Transport: agent.ProxyConfigFromEnvironment().Transport()}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		models, err := decision.ListOpenRouterModels(ctx, client)
+		if err != nil {
+			writeJSONError(w, http.StatusBadGateway, "OpenRouter decision model catalog unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"provider": provider, "models": models})
+		return
+	}
 	locale := strings.TrimSpace(r.URL.Query().Get("locale"))
 	if locale == "" {
 		locale = "en-US"

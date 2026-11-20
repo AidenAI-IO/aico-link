@@ -275,6 +275,10 @@ the expected value. The same matcher works in mock responses and
 "+1 202-555-0147"}}` accepts both the bare number and `Biden: +1 202-555-0147`.
 For a numeric field, `{"$gte": min, "$lte": max}` accepts an inclusive range;
 either bound may be omitted.
+For a timestamp field, `$rfc3339_gte` and `$rfc3339_lte` apply inclusive bounds
+to the instant. UTC and offset forms of the same instant match equivalently.
+Calendar query cases can use these bounds to ensure the requested window covers
+the test events.
 
 A required call is satisfied only by a call whose result was not an error; the
 runner reads per-call error status from the recorded episode. Coordinates are
@@ -1365,6 +1369,20 @@ were called or which environment executed the task:
 | UI operation | `mobilegym_basic`, `mobilegym_scroll_regression`, `mobilegym_scroll_sweep`, `phone_control_v1`, `adb_android_basic`, `adb_android_text_editing`, `adb_android_builtin_apps`, `vphone_ios_basic`, `app_workflow_v1`, `quick_action_v1` | Complete interface and application tasks |
 | Device integration | `aico_app_connection_capabilities_v1`, `aico_app_phone_bridge_data_policy_v1`, `aico_app_notes_entry_policy_v1` | Device interfaces, connection behavior, and routing policies |
 | Shell utilities | `shell_utility_v1` | Time, timezone, and deterministic shell calculations |
+
+For focused workflow checks, select a task with `--task-id`.
+
+- `app_workflow_v1`: `wechat_search_and_send_new_message` requires WeChat on
+  the external test device, signed in to a test account. It sends only to File
+  Transfer Assistant and alternates between two messages so older chat
+  history cannot satisfy the new-message check.
+- `aico_app_android_bridge_capabilities_v1`: the mixed text replacement case
+  checks the final editable field exactly. The batch calendar case writes to
+  the reserved emulator calendar, which the harness removes after each run.
+- `tool_recovery_v1`: the ambiguous calendar create case checks read-back and
+  duplicate prevention with a scripted response timeout.
+- `perception_v1`: the appointment picker uses a synthetic screenshot and
+  scores the first tap on the row matching both the requested date and time.
 
 Many areas exercise tool calls. Shell utilities does not represent general tool
 use proficiency. Each suite belongs to one area; unknown suites appear in Other.

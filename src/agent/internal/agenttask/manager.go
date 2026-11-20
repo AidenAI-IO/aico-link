@@ -262,8 +262,11 @@ func (m *Manager) ObservationSnapshot(taskID string) Observation {
 }
 
 type entry struct {
-	task            Task
-	cancel          context.CancelFunc
+	task   Task
+	cancel context.CancelFunc
+	// silent marks a task the user stopped as a whole: its cancellation
+	// is not announced to the foreground.
+	silent          bool
 	nextPrompt      string
 	actionNotified  bool
 	resumeQueued    bool
@@ -306,6 +309,7 @@ type Manager struct {
 	closed                bool
 	observationSequence   uint64
 	streamSink            stream.EventSink // Optional nonblocking observer; never a network sink.
+	lifecycle             func(Task, string)
 	timelines             map[string]*Timeline
 	finishedTimelines     []string
 }
@@ -327,6 +331,9 @@ func (m *Manager) observeLocked(item *entry, phase string, cause ...Cause) {
 	if len(cause) > 0 {
 		observation.Cause = cause[0]
 	}
+	if m.lifecycle != nil {
+		m.lifecycle(observation.Task, phase)
+	}
 	if observation.StreamSink == nil {
 		return
 	}
@@ -341,6 +348,16 @@ func (m *Manager) observeLocked(item *entry, phase string, cause ...Cause) {
 	// The benchmark recorder only copies/enqueues here. Its queue owns overflow
 	// reporting and draining; no I/O or subscriber callbacks run under this lock.
 	_ = observation.StreamSink.Emit(context.Background(), event)
+}
+
+// SetLifecycleObserver installs a callback that sees every task transition
+// (phase "running", "terminal", ...) once per manager state change, not once
+// per runner call. It runs under the manager lock, so it must be quick and
+// must not call back into the manager. Install it before tasks are submitted.
+func (m *Manager) SetLifecycleObserver(observe func(task Task, phase string)) {
+	m.mu.Lock()
+	m.lifecycle = observe
+	m.mu.Unlock()
 }
 
 func NewManager(runner Runner) *Manager {
@@ -658,27 +675,15 @@ func (m *Manager) Cancel(taskID string) (Task, bool, error) {
 		m.mu.Unlock()
 		return Task{}, false, errors.New("agent task not found")
 	}
-	var cancel context.CancelFunc
 	var notificationCleared bool
-	switch item.task.Status {
-	case StatusCreated, StatusQueued:
-		m.finishLocked(item, StatusCancelled, "", "")
-	case StatusRunning:
-		if item.task.PendingUserAction != nil || item.cancel == nil {
-			m.finishLocked(item, StatusCancelled, "", "")
-			break
-		}
-		item.task.Status = StatusCancelling
-		item.task.UpdatedAt = m.now().UTC()
-		m.observeLocked(item, "cancelling")
-		cancel = item.cancel
-	case StatusCancelling, StatusCancelled, StatusFailed, StatusCompleted:
-		// Cancellation is idempotent for tasks already stopping or terminal. For a
-		// terminal task it also means "do not announce this result" while delivery
-		// is still owned by the manager or claimed by a foreground session.
-		if item.task.Status.terminal() {
-			notificationCleared = m.suppressTerminalNotificationLocked(taskID)
-		}
+	var cancel context.CancelFunc
+	if item.task.Status.terminal() {
+		// Cancellation is idempotent for terminal tasks, and it also means "do
+		// not announce this result" while delivery is still owned by the
+		// manager or claimed by a foreground session.
+		notificationCleared = m.suppressTerminalNotificationLocked(taskID)
+	} else {
+		cancel = m.cancelLocked(item)
 	}
 	task := item.task
 	m.mu.Unlock()
@@ -686,6 +691,81 @@ func (m *Manager) Cancel(taskID string) (Task, bool, error) {
 		cancel()
 	}
 	return task, notificationCleared, nil
+}
+
+// CancelUnfinished cancels a task only while it has not finished. The status
+// check and the cancellation share the manager lock, so a task that finishes
+// first keeps its pending announcement and the call reports an error.
+func (m *Manager) CancelUnfinished(taskID string) (Task, error) {
+	if m == nil {
+		return Task{}, errors.New("agent task manager is unavailable")
+	}
+	taskID = strings.TrimSpace(taskID)
+	m.mu.Lock()
+	item, ok := m.tasks[taskID]
+	if !ok || item.task.Status.terminal() {
+		m.mu.Unlock()
+		return Task{}, errors.New("no unfinished agent task")
+	}
+	cancel := m.cancelLocked(item)
+	task := item.task
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return task, nil
+}
+
+// cancelLocked moves an unfinished task towards cancellation. A queued task, or
+// one with no active run (it waits for the user after its run returned),
+// finishes at once. A task with an active run is marked cancelling, even when it
+// has just asked for the user, and the returned function, called after the lock
+// is released, stops that run. A task already cancelling is left as it is.
+func (m *Manager) cancelLocked(item *entry) context.CancelFunc {
+	switch item.task.Status {
+	case StatusCreated, StatusQueued:
+		m.finishLocked(item, StatusCancelled, "", "")
+	case StatusRunning:
+		if item.cancel == nil {
+			m.finishLocked(item, StatusCancelled, "", "")
+			return nil
+		}
+		item.task.Status = StatusCancelling
+		item.task.UpdatedAt = m.now().UTC()
+		m.observeLocked(item, "cancelling")
+		return item.cancel
+	}
+	return nil
+}
+
+// CancelAll cancels every unfinished task: queued ones end at once and running
+// ones stop at their next cancellation point. Every state change happens under
+// one lock, so the worker cannot start a queued task halfway through. The user
+// asked to stop all the work, so nothing is announced afterwards: neither the
+// cancelled tasks nor results that already finished and still wait for the
+// foreground. It returns the tasks it cancelled.
+func (m *Manager) CancelAll() []Task {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	var cancelled []Task
+	var stops []context.CancelFunc
+	for id, item := range m.tasks {
+		if !item.task.Status.terminal() {
+			item.silent = true
+			if stop := m.cancelLocked(item); stop != nil {
+				stops = append(stops, stop)
+			}
+			cancelled = append(cancelled, item.task)
+		}
+		m.suppressTerminalNotificationLocked(id)
+	}
+	m.mu.Unlock()
+	for _, stop := range stops {
+		stop()
+	}
+	return cancelled
 }
 
 func (m *Manager) Update(taskID, prompt string) (Task, error) {
@@ -1199,7 +1279,9 @@ func (m *Manager) finishLocked(item *entry, status Status, result, taskError str
 	item.actionNotified = false
 	item.pendingSteer = nil
 	m.terminalSeq++
-	m.terminalNotifications[item.task.ID] = terminalNotificationQueued
+	if !item.silent {
+		m.terminalNotifications[item.task.ID] = terminalNotificationQueued
+	}
 	m.observeLocked(item, "terminal")
 	m.signalTerminalLocked()
 	m.signalWakeLocked()

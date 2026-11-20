@@ -45,9 +45,9 @@ const (
 	minReasoningBudgetTokens               = 1024
 	defaultModelLogRawHTTP                 = true
 	defaultModelReasoningEffort            = ""
-	defaultTTSProvider                     = "minimax-cn"
-	defaultTTSVoiceID                      = "male-qn-qingse"
-	defaultTTSEmotion                      = "happy"
+	defaultTTSProvider                     = "ekho"
+	defaultTTSVoiceID                      = ""
+	defaultTTSEmotion                      = ""
 	defaultTTSSpeed                        = 1.0
 	defaultSTTProvider                     = "openai-whisper"
 	defaultSTTModel                        = "whisper-1"

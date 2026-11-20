@@ -306,17 +306,43 @@ func TestLiveActivityManagerKeepsHumanHandoffVisible(t *testing.T) {
 func TestLiveActivityManagerSnapshotActive(t *testing.T) {
 	manager := NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
 	manager.StartTask("req-1", "First task")
-	manager.StartTask("req-2", "Second task")
-
-	active := manager.SnapshotActive()
-	if active == nil || active.RequestID != "req-2" {
-		t.Fatalf("active state = %#v, want req-2", active)
+	if active := manager.SnapshotActive(); active == nil || active.RequestID != "req-1" {
+		t.Fatalf("active state = %#v, want req-1", active)
+	}
+	manager.CompleteTask("req-1", "Done")
+	if active := manager.SnapshotActive(); active == nil || active.RequestID != "req-1" || active.Status != LiveActivityStatusCompleted {
+		t.Fatalf("active terminal state = %#v, want completed req-1", active)
 	}
 
-	manager.CompleteTask("req-2", "Done")
-	active = manager.SnapshotActive()
-	if active == nil || active.RequestID != "req-2" || active.Status != LiveActivityStatusCompleted {
-		t.Fatalf("active terminal state = %#v, want completed req-2", active)
+	// Of two running activities, whichever ends first must not hide the other
+	// one's stop control, with no event in between to reselect it.
+	for _, endFirst := range []string{"older", "newer"} {
+		manager := NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
+		manager.StartTask("older", "Chat")
+		manager.StartTask("newer", "Background task")
+		if active := manager.SnapshotActive(); active == nil || active.RequestID != "newer" {
+			t.Fatalf("active state = %#v, want newer", active)
+		}
+		manager.CancelTask(endFirst)
+		running := map[string]string{"older": "newer", "newer": "older"}[endFirst]
+		if active := manager.SnapshotActive(); active == nil || active.RequestID != running || !active.CanStop {
+			t.Fatalf("%s ended first: active state = %#v, want running %s", endFirst, active, running)
+		}
+	}
+}
+
+// A failed private tool can echo the user's data in its error; the Live
+// Activity shows the failure without that text.
+func TestLiveActivityManagerHidesPrivateToolErrors(t *testing.T) {
+	manager := NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
+	manager.StartTask("req-1", "Read my clipboard")
+	state := manager.UpdateFromRunEvent("req-1", RunEvent{Type: "tool_result", ToolName: toolBridgeClipboard, IsError: true, Content: "clipboard holds 4111 1111 1111 1111"})
+	if state == nil || state.LastError != "" {
+		t.Fatalf("private tool error = %#v", state)
+	}
+	state = manager.UpdateFromRunEvent("req-1", RunEvent{Type: "tool_result", ToolName: "screenshot", IsError: true, Content: "screen capture timed out"})
+	if state == nil || !strings.Contains(state.LastError, "timed out") {
+		t.Fatalf("tool error = %#v", state)
 	}
 }
 

@@ -1,9 +1,10 @@
 // Package decision is a client for decision models: TypeSafe's System One API
-// (Jev), OpenAI's Decisions API (GPT-6 Luna), and Google's Gemini Decisions
-// API (gemini-decision-1). They answer typed questions about a state: a choice
-// among named options, a yes/no probability (noul), or a score; Jev also
-// answers a box in an image. None generate text, so callers keep their own
-// fallback for anything they cannot answer confidently.
+// (Jev), OpenAI's Decisions API (GPT-6 Luna), Google's Gemini Decisions
+// API (gemini-decision-1), and OpenRouter's native Decisions API. They
+// answer typed questions about a state: a choice among named options, a yes/no
+// probability (noul), or a score; Jev also
+// answers a box in an image, as does the OpenRouter adapter. Callers keep
+// their own fallback for anything they cannot answer confidently.
 //
 // Requests are written in System One's shape; the OpenAI and Gemini backends
 // translate them and leave out box questions, which they cannot answer.
@@ -97,9 +98,10 @@ type Response struct {
 
 // Providers.
 const (
-	ProviderTypeSafe = "typesafe"
-	ProviderOpenAI   = "openai"
-	ProviderGemini   = "gemini"
+	ProviderTypeSafe   = "typesafe"
+	ProviderOpenAI     = "openai"
+	ProviderGemini     = "gemini"
+	ProviderOpenRouter = "openrouter"
 )
 
 // Client calls a decision model. HTTP is required so callers decide the proxy.
@@ -152,6 +154,9 @@ func (c *Client) Ask(ctx context.Context, req Request) (Response, error) {
 		endpoint = strings.TrimRight(c.BaseURL, "/") + "/decisions"
 		decode = decodeGemini
 		headers["x-goog-api-key"] = strings.TrimSpace(c.APIKey)
+	case ProviderOpenRouter:
+		body, err = encodeOpenRouter(req)
+		endpoint = strings.TrimRight(c.BaseURL, "/") + "/decisions"
 	default:
 		body, err = json.Marshal(req)
 		endpoint = strings.TrimRight(c.BaseURL, "/") + "/systemone"

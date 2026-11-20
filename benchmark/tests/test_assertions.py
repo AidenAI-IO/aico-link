@@ -744,6 +744,43 @@ def test_dict_contains_with_nested_range():
     )
 
 
+def test_rfc3339_bounds_match_equivalent_fractional_seconds():
+    from runner.matching import value_matches
+
+    bounds = {
+        "$rfc3339_gte": "2037-11-20T07:30:00.100Z",
+        "$rfc3339_lte": "2037-11-20T15:30:00.10+08:00",
+    }
+    assert value_matches("2037-11-20T07:30:00.1Z", bounds)
+    assert value_matches("2037-11-20T07:30:00.1000000Z", bounds)
+    assert not value_matches("2037-11-20T07:30:00.1000009Z", bounds)
+    assert not value_matches("2037-11-20T07:30:00.11Z", bounds)
+    assert value_matches("2037-11-20T07:30:00.1000009Z", {
+        "$rfc3339_gte": "2037-11-20T15:30:00.1000009+08:00",
+    })
+
+
+def test_required_calendar_query_matches_time_window_by_instant():
+    spec = HardAssertions(required_tool_calls=[RequiredToolCallSpec(
+        tool="bridge_calendar", input_contains={
+            "action": "query",
+            "from": {"$rfc3339_lte": "2037-11-18T15:00:00+08:00"},
+            "to": {"$rfc3339_gte": "2037-11-20T15:30:00+08:00"},
+        },
+    )])
+    for end, passed in (
+        ("2037-11-20T23:59:59+08:00", True),
+        ("2037-11-20T07:30:00Z", True),
+        ("2037-11-20T07:29:59Z", False),
+        ("2037-11-20T15:30:00", False),
+    ):
+        query = ToolCall(step=1, tool="bridge_calendar", input={
+            "action": "query", "from": "2037-11-18T00:00:00+08:00", "to": end,
+        })
+        trace = Trace(tool_calls=[query], final_response="Checked.", total_tool_calls=1, total_duration_ms=1)
+        assert assertions.evaluate_hard_assertions(trace, spec, timed_out=False).all_passed is passed
+
+
 def test_required_tool_calls_with_coordinate_range():
     trace = Trace(
         tool_calls=[

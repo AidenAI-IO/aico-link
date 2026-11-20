@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real single-package config upgrades in a disposable Debian container."""
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -266,19 +267,53 @@ class RuntimeConfigTests(unittest.TestCase):
     def test_production_packager_builds_one_verified_package(self):
         apps = self.root / "apps"
         (apps / "bin").mkdir(parents=True)
-        for name in "agent audio_service audio_service_cli ble_service mcu_service cpu_vad frame_service frame_service_cli rknn_vad smart_turn_helper ui_grounding_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail ota abctl aico-environment ttyd".split():
+        for name in "agent audio_service audio_service_cli ble_service mcu_service cpu_vad ekho frame_service frame_service_cli rknn_vad smart_turn_helper ui_grounding_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail ota abctl aico-environment ttyd".split():
             binary = apps / "bin" / name
             binary.write_text("#!/bin/sh\nexit 0\n")
             binary.chmod(0o755)
+        ekho_files = {
+            "share/ekho-data/pinyin.voice": "Mandarin voice fixture\n",
+            "share/ekho-data/pinyin.index": "Mandarin index fixture\n",
+            "share/doc/ekho/build.txt": "english_voice=en-us+f3\n",
+            "share/doc/ekho/COPYING": "Ekho license fixture\n",
+            "share/doc/ekho/COPYING-mandarin-yali": "Mandarin license fixture\n",
+            "share/doc/ekho/source/upstream.tar.gz": "upstream source fixture\n",
+            "share/doc/ekho/source/english-female.patch": "female voice patch fixture\n",
+            "share/doc/ekho/source/source.env": "pinned source fixture\n",
+        }
+        for relative, content in ekho_files.items():
+            target = apps / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        (apps / "metadata").mkdir()
+        (apps / "metadata/ekho-files.sha256").write_text("".join(
+            f"{hashlib.sha256((apps / relative).read_bytes()).hexdigest()}  {relative}\n"
+            for relative in ["bin/ekho", *ekho_files]))
         output = self.root / "production-output"
         output.mkdir()
         script = (ROOT / "scripts/debian-package/container-build.sh").read_text()
         script = script.replace("REPO_ROOT=/work APPS_DIR=/apps OUTPUT_DIR=/out",
                                 f'REPO_ROOT="{ROOT}" APPS_DIR="{apps}" OUTPUT_DIR="{output}"')
         env = {**self.env, "AICO_BUSINESS_VERSION": "0.0.9"}
+        voice = apps / "share/ekho-data/pinyin.voice"
+        voice.write_text("corrupt voice\n")
+        rejected = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertFalse(list(output.glob("*.deb")))
+        voice.write_text(ekho_files["share/ekho-data/pinyin.voice"])
         subprocess.run(["bash", "-c", script], env=env, check=True, stdout=subprocess.DEVNULL)
         package = output / "aico-business_0.0.9-1_armhf.deb"
         self.assertEqual(list(output.glob("*.deb")), [package])
+        extracted = self.root / "extracted-production"
+        subprocess.run(["dpkg-deb", "--extract", str(package), str(extracted)], check=True)
+        self.assertTrue((extracted / "usr/lib/aico/ekho").stat().st_mode & 0o111)
+        for relative, content in ekho_files.items():
+            installed = relative.replace("share/ekho-data/", "usr/share/aico/ekho-data/")
+            installed = installed.replace("share/doc/ekho/", "usr/share/doc/aico-business/ekho/")
+            self.assertEqual((extracted / installed).read_text(), content)
+        depends = subprocess.check_output(["dpkg-deb", "-f", str(package), "Depends"], text=True)
+        self.assertTrue({"libespeak-ng1", "espeak-ng-data", "libsndfile1", "libsonic0",
+                         "libmpg123-0t64", "libstdc++6"}.issubset(depends.strip().split(", ")))
         standalone_release.verify_runtime_config(package, 1)
         # Only binary provenance is mocked: the test binaries are explicit fixtures.
         with patch.object(standalone_release, "check_source", return_value=("a" * 40, "b" * 40)), patch.dict(os.environ, env):

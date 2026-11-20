@@ -18,6 +18,7 @@ import (
 
 	speechtext "aico-agent/internal/agent/speech"
 	ttsmodule "aico-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts/adapters/ekho"
 )
 
 func TestTTSPlaybackFormatUsesProviderOnlySampleRate(t *testing.T) {
@@ -32,47 +33,73 @@ func TestTTSPlaybackFormatUsesProviderOnlySampleRate(t *testing.T) {
 	}
 }
 
-func TestManagedTTSResamplesProviderOnly24kToConfiguredPlaybackRate(t *testing.T) {
-	provider := &formatCheckingTTSProvider{
-		name:       "provider-only-24k",
-		caps:       ttsmodule.Capabilities{SupportedSampleRates: []int{24000}},
-		wantFormat: ttsmodule.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16},
+func TestManagedTTSHonorsProviderFormatAtConfiguredPlaybackRate(t *testing.T) {
+	ekhoProvider, err := ekho.New(ttsmodule.ProviderConfig{})
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	var startRate atomic.Uint32
-	socketPath := startFakeAudioServiceSocket(t, func(req audioRequest) (audioResponse, []byte) {
-		switch req.Op {
-		case "start_playback":
-			startRate.Store(req.SampleRate)
-			return audioResponse{Status: "OK", SessionID: stringUint64(7)}, nil
-		case "write_play_chunk":
-			return audioResponse{Status: "OK"}, nil
-		case "health":
-			return audioResponse{Status: "OK", PlaybackSessions: 0}, nil
-		case "stop_playback":
-			return audioResponse{Status: "OK"}, nil
-		default:
-			return audioResponse{Status: "INTERNAL_ERROR"}, nil
-		}
-	})
-
-	server := &Server{
-		runtime: NewRuntimeWithDeps(
-			Config{Model: ModelConfig{Provider: "fake"}, Audio: AudioConfig{SampleRate: 16000}},
-			&testModelResolver{model: &scriptedModel{}},
-			NewMemoryManager(""),
-			NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
-			NewSkillIndex(),
-		),
-		ttsManager:  ttsmodule.NewProviderManager(provider, nil),
-		audioClient: NewAudioServiceClient(socketPath),
-	}
-
-	if err := server.speakText(context.Background(), "hello", 0); err != nil {
-		t.Fatalf("speakText() error = %v", err)
-	}
-	if got := startRate.Load(); got != 16000 {
-		t.Fatalf("start_playback sample_rate = %d, want configured playback rate 16000", got)
+	for _, tt := range []struct {
+		name  string
+		caps  ttsmodule.Capabilities
+		audio AudioConfig
+		want  ttsmodule.AudioFormat
+	}{
+		{
+			name:  "provider-only-24k",
+			caps:  ttsmodule.Capabilities{SupportedSampleRates: []int{24000}},
+			audio: AudioConfig{SampleRate: 16000},
+			want:  ttsmodule.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16},
+		},
+		{
+			name:  "ekho-with-stereo-config",
+			caps:  ekhoProvider.Capabilities(),
+			audio: AudioConfig{SampleRate: 16000, Channels: 2, BitWidth: 8},
+			want:  ttsmodule.AudioFormat{SampleRate: 22050, Channels: 1, BitWidth: 16},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &formatCheckingTTSProvider{name: tt.name, caps: tt.caps, wantFormat: tt.want}
+			started := make(chan ttsmodule.AudioFormat, 1)
+			socketPath := startFakeAudioServiceSocket(t, func(req audioRequest) (audioResponse, []byte) {
+				switch req.Op {
+				case "start_playback":
+					started <- ttsmodule.AudioFormat{SampleRate: int(req.SampleRate), Channels: int(req.Channels), BitWidth: int(req.BitWidth)}
+					return audioResponse{Status: "OK", SessionID: stringUint64(7)}, nil
+				case "write_play_chunk":
+					return audioResponse{Status: "OK"}, nil
+				case "health":
+					return audioResponse{Status: "OK", PlaybackSessions: 0}, nil
+				case "stop_playback":
+					return audioResponse{Status: "OK"}, nil
+				default:
+					return audioResponse{Status: "INTERNAL_ERROR"}, nil
+				}
+			})
+			server := &Server{
+				runtime: NewRuntimeWithDeps(
+					Config{Model: ModelConfig{Provider: "fake"}, Audio: tt.audio},
+					&testModelResolver{model: &scriptedModel{}},
+					NewMemoryManager(""),
+					NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
+					NewSkillIndex(),
+				),
+				ttsManager:  ttsmodule.NewProviderManager(provider, nil),
+				audioClient: NewAudioServiceClient(socketPath),
+			}
+			if err := server.speakText(context.Background(), "hello", 0); err != nil {
+				t.Fatalf("speakText() error = %v", err)
+			}
+			wantPlayback := tt.want
+			wantPlayback.SampleRate = tt.audio.SampleRate
+			select {
+			case got := <-started:
+				if got != wantPlayback {
+					t.Fatalf("playback format = %#v, want %#v", got, wantPlayback)
+				}
+			default:
+				t.Fatal("playback never started")
+			}
+		})
 	}
 }
 

@@ -235,7 +235,7 @@ The page renders the following config sections. The Language & Time Zone control
 - `[basic_settings.language_timezone]`: UI and response language plus controller time zone
 - `[conversation_settings.agent]`: Agent prompt, iteration and context controls
 - `[model_settings.model]`: provider, model, api_mode, temperature, max_response_tokens, context_window, model_max_output_tokens
-- `[model_settings.decision]`: optional decision model switch, provider, write-only API key, minimum confidence, and connection test (Base URL and model in TOML only)
+- `[model_settings.decision]`: optional decision model switch, provider, write-only API key, minimum confidence, and connection test; OpenRouter also exposes its model ID and Base URL
 - `[voice_settings.classic.stt]`: provider, language and STT options
 - `[voice_settings.classic.tts]`: provider and playback options
 - `[voice_settings.classic.audio]`: socket, sample_rate, channels, bit_width, backend
@@ -789,10 +789,11 @@ Official references: [model capabilities and limits](https://api-docs.deepseek.c
 
 An optional decision model that answers fixed-choice questions (choice, yes/no,
 box in an image) inside deterministic workflows. It is separate from the main
-model: it never plans or generates text. It is off by default; turning it on
-requires `api_key`. When it is off every decision stays with the main model.
+model: it returns typed answers without planning or user-facing text. It is off
+by default; turning it on requires `api_key`. When it is off every decision
+stays with the main model.
 One provider is active at a time; its key is independent of the main model key.
-Three providers are supported:
+The following providers are supported:
 
 - `typesafe`: TypeSafe's System One API (Jev). Answers choice, yes/no and box
   questions, so it can also locate tap targets.
@@ -803,20 +804,40 @@ Three providers are supported:
 - `gemini`: Google's Gemini Decisions API (`gemini-decision-1`). Answers
   choice, yes/no, and score questions but has no box answer, so the same
   tap-target decisions stay with the main model.
+- `openrouter`: OpenRouter's native `/api/alpha/decisions` API. The default is
+  Jev (`~typesafe/jev-latest`), which currently resolves to Jev 1.14 and answers
+  choice, yes/no, score, and box questions. Other models are drawn from the
+  [Decisions model catalog](https://openrouter.ai/models?output_modalities=decisions&order=top-weekly).
+  Entries that only serve Extractions are excluded. Non-Jev models and Jev
+  versions before 1.14 omit box questions, leaving tap-target decisions to the
+  main model. Screenshot decisions require image input; unsupported
+  capabilities retain the existing fallback behavior. The native Decisions
+  endpoint is currently an alpha API.
 
 | Field            | Default                      | Description                                                                   |
 | ---------------- | ---------------------------- | ----------------------------------------------------------------------------- |
 | `enabled`        | `false`                      | Turns the decision model on. Requires `api_key`.                              |
-| `provider`       | `typesafe`                   | `typesafe` (TypeSafe Jev), `openai` (OpenAI Luna), or `gemini` (Gemini Decision 1). |
+| `provider`       | `typesafe`                   | `typesafe` (TypeSafe Jev), `openai` (OpenAI Luna), `gemini` (Gemini Decision 1), or `openrouter`. |
 | `api_key`        | empty                        | Provider API key. Config Web treats it as write-only and reports `has_api_key`. |
-| `base_url`       | provider default             | Provider endpoint; must be an absolute `http(s)` URL. Defaults to `https://api.typesafe.ai/v1`, `https://api.openai.com/v1`, or `https://generativelanguage.googleapis.com/v1beta`. |
-| `model`          | provider default             | Decision model name. Defaults to `jev-preview` (Jev 1.14, which box questions need), `gpt-6-luna`, or `gemini-decision-1`. |
+| `base_url`       | provider default             | Provider endpoint; must be an absolute `http(s)` URL. Defaults to `https://api.typesafe.ai/v1`, `https://api.openai.com/v1`, `https://generativelanguage.googleapis.com/v1beta`, or `https://openrouter.ai/api/alpha`. |
+| `model`          | provider default             | Decision model name. Defaults to `jev-preview` (Jev 1.14, which box questions need), `gpt-6-luna`, `gemini-decision-1`, or `~typesafe/jev-latest`. |
 | `min_confidence` | `0.8`                        | Answers below this confidence (0 to 1) are handed back to the main model. A yes/no answer counts as confident at `p >= min_confidence` or `p <= 1 - min_confidence`. `0` selects the default. |
 
 ```toml
 [model_settings.decision]
 enabled = true
 api_key = "ts-..."
+```
+
+For OpenRouter, use a separate OpenRouter key:
+
+```toml
+[model_settings.decision]
+enabled = true
+provider = "openrouter"
+api_key = "sk-or-..."
+# model = "~typesafe/jev-latest"
+# base_url = "https://openrouter.ai/api/alpha"
 ```
 
 Each decision below asks both models at once. A decision-model answer that
@@ -909,7 +930,15 @@ confidence, and **Test connection** sends one small question with the saved
 key (`POST /api/config/test` with section `decision`), also while the switch is
 off. Switching the provider clears the saved key, turns the model off, and
 resets the Base URL and model to the new provider's defaults. The
-Base URL and model are edited in the TOML file.
+OpenRouter page offers a model ID input with native Decisions catalog
+suggestions and a separate full-width Base URL input. The catalog only assists
+typing; IDs outside the suggestions are accepted, even if the catalog cannot
+be loaded. Clear the model ID to restore the default Jev model; leaving the
+Base URL empty restores the official endpoint. The catalog is fetched from
+OpenRouter's public Models API with `output_modalities=decisions` and
+`order=top-weekly`, without sending any saved API key; entries keep the order
+returned by that API. Other providers' Base URL and model overrides are edited
+in the TOML file.
 
 The SkillOpt sample classifier (`--sample-classifier typesafe`) can use Jev
 offline; it reads the key from `TYPESAFE_API_KEY`.
@@ -1190,6 +1219,7 @@ STT:
 
 TTS:
 
+- `provider = "ekho"`: local Ekho CLI (built-in default), Mandarin with mixed English support; no API key. See [Local Ekho](audio-features.md#local-ekho-default) for installation requirements, sentence buffering, and speed behavior;
 - `provider = "minimax"`: Minimax WebSocket, global endpoint `api.minimax.io`;
 - `provider = "minimax-cn"`: Minimax WebSocket, mainland China endpoint `api.minimaxi.com`;
 - `provider = "fish-audio"`: Fish Audio WebSocket;
@@ -1203,7 +1233,7 @@ TTS configuration fields:
 | Field          | Location                         | Description                                                                                                              |
 | -------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `provider`     | `[voice_settings.classic.tts]`                          | Required reference to a named provider record; a bare provider type remains supported for backward compatibility        |
-| `api_key`      | `[voice_settings.classic.tts.providers.<name>]`         | Required authentication key for the selected provider                                                                   |
+| `api_key`      | `[voice_settings.classic.tts.providers.<name>]`         | Required for cloud providers; unused by local Ekho |
 | `model`        | `[voice_settings.classic.tts.providers.<name>]`         | Optional Minimax model, Fish Audio model header, Alibaba Cloud Realtime model, Volcengine `X-Api-Resource-Id`, or OpenRouter model |
 | `voice_id`     | `[voice_settings.classic.tts.providers.<name>]`         | Optional Minimax, Alibaba Cloud, OpenRouter, or Google Cloud voice; Volcengine speaker. Not used by Fish Audio (see `reference_id`) |
 | `reference_id` | `[voice_settings.classic.tts.providers.<name>]`         | Optional Fish Audio reference id; defaults to the built-in demo voice shown by Config Web. Ignored by other providers    |

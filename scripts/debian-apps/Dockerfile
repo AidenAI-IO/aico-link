@@ -7,6 +7,8 @@ COPY scripts/debian-apps/debian.sources /etc/apt/sources.list.d/debian.sources
 RUN dpkg --add-architecture armhf \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
+        autoconf \
+        automake \
         binutils-arm-linux-gnueabihf \
         binutils \
         ca-certificates \
@@ -16,6 +18,14 @@ RUN dpkg --add-architecture armhf \
         g++-arm-linux-gnueabihf \
         gcc-arm-linux-gnueabihf \
         git \
+        libespeak-ng-dev:armhf \
+        libmpg123-dev:armhf \
+        libsndfile1-dev:armhf \
+        libsonic-dev:armhf \
+        libtool \
+        libutfcpp-dev \
+        make \
         ninja-build \
         patch \
+        pkg-config \
     && rm -rf /var/lib/apt/lists/*
