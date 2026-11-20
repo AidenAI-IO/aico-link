@@ -109,12 +109,17 @@ func (s *Server) handleCoordinateDebugTap(w http.ResponseWriter, r *http.Request
 		defer currentScreen.RestoreMappingState(mappingState)
 	}
 
+	// The debug page sends where it is told. On a landscape iPhone touchpad
+	// mirror_ok uses the current turn, the default one until confirmed,
+	// instead of refusing; a touch that reacts at the mirror shows the
+	// operator to adjust x and y.
 	toolInput, err := json.Marshal(map[string]any{
 		"type": gestureType,
 		"point": map[string]int{
 			"x": req.X,
 			"y": req.Y,
 		},
+		"mirror_ok": true,
 	})
 	if err != nil {
 		http.Error(w, `{"ok":false,"error":"failed to encode tap payload"}`, http.StatusInternalServerError)

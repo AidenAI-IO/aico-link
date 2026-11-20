@@ -16,10 +16,18 @@ import (
 // finger on the glass. The HDMI picture is always upright, so in landscape a
 // point chosen on the screenshot lands turned by a quarter, in a direction set
 // by which way the phone is turned. The screenshot cannot tell the two
-// landscape directions apart, so a probe press learns it. A direct turn from
-// one landscape direction to the other keeps the screenshot landscape and is
-// not noticed; touches then land mirrored until the screen leaves landscape.
+// landscape directions apart. A landscape screen starts from the direction
+// apps that force landscape were seen to use; it stays unconfirmed until the
+// model sees where a touch reacted and calls orientation_set, which can also
+// flip a confirmed direction when a later touch reacts at its mirror.
 const (
+	// touchpadDefaultLandscapeTurn is the direction measured with an app
+	// forcing landscape on an upright iPhone.
+	touchpadDefaultLandscapeTurn = mnk.TouchpadTurnedRight
+	// touchpadTurnPendingObserveDelay replaces the stable-screen wait after
+	// an unconfirmed touch: the reaction that shows the direction, such as
+	// video controls, can fade before a moving screen settles.
+	touchpadTurnPendingObserveDelay = 300 * time.Millisecond
 	// touchpadTurnProbeHold keeps the probe contact down long enough for the
 	// pressed control to draw its highlight before the frame is captured.
 	touchpadTurnProbeHold = 250 * time.Millisecond
@@ -39,8 +47,11 @@ type touchpadTurnCorrector struct {
 	screen   *screen.ScreenState
 
 	mu sync.Mutex
-	// landscapeTurn is the learned landscape direction; zero when unknown.
+	// landscapeTurn is the landscape direction in use; upright while the
+	// screen has not been landscape since it was last portrait.
 	landscapeTurn mnk.TouchpadTurn
+	// confirmed reports that a touch was seen landing with landscapeTurn.
+	confirmed bool
 }
 
 func newTouchpadTurnCorrector(provider mnk.Provider, capture frameCapturer, screenState *screen.ScreenState) *touchpadTurnCorrector {
@@ -60,48 +71,88 @@ func (c *touchpadTurnCorrector) landscape() (bool, bool) {
 	return width > height, true
 }
 
-// prepare sets the provider's turn for an action on the latest screenshot.
-// In landscape with an unknown direction it returns needsProbe; the caller
-// then calls probe with the action's first point.
-func (c *touchpadTurnCorrector) prepare() (needsProbe bool) {
+// prepare sets the provider's turn for an action on the latest screenshot and
+// reports whether that turn is still an unconfirmed landscape guess.
+func (c *touchpadTurnCorrector) prepare() (pending bool) {
 	if c == nil {
 		return false
 	}
 	landscape, ok := c.landscape()
-	if !ok {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case !ok:
 		// No screenshot since the last capture invalidation: the orientation
 		// has not been seen to change, so keep the turn last applied.
-		return false
-	}
-	if !landscape {
-		// The phone may come back turned the other way, so a learned
-		// landscape direction only holds until the screen leaves landscape.
-		c.forget()
+	case !landscape:
+		// The phone may come back turned the other way, so a landscape
+		// direction only holds until the screen leaves landscape.
+		c.landscapeTurn = mnk.TouchpadUpright
+		c.confirmed = false
 		c.provider.SetTouchpadTurn(mnk.TouchpadUpright)
+	default:
+		if c.landscapeTurn == mnk.TouchpadUpright {
+			c.landscapeTurn = touchpadDefaultLandscapeTurn
+		}
+		c.provider.SetTouchpadTurn(c.landscapeTurn)
+	}
+	return c.landscapeTurn != mnk.TouchpadUpright && !c.confirmed
+}
+
+// landscapeActive reports whether a landscape turn is in use.
+func (c *touchpadTurnCorrector) landscapeActive() bool {
+	if c == nil {
 		return false
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.landscapeTurn != mnk.TouchpadUpright
+}
+
+// pending reports whether the landscape turn in use is still unconfirmed.
+func (c *touchpadTurnCorrector) pending() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.landscapeTurn != mnk.TouchpadUpright && !c.confirmed
+}
+
+// remember confirms turn as the landscape direction.
+func (c *touchpadTurnCorrector) remember(turn mnk.TouchpadTurn) {
+	c.mu.Lock()
+	c.landscapeTurn = turn
+	c.confirmed = turn != mnk.TouchpadUpright
+	c.mu.Unlock()
+	c.provider.SetTouchpadTurn(turn)
+}
+
+// confirm records where the model saw the last touch react: at its aimed
+// point (mirrored=false) or at the mirror through the screen centre.
+func (c *touchpadTurnCorrector) confirm(mirrored bool) (mnk.TouchpadTurn, error) {
 	c.mu.Lock()
 	turn := c.landscapeTurn
 	c.mu.Unlock()
 	if turn == mnk.TouchpadUpright {
-		return true
+		return turn, fmt.Errorf("the screen is not in landscape, so there is no direction to set")
 	}
-	c.provider.SetTouchpadTurn(turn)
-	return false
+	if mirrored {
+		turn = oppositeTouchpadTurn(turn)
+	}
+	c.remember(turn)
+	return turn, nil
 }
 
-func (c *touchpadTurnCorrector) remember(turn mnk.TouchpadTurn) {
-	c.mu.Lock()
-	c.landscapeTurn = turn
-	c.mu.Unlock()
-}
-
-// forget drops the learned direction.
-func (c *touchpadTurnCorrector) forget() {
-	if c == nil {
-		return
+func oppositeTouchpadTurn(turn mnk.TouchpadTurn) mnk.TouchpadTurn {
+	switch turn {
+	case mnk.TouchpadTurnedLeft:
+		return mnk.TouchpadTurnedRight
+	case mnk.TouchpadTurnedRight:
+		return mnk.TouchpadTurnedLeft
+	default:
+		return turn
 	}
-	c.remember(mnk.TouchpadUpright)
 }
 
 // probe learns the landscape direction with a press at point, which the

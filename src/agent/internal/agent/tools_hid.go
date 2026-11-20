@@ -322,6 +322,31 @@ type TouchGestureTool struct {
 	turn *touchpadTurnCorrector
 }
 
+// turnCheckSequenceIntervalMs spaces a direction-check tap_sequence that set
+// no interval: its first tap typically reveals controls, whose appearance
+// animation swallows a second tap sent sooner.
+const turnCheckSequenceIntervalMs = 1000
+
+func withTurnCheckSequenceInterval(input string) string {
+	var args map[string]json.RawMessage
+	if json.Unmarshal([]byte(input), &args) != nil {
+		return input
+	}
+	var gestureType string
+	if json.Unmarshal(args["type"], &gestureType) != nil || !strings.EqualFold(strings.TrimSpace(gestureType), "tap_sequence") {
+		return input
+	}
+	if _, set := args["interval_ms"]; set {
+		return input
+	}
+	args["interval_ms"] = json.RawMessage(strconv.Itoa(turnCheckSequenceIntervalMs))
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return input
+	}
+	return string(encoded)
+}
+
 // touchpadOrientationProbeType is the touch_gesture type that learns which
 // way a landscape iPhone is turned before any other touch is sent.
 const touchpadOrientationProbeType = "orientation_probe"
@@ -347,8 +372,8 @@ func (t *TouchGestureTool) ArgsSchema() map[string]any {
 	typeDescription := "Gesture type. tap, double_tap, long_press, drag_start, and drag_release require point. swipe requires start and either end or direction. tap_sequence requires points."
 	types := []string{"tap", "double_tap", "long_press", "drag_start", "drag_release", "swipe", "tap_sequence"}
 	if t.turn != nil {
-		typeDescription += ` orientation_probe requires point; use it only when a touch on a landscape iPhone was refused because the direction is unknown: it presses and releases point once, so choose a control that is harmless to press and shows a press highlight, whose mirror (1000-x, 1000-y) is also harmless.`
-		types = append(types, touchpadOrientationProbeType)
+		typeDescription += ` On a landscape iPhone the turn direction starts as a guess: until it is confirmed, only tap, double_tap, long_press, and tap_sequence with mirror_ok=true are sent. A mirror_ok touch in landscape, confirmed or not, is a direction check: the screenshot is taken shortly after it, marking the aimed point (the last tap of a tap_sequence) red and its mirror (1000-x, 1000-y) blue, and a tap_sequence runs without its layout check, 1000 ms apart unless interval_ms is set, so a target that only appears after a tap, such as video controls that hide again within seconds, can be revealed and pressed in one call. orientation_set requires landed: "expected" when the touch reacted at the red ring, "mirror" when it reacted at the blue ring (then redo the touch). orientation_set also corrects a confirmed direction whenever a later touch visibly reacts at its mirror. orientation_probe requires point and is optional: it presses a control that highlights while pressed and compares the point with its mirror.`
+		types = append(types, touchpadOrientationSetType, touchpadOrientationProbeType)
 	}
 	speedSchema := numberArgSchema("Swipe speed in normalized coordinate units per second. Defaults to 2500.", 2500)
 	speedSchema["exclusiveMinimum"] = 0
@@ -390,6 +415,11 @@ func (t *TouchGestureTool) ArgsSchema() map[string]any {
 		"hold_after_ms":  rangedIntegerArgSchema("Optional swipe dwell at the end before release.", 0, mnk.MaxSwipeHoldMs),
 		"steps":          rangedIntegerArgSchema("Optional HID interpolation step count; larger values produce smoother motion. Defaults to the provider default (24).", 1, mnk.MaxSwipeSteps),
 	})
+	if t.turn != nil {
+		properties := schema["properties"].(map[string]any)
+		properties["mirror_ok"] = map[string]any{"type": "boolean", "description": "For tap, double_tap, long_press, and tap_sequence while the landscape iPhone's turn direction is unconfirmed: true states that the mirror (1000-x, 1000-y) of every touched point is also harmless to touch."}
+		properties["landed"] = stringEnumArgSchema("For orientation_set: where the last touch reacted, at the aimed point or at its mirror.", "expected", "mirror")
+	}
 	schema["description"] = `JSON object for one standard gesture or, rarely, an advanced atomic touch program. Provide either type or actions; a call with neither is rejected. Use type for normal interaction. Reserve actions for uninterrupted custom contact timing that tap, double_tap, long_press, swipe, drag_start, or drag_release cannot express. Never use actions to move a draggable target: call drag_start at its current point, let its internal stability wait finish, determine the destination from its returned screen_stable=true screenshot, then call drag_release at the confirmed point. A screen_stable=false drag_start automatically returns to its original point and releases; inspect its screenshot and retry drag_start rather than calling drag_release. Do not call wait_for_stable_screen separately in the normal drag flow. Unknown fields are ignored. Coordinate fields point, start, and end, and each item of points, use named objects containing both x and y. tap_sequence taps points in order in one call for targets that are all visible and do not change the layout; it stops early when the layout changes. For scrolling, start inside the intended scrollable region near its appropriate edge. Many controls continue receiving the gesture after the initial press, so the explicit end may extend beyond that region while staying inside the screen with a margin from physical edges. Use the available travel for larger movements and shorten it near the target; verify the result after every swipe and leave timing at defaults. Swipe accepts either start+end or start+direction; speed defaults to 2500 normalized coordinate units per second and duration_ms overrides calculated timing. For HID swipes starting outside the outer 1% screen border with hold_after_ms=0, duration_ms controls main motion with a 180ms minimum and excludes an additional 100ms low-speed release tail, in both absolute-mouse and touchscreen modes. hold_before_ms, hold_after_ms, and steps are optional swipe timing controls.`
 	schema["examples"] = []map[string]any{
 		{"type": "tap", "point": map[string]any{"x": 500, "y": 500}},
@@ -415,12 +445,18 @@ func (t *TouchGestureTool) Call(ctx context.Context, input string) (string, erro
 	if err := t.ensureTouchscreenMapping(ctx); err != nil {
 		return toolErrorResultf(ctx, CodeToolExecutionFailed, "touchscreen mapping unavailable: %v", err), nil
 	}
-	if out, handled := t.handleTouchpadTurn(ctx, input); handled {
+	out, handled, turnPending := t.handleTouchpadTurn(ctx, input)
+	if handled {
 		return out, nil
+	}
+	if turnPending {
+		input = withTurnCheckSequenceInterval(input)
 	}
 	provider := t.mnkProvider
 	adapter := mnk.NewTouchGestureToolAdapter(provider)
-	if points, guarded := tapSequenceInput(input); guarded && t.captureFrame != nil {
+	// An unconfirmed landscape tap_sequence is meant to change the screen
+	// between taps (reveal controls, then press one), so it is not guarded.
+	if points, guarded := tapSequenceInput(input); guarded && t.captureFrame != nil && !turnPending {
 		if err := mnk.ValidateTapSequenceInput(input); err != nil {
 			return mapMNKAdapterResult(ctx, "", err)
 		}
@@ -440,6 +476,9 @@ func (t *TouchGestureTool) Call(ctx context.Context, input string) (string, erro
 		adapter.WithTapSequenceGuard(newTapSequenceGuard(t.captureFrame, t.screen, baseline, points, t.confirmTargets))
 	}
 	output, err := adapter.Call(ctx, input)
+	if err == nil && turnPending {
+		output = touchpadTurnPendingNote
+	}
 	return mapMNKAdapterResult(ctx, output, err)
 }
 

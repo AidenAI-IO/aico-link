@@ -335,14 +335,37 @@ width, and re-enumerating does not change the mapping. The provider sends every
 point through the inverse of the current turn, so taps, swipes, drags, and
 `tap_sequence` all land where they were chosen.
 
-The screenshot cannot tell the two landscape directions apart. While the
-latest screenshot is landscape and the direction is unknown, `touch_gesture`
-refuses other gestures and asks for `{"type":"orientation_probe","point":...}`
-on a control that is harmless to press and shows a press highlight, whose
-mirror `(1000-x, 1000-y)` is also harmless. The probe presses that point,
-captures a frame while the contact is held, compares the press highlight at
-the point and at its mirror, and releases. The release completes one tap. The
-direction learned is kept until the screenshot is portrait again. Turning the
-phone directly from one landscape direction to the other keeps the screenshot
-landscape and is not noticed; touches then land mirrored until the screen
-leaves landscape.
+The screenshot cannot tell the two landscape directions apart, so a landscape
+screen starts from `turned_right`, the direction measured with an app forcing
+landscape on an upright iPhone, and the direction stays unconfirmed until the
+model sees where a touch reacted:
+
+- While it is unconfirmed, `touch_gesture` sends only `tap`, `double_tap`,
+  `long_press`, and `tap_sequence` that carry `"mirror_ok": true`, meaning the
+  mirror `(1000-x, 1000-y)` of every touched point is also harmless. Other
+  gestures would run mirrored and are refused. The screen centre is its own
+  mirror.
+- A `mirror_ok` touch on a landscape screen, confirmed or not, is a direction
+  check. Its screenshot is taken about 300 ms after the touch, without the
+  pre-action baseline, stable-screen wait, or UI grounding, because a reaction
+  such as video controls can fade within seconds. It marks the aimed point
+  (the last tap of a `tap_sequence`) with a red ring and its mirror with a
+  blue ring.
+- A check `tap_sequence` skips its layout guard and, unless `interval_ms` is
+  set, waits 1000 ms between taps. That lets one call reveal controls that hide
+  again (tap the centre) and press one of them: with 400 ms the second tap
+  landed during the controls' appearance animation and was lost.
+- The model then calls `{"type":"orientation_set","landed":"expected"}` when
+  the touch reacted at the red ring, or `"landed":"mirror"` when it reacted at
+  the blue ring, which flips the direction; it then redoes the touch. Because
+  a check also works on a confirmed direction, this covers turning the phone
+  directly from one landscape direction to the other.
+- The Coordinate Debug page sends its taps as `mirror_ok`, so in landscape it
+  uses the current direction (the default until confirmed) instead of being
+  refused; a tap that reacts at the mirror shows which way to adjust.
+
+The direction is dropped when the screenshot is portrait again. A screenshot
+cleared by a capture invalidation keeps the direction in use.
+`{"type":"orientation_probe","point":...}` remains as an optional check: it
+presses a control that highlights while pressed and compares the frame at the
+point and at its mirror while the contact is held.
