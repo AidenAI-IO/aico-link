@@ -190,9 +190,9 @@ If the LLM does not generate assistant content in the same response as the tool 
 Ekho is the default TTS adapter. The Debian application build cross-compiles
 [Ekho](https://github.com/hgneng/ekho) and stages its Mandarin voice data;
 `aico-business` installs the executable at `/usr/lib/aico/ekho` and data at
-`/usr/share/aico/ekho-data`. Debian supplies the eSpeak NG runtime and voice data,
+`/usr/share/aico/ekho-data`. Debian supplies the Flite SLT runtime and voice,
 libsndfile, Sonic, and mpg123 dependencies. See the
-[build inputs and female-voice patch](../../scripts/debian-apps/ekho/README.md)
+[build inputs and Flite SLT patch](../../scripts/debian-apps/ekho/README.md)
 and [package installation](../08-ota/debian-package.md).
 The Agent prefers `/usr/lib/aico/ekho`, then finds `ekho` on `PATH` or checks
 `/usr/local/bin/ekho` and `/userdata/ekho/bin/ekho` for manual installations.
@@ -208,13 +208,29 @@ speed = 1.0
 type = "ekho"
 ```
 
-No API key is needed. The fixed bilingual preset is equivalent to
-`ekho -v Mandarin -s 20 --english-speed -10 -a 0`. Use Mandarin for mixed
-Chinese/English input as well. The bundled patch selects the American English
-female variant `en-us+f3` through eSpeak NG's `espeak_SetVoiceByName()` in
-`src/english.cpp`, including English embedded in Mandarin input. `speed` is
+No API key is needed. The bilingual baseline is equivalent to
+`ekho -v Mandarin -s 20 --english-speed -10 -a 0`. The Agent selects
+`-v English` for synthesis chunks containing Latin letters without letters
+from other scripts. This sends the complete chunk, including numbers, decimals,
+dates, currencies, and percentages, to Flite's English text normalization.
+Mandarin mode would convert those digits to Chinese before its English fallback.
+Chinese and mixed Chinese/English chunks keep `-v Mandarin`. Digit-only chunks
+inherit the preceding chunk's language; a new session and `ResetBuffer` default
+to Mandarin. This also preserves English pronunciation across the 160-character
+chunk limit. For direct CLI use, pass `-v English` explicitly when all text
+should be read in English. The bundled patch selects the American English
+female voice `slt` through Flite's `register_cmu_us_slt()` in `src/english.cpp`,
+including English phrases embedded in Mandarin input. Single letters within
+Mandarin-mode chunks retain Ekho's alphabet recordings. English PCM is resampled
+to the selected voice's source rate and given a calibrated 2x amplitude gain
+with PCM16 saturation before the common output processing, bringing English
+loudness close to Mandarin.
+This gain applies only to Flite English audio. `speed` is
 relative to this preset: Ekho's `-s` is `round(120 * speed - 100)`, while
-`--english-speed -10` stays fixed. Cloud-only voice/model fields are ignored.
+`--english-speed -10` stays fixed. For Flite, this is a 10% reduction relative
+to SLT's natural speaking rate before Ekho's common speed processing. It does
+not preserve the old eSpeak voice's exact duration. Cloud-only voice/model
+fields are ignored.
 
 The device integration was validated with Ekho 9.0 at upstream commit
 [`796241e`](https://github.com/hgneng/ekho/commit/796241e13e4c52fff2055128575ce68164f89d8e).
@@ -237,10 +253,22 @@ does not automatically select this English voice.
 
 Incoming LLM fragments are buffered to Chinese/English sentence punctuation or
 newlines. English periods use lookahead to preserve decimals and common
-abbreviations. Unpunctuated text is limited to 160 characters per synthesis,
+abbreviations, and end sentences before adjacent Chinese text even without a
+space. Unpunctuated text is limited to 160 characters per synthesis,
 preferring whitespace or clause punctuation when available. A flush or the end
-of a speech block emits any remaining text. Sentences are synthesized and
-played in order; cancellation kills the active subprocess and stops playback.
+of a speech block emits any remaining text. A synthesis worker prepares the next
+sentence while a separate playback worker sends the current sentence's PCM.
+The handoff allows at most two sentence WAVs (current and next), one queued text
+sentence, and one synthesis process per session. A full queue applies backpressure
+to text input. Playback order is preserved; cancellation kills the active
+subprocess, stops playback, and removes both WAVs. Synthesis and playback errors
+are retained by `Err`, `Flush`, and `Close`.
+
+`WriteText` queues complete sentences without waiting for playback when capacity
+is available. `Flush` emits the incomplete tail and waits for preceding PCM
+writes without ending playback; `Close` also joins both workers and drains the
+sink once. Prefetch can hide the next sentence's synthesis time when text arrives
+early enough; it does not reduce the first sentence's synthesis latency.
 
 The Agent invokes `ekho` directly with text on stdin. It creates one temporary
 seekable WAV per sentence, reads 22050 Hz mono PCM16 in small blocks, and removes

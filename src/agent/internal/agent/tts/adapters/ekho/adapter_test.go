@@ -34,7 +34,12 @@ func (s *testSink) WritePCM(p []byte) error {
 	s.pcm = append(s.pcm, p...)
 	return s.err
 }
-func (s *testSink) Drain(context.Context) error { s.drains++; return nil }
+func (s *testSink) Drain(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.drains++
+	return nil
+}
 func (s *testSink) Stop() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -117,10 +122,6 @@ printf '\n' >> "$EKHO_TEST_LOG"
 			t.Fatal(err)
 		}
 	}
-	before, _ := os.ReadFile(logPath)
-	if string(before) != "你好。\nPrice is 3.14 dollars.\n" {
-		t.Fatalf("sentences before flush = %q", before)
-	}
 	if err := stream.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +133,7 @@ printf '\n' >> "$EKHO_TEST_LOG"
 		t.Fatalf("synthesized input = %q", input)
 	}
 	args, _ := os.ReadFile(logPath + ".args")
-	if !strings.HasPrefix(string(args), "-v\nMandarin\n-s\n20\n--english-speed\n-10\n-a\n0\n--samplerate\n22050\n-f\n-\n-o\n") {
+	if !strings.HasPrefix(string(args), "-v\nEnglish\n-s\n20\n--english-speed\n-10\n-a\n0\n--samplerate\n22050\n-f\n-\n-o\n") {
 		t.Fatalf("unexpected command args: %q", args)
 	}
 	if !bytes.Equal(sink.pcm, bytes.Repeat([]byte{1, 0, 2, 0}, 3)) {
@@ -155,8 +156,11 @@ exec /bin/sleep 30
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := stream.WriteText("取消这一句。"); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
-	go func() { done <- stream.WriteText("取消这一句。") }()
+	go func() { done <- stream.Close() }()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		if _, err := os.Stat(logPath); err == nil {
@@ -173,7 +177,7 @@ exec /bin/sleep 30
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("write error = %v", err)
+			t.Fatalf("close error = %v", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancellation did not kill synthesis")
@@ -195,13 +199,94 @@ func TestEkhoFailureAndReset(t *testing.T) {
 	if err := stream.Flush(); err != nil {
 		t.Fatalf("reset retained text: %v", err)
 	}
-	if err := stream.WriteText("失败。"); err == nil || !strings.Contains(err.Error(), "synthesis-failed") {
+	if err := stream.WriteText("失败。"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Flush(); err == nil || !strings.Contains(err.Error(), "synthesis-failed") {
 		t.Fatalf("subprocess failure not surfaced: %v", err)
 	}
 	if stream.Close() == nil || stream.Err() == nil {
 		t.Fatal("synthesis failure was lost on close")
 	}
 	assertNoTempWAV(t, tempDir)
+}
+
+func TestEkhoNumberLanguageRouting(t *testing.T) {
+	logPath, tempDir := fakeEkho(t, `
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then shift; output="$1"; fi
+  if [ "$1" = "-v" ]; then shift; voice="$1"; fi
+  shift
+done
+printf '%s|' "$voice" >> "$EKHO_TEST_LOG"
+/bin/cat >> "$EKHO_TEST_LOG"
+printf '\n' >> "$EKHO_TEST_LOG"
+/bin/cp "$EKHO_TEST_WAV" "$output"
+`)
+	for _, tc := range []struct {
+		name      string
+		fragments []string
+		reset     bool
+		want      string
+	}{
+		{"decimal fragments", []string{"You have 12 messages, total $3.", "14 and 50%."}, false,
+			"English|You have 12 messages, total $3.14 and 50%.\n"},
+		{"dates and units", []string{"On 2026-11-20 at 10:30, set 22.5 degrees and save 1,234 files."}, false,
+			"English|On 2026-11-20 at 10:30, set 22.5 degrees and save 1,234 files.\n"},
+		{"Unicode punctuation", []string{"“There are 12 files”—50% are ready。"}, false,
+			"English|“There are 12 files”—50% are ready。\n"},
+		{"Chinese", []string{"共有12条消息，金额3.14元。"}, false,
+			"Mandarin|共有12条消息，金额3.14元。\n"},
+		{"mixed", []string{"请 read 12 messages，金额3.14元。"}, false,
+			"Mandarin|请 read 12 messages，金额3.14元。\n"},
+		{"adjacent Chinese sentence", []string{"You have 12 messages.共有3条。"}, false,
+			"English|You have 12 messages.\nMandarin|共有3条。\n"},
+		{"adjacent after decimal", []string{"The total is 3.14.共有3条。"}, false,
+			"English|The total is 3.14.\nMandarin|共有3条。\n"},
+		{"single digit before period", []string{"There are 3.", "中文。"}, false,
+			"English|There are 3.\nMandarin|中文。\n"},
+		{"single digit before space", []string{"There are 3. Next are 12."}, false,
+			"English|There are 3.\nEnglish|Next are 12.\n"},
+		{"mixed decimal remains intact", []string{"金额为3.", "14元。"}, false,
+			"Mandarin|金额为3.14元。\n"},
+		{"numeric default", []string{"12345"}, false, "Mandarin|12345\n"},
+		{"English continuation", []string{"There are 12 files!", "12345"}, false,
+			"English|There are 12 files!\nEnglish|12345\n"},
+		{"language switch", []string{"There are 12 files!共有3个。", "456"}, false,
+			"English|There are 12 files!\nMandarin|共有3个。\nMandarin|456\n"},
+		{"reset language", []string{"There are 12 files!", "12345"}, true,
+			"English|There are 12 files!\nMandarin|12345\n"},
+		{"long numeric continuation", []string{"ID " + strings.Repeat("1", maxChunkRunes+10)}, false,
+			"English|ID\nEnglish|" + strings.Repeat("1", maxChunkRunes) + "\nEnglish|" + strings.Repeat("1", 10) + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			provider := fixtureProvider(t, tts.ProviderConfig{Extra: map[string]any{"pace_audio": false}})
+			stream, err := provider.BeginStream(context.Background(), &testSink{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { tts.Cancel(stream); stream.Close() })
+			for i, fragment := range tc.fragments {
+				if tc.reset && i > 0 {
+					stream.(*session).ResetBuffer()
+				}
+				if err := stream.WriteText(fragment); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := stream.Close(); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(logPath)
+			if err != nil || string(got) != tc.want {
+				t.Fatalf("subprocess input = %q, err=%v; want %q", got, err, tc.want)
+			}
+			assertNoTempWAV(t, tempDir)
+		})
+	}
 }
 
 func TestEkhoSubprocessStderrIsBounded(t *testing.T) {
