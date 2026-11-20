@@ -1,19 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {setImmediate} from 'node:timers/promises';
 import vm from 'node:vm';
 
 const pageSource = await readFile(new URL('../assets/js/app/pages/model.js', import.meta.url), 'utf8');
 const fieldsSource = await readFile(new URL('../assets/js/app/fields.js', import.meta.url), 'utf8');
+const saverSource = await readFile(new URL('../assets/js/app/saver.js', import.meta.url), 'utf8');
 
-async function loadDecisionPage({catalogAvailable = true, beforeSave} = {}) {
+async function loadDecisionPage({catalogAvailable = true, beforeSave, beforePlan, useRealSaver = false} = {}) {
   const snapshot = {config: {decision: {
     provider: 'openrouter', enabled: true, has_api_key: true,
     model: 'vendor/original', base_url: 'https://router.example/v1',
   }}};
   const patches = [];
   const calls = [];
-  const context = vm.createContext({});
+  let persisted = snapshot.config;
+  let configSaves = Promise.resolve();
+  const context = vm.createContext({window: {addEventListener() {}}});
   const msg = (key, fallback) => ({key, fallback});
   const resolve = spec => typeof spec === 'string' ? spec : spec?.fallback || spec?.key || '';
   const el = (tag, options = {}, children = []) => ({
@@ -30,6 +34,20 @@ async function loadDecisionPage({catalogAvailable = true, beforeSave} = {}) {
       adoptSaved: target => payload => { target.config = payload.config; },
       request: async (path, options) => {
         calls.push({path, body: options?.body ? JSON.parse(options.body) : null});
+        if (path === '/api/config' && options?.method === 'PATCH') {
+          const patch = JSON.parse(options.body).config;
+          const key = `decision.${Object.keys(patch.decision)[0]}`;
+          const pending = configSaves.then(async () => {
+            patches.push({key, patch});
+            const outcome = beforeSave ? await beforeSave(key, patch) : undefined;
+            if (outcome === 'failed') throw new Error('save rejected');
+            persisted = {...persisted, decision: {...persisted.decision, ...patch.decision}};
+            if (outcome === 'persisted') throw Object.assign(new Error('apply failed'), {persisted: true, config: persisted});
+            return {config: persisted, apply: 'live'};
+          });
+          configSaves = pending.catch(() => {});
+          return pending;
+        }
         if (path.startsWith('/api/models?')) {
           if (!catalogAvailable) throw new Error('catalog unavailable');
           return {models: [
@@ -43,13 +61,21 @@ async function loadDecisionPage({catalogAvailable = true, beforeSave} = {}) {
       t: (key, options) => options?.defaultValue || key,
     },
     '../../config/i18n.js': {getActiveLocale: () => 'en'},
+    '../apply.js': {
+      APPLY_LIVE: 'live', needsRestart: () => false,
+      planApply: async patch => { if (beforePlan) await beforePlan(patch); return 'live'; },
+      confirmRestart: async () => true, performRestart() {}, saveLabel() {},
+    },
+    '../host.js': {postToHost() {}},
     '../saver.js': {createSaver: (_, options) => ({
       refreshChrome() {},
       async change(key, patch) {
         patches.push({key, patch});
         const outcome = beforeSave ? await beforeSave(key, patch) : undefined;
         if (outcome && outcome !== 'saved') return outcome;
-        options.onSaved({config: {decision: {...snapshot.config.decision, ...patch.decision}}});
+        const payload = {config: {decision: {...snapshot.config.decision, ...patch.decision}}};
+        options.onPersisted?.(payload);
+        options.onSaved?.(payload);
         return 'saved';
       },
     })},
@@ -78,10 +104,14 @@ async function loadDecisionPage({catalogAvailable = true, beforeSave} = {}) {
   };
   const fields = new vm.SourceTextModule(fieldsSource, {context});
   await fields.link(specifier => synthetic(specifier.replace('../ui/', '../../ui/')));
+  const saver = useRealSaver ? new vm.SourceTextModule(saverSource, {context}) : null;
+  if (saver) await saver.link(specifier => synthetic(specifier.startsWith('./')
+    ? specifier.replace('./', '../') : specifier.replace('../ui/', '../../ui/')));
   const page = new vm.SourceTextModule(pageSource, {context});
-  await page.link(specifier => specifier === '../fields.js' ? fields : synthetic(specifier));
+  await page.link(specifier => specifier === '../fields.js' ? fields
+    : specifier === '../saver.js' && saver ? saver : synthetic(specifier));
   await page.evaluate();
-  return {page: await page.namespace.decisionPage({}), patches, calls};
+  return {page: await page.namespace.decisionPage({}), patches, calls, persisted: () => persisted};
 }
 
 function find(node, action) {
@@ -105,9 +135,17 @@ test('OpenRouter model suggestions assist free input without changing the saved 
   assert.equal(model.value, 'jev', 'loading suggestions must not replace typed text');
   assert.equal(patches.length, 0, 'suggestions must not save a model automatically');
   await suggestions.children[0].options.on.click();
+  const selected = find(page, 'edit-decision.model');
+  selected.value = 'jev';
+  selected.listeners.input();
+  await selected.listeners.focus();
+  const currentSuggestions = find(page, node => node.options?.attrs?.role === 'listbox');
+  await currentSuggestions.children[0].options.on.click();
+  assert.equal(patches.length, 1, 'selecting the saved model must not save it again');
   const baseURL = find(page, 'edit-decision.base_url');
   baseURL.value = 'https://new-router.example/v1';
   await baseURL.listeners.change();
+  assert.equal(find(page, 'edit-decision.model').value, 'vendor/jev-special', 'the selected ID must survive a rerender');
   assert.deepEqual(JSON.parse(JSON.stringify(patches)), [
     {key: 'decision.model', patch: {decision: {model: 'vendor/jev-special'}}},
     {key: 'decision.base_url', patch: {decision: {base_url: 'https://new-router.example/v1'}}},
@@ -234,6 +272,67 @@ test('an obsolete validation failure cannot roll back a newer submission of the 
   finishes[2]('saved');
   await Promise.all(saves);
   assert.equal(find(page, 'edit-decision.model').value, 'vendor/retry');
+});
+
+test('the real saver reconciles an earlier persisted write when the next write fails', async t => {
+  for (const {key, persistedError = false} of [{key: 'model'}, {key: 'base_url'}, {key: 'base_url', persistedError: true}]) {
+    for (const newerDraft of [undefined, 'newer draft', '']) {
+      await t.test(`${key}, persisted error: ${persistedError}, draft: ${JSON.stringify(newerDraft)}`, async () => {
+        const finishes = [];
+        const {page, patches, calls, persisted} = await loadDecisionPage({
+          useRealSaver: true,
+          beforeSave: () => new Promise(resolve => { finishes.push(resolve); }),
+        });
+        const field = find(page, `edit-decision.${key}`);
+        const first = key === 'model' ? 'vendor/jev-special' : 'https://first.example/alpha';
+        const second = key === 'model' ? 'vendor/jev-next' : 'https://second.example/alpha';
+        field.value = first;
+        const savingFirst = field.listeners.change();
+        await setImmediate();
+        assert.equal(patches.length, 1);
+        field.value = second;
+        const savingSecond = field.listeners.change();
+        await setImmediate();
+        assert.equal(patches.length, 1, 'config writes must remain serialized');
+        if (newerDraft !== undefined) {
+          field.value = newerDraft;
+          field.listeners.input();
+        }
+        finishes[0](persistedError ? 'persisted' : undefined);
+        await savingFirst;
+        await setImmediate();
+        assert.equal(find(page, `edit-decision.${key}`).value, newerDraft ?? second);
+        finishes[1]('failed');
+        await savingSecond;
+        assert.equal(persisted().decision[key], first);
+        assert.equal(find(page, `edit-decision.${key}`).value, newerDraft ?? first);
+        await find(page, 'test-decision-connection').options.on.click();
+        assert.equal(calls.at(-1).body.values[key], first, 'connection tests must use the persisted config');
+      });
+    }
+  }
+});
+
+test('a persisted write reconciles after a newer value fails validation before it completes', async () => {
+  let finishSave;
+  const saveDelay = new Promise(resolve => { finishSave = resolve; });
+  const {page, persisted} = await loadDecisionPage({
+    useRealSaver: true,
+    beforeSave: () => saveDelay,
+    beforePlan: patch => {
+      if (patch.decision.model === 'vendor/invalid') throw Object.assign(new Error('invalid model'), {status: 400});
+    },
+  });
+  const model = find(page, 'edit-decision.model');
+  model.value = 'vendor/jev-special';
+  const saving = model.listeners.change();
+  await setImmediate();
+  model.value = 'vendor/invalid';
+  await model.listeners.change();
+  finishSave();
+  await saving;
+  assert.equal(persisted().decision.model, 'vendor/jev-special');
+  assert.equal(find(page, 'edit-decision.model').value, 'vendor/jev-special');
 });
 
 test('model suggestions support keyboard navigation, Escape, blur, and input composition', async () => {

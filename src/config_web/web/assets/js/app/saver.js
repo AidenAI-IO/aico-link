@@ -70,6 +70,9 @@ async function patchConfig(patch) {
  * @param {Node} options.root - the page's node; the controller goes quiet once
  *   it is detached, so a stale page cannot answer the app's save request.
  * @param {(payload: object) => void} [options.onSaved] - receives each save response.
+ * @param {(payload: object) => void} [options.onPersisted] - receives every
+ *   persisted config, including a write superseded by a newer change. Pages
+ *   using this to reconcile saved values must preserve their newer drafts.
  * @param {{ready: () => boolean, submit: () => void}} [options.form] - a page
  *   that saves a whole form at once (a provider's credentials) rather than
  *   value by value. Its 保存 sits where staged restarts would, in the top bar
@@ -112,6 +115,10 @@ export function createSaver(context, options) {
     if (options.onSaved) options.onSaved(payload);
   }
 
+  function persisted(payload) {
+    if (options.onPersisted) options.onPersisted(payload);
+  }
+
   /**
    * Apply one setting change.
    *
@@ -149,6 +156,9 @@ export function createSaver(context, options) {
     refreshChrome();
     try {
       const payload = await patchConfig(patch);
+      // Config writes are serialized by request(). Even a superseded write
+      // is the latest persisted baseline until a later write succeeds.
+      persisted(payload);
       // A newer change to the same key may have finished first; do not let this
       // older response overwrite UI state or toast through onSaved.
       if (sequence.get(key) !== current) return 'superseded';
@@ -163,6 +173,7 @@ export function createSaver(context, options) {
       toast(msg('basic.saved', '已保存'));
       return 'saved';
     } catch (error) {
+      if (error && error.persisted) persisted(error);
       if (sequence.get(key) !== current) return 'superseded';
       if (context.localAgent && error.persisted) {
         saved(error);
@@ -202,10 +213,12 @@ export function createSaver(context, options) {
     try {
       const payload = await patchConfig(patch);
       staged.clear();
+      persisted(payload);
       saved(payload);
       restartLevel = needsRestart(payload.apply) ? payload.apply : null;
       if (!restartLevel) toast(msg('basic.saved', '已保存'));
     } catch (error) {
+      if (error && error.persisted) persisted(error);
       toastError(error);
     } finally {
       committing = false;

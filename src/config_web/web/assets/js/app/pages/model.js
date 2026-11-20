@@ -708,7 +708,7 @@ export async function decisionPage(context) {
     title: msg('model.decision', '决策模型'),
     back: '/model',
     root: body,
-    onSaved: payload => {
+    onPersisted: payload => {
       const provider = decision().provider;
       adoptSaved(snapshot)(payload);
       if (provider !== decision().provider) {
@@ -837,6 +837,7 @@ export async function decisionPage(context) {
       };
       const choose = entry => {
         input.value = entry.id;
+        drafts.set(key, input.value);
         show = false;
         close();
         return commit();
