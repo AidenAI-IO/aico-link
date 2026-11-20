@@ -38,7 +38,7 @@ Priority: optional
 Architecture: armhf
 Maintainer: Aico <contact@aico.link>
 Pre-Depends: python3
-Depends: libc6, libgcc-s1, libstdc++6, libsndfile1, libespeak-ng1, espeak-ng-data, libsonic0, libmpg123-0t64, systemd, sudo
+Depends: libc6, libgcc-s1, libstdc++6, libsndfile1, libflite1, libsonic0, libmpg123-0t64, systemd, sudo
 Homepage: https://aico.link
 Description: Aico Link firmware and Aico AI Agent runtime
  Aico AI Agent, Aico Link hardware services, configuration web assets, bundled skills

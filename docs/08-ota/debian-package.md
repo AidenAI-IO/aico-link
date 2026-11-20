@@ -171,8 +171,8 @@ dpkg-query -W aico-business
 ```
 
 Ekho is built automatically with the applications. The package carries the
-`en-us+f3` American English female-voice patch and Mandarin data; it declares
-eSpeak NG (including `espeak-ng-data`), libsndfile, Sonic, mpg123, and C++ runtime
+Flite `slt` American English female-voice patch and Mandarin data; it declares
+Flite (`libflite1`, including its SLT voice), libsndfile, Sonic, mpg123, and C++ runtime
 dependencies. The rootfs package list installs these before `dpkg -i` during
 image creation; `apt install` resolves them when upgrading an existing device.
 The packager verifies the staged Ekho payload checksums before copying it.
