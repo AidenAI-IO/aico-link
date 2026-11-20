@@ -34,6 +34,10 @@ func ConfigForUSBBoot(cfg Config, statePath, bootID, pointerMode string) (Config
 	}
 	// The descriptor is authoritative even on the first Agent start after an
 	// installation, when the config may already differ from the running gadget.
+	// The pointer mode follows the device type, so an iOS config on a gadget
+	// still bound as the absolute mouse runs as macOS: that drives the bound
+	// descriptor correctly, and InitializeConfigApplication reports the
+	// pending reboot that brings up the touchpad.
 	if (DeviceConfig{DeviceType: state.DeviceType}).PointerModeOrDefault() != pointerMode {
 		switch pointerMode {
 		case "touchscreen":

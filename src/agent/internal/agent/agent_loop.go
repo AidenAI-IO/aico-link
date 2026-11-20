@@ -1229,14 +1229,23 @@ func choiceHasToolCall(choice *llms.ContentChoice, toolName string) bool {
 }
 
 func touchPointerModeMismatchGuidance(platform, pointerMode string) string {
-	switch {
-	case platform == "android" && pointerMode == "absolute":
-		return `touch_gesture produced no visible screen change, and the connected platform is Android while [basic_settings.device].device_type derives hid.pointer_mode="absolute". Stop operation here because the touch mode likely does not match the target. Please switch [basic_settings.device].device_type to "Android", restart the agent, and retry.`
-	case (platform == "ios" || platform == "ipados") && pointerMode == "touchscreen":
-		return `touch_gesture produced no visible screen change, and the connected platform is iOS while [basic_settings.device].device_type derives hid.pointer_mode="touchscreen". Stop operation here because the touch mode likely does not match the target. Please switch [basic_settings.device].device_type to "iOS", restart the agent, and retry.`
+	var want string
+	switch platform {
+	case "android":
+		want = "touchscreen"
+	case "ios", "ipados":
+		want = "touchpad"
 	default:
 		return ""
 	}
+	if pointerMode == "" || pointerMode == want {
+		return ""
+	}
+	deviceType := "Android"
+	if want == "touchpad" {
+		deviceType = "iOS"
+	}
+	return fmt.Sprintf(`touch_gesture produced no visible screen change, and the connected platform is %s while [basic_settings.device].device_type derives hid.pointer_mode=%q. Stop operation here because the touch mode likely does not match the target. Please switch [basic_settings.device].device_type to %q, restart the agent, and retry.`, deviceType, pointerMode, deviceType)
 }
 
 func toolNameEqual(got, want string) bool {

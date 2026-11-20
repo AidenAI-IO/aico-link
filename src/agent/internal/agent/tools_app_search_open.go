@@ -15,9 +15,6 @@ import (
 const appSearchOpenLaunchDelay = 1200 * time.Millisecond
 const appSearchResultSettleDelay = 350 * time.Millisecond
 
-// Restoring the pointer profile re-enumerates USB HID. iOS drops the hardware
-// keyboard for a moment and can show the software keyboard, shifting results.
-
 // On iOS, Caps Lock switches between the active IME and English. Switching
 // away commits pending pinyin as letters, so the query survives the later
 // pointer-profile restore; the second tap switches back. With no pending text

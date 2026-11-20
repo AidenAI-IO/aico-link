@@ -219,6 +219,12 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	keyboardText.textProvider, _ = mnkProvider.(mnk.TextProvider)
 	decider := &decisionAdvisor{}
 	frameCapture := newFrameCapturer(provider)
+	// Only the iOS touchpad reports in panel coordinates; the touchscreen and
+	// absolute mouse already follow the upright picture.
+	var turn *touchpadTurnCorrector
+	if hidCfg.PointerModeOrDefault() == "touchpad" {
+		turn = newTouchpadTurnCorrector(mnkProvider, frameCapture, screen)
+	}
 	touchGesture := &TouchGestureTool{
 		mnkProvider:    mnkProvider,
 		screen:         screen,
@@ -226,7 +232,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		directTouch:    hidCfg.PointerDirectTouch(),
 		captureFrame:   frameCapture,
 		confirmTargets: newTapSequenceConfirmer(decider),
-		turn:           newTouchpadTurnCorrector(mnkProvider, frameCapture, screen),
+		turn:           turn,
 	}
 	quickAction := &QuickActionTool{keyboard: keyboardTap, touch: touchGesture, iosKeyboardIsolation: iosKeyboardIsolation, decider: decider, screenshot: screenshot}
 	quickAction.systemActions, _ = mnkProvider.(mnk.SystemActionProvider)

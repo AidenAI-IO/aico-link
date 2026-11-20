@@ -4838,3 +4838,23 @@ func TestRuntimePreemptHookPanicDoesNotStopOtherHooks(t *testing.T) {
 		t.Fatal("first run did not complete")
 	}
 }
+
+func TestTouchPointerModeMismatchGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		platform, mode string
+		want           bool
+	}{
+		{"ios", "touchpad", false},
+		{"ios", "absolute", true},
+		{"ipados", "touchscreen", true},
+		{"android", "touchscreen", false},
+		{"android", "touchpad", true},
+		{"android", "absolute", true},
+		{"macos", "touchpad", false},
+		{"ios", "", false},
+	} {
+		if got := touchPointerModeMismatchGuidance(tc.platform, tc.mode) != ""; got != tc.want {
+			t.Errorf("%s/%s guidance=%v, want %v", tc.platform, tc.mode, got, tc.want)
+		}
+	}
+}

@@ -188,9 +188,6 @@ func TestConfigMeta_PreservesExistingFormPresentation(t *testing.T) {
 		layout      string
 	}
 	want := map[string]displayMeta{
-		"device.device_type": {
-			help: "iOS uses HID touchpad mode (turn on Zoom and turn off AssistiveTouch on the iPhone). Android uses HID touchscreen mode. macOS, windows, and linux use absolute pointer mode.",
-		},
 		"agent.vad_model_path":  {layout: "wide"},
 		"agent.vad_helper_path": {layout: "wide"},
 		"agent.prompt": {

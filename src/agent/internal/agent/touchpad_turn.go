@@ -68,7 +68,12 @@ func (c *touchpadTurnCorrector) prepare() (needsProbe bool) {
 		return false
 	}
 	landscape, ok := c.landscape()
-	if !ok || !landscape {
+	if !ok {
+		// No screenshot since the last capture invalidation: the orientation
+		// has not been seen to change, so keep the turn last applied.
+		return false
+	}
+	if !landscape {
 		// The phone may come back turned the other way, so a learned
 		// landscape direction only holds until the screen leaves landscape.
 		c.forget()
