@@ -517,7 +517,7 @@ func TestQuickActionSpotlightSearchBatchesIOSModifierIsolation(t *testing.T) {
 	if !quickActionResultOK(t, out) {
 		t.Fatalf("unexpected output: %s", out)
 	}
-	if want := []string{"isolate", "restore"}; !reflect.DeepEqual(events, want) {
+	if want := []string{"attach", "detach"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("profile events = %v, want %v", events, want)
 	}
 }
@@ -543,7 +543,7 @@ func TestQuickActionRestoresIOSPointerWhenCanceledMidSequence(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Call error = %v, want context canceled", err)
 	}
-	if want := []string{"isolate", "restore"}; !reflect.DeepEqual(events, want) {
+	if want := []string{"attach", "detach"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("profile events = %v, want %v", events, want)
 	}
 }

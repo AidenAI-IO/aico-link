@@ -9,22 +9,27 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"aico-agent/internal/logging"
 )
 
 const (
 	defaultIOSKeyboardIsolationControl  = "/usr/lib/aico/aico-dynamic-keyboard"
 	iosKeyboardProfileSwitchTimeout     = 30 * time.Second
 	iosKeyboardReenumerationWakeTimeout = 2 * time.Second
-	iosKeyboardRestoreRetryCooldown     = 5 * time.Second
+	iosKeyboardDetachRetryCooldown      = 5 * time.Second
 )
 
 type iosKeyboardIsolationCommand func(context.Context, string, ...string) ([]byte, error)
 
 type iosKeyboardIsolationBatchContextKey struct{}
 
+// iosKeyboardIsolationBatch is one Agent run (or one direct tool call) that
+// owns the keyboard: the first keyboard action attaches it, later ones reuse
+// it, and the end of the scope detaches it.
 type iosKeyboardIsolationBatch struct {
 	controller *iosKeyboardIsolationController
-	isolated   bool
+	attached   bool
 }
 
 func iosKeyboardIsolationControllerFromContext(ctx context.Context) *iosKeyboardIsolationController {
@@ -38,10 +43,16 @@ func iosKeyboardIsolationControllerFromContext(ctx context.Context) *iosKeyboard
 	return batch.controller
 }
 
-// iosKeyboardIsolationController serializes access to the three HID devices.
-// Keyboard actions whose HID reports contain modifiers temporarily use a
-// pointer-free USB profile. Unmodified text, pointer input, and Consumer
-// Control actions do not trigger profile switching.
+// iosKeyboardIsolationController attaches the USB keyboard on demand for the
+// iOS touchpad composite.
+//
+// iOS hides its software keyboard while a hardware keyboard is attached, so
+// the composite idles as media keys + touchpad + ECM. The first keyboard
+// action of a run attaches the keyboard (a USB re-enumeration); the run keeps
+// it until it ends, on success, failure, cancellation, or preemption, and the
+// final detach always runs with a context-independent timeout. Pointer and
+// media-key input never switch profiles. It also serializes access to the
+// three HID devices across profile switches.
 type iosKeyboardIsolationController struct {
 	controlPath         string
 	keyboardDev         hidDeviceCloser
@@ -49,15 +60,13 @@ type iosKeyboardIsolationController struct {
 	extraKeysDev        hidDeviceCloser
 	run                 iosKeyboardIsolationCommand
 	notifyReenumeration func(context.Context) error
-	// onPointerReattached runs after a restore puts the pointer back, so
-	// whoever tracks which orientation the pointer was enumerated in stays
-	// current; nil means nobody does.
-	onPointerReattached func()
 	gateOnce            sync.Once
 	gate                chan struct{}
-	needsRestore        bool
-	lastRestoreErr      error
-	lastRestoreFailure  time.Time
+	// needsDetach is set while the keyboard may still be attached outside any
+	// run, after a failed detach; the next acquire retries it.
+	needsDetach       bool
+	lastDetachErr     error
+	lastDetachFailure time.Time
 }
 
 // hidDeviceCloser is closed across USB profile switches so writers reopen FDs.
@@ -66,7 +75,7 @@ type hidDeviceCloser interface {
 }
 
 func newIOSKeyboardIsolationController(cfg HIDConfig, keyboardDev, pointerDev, extraKeysDev hidDeviceCloser) *iosKeyboardIsolationController {
-	if cfg.InputBackendADB() || cfg.PointerModeOrDefault() != "absolute" {
+	if cfg.InputBackendADB() || cfg.PointerModeOrDefault() != "touchpad" {
 		return nil
 	}
 	info, err := os.Stat(defaultIOSKeyboardIsolationControl)
@@ -91,14 +100,10 @@ func (c *iosKeyboardIsolationController) closeHIDDevices() {
 	if c == nil {
 		return
 	}
-	if c.keyboardDev != nil {
-		c.keyboardDev.Close()
-	}
-	if c.pointerDev != nil {
-		c.pointerDev.Close()
-	}
-	if c.extraKeysDev != nil {
-		c.extraKeysDev.Close()
+	for _, dev := range []hidDeviceCloser{c.keyboardDev, c.pointerDev, c.extraKeysDev} {
+		if dev != nil {
+			dev.Close()
+		}
 	}
 }
 
@@ -129,21 +134,22 @@ func (c *iosKeyboardIsolationController) release() {
 	c.gate <- struct{}{}
 }
 
+// switchProfile runs "attach" or "detach". The HID file descriptors are
+// closed first, because the /dev/hidgN nodes are recreated by the switch.
 func (c *iosKeyboardIsolationController) switchProfile(command string) error {
+	c.closeHIDDevices()
 	ctx, cancel := context.WithTimeout(context.Background(), iosKeyboardProfileSwitchTimeout)
 	defer cancel()
 	if c.notifyReenumeration != nil {
-		// Best effort: the profile switch must still run when BLE is unavailable.
-		// The App uses this advance notice only to ignore the short, intentional
-		// ECM interruption caused by rebinding the single USB gadget controller.
-		notifyCtx, notifyCancel := context.WithTimeout(
-			context.Background(),
-			iosKeyboardReenumerationWakeTimeout,
-		)
+		// Best effort: the switch must still run when BLE is unavailable. The
+		// App uses this notice to ignore the short, intentional ECM gap.
+		notifyCtx, notifyCancel := context.WithTimeout(context.Background(), iosKeyboardReenumerationWakeTimeout)
 		_ = c.notifyReenumeration(notifyCtx)
 		notifyCancel()
 	}
+	started := time.Now()
 	output, err := c.run(ctx, c.controlPath, command)
+	logging.Infof("agent", "ios_keyboard", "keyboard %s ok=%t ms=%d", command, err == nil, time.Since(started).Milliseconds())
 	if err == nil {
 		return nil
 	}
@@ -154,29 +160,28 @@ func (c *iosKeyboardIsolationController) switchProfile(command string) error {
 	return fmt.Errorf("switch iOS HID profile with %s failed: %w: %s", command, err, detail)
 }
 
-func (c *iosKeyboardIsolationController) ensureNormalProfileLocked() error {
-	if !c.needsRestore {
-		return nil
+func (c *iosKeyboardIsolationController) detachLocked() error {
+	err := c.switchProfile("detach")
+	c.needsDetach = err != nil
+	c.lastDetachErr = err
+	if err != nil {
+		c.lastDetachFailure = time.Now()
+	} else {
+		c.lastDetachFailure = time.Time{}
 	}
-	if c.lastRestoreErr != nil && time.Since(c.lastRestoreFailure) < iosKeyboardRestoreRetryCooldown {
-		return c.lastRestoreErr
-	}
-	err := c.switchProfile("restore")
-	c.recordRestoreResult(err)
 	return err
 }
 
-func (c *iosKeyboardIsolationController) recordRestoreResult(err error) {
-	if err == nil && c.onPointerReattached != nil {
-		c.onPointerReattached()
+// ensureDetachedLocked retries a detach that failed outside a run, so the
+// software keyboard comes back even if the end of a run could not detach.
+func (c *iosKeyboardIsolationController) ensureDetachedLocked() error {
+	if !c.needsDetach {
+		return nil
 	}
-	c.needsRestore = err != nil
-	c.lastRestoreErr = err
-	if err != nil {
-		c.lastRestoreFailure = time.Now()
-	} else {
-		c.lastRestoreFailure = time.Time{}
+	if c.lastDetachErr != nil && time.Since(c.lastDetachFailure) < iosKeyboardDetachRetryCooldown {
+		return c.lastDetachErr
 	}
+	return c.detachLocked()
 }
 
 func (c *iosKeyboardIsolationController) batchFromContext(ctx context.Context) *iosKeyboardIsolationBatch {
@@ -190,51 +195,34 @@ func (c *iosKeyboardIsolationController) batchFromContext(ctx context.Context) *
 	return batch
 }
 
-func (b *iosKeyboardIsolationBatch) isolate() error {
-	if b == nil || b.controller == nil || b.isolated {
+func (b *iosKeyboardIsolationBatch) attach() error {
+	if b == nil || b.controller == nil || b.attached {
 		return nil
 	}
 	c := b.controller
-	c.closeHIDDevices()
-	if isolateErr := c.switchProfile("isolate"); isolateErr != nil {
-		restoreErr := c.switchProfile("restore")
-		c.recordRestoreResult(restoreErr)
-		return errors.Join(isolateErr, restoreErr)
+	if err := c.switchProfile("attach"); err != nil {
+		// A half-done switch may have left the keyboard linked.
+		return errors.Join(err, c.detachLocked())
 	}
-	c.needsRestore = true
-	b.isolated = true
+	c.needsDetach = true
+	b.attached = true
 	return nil
 }
 
-func (b *iosKeyboardIsolationBatch) restore() error {
-	if b == nil || b.controller == nil || !b.isolated {
+func (b *iosKeyboardIsolationBatch) detach() error {
+	if b == nil || b.controller == nil || !b.attached {
 		return nil
 	}
-	c := b.controller
-	c.closeHIDDevices()
-	err := c.switchProfile("restore")
-	c.recordRestoreResult(err)
+	err := b.controller.detachLocked()
 	if err == nil {
-		b.isolated = false
+		b.attached = false
 	}
 	return err
 }
 
-// restoreForPointer ends keyboard isolation in the current batch ahead of a
-// pointer action, so callers can observe the screen after the USB profile
-// switch instead of acting on coordinates captured before it.
-func (c *iosKeyboardIsolationController) restoreForPointer(ctx context.Context) (restored bool, err error) {
-	batch := c.batchFromContext(ctx)
-	if batch == nil || !batch.isolated {
-		return false, nil
-	}
-	return true, batch.restore()
-}
-
-// withBatch keeps consecutive keyboard operations in one pointer-free profile.
-// Nested composite tools reuse the same batch. Pointer input restores the normal
-// profile before it runs, and this outer scope always attempts a final restore
-// with a context-independent timeout, including cancellation and error paths.
+// withBatch scopes one Agent run. Nested composite tools reuse the outer
+// scope. The keyboard is attached lazily by the first keyboard action and the
+// scope always detaches it at the end, including cancellation and errors.
 func (c *iosKeyboardIsolationController) withBatch(ctx context.Context, action func(context.Context) error) (err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -248,7 +236,6 @@ func (c *iosKeyboardIsolationController) withBatch(ctx context.Context, action f
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
 	if err := c.acquire(ctx); err != nil {
 		return err
 	}
@@ -256,14 +243,13 @@ func (c *iosKeyboardIsolationController) withBatch(ctx context.Context, action f
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := c.ensureNormalProfileLocked(); err != nil {
+	if err := c.ensureDetachedLocked(); err != nil {
 		return err
 	}
-
 	batch := &iosKeyboardIsolationBatch{controller: c}
 	batchCtx := context.WithValue(ctx, iosKeyboardIsolationBatchContextKey{}, batch)
 	defer func() {
-		err = errors.Join(err, batch.restore())
+		err = errors.Join(err, batch.detach())
 	}()
 	return action(batchCtx)
 }
@@ -285,7 +271,10 @@ func withIOSKeyboardIsolationBatchCall(
 	return output, err
 }
 
-func (c *iosKeyboardIsolationController) withKeyboard(ctx context.Context, isolate bool, action func() error) (err error) {
+// withKeyboard runs a keyboard action with the keyboard attached. Every
+// keyboard action needs it, with or without modifiers, so the modifier flag
+// is ignored. Outside a run the action gets its own attach/detach scope.
+func (c *iosKeyboardIsolationController) withKeyboard(ctx context.Context, _ bool, action func() error) error {
 	if c == nil {
 		return action()
 	}
@@ -295,45 +284,20 @@ func (c *iosKeyboardIsolationController) withKeyboard(ctx context.Context, isola
 		}
 	}
 	if batch := c.batchFromContext(ctx); batch != nil {
-		if !isolate {
-			return action()
-		}
-		if err := batch.isolate(); err != nil {
+		if err := batch.attach(); err != nil {
 			return err
+		}
+		// Attaching takes seconds; a run canceled meanwhile must not type.
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 		}
 		return action()
 	}
-
-	if err := c.acquire(ctx); err != nil {
-		return err
-	}
-	defer c.release()
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-	}
-	if err := c.ensureNormalProfileLocked(); err != nil {
-		return err
-	}
-	if !isolate {
-		return action()
-	}
-
-	c.closeHIDDevices()
-	if isolateErr := c.switchProfile("isolate"); isolateErr != nil {
-		restoreErr := c.switchProfile("restore")
-		c.recordRestoreResult(restoreErr)
-		return errors.Join(isolateErr, restoreErr)
-	}
-	c.needsRestore = true
-	defer func() {
-		c.closeHIDDevices()
-		restoreErr := c.switchProfile("restore")
-		c.recordRestoreResult(restoreErr)
-		err = errors.Join(err, restoreErr)
-	}()
-	return action()
+	return c.withBatch(ctx, func(batchCtx context.Context) error {
+		return c.withKeyboard(batchCtx, true, action)
+	})
 }
 
 func (c *iosKeyboardIsolationController) withPointerCall(ctx context.Context, action func(context.Context) (string, error)) (string, error) {
@@ -346,70 +310,21 @@ func (c *iosKeyboardIsolationController) withPointerCall(ctx context.Context, ac
 	return output, err
 }
 
+// withPointerAction serializes pointer input with profile switches. The
+// touchpad is linked in both profiles, so the keyboard stays as it is.
 func (c *iosKeyboardIsolationController) withPointerAction(ctx context.Context, action func(context.Context) error) error {
-	if c == nil {
-		return action(ctx)
-	}
-	if batch := c.batchFromContext(ctx); batch != nil {
-		if err := batch.restore(); err != nil {
-			return err
-		}
-		if ctx != nil {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
-		return action(ctx)
-	}
-	if err := c.acquire(ctx); err != nil {
-		return err
-	}
-	defer c.release()
-	if err := c.ensureNormalProfileLocked(); err != nil {
-		return err
-	}
-	return action(ctx)
-}
-
-// reenumeratePointer detaches and reattaches the pointer through the same
-// pointer-free profile round trip that modified keyboard input uses, so the
-// host enumerates the pointer again. Inside a batch it reuses the batch's
-// hold on the devices instead of waiting for it.
-func (c *iosKeyboardIsolationController) reenumeratePointer(ctx context.Context) error {
-	if c == nil {
-		return errors.New("iOS keyboard isolation is not available")
-	}
-	if batch := c.batchFromContext(ctx); batch != nil {
-		if err := batch.isolate(); err != nil {
-			return err
-		}
-		return batch.restore()
-	}
-	if err := c.acquire(ctx); err != nil {
-		return err
-	}
-	defer c.release()
-	if err := c.ensureNormalProfileLocked(); err != nil {
-		return err
-	}
-	c.closeHIDDevices()
-	if isolateErr := c.switchProfile("isolate"); isolateErr != nil {
-		restoreErr := c.switchProfile("restore")
-		c.recordRestoreResult(restoreErr)
-		return errors.Join(isolateErr, restoreErr)
-	}
-	c.needsRestore = true
-	c.closeHIDDevices()
-	err := c.switchProfile("restore")
-	c.recordRestoreResult(err)
-	return err
+	return c.withDevices(ctx, func() error { return action(ctx) })
 }
 
 func (c *iosKeyboardIsolationController) withExtraKeys(ctx context.Context, action func() error) error {
+	return c.withDevices(ctx, action)
+}
+
+func (c *iosKeyboardIsolationController) withDevices(ctx context.Context, action func() error) error {
 	if c == nil {
 		return action()
 	}
-	if batch := c.batchFromContext(ctx); batch != nil {
+	if c.batchFromContext(ctx) != nil {
 		if ctx != nil {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -421,7 +336,7 @@ func (c *iosKeyboardIsolationController) withExtraKeys(ctx context.Context, acti
 		return err
 	}
 	defer c.release()
-	if err := c.ensureNormalProfileLocked(); err != nil {
+	if err := c.ensureDetachedLocked(); err != nil {
 		return err
 	}
 	return action()

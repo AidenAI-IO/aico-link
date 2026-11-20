@@ -109,13 +109,19 @@ with no internal pull-up or pull-down. I2C4 runs at 100 kHz for reliable RK628D
 
 ## iOS HID Prerequisites
 
-To control an iOS device via USB HID, enable on the target iOS device:
+On the legacy firmware this page applies to (up to
+[`ad07c4d363f2948048415ed3af0b5e4da86bcac0`](https://github.com/AidenAI-IO/aico-link/tree/ad07c4d363f2948048415ed3af0b5e4da86bcac0)),
+iOS is controlled through the absolute mouse, so enable on the target iOS
+device:
 
 ```text
 Settings > Accessibility > Touch > AssistiveTouch
 ```
 
 It is also recommended to enable **Show Onscreen Keyboard** on the AssistiveTouch page for a more stable keyboard input experience.
+
+Current firmware drives iOS with a HID touchpad instead and needs Zoom on and
+AssistiveTouch off; see [USB HID](../03-services/usb-hid.md).
 
 ## Default Device Nodes
 

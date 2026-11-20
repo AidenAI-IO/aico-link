@@ -99,20 +99,20 @@ When adding or changing a tool, use this rule:
 - In `builtInToolSpecMetadata`, use derived platform identifiers: `ios` and `android` for phone-companion capabilities, `macos` for Mac desktop bindings, and add `windows` or `linux` only after the tool has verified bindings for those platforms. Do not use these lowercase identifiers as documented `[basic_settings.device].device_type` values.
 - Do not ask the model to pass platform/device/os arguments for platform selection; the runtime derives the platform from global `device_type` state.
 - If a tool has platform-specific subcommands, make its runtime `ArgsSchema()` list only the subcommands active for the current `device_type` (for example `quick_action.action` and `touch_gesture.type`).
-- When a nominally platform-specific namespace has a portable subset, expose only that subset on other platforms instead of hiding the namespace entirely; for example non-Android `keyboard_tap` may list only the absolute pointer-mode `KEYCODE_*` media, volume, screenshot, and brightness aliases.
+- When a nominally platform-specific namespace has a portable subset, expose only that subset on other platforms instead of hiding the namespace entirely; for example non-Android `keyboard_tap` may list only the media-key `KEYCODE_*` volume, media, screenshot, and brightness aliases.
 - Add focused tests for `AgentToolsForPlatform`, `Runtime.availableTools()`, or platform-specific tool schemas whenever a tool is introduced or moved between platform groups.
 
 Once an HID-affecting tool invocation is accepted, its execution is independent
 of the client socket and has a five-minute server-side timeout. This is important
-when the client reaches the board through USB ECM: iOS keyboard profile isolation
-briefly re-enumerates the USB composite and may drop the HTTP connection, but the
-tool continues running and still performs its final HID profile restore. The
-caller may need to reconnect and observe the resulting screen if the response
-socket was lost. This applies to keyboard, pointer/touch, composite text/search,
-and quick-action tools that can participate in the serialized HID flow.
-Within one HTTP invocation, consecutive modifier-bearing actions share one
-pointer-free phase; pointer/touch input restores the mouse before acting.
-Separate HTTP invocations each manage their own isolation scope. Other HTTP
+when the client reaches the board through USB ECM: attaching or detaching the
+iOS keyboard briefly re-enumerates the USB composite and may drop the HTTP
+connection, but the tool continues running and still detaches the keyboard at
+the end. The caller may need to reconnect and observe the resulting screen if
+the response socket was lost. This applies to keyboard, pointer/touch,
+composite text/search, and quick-action tools that can participate in the
+serialized HID flow. Within one HTTP invocation, the first keyboard action
+attaches the keyboard and later ones reuse it; touch input does not detach it.
+Separate HTTP invocations each manage their own keyboard scope. Other HTTP
 tools retain normal client-cancellation behavior.
 
 The HTTP catalog is a separate policy. It exposes registered operational and specialized tools together with their `args_schema`, but internal maintenance tools such as `skill_manage` and `skill_mark_used` are never listed or callable through the default HTTP Tool API.

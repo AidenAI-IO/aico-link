@@ -2,6 +2,7 @@ package mnk
 
 import (
 	"aico-agent/internal/agent/screen"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"math"
@@ -326,5 +327,57 @@ func TestHIDProviderNormalizedToAbsolutePreservesNearlyFullAxisOffset(t *testing
 	wantY := scalePixelToAbsolute(28+localY, 1080)
 	if x != wantX || y != wantY {
 		t.Fatalf("point = (%d,%d), want (%d,%d)", x, y, wantX, wantY)
+	}
+}
+
+// The touchpad report must match the descriptor iOS accepted on device:
+// report id 5, scan time, button byte, then finger 1 with tip+confidence and
+// 12-bit X/Y packed little endian, and a lifted finger 2 (contact id 1).
+func TestTouchpadReportLayout(t *testing.T) {
+	report, x, y := TouchpadReport(1234, 567, true, 0x0102)
+	want := []byte{0x05, 0x02, 0x01, 0x00, 0x03, 0xd2, 0x74, 0x23, 0x04, 0x00, 0x00, 0x00}
+	if !bytes.Equal(report, want) || x != 1234 || y != 567 {
+		t.Fatalf("TouchpadReport = % x (%d,%d), want % x (1234,567)", report, x, y, want)
+	}
+	lifted, x, y := TouchpadReport(5000, -3, false, 0)
+	if lifted[4] != 0x00 || x != TouchpadMaxX || y != 0 {
+		t.Fatalf("lifted report = % x (%d,%d), want no tip and clamped (%d,0)", lifted, x, y, TouchpadMaxX)
+	}
+}
+
+// Touchpad coordinates cover the phone screen, not the HDMI frame, so a
+// normalized point maps straight onto the logical range whatever the
+// active_area is.
+func TestTouchpadIgnoresActiveArea(t *testing.T) {
+	screenState := &screen.ScreenState{}
+	screenState.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 711, Y: 0, Width: 498, Height: 1080, Valid: true})
+	pointer := &layoutCaptureDevice{}
+	provider := NewTouchpadHIDProvider(pointer, nil, nil, screenState, "qwerty", nil)
+	if err := provider.Click(context.Background(), 500, 1000, "left", 1); err != nil {
+		t.Fatal(err)
+	}
+	first := pointer.bytes()[:12]
+	packed := uint32(first[5]) | uint32(first[6])<<8 | uint32(first[7])<<16
+	if gotX, gotY := packed&0xfff, packed>>12; gotX != 960 || gotY != TouchpadMaxY {
+		t.Fatalf("tap landed at (%d,%d), want (960,%d)", gotX, gotY, TouchpadMaxY)
+	}
+}
+
+// Each landscape turn sends the point that iOS turns back onto the requested
+// spot. The landing rules were measured on an iPhone with Zoom on: TurnedLeft
+// lands a sent (x, y) at (1000-y, x), TurnedRight at (y, 1000-x).
+func TestTouchpadTurnSendsPointThatLandsOnTarget(t *testing.T) {
+	lands := map[TouchpadTurn]func(x, y float64) (float64, float64){
+		TouchpadUpright:     func(x, y float64) (float64, float64) { return x, y },
+		TouchpadTurnedLeft:  func(x, y float64) (float64, float64) { return 1000 - y, x },
+		TouchpadTurnedRight: func(x, y float64) (float64, float64) { return y, 1000 - x },
+	}
+	for turn, land := range lands {
+		for _, target := range [][2]float64{{0, 0}, {250, 750}, {800, 300}, {1000, 1000}} {
+			sx, sy := turn.ToPanel(target[0], target[1])
+			if gx, gy := land(sx, sy); gx != target[0] || gy != target[1] {
+				t.Errorf("%s: sent (%v,%v) lands at (%v,%v), want %v", turn, sx, sy, gx, gy, target)
+			}
+		}
 	}
 }

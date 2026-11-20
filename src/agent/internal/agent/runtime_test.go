@@ -351,82 +351,40 @@ func TestRuntimeDoesNotForceDeviceMemoryRecallForRelevantQuestion(t *testing.T) 
 	}
 }
 
-func TestRuntimeIOSKeyboardIsolationCoalescesModifierActionsForWholeRun(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-	runtime := &Runtime{tools: &ToolSet{iosKeyboardIsolation: controller}}
+// A whole Agent run attaches the keyboard once, on its first keyboard action,
+// keeps it for nested composite tools, and detaches it when the run ends,
+// also when the run is canceled (the user stops the task).
+func TestRuntimeIOSKeyboardAttachedForWholeRun(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		events := []string{}
+		controller := newCancellationSensitiveIOSKeyboardIsolationController(&events)
+		runtime := &Runtime{tools: &ToolSet{iosKeyboardIsolation: controller}}
+		ctx, cancel := context.WithCancel(context.Background())
 
-	result, err := runtime.withIOSKeyboardIsolationRun(context.Background(), func(runCtx context.Context) (RunResult, error) {
-		if err := controller.withKeyboard(runCtx, true, func() error {
-			events = append(events, "first-shortcut")
-			return nil
-		}); err != nil {
-			return RunResult{}, err
-		}
-		if err := controller.withBatch(runCtx, func(compositeCtx context.Context) error {
-			return controller.withKeyboard(compositeCtx, true, func() error {
-				events = append(events, "second-shortcut")
-				return nil
-			})
-		}); err != nil {
-			return RunResult{}, err
-		}
-		return RunResult{Output: "done"}, nil
-	})
-	if err != nil {
-		t.Fatalf("withIOSKeyboardIsolationRun() error = %v", err)
-	}
-	if result.Output != "done" {
-		t.Fatalf("output = %q, want done", result.Output)
-	}
-	if want := []string{"isolate", "first-shortcut", "second-shortcut", "restore"}; !slices.Equal(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestRuntimeIOSKeyboardIsolationDoesNotSwitchWithoutModifier(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-	runtime := &Runtime{tools: &ToolSet{iosKeyboardIsolation: controller}}
-
-	_, err := runtime.withIOSKeyboardIsolationRun(context.Background(), func(runCtx context.Context) (RunResult, error) {
-		return RunResult{}, controller.withKeyboard(runCtx, false, func() error {
-			events = append(events, "plain-key")
-			return nil
+		_, err := runtime.withIOSKeyboardIsolationRun(ctx, func(runCtx context.Context) (RunResult, error) {
+			if err := controller.withKeyboard(runCtx, false, keyboardAction(&events, "type")); err != nil {
+				return RunResult{}, err
+			}
+			if err := controller.withBatch(runCtx, func(compositeCtx context.Context) error {
+				return controller.withKeyboard(compositeCtx, true, keyboardAction(&events, "shortcut"))
+			}); err != nil {
+				return RunResult{}, err
+			}
+			if canceled {
+				cancel()
+			}
+			return RunResult{}, runCtx.Err()
 		})
-	})
-	if err != nil {
-		t.Fatalf("withIOSKeyboardIsolationRun() error = %v", err)
-	}
-	if want := []string{"plain-key"}; !slices.Equal(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestRuntimeIOSKeyboardIsolationRestoresWhenRunIsCanceled(t *testing.T) {
-	events := []string{}
-	controller := newCancellationSensitiveIOSKeyboardIsolationController(&events)
-	runtime := &Runtime{tools: &ToolSet{iosKeyboardIsolation: controller}}
-	ctx, cancel := context.WithCancel(context.Background())
-
-	_, err := runtime.withIOSKeyboardIsolationRun(ctx, func(runCtx context.Context) (RunResult, error) {
-		if err := controller.withKeyboard(runCtx, true, func() error {
-			events = append(events, "shortcut")
-			cancel()
-			return nil
-		}); err != nil {
-			return RunResult{}, err
+		cancel()
+		if errors.Is(err, errIOSKeyboardDetachUsedCanceledContext) {
+			t.Fatalf("canceled=%t: detach used the canceled context: %v", canceled, err)
 		}
-		return RunResult{}, runCtx.Err()
-	})
-	if errors.Is(err, errIOSKeyboardRestoreUsedCanceledContext) {
-		t.Fatalf("withIOSKeyboardIsolationRun() restore used canceled context: %v", err)
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("withIOSKeyboardIsolationRun() error = %v, want context canceled", err)
-	}
-	if want := []string{"isolate", "shortcut", "restore"}; !slices.Equal(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
+		if canceled != errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled=%t: error = %v", canceled, err)
+		}
+		if want := []string{"attach", "type", "shortcut", "detach"}; !slices.Equal(events, want) {
+			t.Fatalf("canceled=%t: events = %v, want %v", canceled, events, want)
+		}
 	}
 }
 
@@ -4878,5 +4836,25 @@ func TestRuntimePreemptHookPanicDoesNotStopOtherHooks(t *testing.T) {
 	case <-firstDone:
 	case <-time.After(2 * time.Second):
 		t.Fatal("first run did not complete")
+	}
+}
+
+func TestTouchPointerModeMismatchGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		platform, mode string
+		want           bool
+	}{
+		{"ios", "touchpad", false},
+		{"ios", "absolute", true},
+		{"ipados", "touchscreen", true},
+		{"android", "touchscreen", false},
+		{"android", "touchpad", true},
+		{"android", "absolute", true},
+		{"macos", "touchpad", false},
+		{"ios", "", false},
+	} {
+		if got := touchPointerModeMismatchGuidance(tc.platform, tc.mode) != ""; got != tc.want {
+			t.Errorf("%s/%s guidance=%v, want %v", tc.platform, tc.mode, got, tc.want)
+		}
 	}
 }

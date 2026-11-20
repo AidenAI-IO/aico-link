@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -30,8 +29,8 @@ type ToolSet struct {
 	// model config is read live by all of them.
 	decider              *decisionAdvisor
 	iosKeyboardIsolation *iosKeyboardIsolationController
-	// landscape corrects the iOS landscape pointer; nil without one.
-	landscape *landscapePointerCorrector
+	// touchpadTurn keeps the iOS touchpad turned with a landscape screen.
+	touchpadTurn *touchpadTurnCorrector
 	// Environment bridges own the target device and cannot toggle the local
 	// board's USB gadget profile, so bridge input bypasses local iOS isolation.
 	iosKeyboardIsolationOptional bool
@@ -175,6 +174,14 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		var mnkErr error
 		if hidCfg.InputBackendADB() {
 			mnkProvider, mnkErr = mnkFactory.CreateADBProvider()
+		} else if hidCfg.PointerModeOrDefault() == "touchpad" {
+			mnkProvider, mnkErr = mnkFactory.CreateTouchpadHIDProviderWithDevices(
+				asMNKDevice(pointer.dev),
+				asMNKDevice(kbDev),
+				asMNKDevice(androidKbDev),
+				hidCfg.KeyboardLayoutOrDefault(),
+				newIOSKeyboardIsolationProfileGate(iosKeyboardIsolation),
+			)
 		} else {
 			mnkProvider, mnkErr = mnkFactory.CreateHIDProviderWithDevices(
 				asMNKDevice(pointer.dev),
@@ -212,26 +219,20 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	keyboardText.textProvider, _ = mnkProvider.(mnk.TextProvider)
 	decider := &decisionAdvisor{}
 	frameCapture := newFrameCapturer(provider)
-	// Only the absolute pointer is turned with a landscape iPhone; a
-	// touchscreen contact needs no check.
-	var landscape *landscapePointerCorrector
-	if !hidCfg.PointerTouchscreen() {
-		var reenumerate func(context.Context) error
-		if iosKeyboardIsolation != nil {
-			reenumerate = iosKeyboardIsolation.reenumeratePointer
-		}
-		landscape = newLandscapePointerCorrector(frameCapture, screen, reenumerate)
-		if iosKeyboardIsolation != nil && landscape != nil {
-			iosKeyboardIsolation.onPointerReattached = landscape.noteReenumerated
-		}
+	// Only the iOS touchpad reports in panel coordinates; the touchscreen and
+	// absolute mouse already follow the upright picture.
+	var turn *touchpadTurnCorrector
+	if hidCfg.PointerModeOrDefault() == "touchpad" {
+		turn = newTouchpadTurnCorrector(mnkProvider, frameCapture, screen)
 	}
 	touchGesture := &TouchGestureTool{
 		mnkProvider:    mnkProvider,
 		screen:         screen,
 		touchscreen:    hidCfg.PointerTouchscreen(),
+		directTouch:    hidCfg.PointerDirectTouch(),
 		captureFrame:   frameCapture,
 		confirmTargets: newTapSequenceConfirmer(decider),
-		landscape:      landscape,
+		turn:           turn,
 	}
 	quickAction := &QuickActionTool{keyboard: keyboardTap, touch: touchGesture, iosKeyboardIsolation: iosKeyboardIsolation, decider: decider, screenshot: screenshot}
 	quickAction.systemActions, _ = mnkProvider.(mnk.SystemActionProvider)
@@ -245,14 +246,15 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	}
 	textInputHW.textInsertion, _ = mnkProvider.(mnk.TextInsertionProvider)
 
-	// A touchscreen has no pointer; an absolute mouse leaves one on screen.
+	// Direct touch (touchscreen, touchpad) leaves no pointer on screen; an
+	// absolute mouse does.
 	var pointerTrack *pointerTracker
-	if !hidCfg.PointerTouchscreen() {
+	if !hidCfg.PointerDirectTouch() {
 		pointerTrack = &pointerTracker{}
 	}
 	tools := map[string]langtools.Tool{
 		"keyboard_tap":           newPostActionStableScreenshotTool(keyboardTap, waitStable, screenshot, postActionScreenshotDelay, screenStable),
-		"mouse_move":             newPostActionStableScreenshotTool(&MouseMoveTool{mnkProvider: mnkProvider, landscape: landscape}, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack).withTurnedScreenGuard(screen),
+		"mouse_move":             newPostActionStableScreenshotTool(&MouseMoveTool{mnkProvider: mnkProvider}, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack).withTurnedScreenGuard(screen),
 		"mouse_scroll":           newPostActionStableScreenshotTool(&MouseScrollTool{mnkProvider: mnkProvider}, waitStable, screenshot, postActionScreenshotDelay, screenStable),
 		"touch_gesture":          newPostActionStableScreenshotTool(touchGesture, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack).withTurnedScreenGuard(screen),
 		"quick_action":           newPostActionStableScreenshotTool(quickAction, waitStable, screenshot, postActionScreenshotDelay, screenStable),
@@ -285,7 +287,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		textInputHW:                  textInputHW,
 		decider:                      decider,
 		iosKeyboardIsolation:         iosKeyboardIsolation,
-		landscape:                    landscape,
+		touchpadTurn:                 touchGesture.turn,
 		iosKeyboardIsolationOptional: toolOptions.disableIOSKeyboardIsolation,
 		skillInstallClient:           newSkillInstallHTTPClient(proxyCfg),
 	}
