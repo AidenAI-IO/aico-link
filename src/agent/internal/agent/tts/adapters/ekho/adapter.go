@@ -84,7 +84,33 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 	if a.pace {
 		sink = &pacedSink{AudioSink: sink, ctx: ctx}
 	}
-	return &session{ctx: ctx, cancel: cancel, sink: sink, binary: binary, speed: a.speed}, nil
+	s := &session{
+		ctx: ctx, cancel: cancel, sink: sink, binary: binary, speed: a.speed,
+		pending: make(chan synthesisJob, 1), audio: make(chan playbackJob),
+		done: make(chan struct{}), watcherDone: make(chan struct{}),
+	}
+	go s.synthesisLoop()
+	go s.playbackLoop()
+	go func() {
+		defer close(s.watcherDone)
+		select {
+		case <-ctx.Done():
+			s.fail(ctx.Err())
+		case <-s.done:
+		}
+	}()
+	return s, nil
+}
+
+type synthesisJob struct {
+	text  string
+	voice string
+	ack   chan struct{}
+}
+
+type playbackJob struct {
+	path string
+	ack  chan struct{}
 }
 
 type session struct {
@@ -94,17 +120,30 @@ type session struct {
 	binary string
 	speed  int
 
-	// Serialize synthesis and PCM writes. Cancellation deliberately bypasses
-	// this lock so it can kill a running child or unblock a playback write.
-	mu      sync.Mutex
+	// Input calls serialize segmentation and queue ownership. Workers never
+	// take this lock, so cancellation and errors can unblock a full queue.
+	inputMu sync.Mutex
 	buffer  string
+	voice   string
 	closed  bool
-	lastErr error
+	pending chan synthesisJob
+
+	// An unbuffered handoff permits exactly one next WAV to be synthesized
+	// while the playback worker consumes the current one. There is only one
+	// synthesis process, plus one bounded text job waiting for it.
+	audio       chan playbackJob
+	done        chan struct{}
+	watcherDone chan struct{}
+	closeOnce   sync.Once
+	stopOnce    sync.Once
+	stopErr     error
+	errMu       sync.Mutex
+	lastErr     error
 }
 
 func (s *session) WriteText(text string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
 	if err := s.ready(); err != nil {
 		return err
 	}
@@ -112,53 +151,83 @@ func (s *session) WriteText(text string) error {
 	return s.emit(false)
 }
 
+// Flush emits an unfinished sentence and waits for all preceding PCM writes.
+// It leaves input open and does not drain/end the playback session.
 func (s *session) Flush() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
 	if err := s.ready(); err != nil {
 		return err
 	}
-	return s.emit(true)
+	if err := s.emit(true); err != nil {
+		return err
+	}
+	ack := make(chan struct{})
+	if err := s.enqueue(synthesisJob{ack: ack}); err != nil {
+		return err
+	}
+	select {
+	case <-ack:
+		return s.Err()
+	case <-s.ctx.Done():
+		return s.record(s.ctx.Err())
+	}
 }
 
 func (s *session) ResetBuffer() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
 	s.buffer = ""
+	s.voice = ""
+}
+
+func (s *session) stop() error {
+	s.stopOnce.Do(func() { s.stopErr = s.sink.Stop() })
+	return s.stopErr
 }
 
 func (s *session) Cancel() error {
+	s.record(context.Canceled)
 	s.cancel()
-	return s.sink.Stop()
+	return s.stop()
 }
 
 func (s *session) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return s.lastErr
-	}
-	defer s.cancel()
-	if s.ready() == nil {
-		s.emit(true)
-	}
-	s.closed = true
-	s.buffer = ""
-	if s.lastErr == nil {
-		s.record(s.sink.Drain(s.ctx))
-	}
-	return s.lastErr
+	s.closeOnce.Do(func() {
+		s.inputMu.Lock()
+		if s.ready() == nil {
+			s.emit(true)
+		}
+		s.closed = true
+		s.buffer = ""
+		close(s.pending)
+		s.inputMu.Unlock()
+
+		// Workers own their WAVs until playback/removal finishes, including on
+		// cancellation. Join them before releasing the provider/session lease.
+		<-s.done
+		<-s.watcherDone
+		s.record(s.ctx.Err())
+		if s.Err() == nil {
+			if err := s.sink.Drain(s.ctx); err != nil {
+				s.fail(err)
+			}
+		}
+		s.cancel()
+	})
+	return s.Err()
 }
 
 func (s *session) Err() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
 	return s.lastErr
 }
 
+// ready is called with inputMu held; lastErr has its own worker-safe lock.
 func (s *session) ready() error {
-	if s.lastErr != nil {
-		return s.lastErr
+	if err := s.Err(); err != nil {
+		return err
 	}
 	if s.closed {
 		return tts.ErrSessionClosed
@@ -167,10 +236,30 @@ func (s *session) ready() error {
 }
 
 func (s *session) record(err error) error {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
 	if s.lastErr == nil {
 		s.lastErr = err
 	}
 	return s.lastErr
+}
+
+func (s *session) fail(err error) {
+	s.record(err)
+	s.cancel()
+	s.stop()
+}
+
+func (s *session) enqueue(job synthesisJob) error {
+	if err := s.ctx.Err(); err != nil {
+		return s.record(err)
+	}
+	select {
+	case s.pending <- job:
+		return s.Err()
+	case <-s.ctx.Done():
+		return s.record(s.ctx.Err())
+	}
 }
 
 func (s *session) emit(flush bool) error {
@@ -184,39 +273,72 @@ func (s *session) emit(flush bool) error {
 		if strings.IndexFunc(text, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) }) < 0 {
 			continue
 		}
-		if err := s.synthesize(text); err != nil {
-			return s.record(err)
+		// Mandarin normalizes digits to Chinese before its English fallback.
+		// Route Latin-only text as a whole to English so Flite also receives
+		// numbers, currency, dates and units. Digit-only continuations inherit
+		// the preceding chunk's language, including across the size limit.
+		s.voice = voiceForText(text, s.voice)
+		if err := s.enqueue(synthesisJob{text: text, voice: s.voice}); err != nil {
+			return err
 		}
 	}
 }
 
-func (s *session) synthesize(text string) error {
-	// Ekho/libsndfile needs a seekable WAV, so stdout is not usable. Keep one
-	// bounded sentence on disk and stream its PCM to the existing audio sink.
-	f, err := os.CreateTemp("", "aico-ekho-*.wav")
-	if err != nil {
-		return fmt.Errorf("ekho: create WAV: %w", err)
-	}
-	path := f.Name()
-	defer os.Remove(path)
-	if err := f.Close(); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
-	defer cancel()
-	// -a MUST follow --english-speed: Ekho 9.0's option parser otherwise
-	// falls through and applies the English speed value to volume as well.
-	cmd := exec.CommandContext(ctx, s.binary, "-v", "Mandarin", "-s", strconv.Itoa(s.speed),
-		"--english-speed", "-10", "-a", "0", "--samplerate", strconv.Itoa(sampleRate), "-f", "-", "-o", path)
-	cmd.Stdin = strings.NewReader(text)
-	var stderr boundedStderr
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
+func (s *session) synthesisLoop() {
+	defer close(s.audio)
+	for {
+		var job synthesisJob
+		select {
+		case <-s.ctx.Done():
+			return
+		case next, ok := <-s.pending:
+			if !ok {
+				return
+			}
+			job = next
 		}
-		return fmt.Errorf("ekho: synthesis failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		if s.ctx.Err() != nil {
+			return
+		}
+		out := playbackJob{ack: job.ack}
+		if job.ack == nil {
+			path, err := s.synthesize(job.text, job.voice)
+			if err != nil {
+				s.fail(err)
+				return
+			}
+			out.path = path
+		}
+		select {
+		case s.audio <- out:
+			// The playback worker now owns the file.
+		case <-s.ctx.Done():
+			if out.path != "" {
+				os.Remove(out.path)
+			}
+			return
+		}
 	}
+}
+
+func (s *session) playbackLoop() {
+	defer close(s.done)
+	for job := range s.audio {
+		if job.path != "" {
+			if s.ctx.Err() == nil {
+				if err := s.play(job.path); err != nil {
+					s.fail(err)
+				}
+			}
+			os.Remove(job.path)
+		}
+		if job.ack != nil {
+			close(job.ack)
+		}
+	}
+}
+
+func (s *session) play(path string) error {
 	wav, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("ekho: open WAV: %w", err)
@@ -226,6 +348,56 @@ func (s *session) synthesize(text string) error {
 		return fmt.Errorf("ekho: output: %w", err)
 	}
 	return nil
+}
+
+func (s *session) synthesize(text, voice string) (path string, err error) {
+	// Ekho/libsndfile needs a seekable WAV, so stdout is not usable. Keep one
+	// bounded sentence on disk; hand ownership to playback only on success.
+	f, err := os.CreateTemp("", "aico-ekho-*.wav")
+	if err != nil {
+		return "", fmt.Errorf("ekho: create WAV: %w", err)
+	}
+	path = f.Name()
+	defer func() {
+		if err != nil {
+			os.Remove(f.Name())
+		}
+	}()
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	defer cancel()
+	// -a MUST follow --english-speed: Ekho 9.0's option parser otherwise
+	// falls through and applies the English speed value to volume as well.
+	cmd := exec.CommandContext(ctx, s.binary, "-v", voice, "-s", strconv.Itoa(s.speed),
+		"--english-speed", "-10", "-a", "0", "--samplerate", strconv.Itoa(sampleRate), "-f", "-", "-o", path)
+	cmd.Stdin = strings.NewReader(text)
+	var stderr boundedStderr
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", fmt.Errorf("ekho: synthesis failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return path, nil
+}
+
+func voiceForText(text, previous string) string {
+	latin := false
+	for _, r := range text {
+		if unicode.IsLetter(r) {
+			if !unicode.Is(unicode.Latin, r) {
+				return "Mandarin"
+			}
+			latin = true
+		}
+	}
+	if latin || previous == "English" {
+		return "English"
+	}
+	return "Mandarin"
 }
 
 // Bound diagnostic output independently of the text and audio sizes.

@@ -11,7 +11,7 @@ readonly JOBS=${RK_JOBS:-$(getconf _NPROCESSORS_ONLN)}
 source "${PATCH_DIR}/source.env"
 readonly EKHO_VERSION EKHO_COMMIT EKHO_SOURCE_ARCHIVE EKHO_SOURCE_URL EKHO_SOURCE_SHA256
 readonly ARCHIVE=${CACHE_DIR}/${EKHO_SOURCE_ARCHIVE}
-readonly PATCH_FILE=${PATCH_DIR}/english-female.patch
+readonly PATCH_FILE=${PATCH_DIR}/flite-slt.patch
 
 mkdir -p "${CACHE_DIR}"
 # Containers sharing this cache can have identical process IDs.
@@ -38,7 +38,7 @@ autoreconf -fi
 PKG_CONFIG_LIBDIR=/usr/lib/arm-linux-gnueabihf/pkgconfig:/usr/share/pkgconfig \
     ./configure --host=arm-linux-gnueabihf --build="$(sh ./config.guess)" \
     --prefix=/usr --bindir=/usr/lib/aico --datadir=/usr/share/aico \
-    --without-pulseaudio --disable-dist-voice \
+    --without-pulseaudio --disable-dist-voice --enable-flite \
     CXXFLAGS='-O2 -g0 -I/usr/include/utf8cpp' CFLAGS='-O2 -g0'
 # This generated symbol table has very large global constructors. Optimizing
 # it is expensive and does not improve the synthesis engine's hot paths.
@@ -53,6 +53,11 @@ dynamic=$(arm-linux-gnueabihf-readelf -dW ekho)
 grep -q 'Machine:.*ARM' <<<"${header}"
 grep -q 'hard-float ABI' <<<"${header}"
 grep -F '(RUNPATH)' <<<"${dynamic}" | grep -Fq '[$ORIGIN/../lib]'
+grep -F '(NEEDED)' <<<"${dynamic}" | grep -Fq '[libflite_cmu_us_slt.so.1]'
+if grep -Fq 'libespeak' <<<"${dynamic}"; then
+    echo "Ekho unexpectedly links eSpeak instead of the Flite SLT backend" >&2
+    exit 1
+fi
 
 readonly DATA_DIR=${DIST_DIR}/share/ekho-data
 readonly DOC_DIR=${DIST_DIR}/share/doc/ekho
@@ -73,8 +78,9 @@ install -m 0644 "${ARCHIVE}" "${DOC_DIR}/source/${EKHO_SOURCE_ARCHIVE}"
 install -m 0644 "${PATCH_FILE}" "${PATCH_DIR}/source.env" \
     "${REPO_ROOT}/scripts/debian-apps/container-build-ekho.sh" \
     "${REPO_ROOT}/scripts/debian-apps/Dockerfile" "${DOC_DIR}/source/"
-printf 'version=%s\ncommit=%s\nurl=%s\nsource_sha256=%s\nenglish_voice=en-us+f3\ndata_path=/usr/share/aico/ekho-data\npatch_sha256=%s\n' \
+printf 'version=%s\ncommit=%s\nurl=%s\nsource_sha256=%s\nenglish_engine=flite\nenglish_voice=slt\nenglish_gain=2.0\nflite_version=%s\ndata_path=/usr/share/aico/ekho-data\npatch_sha256=%s\n' \
     "${EKHO_VERSION}" "${EKHO_COMMIT}" "${EKHO_SOURCE_URL}" "${EKHO_SOURCE_SHA256}" \
+    "$(dpkg-query -W -f='${Version}' libflite1:armhf)" \
     "$(sha256sum "${PATCH_FILE}" | awk '{print $1}')" >"${DOC_DIR}/build.txt"
 cp "${DOC_DIR}/build.txt" "${DIST_DIR}/metadata/ekho.txt"
 (
