@@ -163,10 +163,11 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 		}
 	} else if attached := ToolErrorFromContext(ctx2); attached != nil {
 		// Adopt only intentional top-level SetToolError + toolErrorString
-		// results. Nested helpers (e.g. ClipboardTool inside enter_text /
+		// results, or a rejected action with a recovery screenshot. Nested
+		// helpers (e.g. ClipboardTool inside enter_text /
 		// search_launch_app) may leave a leftover ToolError while the parent
 		// recovers and returns its own observation — do not overwrite that.
-		if strings.TrimSpace(output) == "" || output == attached.Message {
+		if actionNotDispatched(attached) || strings.TrimSpace(output) == "" || output == attached.Message {
 			toolErr = attached
 		}
 	}
@@ -191,7 +192,7 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 
 	result = runAfterToolCallHook(ctx, execution, call, result)
 	emitToolResult(ctx, execution.Callback, call, result)
-	return resultForToolCall(call, result, nil, true)
+	return resultForToolCall(call, result, nil, !actionNotDispatched(result.Error))
 }
 
 func withToolProgressReporter(ctx context.Context, reporter func(ToolProgress)) context.Context {
@@ -294,7 +295,7 @@ func normalizeToolResult(result ToolResult) ToolResult {
 	if result.Error != nil {
 		if result.Output == "" {
 			result.Output = result.Error.Message
-		} else if result.Output != result.Error.Message {
+		} else if result.Output != result.Error.Message && !actionNotDispatched(result.Error) {
 			result.Error.Message = result.Output
 		}
 	}

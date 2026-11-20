@@ -23,6 +23,11 @@ import (
 
 const postActionScreenshotDelay = time.Second
 const postActionCompletedDetail = "action_completed"
+const actionDispatchedDetail = "action_dispatched"
+
+func actionNotDispatched(err *ToolError) bool {
+	return err != nil && err.Details[actionDispatchedDetail] == false
+}
 
 type postActionScreenshotResult struct {
 	screenshotResult
@@ -188,7 +193,7 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	if seenOK && baselineImage != nil && !releasesHeldContact(t.inner.Name(), input) {
 		bounds := baselineImage.Bounds()
 		if (seenWidth > seenHeight) != (bounds.Dx() > bounds.Dy()) {
-			return t.turnedScreenResult(seenWidth, seenHeight, bounds, baselineOutput), nil
+			return t.turnedScreenResult(ctx, seenWidth, seenHeight, bounds, baselineOutput), nil
 		}
 	}
 	pointerBefore := t.pointer.current()
@@ -210,21 +215,27 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		return toolErrorString(te), nil
 	}
 
-	// Track physical action success before any of the observation steps can
-	// fail. A turn guard or a rejected drag_start cannot arm this cleanup.
+	// Arm recovery only after the provider actually accepted drag_start, before
+	// waiting or capturing can fail. CLI commands own the guard through their
+	// final response; direct tool calls own it through this observation.
 	drag, _ := ctx.Value(compositeDragKey{}).(*compositeDrag)
-	if drag != nil && t.inner.Name() == "touch_gesture" {
-		if releasesHeldContact(t.inner.Name(), input) {
+	var startPoint *normalizedPoint
+	localDrag := drag == nil
+	if t.inner.Name() == "touch_gesture" {
+		startPoint = dragStartRecoveredPoint(input)
+		if drag != nil && releasesHeldContact(t.inner.Name(), input) {
 			drag.release = nil
-		} else if recoverer, ok := t.inner.(unstableScreenRecoverer); ok {
-			if point := dragStartRecoveredPoint(input); point != nil {
-				drag.release = func(cleanupCtx context.Context) error {
-					if err := recoverer.recoverAfterUnstableScreen(cleanupCtx, input); err != nil {
-						return err
-					}
-					t.pointer.set(point)
-					return nil
+		} else if recoverer, ok := t.inner.(unstableScreenRecoverer); ok && startPoint != nil {
+			if localDrag {
+				drag = &compositeDrag{}
+				defer drag.cleanup(ctx)
+			}
+			drag.release = func(cleanupCtx context.Context) error {
+				if err := recoverer.recoverAfterUnstableScreen(cleanupCtx, input); err != nil {
+					return err
 				}
+				t.pointer.set(startPoint)
+				return nil
 			}
 		}
 	}
@@ -370,6 +381,19 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 
 	timing.mark(&timing.markerMs)
 	out, _ := json.Marshal(payload)
+	if drag != nil && drag.release != nil && startPoint != nil {
+		if err := ctx.Err(); err != nil {
+			return postActionErrorResultf(ctx, postActionErrorCode(err), "drag_start observation canceled: %v", err), nil
+		}
+		if visual, ok := parseScreenshotObservation(string(out)); !ok || visual.Result.ScreenStable == nil || !*visual.Result.ScreenStable {
+			return postActionErrorResultf(ctx, CodeToolExecutionFailed, "drag_start did not return a stable screenshot"), nil
+		} else if _, _, err := image.DecodeConfig(bytes.NewReader(visual.ImageBytes)); err != nil {
+			return postActionErrorResultf(ctx, CodeToolExecutionFailed, "drag_start returned an invalid screenshot: %v", err), nil
+		}
+		if localDrag {
+			drag.release = nil
+		}
+	}
 	return string(out), nil
 }
 
@@ -606,7 +630,7 @@ func releasesHeldContact(toolName, input string) bool {
 // turnedScreenResult returns the pre-action screenshot without sending the
 // action: its coordinates were chosen on a screen that has since turned
 // between portrait and landscape, so they point somewhere else now.
-func (t *postActionScreenshotTool) turnedScreenResult(seenWidth, seenHeight int, now image.Rectangle, baselineOutput string) string {
+func (t *postActionScreenshotTool) turnedScreenResult(ctx context.Context, seenWidth, seenHeight int, now image.Rectangle, baselineOutput string) string {
 	logging.Infof("agent", "tools_post_action_screenshot", "screen turned before action: tool=%s seen=%dx%d now=%dx%d; action not sent", t.inner.Name(), seenWidth, seenHeight, now.Dx(), now.Dy())
 	var result screenshotResult
 	_ = json.Unmarshal([]byte(baselineOutput), &result)
@@ -617,6 +641,7 @@ func (t *postActionScreenshotTool) turnedScreenResult(seenWidth, seenHeight int,
 			seenWidth, seenHeight, now.Dx(), now.Dy()),
 		ScreenChanged: &changed,
 	}
+	SetToolError(ctx, NewToolErrorWithDetails(CodeStepExpectationUnmet, payload.ActionOutput, map[string]any{actionDispatchedDetail: false}))
 	out, _ := json.Marshal(payload)
 	return string(out)
 }

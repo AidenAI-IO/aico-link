@@ -116,8 +116,8 @@ func (s *Server) handleDeviceCLIDrag(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	var args []string
-	if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&args); err != nil || len(args) != 5 || args[0] != "drag" {
-		http.Error(w, "Expected drag X1 Y1 X2 Y2", http.StatusBadRequest)
+	if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&args); err != nil || !(len(args) == 5 && args[0] == "drag" || len(args) == 3 && args[0] == "drag-start") {
+		http.Error(w, "Expected drag X1 Y1 X2 Y2 or drag-start X Y", http.StatusBadRequest)
 		return
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), httpToolExecutionTimeout)
@@ -132,6 +132,17 @@ func (s *Server) handleDeviceCLIDrag(w http.ResponseWriter, req *http.Request) {
 
 type compositeDragKey struct{}
 type compositeDrag struct{ release func(context.Context) error }
+
+func (d *compositeDrag) cleanup(ctx context.Context) {
+	if d.release == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	if err := d.release(cleanupCtx); err != nil {
+		logging.Warnf("agent", "device_cli", "drag cleanup failed: %v", err)
+	}
+}
 
 func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *deviceCLICapture) (ToolInvokeResponse, error) {
 	calls, err := devicecli.Calls(args)
@@ -156,19 +167,11 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 		last = compressCLIFrame(last)
 		capture.add(len(capture.actions)-1, last)
 	}()
-	if len(calls) > 1 {
-		drag := &compositeDrag{}
+	var drag *compositeDrag
+	if len(calls) > 1 || args[0] == "drag-start" {
+		drag = &compositeDrag{}
 		scoped = context.WithValue(scoped, compositeDragKey{}, drag)
-		defer func() {
-			if drag.release == nil {
-				return
-			}
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(scoped), 3*time.Second)
-			defer cancel()
-			if err := drag.release(cleanupCtx); err != nil {
-				logging.Warnf("agent", "device_cli", "drag cleanup failed: %v", err)
-			}
-		}()
+		defer drag.cleanup(scoped)
 	}
 	for i, call := range calls {
 		if err := scoped.Err(); err != nil {
@@ -177,6 +180,9 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 		action := newDeviceCLIAction(args[0], call)
 		result, err = invokeDeviceHTTP(scoped, s, call)
 		action.failed = err != nil || result.IsError
+		if actionNotDispatched(result.ToolError) {
+			action.pointCount = 0
+		}
 		capture.actions = append(capture.actions, action)
 		if err != nil {
 			return result, err
@@ -192,14 +198,22 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 		if result.IsError {
 			return result, nil
 		}
-		if i+1 < len(calls) {
+		if action.name == "drag-start" {
 			if !ok || visual.Result.ScreenStable == nil || !*visual.Result.ScreenStable {
 				capture.actions[len(capture.actions)-1].failed = true
-				err = fmt.Errorf("drag did not reach a stable screen; inspect the screenshot before retrying")
+				return result, fmt.Errorf("drag did not reach a stable screen; inspect the screenshot before retrying")
+			}
+			if err := scoped.Err(); err != nil {
+				capture.actions[len(capture.actions)-1].failed = true
 				return result, err
 			}
-			// Preserve the drag-start frame separately from drag-release.
-			capture.add(len(capture.actions)-1, compressCLIFrame(visual))
+			if i+1 < len(calls) {
+				capture.add(len(capture.actions)-1, compressCLIFrame(visual))
+			} else {
+				// A verified standalone start hands the contact to a later
+				// drag-release, which may run in a different shell call.
+				drag.release = nil
+			}
 		}
 	}
 	return result, nil

@@ -75,3 +75,18 @@ func TestLookSavesScreenshotLocally(t *testing.T) {
 		})
 	}
 }
+
+func TestRunRejectsNotDispatchedResponseWithScreenshot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"output":   `{"data":"aW1hZ2U=","action_output":"not sent: screen turned"}`,
+			"is_error": true,
+			"error":    "not sent: screen turned",
+		})
+	}))
+	defer server.Close()
+	t.Setenv("AICO_DEVICE_CLI_TOKEN", "")
+	if err := run(server.URL, []string{"tap", "100", "250"}); err == nil || err.Error() != "not sent: screen turned" {
+		t.Fatalf("expected the rejected tap to fail even with a screenshot, got %v", err)
+	}
+}

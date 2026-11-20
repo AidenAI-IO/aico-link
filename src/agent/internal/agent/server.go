@@ -3908,7 +3908,10 @@ func (s *Server) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	executionCtx := r.Context()
 	cancelExecution := context.CancelFunc(func() {})
-	if r.Context().Value(deviceCLICaptureKey{}) == nil && httpToolExecutionSurvivesClientDisconnect(toolName) {
+	// A drag_start is not safe to leave held when the caller has already
+	// disconnected. Release operations still finish independently of the client.
+	startingDrag := toolName == "touch_gesture" && dragStartRecoveredPoint(rawInput) != nil
+	if !startingDrag && r.Context().Value(deviceCLICaptureKey{}) == nil && httpToolExecutionSurvivesClientDisconnect(toolName) {
 		executionCtx, cancelExecution = detachedHTTPToolExecutionContext(r.Context())
 	}
 	defer cancelExecution()

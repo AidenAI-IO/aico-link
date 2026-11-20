@@ -24,13 +24,17 @@ right, then top to bottom. Each panel marks only its own operation. There is no
 footer; a `!` next to a marker indicates a failed operation. Normalize new
 coordinates within the last panel,
 not across the entire sheet. A foreground shell can dispatch up to 64 operations.
-An unchanged display is not an error. A CLI failure exits nonzero, so `&&` stops
-the chain. Without an active shell scope, the executable accepts `--url` to
-target a daemon directly (default `http://127.0.0.1:8080`).
+An unchanged display is not an error. If rotation prevents an action from being
+sent, the CLI exits nonzero and attaches the fresh screen without a touch
+marker, so `&&` does not run the next command. Without an active shell scope,
+the executable accepts `--url` to target a daemon directly (default
+`http://127.0.0.1:8080`).
 
-`drag` runs both phases on the controller. If interrupted after lifting the
-item, the controller attempts to return it to its starting point and release
-it, even when the shell or standalone CLI disconnects.
+`drag` runs both phases on the controller. If either `drag` or `drag-start`
+fails verification after pressing, the controller attempts to return the
+contact to its starting point and release it, even if the caller disconnects.
+A successful `drag-start` intentionally keeps the contact held so that a
+separate `drag-release` can finish the gesture.
 
 ## Viewing and saving screenshots
 

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"aico-agent/internal/agent/screen"
+
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/schema"
 	langtools "github.com/tmc/langchaingo/tools"
@@ -134,13 +136,20 @@ func (s deviceCLITestTool) Name() string                                 { retur
 func (s deviceCLITestTool) Description() string                          { return "test device tool" }
 func (s deviceCLITestTool) Call(context.Context, string) (string, error) { return s.output, nil }
 
-func TestDeviceCLICompositeDragReleasesOnCaptureFailure(t *testing.T) {
+func TestDeviceCLIDragReleasesOnCaptureFailure(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		cancel  bool
-		useHTTP bool
+		name       string
+		cancel     bool
+		useHTTP    bool
+		standalone bool
+		directTool bool
 	}{
-		{name: "shell"}, {name: "canceled shell", cancel: true}, {name: "standalone HTTP", useHTTP: true},
+		{name: "composite shell"}, {name: "canceled composite shell", cancel: true},
+		{name: "composite HTTP", useHTTP: true},
+		{name: "split start shell", standalone: true},
+		{name: "canceled split start shell", standalone: true, cancel: true},
+		{name: "canceled split start HTTP", standalone: true, useHTTP: true, cancel: true},
+		{name: "direct tool start", standalone: true, directTool: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -165,15 +174,28 @@ func TestDeviceCLICompositeDragReleasesOnCaptureFailure(t *testing.T) {
 			tool := newPostActionStableScreenshotTool(action, &fakeInternalWaitTool{result: waitStableScreenResult{OK: true, Stable: true}}, screen, 0, ScreenStableDefaults{})
 			rt := &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "screenshot": screen}}}
 			server := &Server{runtime: rt}
-			if tc.useHTTP {
+			args := []string{"drag", "100", "250", "800", "900"}
+			if tc.standalone {
+				args = []string{"drag-start", "100", "250"}
+			}
+			if tc.directTool {
+				res := executeToolCall(ctx, ToolCallExecution{
+					Specs:  NewToolSpecs([]langtools.Tool{tool}),
+					Action: schema.AgentAction{Tool: "touch_gesture", ToolInput: `{"type":"drag_start","point":{"x":100,"y":250}}`},
+				})
+				if !res.Result.IsError() {
+					t.Fatal("drag unexpectedly succeeded")
+				}
+			} else if tc.useHTTP {
 				w := httptest.NewRecorder()
-				server.handleDeviceCLIDrag(w, httptest.NewRequest(http.MethodPost, "/api/device-cli/drag", strings.NewReader(`["drag","100","250","800","900"]`)))
+				body, _ := json.Marshal(args)
+				server.handleDeviceCLIDrag(w, httptest.NewRequest(http.MethodPost, "/api/device-cli/drag", bytes.NewReader(body)).WithContext(ctx))
 				var result ToolInvokeResponse
 				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || !result.IsError {
 					t.Fatalf("expected failed drag, got %s", w.Body.String())
 				}
 			} else {
-				result, err := executeDeviceCLI(ctx, server, []string{"drag", "100", "250", "800", "900"}, &deviceCLICapture{})
+				result, err := executeDeviceCLI(ctx, server, args, &deviceCLICapture{})
 				if err == nil && !result.IsError {
 					t.Fatal("drag unexpectedly succeeded")
 				}
@@ -182,5 +204,37 @@ func TestDeviceCLICompositeDragReleasesOnCaptureFailure(t *testing.T) {
 				t.Fatalf("contact cleanup did not release at origin: %+v", provider)
 			}
 		})
+	}
+}
+
+func TestDeviceCLIVerifiedDragStartCanBeReleasedFromAnotherShell(t *testing.T) {
+	provider := &dragRecoveryProvider{}
+	shot := &stubTool{name: "screenshot", output: terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})}
+	tool := newPostActionStableScreenshotTool(&TouchGestureTool{mnkProvider: provider}, &fakeInternalWaitTool{result: waitStableScreenResult{OK: true, Stable: true}}, shot, 0, ScreenStableDefaults{})
+	s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "screenshot": shot}}}}
+	res, err := executeDeviceCLI(context.Background(), s, []string{"drag-start", "100", "250"}, &deviceCLICapture{})
+	if err != nil || res.IsError || !provider.dragActive {
+		t.Fatalf("verified start must leave contact held: result error=%s err=%v", res.Error, err)
+	}
+	res, err = executeDeviceCLI(context.Background(), s, []string{"drag-release", "800", "900"}, &deviceCLICapture{})
+	if err != nil || res.IsError || provider.dragActive || provider.releaseX != 800 || provider.releaseY != 900 {
+		t.Fatalf("release failed: result error=%s err=%v provider=%+v", res.Error, err, provider)
+	}
+}
+
+func TestDeviceCLIRotationRejectionReturnsErrorAndScreenshot(t *testing.T) {
+	state := &screen.ScreenState{}
+	state.UpdateScreenshot([]byte("seen"), 200, 400)
+	shot := &stubTool{name: "screenshot", output: terminationPolicyScreenshotObservation(t, 400, 200, image.Rectangle{})}
+	inner := &stubTool{name: "touch_gesture", output: "ok"}
+	tool := newPostActionScreenshotTool(inner, shot, 0).(*postActionScreenshotTool).withTurnedScreenGuard(state)
+	s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "screenshot": shot}}}}
+	capture := &deviceCLICapture{}
+	res, err := executeDeviceCLI(context.Background(), s, []string{"tap", "100", "250"}, capture)
+	if err != nil || !res.IsError || !actionNotDispatched(res.ToolError) || !strings.Contains(res.Error, "not sent") || len(inner.inputs) != 0 {
+		t.Fatalf("expected a skipped action error: error=%q tool error=%+v err=%v calls=%v", res.Error, res.ToolError, err, inner.inputs)
+	}
+	if len(capture.frames) != 1 || len(capture.actions) != 1 || !capture.actions[0].failed || capture.actions[0].pointCount != 0 {
+		t.Fatalf("expected fresh screenshot with a failed step but no touch marker: frames=%d actions=%+v", len(capture.frames), capture.actions)
 	}
 }
