@@ -35,6 +35,7 @@ const (
 	apiConfigBackupExport
 	apiConfigBackupImport
 	apiWiFiScan
+	apiWiFiStatus
 	apiWiFiConnect
 	apiWiFiConnectStatus
 	apiWiFiForget
@@ -112,6 +113,7 @@ var apiRoutes = []apiRoute{
 	{apiConfigBackupExport, routeVariant{http.MethodGet, apiPrefix + "/config/backup"}},
 	{apiConfigBackupImport, routeVariant{http.MethodPut, apiPrefix + "/config/backup"}},
 	{apiWiFiScan, routeVariant{http.MethodPost, apiPrefix + "/network/wifi/scan"}},
+	{apiWiFiStatus, routeVariant{http.MethodGet, apiPrefix + "/network/wifi/status"}},
 	{apiWiFiConnect, routeVariant{http.MethodPut, apiPrefix + "/network/wifi/connection"}},
 	{apiWiFiConnectStatus, routeVariant{http.MethodGet, apiPrefix + "/network/wifi/connection"}},
 	{apiWiFiForget, routeVariant{http.MethodDelete, apiPrefix + "/network/wifi/connection"}},
@@ -288,6 +290,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleConfigBackupImport(w, r)
 	case apiWiFiScan:
 		s.handleWiFiScan(w, r)
+	case apiWiFiStatus:
+		s.handleWiFiStatus(w, r)
 	case apiWiFiConnect:
 		s.handleWiFiConnect(w, r)
 	case apiWiFiConnectStatus:

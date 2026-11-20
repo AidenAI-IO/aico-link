@@ -48,6 +48,7 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Security | `GET /api/auth/session` | Report whether the request is signed in |
 | Device | `POST /api/device/usb/reenumerate` | Re-enumerate USB HID/ECM |
 | Network | `POST /api/network/wifi/scan` | Scan for nearby Wi-Fi networks |
+| Network | `GET /api/network/wifi/status` | Read live radio status and saved profiles without a scan or full device snapshot |
 | Network | `PUT /api/network/wifi/connection` | Start a bounded asynchronous connect-and-save task |
 | Network | `GET /api/network/wifi/connection?task_id=...` | Poll connection, persistence, and rollback status |
 | Network | `DELETE /api/network/wifi/connection?ssid=...` | Forget a network without relying on a DELETE request body |
@@ -244,6 +245,25 @@ operations. It uses a read-only state view to include the SD archive root when
 serving previously migrated audio.
 
 ## Wi-Fi Task Lifecycle
+
+`GET /api/network/wifi/status` returns `wifi` (saved profiles with redacted
+proxy URLs) and `wifi_status` (current `connected`, `ssid`, `state`,
+`ip_address`, optional `signal_dbm`, and `observed_at_unix_us`, the device's
+Unix timestamp in microseconds when the primary probe completed). The aggregate
+snapshot carries the same timestamp so clients can compare radio observations
+independently of response arrival order. The live endpoint is uncached, has a
+three-second probe deadline, and remains readable during connection and rollback
+tasks. A stalled `wpa_cli` read leaves time for the `iw` fallback. IPv4 and signal
+enrichment use separate short budgets; missing enrichment does not invalidate
+a confirmed radio association.
+If neither radio probe yields a usable observation, it returns HTTP 503 with
+`Wi-Fi status unavailable`. A successful probe confirming disconnection returns
+HTTP 200 when profile loading also succeeds. Profile-loading failures return
+HTTP 503 with `Wi-Fi profiles unavailable` or `Wi-Fi proxy profiles unavailable`,
+including when the proxy profile file cannot be read.
+Radio association and the task outcome are separate: `connected` reflects
+association, while task success also requires address acquisition and
+persistence. A newly associated SSID may not be saved until its task succeeds.
 
 `PUT /api/network/wifi/connection` returns HTTP 202 with a `task_id` immediately.
 The task has a 120-second total deadline covering candidate application,

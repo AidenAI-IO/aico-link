@@ -1,5 +1,6 @@
 [Unit]
 Description=Aico Link ttyd browser terminal
+OnFailure=aico-service-incident@%p.service
 Requires=aico-environment.service aico-usb-gadget.service
 After=aico-environment.service aico-usb-gadget.service
 ConditionPathExists=/usr/lib/aico/ttyd

@@ -1190,6 +1190,7 @@ STT:
 
 TTS:
 
+- `provider = "ekho"`: local Ekho CLI (built-in default), Mandarin with mixed English support; no API key. See [Local Ekho](audio-features.md#local-ekho-default) for installation requirements, sentence buffering, and speed behavior;
 - `provider = "minimax"`: Minimax WebSocket, global endpoint `api.minimax.io`;
 - `provider = "minimax-cn"`: Minimax WebSocket, mainland China endpoint `api.minimaxi.com`;
 - `provider = "fish-audio"`: Fish Audio WebSocket;
@@ -1203,7 +1204,7 @@ TTS configuration fields:
 | Field          | Location                         | Description                                                                                                              |
 | -------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `provider`     | `[voice_settings.classic.tts]`                          | Required reference to a named provider record; a bare provider type remains supported for backward compatibility        |
-| `api_key`      | `[voice_settings.classic.tts.providers.<name>]`         | Required authentication key for the selected provider                                                                   |
+| `api_key`      | `[voice_settings.classic.tts.providers.<name>]`         | Required for cloud providers; unused by local Ekho |
 | `model`        | `[voice_settings.classic.tts.providers.<name>]`         | Optional Minimax model, Fish Audio model header, Alibaba Cloud Realtime model, Volcengine `X-Api-Resource-Id`, or OpenRouter model |
 | `voice_id`     | `[voice_settings.classic.tts.providers.<name>]`         | Optional Minimax, Alibaba Cloud, OpenRouter, or Google Cloud voice; Volcengine speaker. Not used by Fish Audio (see `reference_id`) |
 | `reference_id` | `[voice_settings.classic.tts.providers.<name>]`         | Optional Fish Audio reference id; defaults to the built-in demo voice shown by Config Web. Ignored by other providers    |

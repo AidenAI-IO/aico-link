@@ -91,6 +91,12 @@ func buildTTSProviderConfigFor(cfg Config, providerRef string) tts.ProviderConfi
 	// Provider-specific parameter cleanup to avoid cross-provider pollution.
 	// Each provider should only receive parameters it actually uses.
 	switch provider {
+	case "ekho":
+		// The local bilingual voice uses a fixed Mandarin preset. Do not pass
+		// credentials or voice settings inherited from a cloud provider.
+		apiKey, voice = "", ""
+		extra = map[string]any{"pace_audio": cfg.AudioBackendOrDefault() == AudioBackendAudioService}
+
 	case "fish-audio":
 		// Fish Audio uses reference_id exclusively; clear voice to prevent
 		// inheriting voice_id from other providers (e.g., Minimax, OpenRouter).
@@ -140,11 +146,18 @@ func ttsPlaybackFormat(cfg Config, caps tts.Capabilities) tts.AudioFormat {
 	} else if len(caps.SupportedSampleRates) > 1 && !containsInt(caps.SupportedSampleRates, sampleRate) {
 		sampleRate = caps.SupportedSampleRates[0]
 	}
-	return tts.AudioFormat{
+	format := tts.AudioFormat{
 		SampleRate: sampleRate,
 		Channels:   cfg.Audio.ChannelsOrDefault(),
 		BitWidth:   cfg.Audio.BitWidthOrDefault(),
 	}
+	if caps.OutputChannels > 0 {
+		format.Channels = caps.OutputChannels
+	}
+	if caps.OutputBitWidth > 0 {
+		format.BitWidth = caps.OutputBitWidth
+	}
+	return format
 }
 
 func ttsPlaybackTargetFormat(cfg Config, source tts.AudioFormat) tts.AudioFormat {
