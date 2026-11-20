@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"aico-agent/internal/devicecli"
+	"aico-agent/internal/logging"
 	"github.com/google/uuid"
 	"github.com/tmc/langchaingo/llms"
 )
@@ -101,6 +102,37 @@ func openDeviceCLIScope(ctx context.Context, r *Runtime, capture *deviceCLICaptu
 	return "http://" + listener.Addr().String(), token, func() { cancel(); _ = srv.Close(); mu.Lock(); closed = true; mu.Unlock() }, nil
 }
 
+// handleDeviceCLIDrag keeps both phases and their cleanup on the controller,
+// even when the standalone CLI disconnects between starting and releasing.
+func (s *Server) handleDeviceCLIDrag(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var originGuard http.CrossOriginProtection
+	if err := originGuard.Check(req); err != nil {
+		http.Error(w, "Cross-origin writes are not allowed", http.StatusForbidden)
+		return
+	}
+	var args []string
+	if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&args); err != nil || len(args) != 5 || args[0] != "drag" {
+		http.Error(w, "Expected drag X1 Y1 X2 Y2", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), httpToolExecutionTimeout)
+	defer cancel()
+	result, err := executeDeviceCLI(ctx, s, args, &deviceCLICapture{})
+	if err != nil {
+		result = ToolInvokeResponse{IsError: true, Error: err.Error()}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+type compositeDragKey struct{}
+type compositeDrag struct{ release func(context.Context) error }
+
 func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *deviceCLICapture) (ToolInvokeResponse, error) {
 	calls, err := devicecli.Calls(args)
 	if err != nil {
@@ -124,7 +156,24 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 		last = compressCLIFrame(last)
 		capture.add(len(capture.actions)-1, last)
 	}()
+	if len(calls) > 1 {
+		drag := &compositeDrag{}
+		scoped = context.WithValue(scoped, compositeDragKey{}, drag)
+		defer func() {
+			if drag.release == nil {
+				return
+			}
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(scoped), 3*time.Second)
+			defer cancel()
+			if err := drag.release(cleanupCtx); err != nil {
+				logging.Warnf("agent", "device_cli", "drag cleanup failed: %v", err)
+			}
+		}()
+	}
 	for i, call := range calls {
+		if err := scoped.Err(); err != nil {
+			return result, err
+		}
 		action := newDeviceCLIAction(args[0], call)
 		result, err = invokeDeviceHTTP(scoped, s, call)
 		action.failed = err != nil || result.IsError
@@ -144,7 +193,7 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 			return result, nil
 		}
 		if i+1 < len(calls) {
-			if !ok || visual.Result.ScreenStable != nil && !*visual.Result.ScreenStable {
+			if !ok || visual.Result.ScreenStable == nil || !*visual.Result.ScreenStable {
 				capture.actions[len(capture.actions)-1].failed = true
 				err = fmt.Errorf("drag did not reach a stable screen; inspect the screenshot before retrying")
 				return result, err

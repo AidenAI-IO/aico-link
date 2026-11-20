@@ -232,6 +232,7 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		ExampleInput: `{"url":"https://example.com"}`,
 	},
 	toolReadImage: {
+		HTTPExposed:  toolSpecBoolPtr(false),
 		Category:     "observation",
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"path":"/tmp/device-cli-example.jpg"}`,

@@ -14,6 +14,7 @@ For MCP Streamable HTTP on the same Agent (`POST /mcp`), see [mcp.md](./mcp.md).
 | --- | --- | --- |
 | `GET` | `/api/tools` | List HTTP-visible tools with descriptions, input modes, examples, and HTTP bindings |
 | `POST` | `/api/tools/{tool_name}` | Invoke the specified tool |
+| `POST` | `/api/device-cli/drag` | Run both drag phases on the controller. The standalone CLI sends a JSON array such as `["drag","100","250","800","900"]`. |
 | `GET` | `/api/tool-skills` | Generate a `SKILL.md` bundle suitable for external agents |
 
 ## Request Format

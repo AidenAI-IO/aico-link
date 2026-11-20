@@ -136,7 +136,7 @@ func (t *WaitStableScreenTool) Description() string {
 	return fmt.Sprintf(
 		`Wait until the connected display stops changing before judging UI result. `+
 			`Use only while operating a visible target UI, after a UI action or known UI transition that may animate, navigate, or load; do not call for text-only reasoning, arithmetic, comparison, or memory lookup. `+
-			`Input: {} (empty JSON object). Configured timeouts: timeout_ms=%d, stable_ms=%d, diff_threshold=%g. `+
+			`Input: {} for defaults, or set timeout_ms (1–30000). Configured defaults: timeout_ms=%d, stable_ms=%d, diff_threshold=%g. `+
 			`Consecutive frames are compared on a grid of screen blocks; a block changes when its mean brightness moves more than diff_threshold. The screen is stable when no more than 1%% of blocks change for stable_ms. Small areas that keep moving in every frame (video, carousel, clock) are ignored after a few frames and reported as ignored_motion_blocks; large changes such as a page transition are always waited out. `+
 			`Returns {"ok":true,"stable":true/false,"elapsed_ms":N,"frames_differed":true/false,...} and provides the screenshot as a visual observation. `+
 			`frames_differed reports whether any frame-to-frame change was observed during this wait window; it is not a before/after action-success signal. Inspect the returned screenshot to judge the preceding action. `+
@@ -148,8 +148,9 @@ func (t *WaitStableScreenTool) Description() string {
 }
 
 func (t *WaitStableScreenTool) ArgsSchema() map[string]any {
-	// No parameters - tool uses configured timeouts only
-	return objectArgsSchema(map[string]any{})
+	return objectArgsSchema(map[string]any{
+		"timeout_ms": rangedIntegerArgSchema("Maximum stability polling time in milliseconds. Omit to use the configured default.", 1, 30000),
+	})
 }
 
 func (t *WaitStableScreenTool) Call(ctx context.Context, input string) (string, error) {
@@ -286,9 +287,7 @@ func (t *WaitStableScreenTool) captureWaitFrame() (*frameMetadata, []byte, scree
 
 func (t *WaitStableScreenTool) wait(ctx context.Context, input string) (waitStableScreenResult, error) {
 	var args struct {
-		TimeoutMs     int     `json:"timeout_ms"`
-		StableMs      int     `json:"stable_ms"`
-		DiffThreshold float64 `json:"diff_threshold"`
+		TimeoutMs *int `json:"timeout_ms"`
 	}
 	if trimmed := strings.TrimSpace(input); trimmed != "" {
 		if err := json.Unmarshal([]byte(input), &args); err != nil {
@@ -297,8 +296,14 @@ func (t *WaitStableScreenTool) wait(ctx context.Context, input string) (waitStab
 	}
 
 	resolvedDefaults := t.defaults.Resolved()
-	// Always use configured values; ignore LLM parameters to enforce config authority
-	timeout := time.Duration(resolvedDefaults.TimeoutMs) * time.Millisecond
+	timeoutMs := resolvedDefaults.TimeoutMs
+	if args.TimeoutMs != nil {
+		if *args.TimeoutMs < 1 || *args.TimeoutMs > 30000 {
+			return waitStableScreenResult{}, fmt.Errorf("timeout_ms must be 1–30000")
+		}
+		timeoutMs = *args.TimeoutMs
+	}
+	timeout := time.Duration(timeoutMs) * time.Millisecond
 	stableFor := time.Duration(resolvedDefaults.StableMs) * time.Millisecond
 	if stableFor > timeout {
 		stableFor = timeout

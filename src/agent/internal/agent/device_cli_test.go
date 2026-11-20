@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/jpeg"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"strings"
 	"testing"
@@ -130,3 +133,54 @@ type deviceCLITestTool struct{ name, output string }
 func (s deviceCLITestTool) Name() string                                 { return s.name }
 func (s deviceCLITestTool) Description() string                          { return "test device tool" }
 func (s deviceCLITestTool) Call(context.Context, string) (string, error) { return s.output, nil }
+
+func TestDeviceCLICompositeDragReleasesOnCaptureFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cancel  bool
+		useHTTP bool
+	}{
+		{name: "shell"}, {name: "canceled shell", cancel: true}, {name: "standalone HTTP", useHTTP: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			provider := &dragRecoveryProvider{}
+			action := &TouchGestureTool{mnkProvider: provider}
+			screen := &stubTool{name: "screenshot"}
+			screen.callFn = func(context.Context, string) (string, error) {
+				if len(screen.inputs) == 1 {
+					return terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{}), nil
+				}
+				if len(screen.inputs) == 2 {
+					if !provider.dragActive {
+						t.Error("expected a held contact when final capture failed")
+					}
+					if tc.cancel {
+						cancel()
+					}
+				}
+				return "", errors.New("capture unavailable")
+			}
+			tool := newPostActionStableScreenshotTool(action, &fakeInternalWaitTool{result: waitStableScreenResult{OK: true, Stable: true}}, screen, 0, ScreenStableDefaults{})
+			rt := &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "screenshot": screen}}}
+			server := &Server{runtime: rt}
+			if tc.useHTTP {
+				w := httptest.NewRecorder()
+				server.handleDeviceCLIDrag(w, httptest.NewRequest(http.MethodPost, "/api/device-cli/drag", strings.NewReader(`["drag","100","250","800","900"]`)))
+				var result ToolInvokeResponse
+				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || !result.IsError {
+					t.Fatalf("expected failed drag, got %s", w.Body.String())
+				}
+			} else {
+				result, err := executeDeviceCLI(ctx, server, []string{"drag", "100", "250", "800", "900"}, &deviceCLICapture{})
+				if err == nil && !result.IsError {
+					t.Fatal("drag unexpectedly succeeded")
+				}
+			}
+			if provider.dragActive || provider.releaseX != 100 || provider.releaseY != 250 {
+				t.Fatalf("contact cleanup did not release at origin: %+v", provider)
+			}
+		})
+	}
+}

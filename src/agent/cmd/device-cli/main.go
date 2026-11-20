@@ -46,6 +46,9 @@ func run(base string, args []string) error {
 	if err != nil {
 		return err
 	}
+	if len(calls) > 1 {
+		return runCall(client, base+"/api/device-cli/drag", args, "", nil)
+	}
 	for _, call := range calls {
 		if err := runCall(client, base+"/api/tools/"+call.Tool, map[string]any{"input": call.Input}, "", look); err != nil {
 			return err

@@ -10,6 +10,8 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +41,20 @@ func writeTestPNG(t *testing.T, path string, width, height int, fill color.Color
 	}
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReadImageToolIsBackendOnly(t *testing.T) {
+	tool := NewReadImageTool()
+	s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{tool.Name(): tool}}}}
+	if !NewToolSpec(tool).AgentExposed {
+		t.Fatal("backend must retain read_image")
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/tools/read_image", strings.NewReader(`{"input":{"path":"/tmp/photo.jpg"}}`))
+	w := httptest.NewRecorder()
+	s.handleToolInvoke(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("HTTP read_image status=%d", w.Code)
 	}
 }
 

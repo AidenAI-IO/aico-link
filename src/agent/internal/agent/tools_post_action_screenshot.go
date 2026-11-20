@@ -210,6 +210,25 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		return toolErrorString(te), nil
 	}
 
+	// Track physical action success before any of the observation steps can
+	// fail. A turn guard or a rejected drag_start cannot arm this cleanup.
+	drag, _ := ctx.Value(compositeDragKey{}).(*compositeDrag)
+	if drag != nil && t.inner.Name() == "touch_gesture" {
+		if releasesHeldContact(t.inner.Name(), input) {
+			drag.release = nil
+		} else if recoverer, ok := t.inner.(unstableScreenRecoverer); ok {
+			if point := dragStartRecoveredPoint(input); point != nil {
+				drag.release = func(cleanupCtx context.Context) error {
+					if err := recoverer.recoverAfterUnstableScreen(cleanupCtx, input); err != nil {
+						return err
+					}
+					t.pointer.set(point)
+					return nil
+				}
+			}
+		}
+	}
+
 	pointerAfter := pointerFinalPoint(t.inner.Name(), input, actionOutput)
 	t.pointer.set(pointerAfter)
 
@@ -221,7 +240,7 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	if t.waitStable != nil {
 		touchscreenRCALogf("post_action wait_stable start inner=%q", t.inner.Name())
 		if waiter, ok := t.waitStable.(stableScreenWaiter); ok {
-			waitResult, err = waiter.wait(ctx, t.waitInput)
+			waitResult, err = waiter.wait(ctx, "{}")
 			if err != nil {
 				touchscreenRCALogf("post_action wait_stable error inner=%q err_type=%T", t.inner.Name(), err)
 				return postActionErrorResultf(ctx, postActionErrorCode(err), "%s completed with output %q, but stable-screen wait failed: %v", t.inner.Name(), actionOutput, err), nil
@@ -258,6 +277,9 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 					return postActionErrorResultf(ctx, postActionErrorCode(err), "%s completed with output %q, but unstable-screen recovery failed: %v", t.inner.Name(), actionOutput, err), nil
 				}
 				if recovered := dragStartRecoveredPoint(input); recovered != nil {
+					if drag != nil {
+						drag.release = nil
+					}
 					pointerAfter = recovered
 					t.pointer.set(recovered)
 				}

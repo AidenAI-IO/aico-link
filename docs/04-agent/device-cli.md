@@ -28,6 +28,10 @@ An unchanged display is not an error. A CLI failure exits nonzero, so `&&` stops
 the chain. Without an active shell scope, the executable accepts `--url` to
 target a daemon directly (default `http://127.0.0.1:8080`).
 
+`drag` runs both phases on the controller. If interrupted after lifting the
+item, the controller attempts to return it to its starting point and release
+it, even when the shell or standalone CLI disconnects.
+
 ## Viewing and saving screenshots
 
 ```sh
@@ -43,3 +47,6 @@ The Agent can inspect the saved JPEG with `read_image` using the printed path.
 integer coordinates (0–1000). `look` does not contribute a frame to the shell's
 screenshot sheet. If a chain also runs commands that attach frames, those
 commands still contribute their own screenshots.
+
+`wait N` with a positive `N` sets the stability polling timeout in milliseconds
+(1–30000). Capturing the final frame can take additional time.
