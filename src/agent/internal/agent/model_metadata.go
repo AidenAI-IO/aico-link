@@ -22,6 +22,7 @@ import (
 
 const providerModelMetadataTimeout = 5 * time.Second
 const modelsDevCatalogTimeout = 20 * time.Second
+const modelsDevCatalogRetryDelay = time.Minute
 const modelsDevCatalogMaxAge = 24 * time.Hour
 const providerModelMetadataCacheVersion = 1
 const maxModelsDevCatalogBytes = 8 * 1024 * 1024
@@ -30,6 +31,7 @@ type modelsDevCatalogCacheEntry struct {
 	ready   chan struct{}
 	catalog map[string]modelsDevProvider
 	err     error
+	retryAt time.Time
 }
 
 var modelsDevCatalogCache sync.Map
@@ -383,14 +385,31 @@ func (m *ModelManager) fetchModelsDevModelSpec(ctx context.Context) (model.Model
 }
 
 func (m *ModelManager) startModelsDevCatalog(endpoint string) *modelsDevCatalogCacheEntry {
-	pending := &modelsDevCatalogCacheEntry{ready: make(chan struct{})}
-	actual, loaded := modelsDevCatalogCache.LoadOrStore(endpoint, pending)
-	entry := actual.(*modelsDevCatalogCacheEntry)
-	if !loaded {
+	for {
+		actual, found := modelsDevCatalogCache.Load(endpoint)
+		if found {
+			entry := actual.(*modelsDevCatalogCacheEntry)
+			select {
+			case <-entry.ready:
+				if entry.retryAt.IsZero() || time.Now().Before(entry.retryAt) {
+					return entry
+				}
+			default:
+				return entry
+			}
+		}
+		pending := &modelsDevCatalogCacheEntry{ready: make(chan struct{})}
+		if found {
+			if !modelsDevCatalogCache.CompareAndSwap(endpoint, actual, pending) {
+				continue
+			}
+		} else if _, loaded := modelsDevCatalogCache.LoadOrStore(endpoint, pending); loaded {
+			continue
+		}
 		// Complete the shared load even if its first caller stops waiting.
-		go m.populateModelsDevCatalog(endpoint, entry)
+		go m.populateModelsDevCatalog(endpoint, pending)
+		return pending
 	}
-	return entry
 }
 
 func (m *ModelManager) loadModelsDevCatalog(ctx context.Context, endpoint string) (map[string]modelsDevProvider, error) {
@@ -409,7 +428,7 @@ func (m *ModelManager) populateModelsDevCatalog(endpoint string, entry *modelsDe
 	entry.catalog, entry.err = m.readOrDownloadModelsDevCatalog(ctx, endpoint)
 	if entry.err != nil {
 		logging.Warnf("agent", "model_spec", "load models.dev catalog: %v", entry.err)
-		modelsDevCatalogCache.Delete(endpoint)
+		entry.retryAt = time.Now().Add(modelsDevCatalogRetryDelay)
 	}
 	close(entry.ready)
 }

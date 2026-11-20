@@ -97,8 +97,9 @@ func (m *ModelManager) cachedModelsDevCatalog() map[string]modelsDevProvider {
 }
 
 type catalogPriceEstimate struct {
-	usd  float64
-	rate string
+	usd     float64
+	rate    string
+	partial bool
 }
 
 func (key modelsDevPriceKey) estimate(catalog map[string]modelsDevProvider, input, cached, cacheWrite, output int, aggregated bool) (catalogPriceEstimate, bool) {
@@ -204,5 +205,15 @@ func estimateHistoricalCatalogCost(episode TaskEpisode, catalog map[string]model
 	}
 	cached, _ := util.UsageMetricInt(episode.Extra["cached_prompt_tokens"])
 	calls, _ := util.UsageMetricInt(episode.Extra["llm_calls"])
-	return key.estimate(catalog, input, cached, 0, output, calls != 1)
+	estimate, ok := key.estimate(catalog, input, cached, 0, output, calls != 1)
+	if ok {
+		if usageCalls, tracked := util.UsageMetricInt(episode.Extra["usage_reported_calls"]); tracked {
+			estimate.partial = usageCalls < calls
+		} else {
+			// One call with recorded input and output can be priced directly.
+			// Legacy totals cannot establish coverage over multiple calls.
+			estimate.partial = calls != 1
+		}
+	}
+	return estimate, ok
 }

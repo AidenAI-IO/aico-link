@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
@@ -68,5 +69,62 @@ func TestTaskHistoryPersistsCatalogPriceAfterProviderAndTelemetry(t *testing.T) 
 	}
 	if _, ok := episode.Extra["cost_usd"]; ok {
 		t.Fatal("estimated cost leaked into provider billing")
+	}
+}
+
+func TestTaskHistoryBackfillPreservesUsageCoverage(t *testing.T) {
+	catalog, err := decodeModelsDevCatalog([]byte(`{"openai":{"models":{"test-model":{"cost":{"input":1,"output":2}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name    string
+		second  *llms.ContentResponse
+		legacy  bool
+		partial bool
+		usd     float64
+	}{
+		{name: "complete", second: usageResponse(100, 10, 110), usd: .00024},
+		{name: "missing response", partial: true, usd: .00012},
+		{name: "legacy aggregate", second: usageResponse(100, 10, 110), legacy: true, partial: true, usd: .00024},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			tracked := &usageTrackingModel{
+				inner:   &scriptedModel{responses: []*llms.ContentResponse{usageResponse(80, 20, 100), test.second}},
+				metrics: &RunMetrics{},
+			}
+			for range 2 {
+				if _, err := tracked.GenerateContent(ctx, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			episode := NewEpisodeRecorder(MemoryRetrieveRequest{Input: "task"}, MemoryContext{}).
+				Finish("", tracked.metrics, nil, nil, nil)
+			episode.Extra["model_provider"] = "openai"
+			episode.Extra["model_name"] = "test-model"
+			if test.legacy {
+				delete(episode.Extra, "usage_reported_calls")
+			}
+			store := NewTaskEpisodeStore(t.TempDir())
+			if _, err := store.AddEpisode(ctx, episode); err != nil {
+				t.Fatal(err)
+			}
+			index, err := store.loadIndex()
+			if err != nil {
+				t.Fatal(err)
+			}
+			groups := groupTaskHistory(index, nil)
+			if len(groups) != 1 {
+				t.Fatalf("got %d history groups, want one", len(groups))
+			}
+			detail, err := store.readTaskHistory(groups[0], true, catalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if detail.Cost == nil || math.Abs(detail.Cost.USD-test.usd) > 1e-12 || detail.Cost.Partial != test.partial {
+				t.Fatalf("backfilled cost = %+v, want %v with partial=%t", detail.Cost, test.usd, test.partial)
+			}
+		})
 	}
 }

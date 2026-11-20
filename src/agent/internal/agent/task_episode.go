@@ -334,6 +334,7 @@ func (r *EpisodeRecorder) Finish(output string, metrics *RunMetrics, runErr erro
 		}
 		if metrics.LLMCalls > 0 {
 			episode.Extra["llm_calls"] = metrics.LLMCalls
+			episode.Extra["usage_reported_calls"] = metrics.usageReportedCalls
 			episode.Extra["llm_time_ms"] = metrics.LLMTimeMs
 			episode.Extra["cost_reported_calls"] = metrics.costReportedCalls
 		}

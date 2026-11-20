@@ -265,16 +265,17 @@ type RunMetrics struct {
 	FirstTokenTime   float64 `json:"first_token_time_ms,omitempty"`
 	ToolCount        int     `json:"tool_count,omitempty"`
 	// Model calls include compaction and failed calls made by the run's wrapper.
-	LLMCalls          int      `json:"llm_calls,omitempty"`
-	LLMTimeMs         float64  `json:"llm_time_ms,omitempty"`
-	CostUSD           *float64 `json:"cost_usd,omitempty"`
-	CostSource        string   `json:"cost_source,omitempty"`
-	costReportedCalls int
-	reportedCostUSD   float64
-	costFallbackCalls int
-	fallbackCostUSD   float64
-	catalogCostCalls  int
-	catalogRates      []string
+	LLMCalls           int      `json:"llm_calls,omitempty"`
+	LLMTimeMs          float64  `json:"llm_time_ms,omitempty"`
+	CostUSD            *float64 `json:"cost_usd,omitempty"`
+	CostSource         string   `json:"cost_source,omitempty"`
+	usageReportedCalls int
+	costReportedCalls  int
+	reportedCostUSD    float64
+	costFallbackCalls  int
+	fallbackCostUSD    float64
+	catalogCostCalls   int
+	catalogRates       []string
 	// CachedPromptTokens accumulates provider-reported cached prompt tokens
 	// (usage.prompt_tokens_details.cached_tokens) across the run. The prompt-cache
 	// hit rate is CachedPromptTokens / PromptTokens.
@@ -400,8 +401,8 @@ func (m *usageTrackingModel) GenerateContent(ctx context.Context, messages []llm
 	startedAt := time.Now()
 	res, err := m.inner.GenerateContent(ctx, messages, options...)
 	m.recordCallMetrics(res, startedAt)
-	if err == nil {
-		recordUsageMetrics(m.metrics, res)
+	if err == nil && recordUsageMetrics(m.metrics, res) {
+		m.metrics.usageReportedCalls++
 	}
 	if m.promptCapture != nil {
 		m.promptCapture.Record(ctx, startedAt, time.Now(), messages, options, res, err, m.contextWindow())
@@ -423,8 +424,8 @@ func (m *usageTrackingModel) GenerateContentFromMessageList(ctx context.Context,
 	startedAt := time.Now()
 	res, err := inner.GenerateContentFromMessageList(ctx, messageList, options...)
 	m.recordCallMetrics(res, startedAt)
-	if err == nil {
-		recordUsageMetrics(m.metrics, res)
+	if err == nil && recordUsageMetrics(m.metrics, res) {
+		m.metrics.usageReportedCalls++
 	}
 	if m.promptCapture != nil {
 		m.promptCapture.Record(ctx, startedAt, time.Now(), messages.ConvertMessageList(messageList), options, res, err, m.contextWindow())
@@ -1155,7 +1156,8 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}}
 	if manager, ok := r.models.(*ModelManager); ok {
 		key := modelsDevPriceKeyForConfig(cfg.Model)
-		if key.provider != "" {
+		if key.provider != "" && key.model != "" {
+			manager.startModelsDevCatalog(manager.modelsDevEndpoint())
 			m.catalogEstimate = func(info map[string]any) (catalogPriceEstimate, bool) {
 				return key.estimateUsage(manager.cachedModelsDevCatalog(), info)
 			}
@@ -2486,27 +2488,25 @@ func providerCostUSD(info map[string]any) (float64, bool) {
 	return total, inputOK && outputOK && !math.IsInf(total, 0)
 }
 
-func recordUsageMetrics(metrics *RunMetrics, res *llms.ContentResponse) {
-	if res == nil || metrics == nil || len(res.Choices) == 0 {
-		return
+// recordUsageMetrics reports whether this response supplied input and output usage.
+func recordUsageMetrics(metrics *RunMetrics, res *llms.ContentResponse) bool {
+	if res == nil || metrics == nil || len(res.Choices) == 0 || res.Choices[0] == nil {
+		return false
 	}
 	info := res.Choices[0].GenerationInfo
-	if info == nil {
-		return
-	}
 
 	// A single run makes several LLM calls (planner, executor, verifier, and any
 	// tool-assisted iterations). Accumulate token counts across calls so the run
 	// metrics reflect the whole run rather than only the last call. LastPromptTokens
 	// keeps the largest single-call prompt size for the compression heuristic.
-	if v, ok := util.UsageMetricInt(info["prompt_tokens"]); ok {
-		metrics.PromptTokens += v
-		if v > metrics.LastPromptTokens {
-			metrics.LastPromptTokens = v
-		}
+	input, hasInput := util.UsageMetricInt(info["prompt_tokens"])
+	output, hasOutput := util.UsageMetricInt(info["completion_tokens"])
+	if hasInput {
+		metrics.PromptTokens += input
+		metrics.LastPromptTokens = max(metrics.LastPromptTokens, input)
 	}
-	if v, ok := util.UsageMetricInt(info["completion_tokens"]); ok {
-		metrics.CompletionTokens += v
+	if hasOutput {
+		metrics.CompletionTokens += output
 	}
 	if v, ok := util.UsageMetricInt(info["total_tokens"]); ok {
 		metrics.TotalTokens += v
@@ -2517,6 +2517,7 @@ func recordUsageMetrics(metrics *RunMetrics, res *llms.ContentResponse) {
 	if v, ok := util.UsageMetricInt(info["reasoning_tokens"]); ok {
 		metrics.ReasoningTokens += v
 	}
+	return hasInput && hasOutput && input >= 0 && output >= 0 && (input > 0 || output > 0)
 }
 
 func (h *runtimeCallbackHandler) HandleLLMError(ctx context.Context, err error) {}

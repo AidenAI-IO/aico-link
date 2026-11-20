@@ -287,6 +287,59 @@ func TestModelsDevCatalogCachedAcrossManagers(t *testing.T) {
 	}
 }
 
+func TestModelsDevCatalogRetriesAfterFailure(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, `{"openai":{"models":{"test-model":{"cost":{"input":1,"output":2}}}}}`)
+	}))
+	defer server.Close()
+	t.Cleanup(func() { modelsDevCatalogCache.Delete(server.URL) })
+
+	manager := NewModelManager(ModelConfig{Provider: "openai", Model: "test-model"}, ProxyConfig{},
+		WithModelsDevURL(server.URL), WithProviderMetadataHTTPClient(server.Client()))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := manager.loadModelsDevCatalog(ctx, server.URL); err == nil {
+		t.Fatal("initial load should fail")
+	}
+	current, _ := modelsDevCatalogCache.Load(server.URL)
+	failed := current.(*modelsDevCatalogCacheEntry)
+	if !failed.retryAt.After(time.Now()) {
+		t.Fatal("failed load did not enter backoff")
+	}
+	for range 5 {
+		manager.prefetchModelsDevPricing()
+	}
+	if current, _ := modelsDevCatalogCache.Load(server.URL); current != failed || requests.Load() != 1 {
+		t.Fatal("prefetch retried during backoff")
+	}
+
+	// Expire the backoff without waiting on a real-time timer.
+	expired := *failed
+	expired.retryAt = time.Now().Add(-time.Second)
+	modelsDevCatalogCache.Store(server.URL, &expired)
+	if manager.cachedModelsDevCatalog() != nil {
+		t.Fatal("history should see no catalog after a failed load")
+	}
+	if current, _ := modelsDevCatalogCache.Load(server.URL); current != &expired {
+		t.Fatal("reading cached prices started a request")
+	}
+	manager.prefetchModelsDevPricing()
+	if _, err := manager.loadModelsDevCatalog(ctx, server.URL); err != nil {
+		t.Fatalf("load after backoff: %v", err)
+	}
+	if _, ok := modelsDevPriceKeyForConfig(manager.config).estimate(manager.cachedModelsDevCatalog(), 10, 0, 0, 5, false); !ok {
+		t.Fatal("successful retry did not make prices available")
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("models.dev requests = %d, want one initial request and one shared retry", got)
+	}
+}
+
 func TestModelsDevCatalogReportsOversizedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, strings.Repeat("x", maxModelsDevCatalogBytes+1))

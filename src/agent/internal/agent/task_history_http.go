@@ -250,7 +250,7 @@ func (s *TaskEpisodeStore) readTaskHistory(group taskHistoryGroup, withSteps boo
 		cost, hasCost := taskHistoryEpisodeCost(episode)
 		if !hasCost {
 			if estimate, ok := estimateHistoricalCatalogCost(episode, catalog); ok {
-				cost = taskHistoryCost{USD: estimate.usd, Source: "catalog", Estimated: true}
+				cost = taskHistoryCost{USD: estimate.usd, Source: "catalog", Estimated: true, Partial: estimate.partial}
 				hasCost = true
 				if withSteps {
 					detail.Pricing = append(detail.Pricing, estimate.rate)

@@ -66,11 +66,14 @@ provider by the API endpoint and matches the complete model ID. APIBest's
 `gpt-6-luna` can use the corresponding OpenAI entry as a reference price.
 The Agent applies context tiers to each call and records the amount and
 matched tier with the episode. For older episodes, it uses recorded totals
-when they determine the applicable rates.
+when they determine the applicable rates. A backfilled cost is marked partial
+when some calls lack recorded usage or an older multi-call record has unknown
+coverage.
 
 On startup or a model change, a recognized endpoint can trigger a background
 catalog load. Reasoning metadata and cost estimates share the same catalog
-load in the Agent process. The Agent reuses a local snapshot for up to 24
+load in the Agent process. After a failed load, a later model run can retry
+after a one-minute backoff. The Agent reuses a local snapshot for up to 24
 hours at startup. Task history uses local data even when telemetry export
 is disabled. The list displays a dash when no amount is available and
 appends `+` to a partial total. Task details show the cost source.
