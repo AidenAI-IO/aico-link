@@ -1245,7 +1245,7 @@ func touchPointerModeMismatchGuidance(platform, pointerMode string) string {
 	if want == "touchpad" {
 		deviceType = "iOS"
 	}
-	return fmt.Sprintf(`touch_gesture produced no visible screen change, and the connected platform is %s while [basic_settings.device].device_type derives hid.pointer_mode=%q. Stop operation here because the touch mode likely does not match the target. Please switch [basic_settings.device].device_type to %q, restart the agent, and retry.`, deviceType, pointerMode, deviceType)
+	return fmt.Sprintf(`touch_gesture produced no visible screen change, and the connected platform is %s while [basic_settings.device].device_type derives hid.pointer_mode=%q. Stop operation here because the touch mode likely does not match the target. Please switch [basic_settings.device].device_type to %q, reboot the board so the USB descriptor changes, and retry.`, deviceType, pointerMode, deviceType)
 }
 
 func toolNameEqual(got, want string) bool {

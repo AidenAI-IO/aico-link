@@ -358,7 +358,7 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	if t.inner.Name() == "touch_gesture" {
 		if marker, ok := parseTouchGesturePostMarker(input); ok {
 			markers := []touchGesturePostMarkerInfo{marker}
-			if turnPending {
+			if turnPending && !(marker.X == 500 && marker.Y == 500) {
 				markers = append(markers, touchGesturePostMarkerInfo{Type: touchMarkerMirror, X: 1000 - marker.X, Y: 1000 - marker.Y})
 			}
 			applyTouchGesturePostMarkers(&payload.screenshotResult, markers)
@@ -366,7 +366,11 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 			// The action output is the turn note, and an unguarded sequence
 			// sends every tap, so the last input point is the one to judge.
 			if last, ok := lastTapSequencePoint(input); ok {
-				applyTouchGesturePostMarkers(&payload.screenshotResult, []touchGesturePostMarkerInfo{last, {Type: touchMarkerMirror, X: 1000 - last.X, Y: 1000 - last.Y}})
+				markers := []touchGesturePostMarkerInfo{last}
+				if !(last.X == 500 && last.Y == 500) {
+					markers = append(markers, touchGesturePostMarkerInfo{Type: touchMarkerMirror, X: 1000 - last.X, Y: 1000 - last.Y})
+				}
+				applyTouchGesturePostMarkers(&payload.screenshotResult, markers)
 			}
 		} else if markers := parseTapSequencePostMarkers(input, actionOutput); len(markers) > 0 {
 			applyTouchGesturePostMarkers(&payload.screenshotResult, markers)
@@ -554,6 +558,15 @@ func drawTouchGesturePostMarkers(jpegData []byte, markers []touchGesturePostMark
 // touchMarkerMirror marks where an unconfirmed landscape touch lands if the
 // phone is turned the other way.
 const touchMarkerMirror = "mirror"
+
+// turnCheckPoint returns the point a direction check is judged at: the point
+// of a single touch or the last point of a tap_sequence.
+func turnCheckPoint(input string) (touchGesturePostMarkerInfo, bool) {
+	if marker, ok := parseTouchGesturePostMarker(input); ok {
+		return marker, true
+	}
+	return lastTapSequencePoint(input)
+}
 
 // lastTapSequencePoint returns the last point of a tap_sequence input.
 func lastTapSequencePoint(input string) (touchGesturePostMarkerInfo, bool) {

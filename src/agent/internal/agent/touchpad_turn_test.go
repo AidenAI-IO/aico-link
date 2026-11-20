@@ -68,3 +68,34 @@ func TestTurnCheckSequenceKeepsExplicitInterval(t *testing.T) {
 		}
 	}
 }
+
+func TestTouchpadTurnResetsOnAnyPortraitScreenshot(t *testing.T) {
+	state := &screen.ScreenState{}
+	provider := &fakeTouchpadTurn{}
+	c := &touchpadTurnCorrector{provider: provider, screen: state}
+	state.SetScreenshotObserver(c.observeScreenshot)
+	state.UpdateScreenshot([]byte{0xff}, 1920, 1080)
+	c.prepare()
+	c.remember(mnk.TouchpadTurnedLeft)
+	// A portrait screenshot from any path, then landscape again: the old
+	// direction must not survive as confirmed.
+	state.UpdateScreenshot([]byte{0xff}, 1080, 1920)
+	state.UpdateScreenshot([]byte{0xff}, 1920, 1080)
+	if !c.prepare() || provider.turn != touchpadDefaultLandscapeTurn {
+		t.Fatalf("turn after a portrait screenshot = %v, want unconfirmed default", provider.turn)
+	}
+}
+
+func TestLumaContentBoundsIgnoresBlackBorders(t *testing.T) {
+	const w, h = 64, 48
+	frame := lumaFrame{width: w, height: h, stride: w, y: make([]byte, w*h)}
+	for y := 8; y < 40; y++ {
+		for x := 24; x < 40; x++ {
+			frame.y[y*w+x] = 200
+		}
+	}
+	got := lumaContentBounds(frame)
+	if got.Dx() >= got.Dy() {
+		t.Fatalf("portrait picture inside landscape frame read as %v", got)
+	}
+}

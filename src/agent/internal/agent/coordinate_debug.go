@@ -161,6 +161,11 @@ func (s *Server) handleCoordinateDebugTap(w http.ResponseWriter, r *http.Request
 			http.Error(w, fmt.Sprintf(`{"ok":false,"error":"post-action screenshot failed: %s"}`, err), http.StatusInternalServerError)
 			return
 		}
+		// A direction check marks its point and mirror; carry the rings onto
+		// the uncropped capture through its active area.
+		if markers := coordinateDebugTurnMarkers(req, actionResult.ActionOutput); len(markers) > 0 {
+			markCoordinateDebugScreenshot(screenshotResult, markers)
+		}
 		screenshotPayload = coordinateDebugPostActionScreenshotResult{
 			coordinateDebugScreenshotResult: *screenshotResult,
 			ActionOutput:                    actionResult.ActionOutput,
@@ -190,4 +195,34 @@ func httpStatusForToolError(te *ToolError) int {
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// coordinateDebugTurnMarkers returns the rings of a landscape direction
+// check, recognised by its action output, in active-area coordinates.
+func coordinateDebugTurnMarkers(req coordinateDebugTapRequest, actionOutput string) []touchGesturePostMarkerInfo {
+	if actionOutput != touchpadTurnPendingNote {
+		return nil
+	}
+	x, y := float64(req.X), float64(req.Y)
+	return []touchGesturePostMarkerInfo{{Type: "tap", X: x, Y: y}, {Type: touchMarkerMirror, X: 1000 - x, Y: 1000 - y}}
+}
+
+// markCoordinateDebugScreenshot draws markers given in active-area
+// coordinates onto an uncropped capture.
+func markCoordinateDebugScreenshot(result *coordinateDebugScreenshotResult, markers []touchGesturePostMarkerInfo) {
+	active := result.SourceActiveArea
+	if active == nil || !active.Valid || result.Width <= 1 || result.Height <= 1 {
+		return
+	}
+	scaleX := float64(result.Width) / float64(max(result.SourceWidth, 1))
+	scaleY := float64(result.Height) / float64(max(result.SourceHeight, 1))
+	frameMarkers := make([]touchGesturePostMarkerInfo, 0, len(markers))
+	for _, marker := range markers {
+		px := (float64(active.X) + marker.X/1000*float64(active.Width-1)) * scaleX
+		py := (float64(active.Y) + marker.Y/1000*float64(active.Height-1)) * scaleY
+		marker.X = px / float64(result.Width-1) * 1000
+		marker.Y = py / float64(result.Height-1) * 1000
+		frameMarkers = append(frameMarkers, marker)
+	}
+	applyTouchGesturePostMarkers(&result.screenshotResult, frameMarkers)
 }

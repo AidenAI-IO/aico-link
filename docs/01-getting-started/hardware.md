@@ -109,21 +109,19 @@ with no internal pull-up or pull-down. I2C4 runs at 100 kHz for reliable RK628D
 
 ## iOS HID Prerequisites
 
-To control an iOS device via USB HID, set on the target iOS device:
+On the legacy firmware this page applies to (up to
+[`ad07c4d363f2948048415ed3af0b5e4da86bcac0`](https://github.com/AidenAI-IO/aico-link/tree/ad07c4d363f2948048415ed3af0b5e4da86bcac0)),
+iOS is controlled through the absolute mouse, so enable on the target iOS
+device:
 
 ```text
-Settings > Accessibility > Zoom                      On
-Settings > Accessibility > Touch > AssistiveTouch    Off
+Settings > Accessibility > Touch > AssistiveTouch
 ```
 
-With Zoom on, iOS takes the board's HID touchpad as direct touch: a touch
-lands where it is sent and no pointer is drawn. With AssistiveTouch on, iOS
-ignores the touchpad.
+It is also recommended to enable **Show Onscreen Keyboard** on the AssistiveTouch page for a more stable keyboard input experience.
 
-The board does not keep a hardware keyboard attached, so the iPhone's
-software keyboard stays available. The Agent attaches the keyboard only
-while a task types and detaches it when the task ends; see
-[USB HID](../03-services/usb-hid.md).
+Current firmware drives iOS with a HID touchpad instead and needs Zoom on and
+AssistiveTouch off; see [USB HID](../03-services/usb-hid.md).
 
 ## Default Device Nodes
 
@@ -132,8 +130,8 @@ while a task types and detaches it when the task ends; see
 | Video capture | `/dev/video0` | RK628D or TC358743 bridge output to the V4L2 capture device |
 | HDMI subdev | Auto-detected `rk628-csi` or `tc358743` node | EDID / DV timings / HDMI sync; the exact `/dev/v4l-subdevX` index can vary |
 | Keyboard HID | `/dev/hidg0` | Default keyboard device for Go Agent and example tools |
-| Mouse/touch HID | `/dev/hidg1` | iOS touchpad, Android touchscreen, or desktop absolute mouse, following `device_type` |
-| Auxiliary control HID | `/dev/hidg2` | Android extension keys in touchscreen mode; Consumer Control media, volume, brightness, and screenshot keys in touchpad and absolute modes |
+| Mouse/touch HID | `/dev/hidg1` | Go Agent uses the same HID device for mouse/touch input |
+| Auxiliary control HID | `/dev/hidg2` | Android extension keys in touchscreen mode; Consumer Control media, volume, brightness, and screenshot keys in absolute mode |
 | Frame socket | `/run/frame_service/frame_service.sock` | Default path for system service deployment |
 | Audio socket | `/run/audio_service/audio_service.sock` | Default path for system service deployment |
 

@@ -59,7 +59,67 @@ func newTouchpadTurnCorrector(provider mnk.Provider, capture frameCapturer, scre
 	if !ok || capture == nil || screenState == nil {
 		return nil
 	}
-	return &touchpadTurnCorrector{provider: turnProvider, capture: capture, screen: screenState}
+	c := &touchpadTurnCorrector{provider: turnProvider, capture: capture, screen: screenState}
+	screenState.SetScreenshotObserver(c.observeScreenshot)
+	return c
+}
+
+// observeScreenshot ends the landscape turn on any portrait screenshot, not
+// only one a touch reads: the phone may come back turned the other way.
+func (c *touchpadTurnCorrector) observeScreenshot(width, height int) {
+	if height >= width {
+		c.reset()
+	}
+}
+
+// reset drops the landscape turn after a portrait screenshot.
+func (c *touchpadTurnCorrector) reset() {
+	c.mu.Lock()
+	wasLandscape := c.landscapeTurn != mnk.TouchpadUpright
+	c.landscapeTurn = mnk.TouchpadUpright
+	c.confirmed = false
+	c.mu.Unlock()
+	if wasLandscape {
+		c.provider.SetTouchpadTurn(mnk.TouchpadUpright)
+	}
+}
+
+// frameLandscape reads a current frame and reports whether the phone picture
+// in it, the frame without its black borders, is wider than tall. It uses no
+// stored screen state, which may predate a turn.
+func (c *touchpadTurnCorrector) frameLandscape(ctx context.Context) (bool, error) {
+	frame, err := c.capture(ctx)
+	if err != nil {
+		return false, err
+	}
+	content := lumaContentBounds(frame)
+	if content.Empty() {
+		return false, fmt.Errorf("the captured frame is black")
+	}
+	return content.Dx() > content.Dy(), nil
+}
+
+// lumaContentBounds returns the smallest rectangle holding every sampled row
+// and column brighter than black, the phone picture inside HDMI borders.
+func lumaContentBounds(frame lumaFrame) image.Rectangle {
+	const step, black = 4, 16
+	if !frame.valid() {
+		return image.Rectangle{}
+	}
+	minX, minY, maxX, maxY := frame.width, frame.height, -1, -1
+	for y := 0; y < frame.height; y += step {
+		row := frame.y[y*frame.stride : y*frame.stride+frame.width]
+		for x := 0; x < frame.width; x += step {
+			if row[x] > black {
+				minX, maxX = min(minX, x), max(maxX, x)
+				minY, maxY = min(minY, y), max(maxY, y)
+			}
+		}
+	}
+	if maxX < 0 {
+		return image.Rectangle{}
+	}
+	return image.Rect(minX, minY, maxX+1, maxY+1)
 }
 
 // landscape reports whether the latest screenshot is wider than tall.
@@ -86,7 +146,8 @@ func (c *touchpadTurnCorrector) prepare() (pending bool) {
 		// has not been seen to change, so keep the turn last applied.
 	case !landscape:
 		// The phone may come back turned the other way, so a landscape
-		// direction only holds until the screen leaves landscape.
+		// direction only holds until the screen leaves landscape. The
+		// screenshot observer normally did this already.
 		c.landscapeTurn = mnk.TouchpadUpright
 		c.confirmed = false
 		c.provider.SetTouchpadTurn(mnk.TouchpadUpright)

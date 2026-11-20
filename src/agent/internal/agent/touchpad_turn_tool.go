@@ -11,6 +11,9 @@ import (
 const (
 	// touchpadOrientationSetType reports where the last touch reacted.
 	touchpadOrientationSetType = "orientation_set"
+	// touchpadTurnCentreNote follows a check touch at the screen centre,
+	// which lands on the same spot with either turn.
+	touchpadTurnCentreNote = `ok. This mirror_ok touch was at the screen centre, which is its own mirror (1000-x, 1000-y), so its reaction does not show the turn direction; do not call orientation_set for it. To check the direction, touch an off-centre point whose mirror is harmless, or use a tap_sequence that first taps the centre to reveal controls and then taps an off-centre one.`
 	// touchpadTurnPendingNote follows an unconfirmed landscape touch.
 	touchpadTurnPendingNote = `ok. This mirror_ok touch on the landscape iPhone checks its turn direction. The red ring marks where this touch was aimed; the blue ring marks its mirror (1000-x, 1000-y), where it lands if the phone is turned the other way. For a tap_sequence the rings mark its last tap. Find the touch's reaction in the screenshot. If it reacted at the red ring, call touch_gesture {"type":"orientation_set","landed":"expected"}. If it reacted at the blue ring, call {"type":"orientation_set","landed":"mirror"} and then redo the intended touch. If no reaction is visible, continue with taps whose mirror is also harmless.`
 )
@@ -23,13 +26,19 @@ const (
 // which runs as a direction check.
 func (t *TouchGestureTool) handleTouchpadTurn(ctx context.Context, input string) (out string, handled, check bool) {
 	var args struct {
-		Type     string        `json:"type"`
-		Point    *pointerPoint `json:"point"`
-		Landed   string        `json:"landed"`
-		MirrorOK bool          `json:"mirror_ok"`
+		Type     string          `json:"type"`
+		Point    *pointerPoint   `json:"point"`
+		Landed   string          `json:"landed"`
+		MirrorOK bool            `json:"mirror_ok"`
+		Actions  json.RawMessage `json:"actions"`
 	}
 	_ = json.Unmarshal([]byte(input), &args)
 	gestureType := strings.ToLower(strings.TrimSpace(args.Type))
+	if len(args.Actions) > 0 && string(args.Actions) != "null" {
+		// The adapter runs actions in place of type, so the touch checked
+		// here would not be the one sent.
+		gestureType = "actions"
+	}
 	if t.turn == nil {
 		if gestureType == touchpadOrientationProbeType || gestureType == touchpadOrientationSetType {
 			return toolErrorResultf(ctx, CodeInvalidArguments, "%s is only used with the iOS touchpad", gestureType), true, false
@@ -38,6 +47,10 @@ func (t *TouchGestureTool) handleTouchpadTurn(ctx context.Context, input string)
 	}
 	pending := t.turn.prepare()
 	switch gestureType {
+	case "drag_release":
+		// A held contact must always be releasable; it was pressed with the
+		// turn now in use.
+		return "", false, false
 	case touchpadOrientationSetType:
 		return t.setTouchpadTurn(ctx, args.Landed), true, false
 	case touchpadOrientationProbeType:

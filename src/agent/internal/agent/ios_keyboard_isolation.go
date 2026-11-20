@@ -287,6 +287,12 @@ func (c *iosKeyboardIsolationController) withKeyboard(ctx context.Context, _ boo
 		if err := batch.attach(); err != nil {
 			return err
 		}
+		// Attaching takes seconds; a run canceled meanwhile must not type.
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		return action()
 	}
 	return c.withBatch(ctx, func(batchCtx context.Context) error {

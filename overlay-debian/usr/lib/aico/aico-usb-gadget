@@ -47,7 +47,7 @@ read_pointer_mode() {
 	fi
 	device_line=$(awk '
 		/^[[:space:]]*\[/ {
-			in_device = ($0 ~ /^[[:space:]]*\[basic_settings\.device\][[:space:]]*$/)
+			in_device = ($0 ~ /^[[:space:]]*\[basic_settings\.device\][[:space:]]*(#.*)?$/)
 			next
 		}
 		in_device && /^[[:space:]]*device_type[[:space:]]*=/ {
@@ -68,13 +68,8 @@ read_pointer_mode() {
 		*\"macos\"*|*\'macos\'*|*macos*|*\"windows\"*|*\'windows\'*|*windows*|*\"linux\"*|*\'linux\'*|*linux*) POINTER_MODE=absolute; return ;;
 		*\"ios\"*|*\'ios\'*|*ios*) POINTER_MODE=touchpad; return ;;
 	esac
-
-	line=$(grep -E '^[[:space:]]*pointer_mode[[:space:]]*=' "$AGENT_TOML" | tail -n1)
-	case "$line" in
-		*\"touchscreen\"*|*\'touchscreen\'*|*touchscreen*) POINTER_MODE=touchscreen ;;
-		*\"touchpad\"*|*\'touchpad\'*|*touchpad*) POINTER_MODE=touchpad ;;
-		*\"absolute\"*|*\'absolute\'*|*absolute*) POINTER_MODE=absolute ;;
-	esac
+	# Like the Agent, derive the mode from device_type only: a missing
+	# device_type means iOS, and a stray pointer_mode line is ignored.
 }
 
 configure_usb0() {
