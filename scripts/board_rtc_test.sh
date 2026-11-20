@@ -2,8 +2,10 @@
 # board_rtc_test.sh - RTC and system-clock test for an Aico board.
 #
 # Runs ON A HOST connected to the board over USB. It drives the board through
-# the Agent shell tool (http://<board>:8080, no sign-in over USB, runs as root),
-# so it works on a freshly flashed board without an SSH key or sudo password.
+# the Agent shell tool (http://<board>:8080, runs as root), so it works on a
+# freshly flashed board without an SSH key or sudo password. Firmware that
+# requires sign-in is paired over USB (POST /api/auth/pair) and the session
+# token is kept in the report directory with mode 0600.
 # Host requirements: bash, curl, jq, and an NTP-synchronized clock (the host
 # clock is the reference).
 #
@@ -43,25 +45,55 @@ warn() { WARN=$((WARN+1)); say "  WARN  $*"; }
 fmt()  { date -u -r "$1" +%FT%TZ 2>/dev/null || date -u -d "@$1" +%FT%TZ 2>/dev/null || echo "$1"; }
 absd() { local v=$1; [ "$v" -lt 0 ] && v=$(( -v )); echo "$v"; }
 
+TOKEN_FILE="${DIR}/${BOARD}.token"
+TOKEN=""
+[ -s "$TOKEN_FILE" ] && TOKEN=$(cat "$TOKEN_FILE")
+
+# Board requests go straight to the board, never through a host proxy.
+bcurl() {
+    if [ -n "$TOKEN" ]; then
+        curl -s --noproxy '*' -H "Authorization: Bearer ${TOKEN}" "$@"
+    else
+        curl -s --noproxy '*' "$@"
+    fi
+}
+
+# Pair over USB when the firmware requires sign-in. Pairing needs no password
+# and works only on the USB link, so it never touches a LAN-reachable board.
+ensure_auth() {
+    local code resp
+    code=$(bcurl -m 6 -o /dev/null -w '%{http_code}' "${AGENT}/api/history" 2>/dev/null)
+    [ "$code" = 401 ] || return 0
+    resp=$(curl -s --noproxy '*' -m 10 -X POST -H "Origin: http://${BOARD}" "http://${BOARD}/api/auth/pair")
+    TOKEN=$(printf '%s' "$resp" | jq -r '.token // empty' 2>/dev/null)
+    if [ -z "$TOKEN" ]; then
+        echo "sign-in required and USB pairing failed: $(printf '%s' "$resp" | jq -r '.error // .message // empty' 2>/dev/null)" >&2
+        return 1
+    fi
+    ( umask 077; printf '%s\n' "$TOKEN" > "$TOKEN_FILE" )
+}
+
 # Run a command on the board as root; always returns its stdout.
 rsh() {
-    curl -s -m "${2:-90}" -X POST -H 'Content-Type: application/json' "${AGENT}/api/tools/shell" \
+    bcurl -m "${2:-90}" -X POST -H 'Content-Type: application/json' "${AGENT}/api/tools/shell" \
         -d "$(jq -nc --arg c "$1" '{input:{command:$c}}')" | jq -r '.output // .error // empty'
 }
 val() { printf '%s\n' "$OUT" | sed -n "s/^$1=//p" | head -1; }
-agent_up() { curl -s -m 4 -o /dev/null -w '%{http_code}' "${AGENT}/api/history" 2>/dev/null | grep -q 200; }
+agent_up() { bcurl -m 4 -o /dev/null -w '%{http_code}' "${AGENT}/api/history" 2>/dev/null | grep -q 200; }
+now_ms() { python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo "$(date -u +%s)000"; }
+boot_id() { rsh 'cat /proc/sys/kernel/random/boot_id 2>/dev/null' 15 | tr -d '[:space:]'; }
 
 for tool in curl jq; do
     command -v "$tool" >/dev/null || { echo "missing host tool: $tool" >&2; exit 2; }
 done
 
 # Kernel line: "[    5.14] ... setting system clock to <iso> UTC (<epoch>)".
+# Reads the logs only; the timing samples come from a separate short request.
 BOOT_PROBE='
 r=/sys/class/rtc/rtc0
 line=$( (journalctl -b -k -o short-monotonic --no-pager 2>/dev/null; dmesg 2>/dev/null) | grep -m1 "setting system clock to")
 echo "boot_epoch=$(printf "%s" "$line" | sed -n "s/.*UTC (\([0-9]*\)).*/\1/p")"
 echo "boot_mono=$(printf "%s" "$line" | sed -n "s/^\[ *\([0-9]*\)\..*/\1/p")"
-echo "uptime=$(cut -d. -f1 /proc/uptime)"
 echo "sys=$(date -u +%s)"
 echo "rtc=$(cat $r/since_epoch 2>/dev/null)"
 echo "ntp=$(timedatectl show -p NTPSynchronized --value 2>/dev/null)"
@@ -69,25 +101,41 @@ echo "bad_alarm=$( (journalctl -b -k --no-pager 2>/dev/null; dmesg 2>/dev/null) 
 echo "baseline=$(sed -n "s/^default_date=\${RTC_DEFAULT_DATE:-\(.*\)}/\1/p" /usr/lib/aico/aico-rtc 2>/dev/null)"
 true'
 
+# One short request that samples the board clocks, bracketed by host times.
+# Sets T0/T1 (host ms before/after), HOST_MID (host s at the request midpoint)
+# and SAMPLE (the board output); the board sampled somewhere between T0 and T1.
+sample_clock() {
+    T0=$(now_ms)
+    SAMPLE=$(rsh 'echo "uptime=$(cut -d" " -f1 /proc/uptime)"; echo "sys=$(date -u +%s)"' 15)
+    T1=$(now_ms)
+    HOST_MID=$(( (T0 + T1) / 2000 ))
+}
+sval() { printf '%s\n' "$SAMPLE" | sed -n "s/^$1=//p" | head -1; }
+
 # Compare the RTC value the kernel loaded at boot with the host clock at that moment.
 check_boot_rtc() {
-    local label=$1 host_now boot_epoch boot_mono uptime expected diff
-    host_now=$(date -u +%s)
+    local label=$1 boot_epoch boot_mono uptime expected diff slack
     OUT=$(rsh "$BOOT_PROBE")
-    boot_epoch=$(val boot_epoch); boot_mono=$(val boot_mono); uptime=$(val uptime)
+    sample_clock
+    uptime=$(sval uptime); uptime=${uptime%%.*}
+    boot_epoch=$(val boot_epoch); boot_mono=$(val boot_mono)
     if [ -z "$boot_epoch" ] || [ -z "$uptime" ]; then
         fail "$label: kernel did not report loading the system clock from the RTC"
         return 1
     fi
-    expected=$(( host_now - uptime + ${boot_mono:-0} ))
+    # The board read its uptime at an unknown moment within the request, so
+    # half the round trip (rounded up) widens the allowed error.
+    slack=$(( (T1 - T0 + 1999) / 2000 ))
+    expected=$(( HOST_MID - uptime + ${boot_mono:-0} ))
     diff=$(( boot_epoch - expected ))
-    say "  info  kernel loaded RTC time $(fmt "$boot_epoch") at ${boot_mono:-?}s after boot; host time then $(fmt "$expected") (diff ${diff}s)"
-    if [ "$(absd "$diff")" -le "$TOL" ]; then
+    say "  info  kernel loaded RTC time $(fmt "$boot_epoch") at ${boot_mono:-?}s after boot; host time then $(fmt "$expected") (diff ${diff}s, request $(( T1 - T0 ))ms)"
+    if [ "$(absd "$diff")" -le $(( TOL + slack )) ]; then
         pass "$label: RTC kept the time (within ${TOL}s)"
-    else
-        fail "$label: RTC time at boot is off by ${diff}s"
-        [ "$(val bad_alarm)" != "0" ] && say "  info  kernel also reported an invalid RTC alarm value: the RTC lost power and was reset"
+        return 0
     fi
+    fail "$label: RTC time at boot is off by ${diff}s"
+    [ "$(val bad_alarm)" != "0" ] && say "  info  kernel also reported an invalid RTC alarm value: the RTC lost power and was reset"
+    return 1
 }
 
 cmd_check() {
@@ -105,6 +153,7 @@ echo "cfg_hctosys=$(printf "%s\n" "$cfg" | grep -c "^CONFIG_RTC_HCTOSYS=y")"
 echo "cfg_systohc=$(printf "%s\n" "$cfg" | grep -c "^CONFIG_RTC_SYSTOHC=y")"
 echo "unit_result=$(systemctl show -p Result --value aico-rtc 2>/dev/null)"
 echo "unit_exit=$(systemctl show -p ExecMainStatus --value aico-rtc 2>/dev/null)"
+echo "unit_ran=$(systemctl show -p ExecMainStartTimestampMonotonic --value aico-rtc 2>/dev/null)"
 echo "script=$([ -x /usr/lib/aico/aico-rtc ] && echo yes || echo no)"
 i0=$(awk "/RTC alarm/{print \$2}" /proc/interrupts)
 echo 0 > $r/wakealarm 2>/dev/null; echo +3 > $r/wakealarm 2>/dev/null
@@ -125,19 +174,31 @@ true')
     fi
     local d; d=$(( $(val rtc) - $(val sys) ))
     if [ "$(absd "$d")" -le 2 ]; then pass "RTC matches system time (diff ${d}s)"; else warn "RTC and system time differ by ${d}s"; fi
-    local hd; hd=$(( $(val sys) - $(date -u +%s) ))
-    if [ "$(val ntp)" = yes ]; then
-        if [ "$(absd "$hd")" -le "$TOL" ]; then pass "system clock NTP-synchronized and matches host (diff ${hd}s)"
-        else fail "system clock NTP-synchronized but differs from host by ${hd}s"; fi
+    # The probe above ran for about 8 s (tick + alarm waits), so compare the
+    # host with a fresh board sample from one short request instead.
+    sample_clock
+    local hd slack bsys; bsys=$(sval sys)
+    slack=$(( (T1 - T0 + 1999) / 2000 ))
+    if [ -z "$bsys" ]; then
+        fail "could not read the board system clock for the host comparison"
     else
-        warn "system clock not NTP-synchronized yet (no network?); host diff ${hd}s"
+        hd=$(( bsys - HOST_MID ))
+        if [ "$(val ntp)" = yes ]; then
+            if [ "$(absd "$hd")" -le $(( TOL + slack )) ]; then pass "system clock NTP-synchronized and matches host (diff ${hd}s)"
+            else fail "system clock NTP-synchronized but differs from host by ${hd}s"; fi
+        else
+            warn "system clock not NTP-synchronized yet (no network?); host diff ${hd}s"
+        fi
     fi
     [ "$(val cfg_hctosys)" = 1 ] && pass "kernel CONFIG_RTC_HCTOSYS=y" || warn "kernel CONFIG_RTC_HCTOSYS not set"
     [ "$(val cfg_systohc)" = 1 ] && pass "kernel CONFIG_RTC_SYSTOHC=y (NTP time is written back to the RTC)" || warn "kernel CONFIG_RTC_SYSTOHC not set"
-    if [ "$(val script)" = yes ] && [ "$(val unit_result)" = success ]; then
-        pass "aico-rtc.service ran at boot (result=success)"
+    # Result=success alone is also reported for a unit that never started, so
+    # also require a start timestamp from this boot (0 or empty = not run).
+    local ran; ran=$(val unit_ran)
+    if [ "$(val script)" = yes ] && [ "$(val unit_result)" = success ] && [ -n "$ran" ] && [ "$ran" != 0 ] && [ "$(val unit_exit)" = 0 ]; then
+        pass "aico-rtc.service ran at boot (result=success, exit 0)"
     else
-        fail "aico-rtc.service script=$(val script) result=$(val unit_result) exit=$(val unit_exit)"
+        fail "aico-rtc.service script=$(val script) result=$(val unit_result) exit=$(val unit_exit) started_monotonic=${ran:-none}"
     fi
     if [ -n "$(val irq_before)" ] && [ "$(val irq_after)" -gt "$(val irq_before)" ] 2>/dev/null && [ -z "$(val alarm_left)" ]; then
         pass "RTC alarm interrupt fires (count $(val irq_before) -> $(val irq_after))"
@@ -174,18 +235,37 @@ rm -rf "$T"; true')
     [ -z "$(val unreadable)" ] && pass "aico-rtc: unreadable RTC -> no change" || fail "aico-rtc: unreadable RTC did [$(val unreadable)]"
 }
 
-wait_reboot() {
-    local i
-    for i in $(seq 1 30); do agent_up || break; sleep 2; done
-    for i in $(seq 1 120); do agent_up && return 0; sleep 3; done
+# Wait until the Agent answers with a boot ID other than $1. An Agent that
+# stays up, or only restarts, keeps the old boot ID and never satisfies this.
+# Returns 0 on a new boot, 1 on timeout (about 6 minutes).
+wait_new_boot() {
+    local old=$1 id _
+    for _ in $(seq 1 120); do
+        if agent_up; then
+            id=$(boot_id)
+            if [ -n "$id" ] && [ "$id" != "$old" ]; then NEW_BOOT_ID=$id; return 0; fi
+        fi
+        sleep 3
+    done
     return 1
 }
 
 cmd_reboot() {
     say "== warm reboot test on ${BOARD} ($(date -u +%FT%TZ)) =="
-    rsh '(sleep 2; systemctl reboot) >/dev/null 2>&1 & true' 15 >/dev/null
-    say "  info  rebooting, waiting for the Agent to come back..."
-    if ! wait_reboot; then fail "board did not come back within 6 minutes"; return; fi
+    local before ack
+    before=$(boot_id)
+    if [ -z "$before" ]; then fail "cannot read the board boot ID before rebooting"; return 1; fi
+    ack=$(rsh '(sleep 2; systemctl reboot) >/dev/null 2>&1 & echo reboot-scheduled' 15)
+    case "$ack" in
+        *reboot-scheduled*) ;;
+        *) fail "the board did not accept the reboot request (${ack:-no answer})"; return 1 ;;
+    esac
+    say "  info  rebooting (boot ID ${before}), waiting for a new boot..."
+    if ! wait_new_boot "$before"; then
+        fail "the board did not come back with a new boot ID within 6 minutes"
+        return 1
+    fi
+    say "  info  new boot ID ${NEW_BOOT_ID}"
     sleep 5
     check_boot_rtc "warm reboot"
 }
@@ -193,8 +273,8 @@ cmd_reboot() {
 cmd_poweroff_pre() {
     say "== power-off test, step 1: baseline on ${BOARD} ($(date -u +%FT%TZ)) =="
     OUT=$(rsh 'echo "rtc=$(cat /sys/class/rtc/rtc0/since_epoch 2>/dev/null)"; echo "sys=$(date -u +%s)"; echo "ntp=$(timedatectl show -p NTPSynchronized --value 2>/dev/null)"; true')
-    [ -z "$(val rtc)" ] && { fail "cannot read the RTC"; return; }
-    local batt; batt=$(curl -s -m 8 "${AGENT}/api/mcu/battery" | jq -r '.battery | "\(.percent)% \(.charge_state)"' 2>/dev/null)
+    [ -z "$(val rtc)" ] && { fail "cannot read the RTC"; return 1; }
+    local batt; batt=$(bcurl -m 8 "${AGENT}/api/mcu/battery" | jq -r '.battery | "\(.percent)% \(.charge_state)"' 2>/dev/null)
     { echo "host=$(date -u +%s)"; echo "rtc=$(val rtc)"; echo "sys=$(val sys)"; echo "battery=${batt}"; } > "$STATE"
     say "  info  RTC $(fmt "$(val rtc)"), system $(fmt "$(val sys)"), NTP=$(val ntp), battery ${batt:-unknown}"
     say "  info  baseline saved to ${STATE}"
@@ -237,10 +317,15 @@ summary() {
 }
 
 case "${1:-}" in
+    check|reboot|poweroff-pre|poweroff-post|all)
+        ensure_auth || { say "  FAIL  cannot sign in to ${AGENT}"; exit 1; } ;;
+    *) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
+
+case "$1" in
     check)         cmd_check; summary ;;
     reboot)        cmd_reboot; summary ;;
-    poweroff-pre)  cmd_poweroff_pre ;;
+    poweroff-pre)  cmd_poweroff_pre || { summary; exit 1; } ;;
     poweroff-post) cmd_poweroff_post; summary ;;
     all)           cmd_check; cmd_reboot; summary ;;
-    *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
