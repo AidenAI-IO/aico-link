@@ -702,6 +702,8 @@ export async function decisionPage(context) {
   const snapshot = await ensureSnapshot(context);
   const body = el('div');
   const drafts = new Map();
+  const submissions = new Map();
+  const valueInputs = new Map();
   const saver = createSaver(context, {
     title: msg('model.decision', '决策模型'),
     back: '/model',
@@ -709,7 +711,10 @@ export async function decisionPage(context) {
     onSaved: payload => {
       const provider = decision().provider;
       adoptSaved(snapshot)(payload);
-      if (provider !== decision().provider) drafts.clear();
+      if (provider !== decision().provider) {
+        drafts.clear();
+        submissions.clear();
+      }
       render();
     },
   });
@@ -783,17 +788,23 @@ export async function decisionPage(context) {
       },
       data: {action: `edit-decision.${key}`},
     });
-    let submitted = decision()[key] || '';
+    valueInputs.set(key, input);
     const commit = async () => {
       const value = input.value.trim();
-      if (value === submitted) return;
-      submitted = value;
+      const submitted = submissions.get(key);
+      if (value === (submitted ? submitted.value : decision()[key] || '')) return;
+      // Keep pending/staged values across renders, but never treat a failed
+      // attempt as saved or let an older attempt roll back a newer one.
+      const attempt = {value};
+      submissions.set(key, attempt);
       const draft = input.value;
       drafts.set(key, draft);
       const outcome = await saver.change(`decision.${key}`, {decision: {[key]: value || null}});
+      if (submissions.get(key) !== attempt) return;
+      if (outcome !== 'staged') submissions.delete(key);
       if (drafts.get(key) === draft && (outcome === 'saved' || outcome === 'invalid' || outcome === 'failed')) {
         drafts.delete(key);
-        if (outcome !== 'saved') input.value = submitted = decision()[key] || '';
+        if (outcome !== 'saved') valueInputs.get(key).value = decision()[key] || '';
       }
     };
     input.addEventListener('change', commit);
@@ -918,6 +929,7 @@ export async function decisionPage(context) {
   }
 
   function render() {
+    valueInputs.clear();
     const provider = decisionProvider(decision().provider);
     const toggle = switchControl({
       checked: Boolean(decision().enabled),

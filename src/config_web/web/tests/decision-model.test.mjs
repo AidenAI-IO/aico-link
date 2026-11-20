@@ -47,7 +47,8 @@ async function loadDecisionPage({catalogAvailable = true, beforeSave} = {}) {
       refreshChrome() {},
       async change(key, patch) {
         patches.push({key, patch});
-        if (beforeSave) await beforeSave(key);
+        const outcome = beforeSave ? await beforeSave(key, patch) : undefined;
+        if (outcome && outcome !== 'saved') return outcome;
         options.onSaved({config: {decision: {...snapshot.config.decision, ...patch.decision}}});
         return 'saved';
       },
@@ -155,6 +156,84 @@ test('finishing one field save preserves another field draft, including a cleare
       assert.equal(patches.at(-1).patch.decision[draftKey], draftValue || null);
     });
   }
+});
+
+test('rejected model values can be retried while preserving newer drafts', async t => {
+  for (const outcome of ['failed', 'invalid']) {
+    await t.test(outcome, async () => {
+      let finishSave;
+      let attempts = 0;
+      const saveDelay = new Promise(resolve => { finishSave = resolve; });
+      const {page, patches} = await loadDecisionPage({
+        beforeSave: () => ++attempts === 1 ? saveDelay : undefined,
+      });
+      const model = find(page, 'edit-decision.model');
+      model.value = 'vendor/retry';
+      const saving = model.listeners.change();
+      await model.listeners.change();
+      assert.equal(patches.length, 1, 'an in-flight value must not be submitted twice');
+      model.value = 'vendor/newer-draft';
+      model.listeners.input();
+      finishSave(outcome);
+      await saving;
+      assert.equal(find(page, 'edit-decision.model').value, 'vendor/newer-draft');
+      model.value = 'vendor/retry';
+      await model.listeners.change();
+      assert.equal(patches.length, 2, 'a rejected value must remain retryable');
+      assert.equal(find(page, 'edit-decision.model').value, 'vendor/retry');
+    });
+  }
+});
+
+test('failed saves restore the rendered field unless it has a newer draft', async t => {
+  for (const newerDraft of [undefined, 'https://draft.example/alpha', '']) {
+    await t.test(`newer draft: ${JSON.stringify(newerDraft)}`, async () => {
+      let finishSave;
+      const saveDelay = new Promise(resolve => { finishSave = resolve; });
+      const {page, patches} = await loadDecisionPage({
+        beforeSave: key => key === 'decision.base_url' ? saveDelay : undefined,
+      });
+      const baseURL = find(page, 'edit-decision.base_url');
+      baseURL.value = 'https://rejected.example/alpha';
+      const saving = baseURL.listeners.change();
+      const model = find(page, 'edit-decision.model');
+      model.value = 'vendor/new-decision';
+      await model.listeners.change();
+      const visibleURL = find(page, 'edit-decision.base_url');
+      assert.notEqual(visibleURL, baseURL, 'another save must replace the rendered input');
+      const repeated = visibleURL.listeners.change();
+      assert.equal(patches.length, 2, 'rerendering must preserve in-flight duplicate suppression');
+      if (newerDraft !== undefined) {
+        visibleURL.value = newerDraft;
+        visibleURL.listeners.input();
+      }
+      finishSave('failed');
+      await Promise.all([saving, repeated]);
+      assert.equal(find(page, 'edit-decision.base_url').value,
+        newerDraft === undefined ? 'https://router.example/v1' : newerDraft);
+    });
+  }
+});
+
+test('an obsolete validation failure cannot roll back a newer submission of the same value', async () => {
+  const finishes = [];
+  const {page, patches} = await loadDecisionPage({
+    beforeSave: () => new Promise(resolve => { finishes.push(resolve); }),
+  });
+  const model = find(page, 'edit-decision.model');
+  const saves = ['vendor/retry', 'vendor/other', 'vendor/retry'].map(value => {
+    model.value = value;
+    return model.listeners.change();
+  });
+  finishes[0]('invalid');
+  await saves[0];
+  assert.equal(model.value, 'vendor/retry');
+  await model.listeners.change();
+  assert.equal(patches.length, 3, 'an older rejection must not retire the latest attempt');
+  finishes[1]('superseded');
+  finishes[2]('saved');
+  await Promise.all(saves);
+  assert.equal(find(page, 'edit-decision.model').value, 'vendor/retry');
 });
 
 test('model suggestions support keyboard navigation, Escape, blur, and input composition', async () => {
