@@ -243,6 +243,7 @@ export async function wifiPage(context) {
   let scanning = false;
   /** SSID of the saved network being joined from the list, if any. */
   let switching = '';
+  let renderSignature = '';
 
   const listHost = el('div');
   const rescanButton = button({
@@ -260,10 +261,26 @@ export async function wifiPage(context) {
     const discoveredBySsid = new Map(discovered.map(network => [network.ssid, network]));
     const savedSsids = saved.map(network => network.ssid);
     const priorityOrdered = [
+      ...(connected && !savedSsids.includes(connected) ? [{ssid: connected}] : []),
       ...(connected ? saved.filter(network => network.ssid === connected) : []),
       ...saved.filter(network => !connected || network.ssid !== connected),
     ];
     const others = otherNetworks(discovered, savedSsids, connected);
+    const signalFor = network => wifiSignalLevel({
+      ...network,
+      ...(discoveredBySsid.get(network.ssid) || {}),
+      ...(network.ssid === connected && connectedStatus.signal_dbm != null ? {signalDbm: connectedStatus.signal_dbm} : {}),
+    });
+    // RSSI and DHCP can change every poll without changing anything on this list.
+    const signature = JSON.stringify([
+      connected, switching, scanning,
+      priorityOrdered.map(network => [network.ssid, Boolean(network.disabled), signalFor(network)]),
+      others.map(network => [network.ssid, network.secured, wifiSignalLevel(network)]),
+    ]);
+    if (signature === renderSignature) return;
+    renderSignature = signature;
+    const focusedAction = listHost.contains(document.activeElement)
+      ? document.activeElement.getAttribute('data-action') : null;
 
     const sections = [];
 
@@ -277,15 +294,7 @@ export async function wifiPage(context) {
             row({
               label: network.ssid,
               icon: 'wifi',
-              signalLevel: wifiSignalLevel(
-                network.ssid === connected
-                  ? {
-                      ...network,
-                      ...(discoveredBySsid.get(network.ssid) || {}),
-                      ...(connectedStatus.signal_dbm != null ? {signalDbm: connectedStatus.signal_dbm} : {}),
-                    }
-                  : {...network, ...(discoveredBySsid.get(network.ssid) || {})},
-              ),
+              signalLevel: signalFor(network),
               // As on iOS: tapping a saved network joins it, and the ⓘ opens
               // its details. The connected one has nothing to join.
               action: `wifi-open-${network.ssid}`,
@@ -328,6 +337,10 @@ export async function wifiPage(context) {
     );
 
     replace(listHost, sections);
+    if (focusedAction) {
+      Array.from(listHost.querySelectorAll('[data-action]'))
+        .find(node => node.getAttribute('data-action') === focusedAction)?.focus({preventScroll: true});
+    }
     rescanButton.disabled = scanning;
   }
 
@@ -348,8 +361,8 @@ export async function wifiPage(context) {
       }},
     }, [icon('info', {size: 22})]);
     let state = null;
-    if (network.ssid === switching) state = el('span', {class: 'ds-row__spinner', attrs: {role: 'status', 'aria-label': resolve(msg('wifi.joining', '正在连接…'))}});
-    else if (network.ssid === connected) state = icon('checkCircle', {class: 'ds-row__icon ds-row__icon--success', size: 22});
+    if (network.ssid === connected) state = icon('checkCircle', {class: 'ds-row__icon ds-row__icon--success', size: 22});
+    else if (network.ssid === switching) state = el('span', {class: 'ds-row__spinner', attrs: {role: 'status', 'aria-label': resolve(msg('wifi.joining', '正在连接…'))}});
     return el('span', {class: 'ds-row__accessory-group'}, [state, info]);
   }
 
@@ -372,6 +385,7 @@ export async function wifiPage(context) {
     render();
     try {
       const result = await connect({ssid, keepProxy: true});
+      adoptResult(result.payload);
       if (result.ok) {
         toast(t('wifi.connected_to', {ssid, defaultValue: '已连接到“{{ssid}}”。'}));
       } else if (result.failureReason === 'wrong_password') {
@@ -389,7 +403,7 @@ export async function wifiPage(context) {
       toast(error && error.message ? error.message : resolve(msg('ui.connect_failed', '连接失败')), {durationMs: 5000});
     } finally {
       switching = '';
-      await refresh();
+      render();
     }
   }
 
@@ -398,10 +412,16 @@ export async function wifiPage(context) {
     return network && network.disabled ? msg('wifi.disabled', '已停用') : null;
   }
 
-  async function refresh() {
-    snapshot = await fetchSnapshot().catch(() => snapshot);
+  function adoptResult(payload) {
+    snapshot = {...snapshot, ...(payload?.wifi ? {wifi: payload.wifi} : {}), ...(payload?.wifi_status ? {wifi_status: payload.wifi_status} : {})};
     render();
   }
+
+  function refresh(payload) {
+    adoptResult(payload);
+  }
+
+  context.onWiFiChange?.(value => { snapshot = value; render(); });
 
   async function runScan() {
     if (scanning) return;
@@ -409,8 +429,6 @@ export async function wifiPage(context) {
     render();
     try {
       discovered = await scan();
-      // Refresh the profiles too: a successful association shows up here.
-      snapshot = await fetchSnapshot().catch(() => snapshot);
     } catch (error) {
       toast(error && error.message ? error.message : resolve(msg('wifi.scan_failed', '扫描失败')));
     } finally {
@@ -448,12 +466,14 @@ export async function wifiDetailPage(context) {
     });
   }
 
-  const profile = savedNetwork(snapshot, ssid) || {ssid};
-  const connected = connectedSsid(snapshot) === ssid;
+  let profile = savedNetwork(snapshot, ssid);
 
-  const savedProxyUrl = profile.proxy_url || '';
-  let proxyEnabled = (profile.proxy_mode || 'system') === 'proxy';
+  let savedProxyUrl = profile?.proxy_url || '';
+  let proxyEnabled = profile?.proxy_mode === 'proxy';
   let proxyUrl = savedProxyUrl;
+  let proxyUrlDirty = false;
+  let proxyModeDirty = false;
+  let applyingProxy = false;
 
   const proxyErrorNode = el('div', {class: 'ds-field__error', attrs: {'aria-live': 'polite'}});
   proxyErrorNode.hidden = true;
@@ -494,6 +514,7 @@ export async function wifiDetailPage(context) {
   }
 
   // A committed URL, or switching the proxy off, is what talks to the Agent.
+  proxyInput.addEventListener('input', () => { proxyUrlDirty = true; });
   proxyInput.addEventListener('change', () => {
     if (!proxyEnabled) return;
     commitProxy({enabled: true, url: proxyInput.value});
@@ -506,6 +527,7 @@ export async function wifiDetailPage(context) {
     checked: proxyEnabled,
     label: msg('ui.proxy_row_label', '配置代理'),
     onChange: next => {
+      proxyModeDirty = true;
       proxyEnabled = next;
       proxyUrlField.hidden = !next;
       setProxyError(null);
@@ -526,6 +548,7 @@ export async function wifiDetailPage(context) {
    * @param {{enabled: boolean, url: string}} choice
    */
   async function commitProxy({enabled, url}) {
+    if (!profile || applyingProxy) return;
     // `proxyChangeRequest` owns the rule that a proxy needs a URL, so the UI can
     // never send a combination the Agent rejects.
     const choice = proxyChangeRequest({enabled, url, savedUrl: savedProxyUrl});
@@ -535,7 +558,9 @@ export async function wifiDetailPage(context) {
     }
 
     setProxyError(null);
+    applyingProxy = true;
     proxyInput.disabled = true;
+    proxySwitch.disabled = true;
     try {
       const result = await connect({
         ssid,
@@ -545,34 +570,46 @@ export async function wifiDetailPage(context) {
       if (!result.ok) throw new Error(resolve(msg('wifi.connect_failed', '连接失败')));
       proxyEnabled = enabled;
       proxyUrl = choice.proxyUrl;
+      savedProxyUrl = choice.proxyUrl;
+      proxyUrlDirty = false;
+      proxyModeDirty = false;
+      proxyInput.value = choice.proxyUrl;
+      setChecked(proxySwitch, enabled);
+      profile = {...profile, proxy_mode: choice.proxyMode, proxy_url: choice.proxyUrl};
+      if (result.payload?.wifi) snapshot = {...snapshot, wifi: result.payload.wifi};
       proxyUrlField.hidden = !enabled;
       toast(msg('action.saved', '已保存'));
     } catch (error) {
       // The switch already moved; put it back so the control never claims a
       // state the device did not accept.
+      proxyEnabled = profile?.proxy_mode === 'proxy';
+      proxyModeDirty = false;
       setChecked(proxySwitch, proxyEnabled);
       proxyUrlField.hidden = !proxyEnabled;
       setProxyError({key: 'ui.proxy_apply_failed', fallback: error && error.message ? error.message : '保存失败'});
     } finally {
       proxyInput.disabled = false;
+      proxySwitch.disabled = false;
+      applyingProxy = false;
+      reconcileProxyControls();
     }
   }
 
-  const infoRows = [row({label: msg('ui.network_name', '网络名称'), value: ssid, tone: 'strong'})];
-  // Only the connected profile has an address; a saved one out of range has none.
-  const ipAddress = connected ? ((snapshot && snapshot.wifi_status) || {}).ip_address : '';
-  if (ipAddress) {
-    infoRows.push(row({label: msg('ui.ip_address', 'IP 地址'), value: ipAddress}));
+  const infoHost = el('div');
+  function renderInfo() {
+    const infoRows = [row({label: msg('ui.network_name', '网络名称'), value: ssid, tone: 'strong'})];
+    // Only the connected profile has an address; remove it as soon as it leaves.
+    const ipAddress = connectedSsid(snapshot) === ssid ? snapshot?.wifi_status?.ip_address : '';
+    if (ipAddress) infoRows.push(row({label: msg('ui.ip_address', 'IP 地址'), value: ipAddress}));
+    if (profile?.has_psk) infoRows.push(row({label: msg('wifi.password', '密码'), value: '••••••••'}));
+    replace(infoHost, [group({caption: msg('ui.section_network_info', '网络信息'), rows: infoRows})]);
   }
-  if (profile.has_psk) {
-    infoRows.push(row({label: msg('wifi.password', '密码'), value: '••••••••'}));
-  }
-
   const forgetRow = row({
     label: msg('ui.forget_network', '忽略此网络'),
     labelTone: 'accent',
     action: 'wifi-forget',
     onPress: async () => {
+      if (!profile) return;
       // The title names the network, so it needs `t` with the SSID; `msg`
       // resolves without parameters and left the quotes empty.
       const confirmed = await confirmSheet({
@@ -594,15 +631,39 @@ export async function wifiDetailPage(context) {
   // The design's detail page carries no title block: the top bar (native or
   // standalone) names the network, and the "Network info" card repeats it.
   if (context.header) context.header({title: ssid, onBack: () => context.navigate('/wifi')});
+  const forgetGroup = group({rows: [forgetRow]});
+  const proxyGroup = group({
+    joined: true,
+    rows: [row({label: msg('ui.proxy_row_label', '配置代理'), accessory: proxySwitch}), proxyUrlField],
+  });
+  function reconcileProxyControls() {
+    if (!applyingProxy && !proxyModeDirty) {
+      proxyEnabled = profile?.proxy_mode === 'proxy';
+      proxyUrlField.hidden = !proxyEnabled;
+      setChecked(proxySwitch, proxyEnabled);
+    }
+    if (!applyingProxy && !proxyUrlDirty) {
+      proxyUrl = savedProxyUrl;
+      proxyInput.value = proxyUrl;
+    }
+  }
+  function reconcileProfile(value) {
+    snapshot = value;
+    profile = savedNetwork(snapshot, ssid);
+    savedProxyUrl = profile?.proxy_url || '';
+    // A connected candidate can be observed before the connection task saves it.
+    forgetGroup.hidden = proxyGroup.hidden = !profile;
+    reconcileProxyControls();
+    renderInfo();
+  }
+  reconcileProfile(snapshot);
+  context.onWiFiChange?.(reconcileProfile);
   return screen([
     // The design leads with the destructive action as a blue row, not a button
     // parked at the bottom of the page.
-    group({rows: [forgetRow]}),
-    group({caption: msg('ui.section_network_info', '网络信息'), rows: infoRows}),
-    group({
-      joined: true,
-      rows: [row({label: msg('ui.proxy_row_label', '配置代理'), accessory: proxySwitch}), proxyUrlField],
-    }),
+    forgetGroup,
+    infoHost,
+    proxyGroup,
   ]);
 }
 
@@ -647,7 +708,7 @@ export function openJoinSheet(ssid, secured, onJoined) {
       }
       view.close();
       toast(t('wifi.connected_to', {ssid, defaultValue: '已连接到“{{ssid}}”。'}));
-      if (onJoined) onJoined();
+      if (onJoined) onJoined(result.payload);
     } catch (error) {
       form.setError({key: 'ui.connect_failed', fallback: error && error.message ? error.message : '连接失败'});
     } finally {
@@ -693,7 +754,7 @@ export function openCustomNetworkSheet(onJoined) {
       }
       view.close();
       toast(t('wifi.connected_to', {ssid, defaultValue: '已连接到“{{ssid}}”。'}));
-      if (onJoined) onJoined();
+      if (onJoined) onJoined(result.payload);
     } catch (error) {
       form.setError({key: 'ui.connect_failed', fallback: error && error.message ? error.message : '连接失败'});
     } finally {

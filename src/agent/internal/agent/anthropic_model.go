@@ -32,6 +32,9 @@ const (
 	anthropicDaemonRawSSELimit       = 128 * 1024
 	anthropicRawHTTPRawSSELimit      = 4 * 1024 * 1024
 	anthropicEmptyEndTurnMessage     = "end_turn response has no text or tool_use content"
+	// anthropicFallbackMaxTokens is the required max_tokens value used when
+	// neither the configuration nor the model metadata provides a limit.
+	anthropicFallbackMaxTokens = 8192
 )
 
 type anthropicModel struct {
@@ -291,7 +294,7 @@ func (m *anthropicModel) generateContent(ctx context.Context, messages []llms.Me
 		request.ToolChoice = disableAnthropicParallelToolUse(request.ToolChoice)
 	}
 	if request.MaxTokens <= 0 {
-		request.MaxTokens = 2048
+		request.MaxTokens = m.defaultMaxTokens(request.Model)
 	}
 	if m.temperature != nil {
 		request.Temperature = m.temperature
@@ -331,6 +334,7 @@ func (m *anthropicModel) generateContent(ctx context.Context, messages []llms.Me
 			return nil, fail(fmt.Errorf("create Anthropic request: %w", err))
 		}
 		httpRequest.Header.Set("Content-Type", "application/json")
+		httpRequest.Header.Set("User-Agent", "Claude Code")
 		httpRequest.Header.Set("anthropic-version", anthropicAPIVersion)
 		if m.token != "" && m.useBearerAuth {
 			httpRequest.Header.Set("Authorization", "Bearer "+m.token)
@@ -516,6 +520,23 @@ func (m *anthropicModel) reasoningModelSpec() model.ModelSpec {
 		}
 	}
 	return m.modelSpec
+}
+
+// defaultMaxTokens fills Anthropic's required max_tokens when no response
+// limit is configured: the requested model's advertised output limit, or a
+// conservative fallback when that limit is unknown. A per-call model override
+// is resolved from the registry rather than the configured model's spec.
+func (m *anthropicModel) defaultMaxTokens(requestModel string) int {
+	if requestModel == "" || strings.EqualFold(requestModel, m.model) {
+		if maxOutput := m.reasoningModelSpec().MaxOutput; maxOutput > 0 {
+			return maxOutput
+		}
+		return anthropicFallbackMaxTokens
+	}
+	if spec, ok := LookupModelSpec("anthropic", requestModel); ok && spec.MaxOutput > 0 {
+		return spec.MaxOutput
+	}
+	return anthropicFallbackMaxTokens
 }
 
 func (m *anthropicModel) reasoningSpecValue() *model.ReasoningSpec {

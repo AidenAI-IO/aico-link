@@ -306,7 +306,11 @@ func (c *inputLifecycle) startVoice(cfg agent.Config, dialog *agent.AudioDialog)
 			}
 			runWakeupModeWithVoice(cfg, dialog, c.runtime, voice, shutdown, c.newVoiceWatcher, stop)
 		case "realtime":
-			tasks := newRealtimeAgentTaskManager(cfg, c.runtime)
+			var activity *agent.BackgroundTaskActivity
+			if c.server != nil {
+				activity = c.server.BackgroundTaskActivity()
+			}
+			tasks := newRealtimeAgentTaskManager(cfg, c.runtime, activity)
 			if tasks != nil {
 				defer tasks.Close()
 				if recorder := c.server.CollaborationRecorder(); recorder != nil {

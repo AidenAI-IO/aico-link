@@ -60,6 +60,7 @@ jobs:
     # The callee keeps planning/build jobs read-only and grants write only to publication.
     permissions:
       contents: write
+      packages: write
       pages: write
       id-token: write
     uses: ./.github/workflows/release.yml

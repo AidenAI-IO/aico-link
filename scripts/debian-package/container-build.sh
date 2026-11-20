@@ -8,7 +8,7 @@ readonly REVISION=${AICO_BUSINESS_REVISION}
 readonly PACKAGE_VERSION=${VERSION}-${REVISION}
 readonly PACKAGE_NAME=aico-business
 readonly BINARIES=(
-  agent audio_service audio_service_cli ble_service mcu_service cpu_vad frame_service
+  agent audio_service audio_service_cli ble_service mcu_service cpu_vad ekho frame_service
   frame_service_cli rknn_vad smart_turn_helper ui_grounding_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail ota abctl aico-environment ttyd
 )
 rm -rf "${PKG_ROOT}" "${OUTPUT_DIR}/${PACKAGE_NAME}_"*.deb
@@ -17,6 +17,11 @@ for binary in "${BINARIES[@]}"; do
   test -x "${APPS_DIR}/bin/${binary}" || { echo "missing application binary: ${binary}" >&2; exit 1; }
   install -m 0755 "${APPS_DIR}/bin/${binary}" "${PKG_ROOT}/usr/lib/aico/${binary}"
 done
+test -s "${APPS_DIR}/share/ekho-data/pinyin.voice" || { echo "missing Ekho Mandarin data" >&2; exit 1; }
+test -s "${APPS_DIR}/share/doc/ekho/build.txt" || { echo "missing Ekho build provenance" >&2; exit 1; }
+(cd "${APPS_DIR}" && sha256sum -c metadata/ekho-files.sha256 >/dev/null)
+rsync -aH --chown=0:0 "${APPS_DIR}/share/ekho-data/" "${PKG_ROOT}/usr/share/aico/ekho-data/"
+rsync -aH --chown=0:0 "${APPS_DIR}/share/doc/ekho/" "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}/ekho/"
 rsync -aH --chown=0:0 "${REPO_ROOT}/src/config_web/web/" "${PKG_ROOT}/usr/share/aico/config-web/"
 rsync -aH --chown=0:0 "${REPO_ROOT}/src/agent/config/skills/" "${PKG_ROOT}/usr/share/aico/skills/"
 install -m 0644 "${REPO_ROOT}/src/agent/internal/agent/quick_actions.json" "${PKG_ROOT}/usr/share/aico/quick_actions.json"
@@ -33,11 +38,11 @@ Priority: optional
 Architecture: armhf
 Maintainer: Aico <contact@aico.link>
 Pre-Depends: python3
-Depends: libc6, systemd, sudo
+Depends: libc6, libgcc-s1, libstdc++6, libsndfile1, libespeak-ng1, espeak-ng-data, libsonic0, libmpg123-0t64, systemd, sudo
 Homepage: https://aico.link
 Description: Aico Link firmware and Aico AI Agent runtime
  Aico AI Agent, Aico Link hardware services, configuration web assets, bundled skills
- and runtime models.
+ and runtime models, with local Ekho Mandarin and American English speech.
 CTL
 bash "${REPO_ROOT}/scripts/debian-package/write-maintainer-scripts.sh" "${PKG_ROOT}/DEBIAN"
 python3 "${REPO_ROOT}/scripts/release/contract.py" package \

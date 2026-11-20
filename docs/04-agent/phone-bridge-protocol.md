@@ -94,6 +94,7 @@ Current events:
 
 - `phone_environment`: App reports phone environment snapshot upon WebSocket connection success and returning from background to foreground.
 - `phone_app_state`: App reports the last visible app lifecycle state when it changes among `active`, `background`, and `inactive`, plus whether a Live Activity / Dynamic Island entry is available to return to the Aico companion app and whether PiP Bridge mode is enabled. This state is for diagnostics and strategy decisions; it does not mean the app can execute permanently in iOS background.
+- `phone_orientation`: iOS app reports how the phone is physically held, read from the CoreMotion gravity vector, whenever it settles on a new value and again on WebSocket connection. A backgrounded app is usually on HTTP polling instead, so `GET /api/phone-bridge/commands` also accepts the same value as `device_orientation`; an HTTP-carried value stays current for 10 seconds without a WebSocket. Values are `portrait`, `portrait_upside_down`, `landscape_left`, `landscape_right` (matching `UIDeviceOrientation`), and `flat`. It describes the device, not which way the front app turned its interface. The board reuses an iOS landscape pointer turn decision only while this value stays the same, skips the pointer check while it reports `landscape_left` or `landscape_right`, and logs it with each decision.
 
 Example:
 
@@ -178,6 +179,19 @@ Island recovery.
     "return_entry_available": true,
     "pip_bridge_enabled": true,
     "reported_at": "2026-06-10T03:20:05Z"
+  }
+}
+```
+
+`phone_orientation` example:
+
+```json
+{
+  "id": "phone_orientation",
+  "method": "phone_orientation",
+  "data": {
+    "orientation": "landscape_left",
+    "reported_at": "2026-06-10T03:20:07Z"
   }
 }
 ```

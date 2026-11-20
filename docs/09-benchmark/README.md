@@ -646,12 +646,13 @@ input. Both variants retain the task's prepared screen; the connected variant
 does not bring the companion App to the foreground after task setup.
 ADB cases run exclusively on the shared emulator, including scheduled runs.
 
-With the companion App in the background, Phone Bridge reaches the Agent only
-through the App's foreground service (FGS), which polls the HTTP command queue.
-That service polls only over a USB or Ethernet Android Network that routes to
-the board subnet, and the emulator has neither. For runs that contain
-runnable background Bridge tasks, the runner therefore gives the rooted emulator
-a board-like link; skipped tasks do not trigger this setup:
+The companion App reaches the board only after binding to a USB or Ethernet
+Android Network that routes to the board subnet, and the emulator has neither.
+In the foreground the App refuses to open its WebSocket without that bind; in
+the background its foreground service (FGS) polls the HTTP command queue only
+over that network. For runs that contain runnable Bridge tasks, the runner
+therefore gives the rooted emulator a board-like link; skipped tasks do not
+trigger this setup:
 
 1. The runner checks the `android.hardware.ethernet` feature and its static
    `eth1` configuration (`192.168.42.2/24`) independently. If the feature is
@@ -659,10 +660,10 @@ a board-like link; skipped tasks do not trigger this setup:
    If the stored configuration differs, it installs the benchmark configuration.
    Either change triggers one Android framework restart so EthernetService
    loads the configuration. The bind mount is lost on reboot, so both checks
-   run on every background Bridge run.
+   run on every Bridge run.
 2. It adds a veth pair, `eth1` with peer `aicobd` (`192.168.42.1/24`), which
-   Android provisions as an Ethernet network. The App binds its FGS client to
-   that network. Requests to `192.168.42.1:8080` still reach the task Agent
+   Android provisions as an Ethernet network. The App binds its board clients
+   to that network. Requests to `192.168.42.1:8080` still reach the task Agent
    through the existing iptables DNAT rule and `adb reverse`.
 3. Background tasks wait for the Agent to report `fgs_bridge_enabled=true`
    and fail setup otherwise, instead of silently falling back to ADB text
@@ -672,8 +673,9 @@ a board-like link; skipped tasks do not trigger this setup:
    provides a further backstop for job cancellation.
 
 While `eth1` exists, Android prefers it as the default network, so the
-emulator has no internet access. Settings text editing does not need it, and
-runs without background Bridge tasks never create the link.
+emulator has no internet access. Settings text editing and the Aico App
+capability tasks do not need it, and runs without Bridge tasks never create the
+link.
 
 Run IDs distinguish the variants, and `manifest.json`/Langfuse metadata records
 `execution_environment` as `adb` or `adb_aidenbridge`. The dashboard shows
@@ -689,9 +691,13 @@ the foreground. It runs with a rooted Android emulator and one Agent worker, che
 Phone Bridge connection per task, and covers clipboard round trips, semantic
 app and URL opening, calendar create/query/delete, contacts create/query/update,
 local notifications, and single-line and multiline Unicode text entry. The
-write tasks use reserved fixtures (`AidenBridgeBenchmark` local calendar and
-`AidenBridgeBenchmarkContact` contact). The runner removes only those fixtures
-before and after each write task, including failures. Calendar/contact write
+write tasks use reserved fixtures (`AidenBridgeBenchmark` local calendar,
+`AidenBridgeBenchmarkContact` contact, and the Messages draft for
+`+12025550147`). The runner removes only those fixtures before and after each
+write task, including failures. Per-task ADB setup only returns the emulator
+to the home screen, and Messages restores a saved draft on the next open, so
+the SMS draft fixture opens that recipient with a sentinel body and clears it.
+Calendar/contact write
 permissions are granted on the CI emulator. Text-entry tasks require both a new clipboard-write
 diagnostic event from the App and the exact text in a non-Bridge Android input
 field; its evidence is included in `results.jsonl` and the local
@@ -700,7 +706,7 @@ the input assertion is unknown; an otherwise passing task becomes an evaluation
 error. Cleanup failures retain the completed task result and are recorded in
 `android_bridge_cleanup_error` and the worker log. Select this suite with the
 `hardware` profile to run only the connected App cases. This dedicated capability
-suite has `runnable: false` and remains excluded from the daily comparison sweep.
+suite also runs in the daily `runnable` sweep.
 
 This suite replaces the former separate `android_bridge_data_v1.json` suite.
 It does not claim coverage of iOS-only transports, BLE notification forwarding,

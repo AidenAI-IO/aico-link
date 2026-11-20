@@ -9,6 +9,7 @@ import pytest
 from ci import run_case as run_case_module
 from ci.plan import BENCHMARK_ROOT, CatalogError, load_catalog, select_cases
 from ci.run_cases import _cases_from_matrix
+from runner.android_phone_bridge import ANDROID_BRIDGE_PACKAGE
 from runner.suite import load_suite
 
 
@@ -29,7 +30,11 @@ def test_adb_profile_selects_only_serial_native_android_cases():
         selected = [task for task in suite.tasks if not case.task_ids or task.id in case.task_ids]
         for task in selected:
             assert not task.platforms or "android" in task.platforms
-            assert not task.app_ids and task.foreground_app_id is None
+            assert not task.app_ids
+            # Only Bridge cases install and route the companion App.
+            assert task.foreground_app_id is None or (
+                case.android_phone_bridge and task.foreground_app_id == ANDROID_BRIDGE_PACKAGE
+            )
             assert not task.environment_assertions  # ADB has no MobileGym state API.
             assert task.mock_environment is None and suite.mock_environment is None
             assert task.input_screenshot is None  # Observe the real device.

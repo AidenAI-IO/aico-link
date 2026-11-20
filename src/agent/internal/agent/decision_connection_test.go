@@ -38,3 +38,20 @@ func TestRunDecisionModelTestUsesSavedKeyAndChecksTheAnswer(t *testing.T) {
 		t.Fatalf("missing key error = %v", err)
 	}
 }
+
+func TestRunDecisionModelTestOpenRouterUsesSavedConfig(t *testing.T) {
+	server := newDecisionServer(t, `{"model":"typesafe/jev-1.14","answers":{"check":{"type":"noul","noul":0.98}}}`)
+	saved := Config{Decision: DecisionModelConfig{
+		Provider: DecisionProviderOpenRouter, APIKey: "sk-or-saved", BaseURL: server.URL,
+	}}
+	candidate := DecisionModelConfig{Provider: DecisionProviderOpenRouter, BaseURL: server.URL}
+	result, err := RunDecisionModelTest(context.Background(), saved, candidate)
+	if err != nil || result.Provider != DecisionProviderOpenRouter || result.Model != defaultOpenRouterModel {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if len(server.requests) != 1 || server.requests[0]["model"] != defaultOpenRouterModel || server.requests[0]["questions"] == nil {
+		t.Fatalf("OpenRouter request = %+v", server.requests)
+	}
+}

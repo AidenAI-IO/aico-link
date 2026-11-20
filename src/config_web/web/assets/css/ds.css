@@ -714,6 +714,56 @@
   color: var(--color-ink-secondary);
 }
 
+/* Model suggestions stay inside the field's card, including on small screens. */
+.ds-suggestions {
+  max-height: calc(var(--size-option) * 4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-xs);
+  border: 1px solid var(--color-option-border);
+  border-radius: var(--radius-field);
+  background-color: var(--color-card);
+}
+
+.ds-suggestion {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-height: var(--size-option);
+  padding: var(--space-md);
+  border-radius: var(--radius-field);
+  color: var(--color-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ds-suggestion--active,
+.ds-suggestion:active {
+  background-color: var(--color-option-selected);
+}
+
+@media (hover: hover) {
+  .ds-suggestion:hover {
+    background-color: var(--color-option-selected);
+  }
+}
+
+.ds-suggestion__name {
+  font-size: var(--font-body-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--font-line-body);
+  overflow-wrap: anywhere;
+}
+
+.ds-suggestion__id {
+  font-size: var(--font-caption);
+  line-height: var(--font-line-caption);
+  color: var(--color-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
 .ds-textarea {
   width: 100%;
   min-height: 136px;

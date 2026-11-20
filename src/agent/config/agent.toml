@@ -195,12 +195,19 @@ model = "gpt-5.5"
 # context_window = 128000
 # model_max_output_tokens = 8192
 
-# Optional decision model: TypeSafe Jev ("typesafe") or OpenAI Luna ("openai").
-# It answers fixed-choice checks in deterministic workflows, asked together
-# with the main model; confident answers are used, the rest come from the main
-# model. Off by default; enabling it requires an API key.
+# Optional decision model: TypeSafe Jev ("typesafe"), OpenAI Luna ("openai"),
+# Gemini Decision 1 ("gemini"), or OpenRouter ("openrouter"). It answers
+# fixed-choice checks in deterministic workflows, asked together with the main model; confident
+# answers are used, the rest come from the main model. Off by default;
+# enabling it requires an API key. Pick one provider; the key is independent
+# of the main model key.
 # base_url and model default per provider (api.typesafe.ai/v1 + jev-preview,
-# or api.openai.com/v1 + gpt-6-luna).
+# api.openai.com/v1 + gpt-6-luna, or generativelanguage.googleapis.com/v1beta +
+# gemini-decision-1). OpenRouter ("openrouter") uses openrouter.ai/api/alpha +
+# ~typesafe/jev-latest through the native Decisions API. Its model list comes
+# from OpenRouter's decisions-output catalog.
+# OpenAI and Gemini have no box answers, so tap-target decisions stay with the
+# main model.
 [model_settings.decision]
 # enabled = false
 # provider = "typesafe"
@@ -318,15 +325,12 @@ provider = "openai-main"
 
 # Text-to-Speech (TTS) configuration
 # Required when input_mode = "stt"
-[voice_settings.classic.tts.providers.minimax-main]
-type = "minimax-cn"
-api_key = "$MINIMAX_API_KEY"
-voice_id = "male-qn-qingse"   # Voice ID from Minimax
-emotion = "happy"             # Emotion: happy, sad, angry, etc.
+[voice_settings.classic.tts.providers.ekho-local]
+type = "ekho"                # Local Ekho CLI and Mandarin voice data required
 
 [voice_settings.classic.tts]
-provider = "minimax-main"
-# speed = 1.0                 # Speech speed: 0.5 - 2.0
+provider = "ekho-local"
+# speed = 1.0                 # 0.5 - 2.0; Ekho baseline: -s 20 --english-speed -10 -a 0
 
 # Audio service configuration for Classic Mode
 [voice_settings.classic.audio]

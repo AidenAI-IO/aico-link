@@ -1,11 +1,13 @@
 // Package decision is a client for decision models: TypeSafe's System One API
-// (Jev) and OpenAI's Decisions API (GPT-6 Luna). Both answer typed questions
-// about a state: a choice among named options, a yes/no probability (noul),
-// or a score; Jev also answers a box in an image. Neither generates text, so
-// callers keep their own fallback for anything they cannot answer confidently.
+// (Jev), OpenAI's Decisions API (GPT-6 Luna), Google's Gemini Decisions
+// API (gemini-decision-1), and OpenRouter's native Decisions API. They
+// answer typed questions about a state: a choice among named options, a yes/no
+// probability (noul), or a score; Jev also
+// answers a box in an image, as does the OpenRouter adapter. Callers keep
+// their own fallback for anything they cannot answer confidently.
 //
-// Requests are written in System One's shape; the OpenAI backend translates
-// them and leaves out box questions, which it cannot answer.
+// Requests are written in System One's shape; the OpenAI and Gemini backends
+// translate them and leave out box questions, which they cannot answer.
 package decision
 
 import (
@@ -96,8 +98,10 @@ type Response struct {
 
 // Providers.
 const (
-	ProviderTypeSafe = "typesafe"
-	ProviderOpenAI   = "openai"
+	ProviderTypeSafe   = "typesafe"
+	ProviderOpenAI     = "openai"
+	ProviderGemini     = "gemini"
+	ProviderOpenRouter = "openrouter"
 )
 
 // Client calls a decision model. HTTP is required so callers decide the proxy.
@@ -140,11 +144,20 @@ func (c *Client) Ask(ctx context.Context, req Request) (Response, error) {
 		headers  = map[string]string{}
 		decode   = decodeTypeSafe
 	)
-	if c.Provider == ProviderOpenAI {
+	switch c.Provider {
+	case ProviderOpenAI:
 		body, err = encodeOpenAI(req)
 		endpoint = strings.TrimRight(c.BaseURL, "/") + "/decisions"
 		decode = decodeOpenAI
-	} else {
+	case ProviderGemini:
+		body, err = encodeGemini(req)
+		endpoint = strings.TrimRight(c.BaseURL, "/") + "/decisions"
+		decode = decodeGemini
+		headers["x-goog-api-key"] = strings.TrimSpace(c.APIKey)
+	case ProviderOpenRouter:
+		body, err = encodeOpenRouter(req)
+		endpoint = strings.TrimRight(c.BaseURL, "/") + "/decisions"
+	default:
 		body, err = json.Marshal(req)
 		endpoint = strings.TrimRight(c.BaseURL, "/") + "/systemone"
 		images := len(req.Assets) > 0
@@ -185,7 +198,9 @@ func (c *Client) post(ctx context.Context, endpoint string, body []byte, headers
 	if err != nil {
 		return Response{}, err
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.APIKey))
+	if _, ok := headers["x-goog-api-key"]; !ok {
+		httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.APIKey))
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	for key, value := range headers {
 		httpReq.Header.Set(key, value)

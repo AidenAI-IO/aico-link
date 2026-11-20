@@ -74,6 +74,15 @@ failed turn). During a voice session a typed message joins the conversation,
 so its reply is spoken on that session's route: the device speaker, or the
 browser that started it. Only a wake word, a button press, or the Web UI
 voice button opens a session.
+
+For temporary device-speaker testing, start the Agent with
+`AICO_TEXT_CHAT_TTS=1`. Typed chats then use the configured standalone TTS for
+streamed speech, tool progress, and final replies without opening a microphone.
+An active voice session keeps its existing route and speaker mute behavior.
+Remove the variable and restart the Agent to restore silent text chat. A
+systemd drop-in under `/run/systemd/system/aico-agent.service.d/` can enable
+this override only until the next device reboot.
+
 The legacy single-turn mode (`voice_followup_enabled = false`) does not offer
 the Web UI voice button.
 
@@ -96,7 +105,7 @@ Waits for the hardware tap button to open a Classic voice session. On current bo
 
 Separately, if the MCU service socket is unavailable, the daemon may use a gated GPIO 33/32 fallback only on boards where those pins are still voice keys (for example Luckfox Pico Zero) or when `AICO_LEGACY_GPIO_VOICE_WAKEUP=1` is set. On Aico Link SCH v1 those GPIOs drive HDMI power/reset, so the fallback stays disabled there even when the MCU socket is missing.
 
-Classic STT Agent turns share the main model's `max_response_tokens` output limit (8192 by default), including any reasoning tokens counted toward that limit by the provider. They do not apply a separate voice-specific token cap.
+Classic STT Agent turns share the main model's `max_response_tokens` output limit, including any reasoning tokens counted toward that limit by the provider. The default `0` sends no limit, so the provider's model default applies; native Anthropic, which requires a limit, uses the model's advertised output limit (or `8192` when unknown). They do not apply a separate voice-specific token cap.
 
 
 ## Configuration Snippet
@@ -176,6 +185,76 @@ If the LLM does not generate assistant content in the same response as the tool 
 
 ## TTS Provider Usage
 
+### Local Ekho (default)
+
+Ekho is the default TTS adapter. The Debian application build cross-compiles
+[Ekho](https://github.com/hgneng/ekho) and stages its Mandarin voice data;
+`aico-business` installs the executable at `/usr/lib/aico/ekho` and data at
+`/usr/share/aico/ekho-data`. Debian supplies the eSpeak NG runtime and voice data,
+libsndfile, Sonic, and mpg123 dependencies. See the
+[build inputs and female-voice patch](../../scripts/debian-apps/ekho/README.md)
+and [package installation](../08-ota/debian-package.md).
+The Agent prefers `/usr/lib/aico/ekho`, then finds `ekho` on `PATH` or checks
+`/usr/local/bin/ekho` and `/userdata/ekho/bin/ekho` for manual installations.
+Existing configurations that explicitly select a cloud
+provider keep that selection; speech remains opt-in when no TTS section is declared.
+
+```toml
+[voice_settings.classic.tts]
+provider = "ekho-local"
+speed = 1.0
+
+[voice_settings.classic.tts.providers.ekho-local]
+type = "ekho"
+```
+
+No API key is needed. The fixed bilingual preset is equivalent to
+`ekho -v Mandarin -s 20 --english-speed -10 -a 0`. Use Mandarin for mixed
+Chinese/English input as well. The bundled patch selects the American English
+female variant `en-us+f3` through eSpeak NG's `espeak_SetVoiceByName()` in
+`src/english.cpp`, including English embedded in Mandarin input. `speed` is
+relative to this preset: Ekho's `-s` is `round(120 * speed - 100)`, while
+`--english-speed -10` stays fixed. Cloud-only voice/model fields are ignored.
+
+The device integration was validated with Ekho 9.0 at upstream commit
+[`796241e`](https://github.com/hgneng/ekho/commit/796241e13e4c52fff2055128575ce68164f89d8e).
+Before selecting the provider, run a synthesis check as the Agent's service
+user, with the same `PATH` and voice-data access:
+
+```bash
+printf '%s\n' '你好。Hello, this is Ekho.' | \
+  /usr/lib/aico/ekho -v Mandarin -s 20 --english-speed -10 -a 0 \
+    --samplerate 22050 -f - -o /tmp/ekho-smoke.wav
+```
+
+This checks synthesis only. Verify speaker routing and volume separately with
+the configured audio backend, then remove `/tmp/ekho-smoke.wav`. Keep `-a 0`
+after `--english-speed`: Ekho 9.0's option parser otherwise applies the English
+speed value to volume as well. The package includes the exact upstream source
+archive, patch, build inputs, and original code/voice licenses under
+`/usr/share/doc/aico-business/ekho/`. An independently installed upstream build
+does not automatically select this English voice.
+
+Incoming LLM fragments are buffered to Chinese/English sentence punctuation or
+newlines. English periods use lookahead to preserve decimals and common
+abbreviations. Unpunctuated text is limited to 160 characters per synthesis,
+preferring whitespace or clause punctuation when available. A flush or the end
+of a speech block emits any remaining text. Sentences are synthesized and
+played in order; cancellation kills the active subprocess and stops playback.
+
+The Agent invokes `ekho` directly with text on stdin. It creates one temporary
+seekable WAV per sentence, reads 22050 Hz mono PCM16 in small blocks, and removes
+the WAV on success, failure, or cancellation. The existing audio backend
+resamples to its configured playback rate. Ekho declares a fixed mono PCM16
+layout; its synthesis and playback sessions use that layout even when the
+general audio configuration selects stereo or another bit width. Device audio
+writes are paced near real time to respect the audio service's bounded queue; desktop file playback
+does not need this pacing. `ekho-say` and its separate `aplay`
+process are not used. This provides sentence streaming, rather than audio
+streaming within an unfinished sentence.
+
+### Streaming sessions and cloud providers
+
 The selected provider name lives in `[voice_settings.classic.tts]`; provider-specific fields live in its `[voice_settings.classic.tts.providers.<name>]` record. See [Agent Configuration Reference](configuration.md#voice_settingsclassicstt-and-voice_settingsclassictts) for full details. The following examples omit `api_key` and only show adapter behavior-related configuration.
 
 All TTS providers are called through a unified streaming session: the Agent writes LLM output fragments to the adapter, and the adapter decides when to send to the backend. Fish Audio, Alicloud, and Volcengine are true streaming WebSocket links; the Minimax WebSocket adapter buffers internally at sentence boundaries before sending, so the upper layer doesn't need to distinguish between “true streaming” or “sentence-level streaming”. The runtime can switch providers via `POST /api/settings/tts`; playback that has already started will continue using the old provider, and subsequent requests will use the new provider.
@@ -240,7 +319,7 @@ voice_id = "zh_female_vv_uranus_bigtts"
 - the local recording backend uses SoX `rec` or `ffmpeg` (AVFoundation) on macOS and `pw-record`, `parec`, `arecord`, SoX `rec`, or `ffmpeg` (PulseAudio) on Linux. Playback uses `afplay`/`ffplay` on macOS, `pw-play`/`paplay`/`aplay`/`ffplay` on Linux, and PowerShell on Windows. The first available command is selected. Local recording is not currently available on Windows;
 - `rknn_vad` / `cpu_vad` helper must be executable; when `vad_backend="rknn"`, `vad_model_path` points to a converted encoder RKNN; when `vad_backend="cpu"`, helper defaults to `/usr/lib/aico/cpu_vad`;
 - when Classic Smart Turn is enabled, `smart_turn_helper` must be executable and `turn_detection_model_path` / `turn_detection_helper_path` must be set; leave both empty to keep silence-only Silero endpointing;
-- STT/TTS require external API keys;
+- cloud STT/TTS require external API keys; local Ekho requires its executable and voice data;
 - STT mode normally uses the hardware tap button to start a continuous voice session; set `tap_wakeup_enabled = false` to ignore that button only (Realtime `/api/chat` activation is unchanged).
 
 VAD and Smart Turn helpers can be verified directly on the board:

@@ -196,3 +196,21 @@ func (m *MockProvider) MoveCalls() []MockMove {
 	copy(out, m.moves)
 	return out
 }
+
+func (m *MockProvider) DragReleaseCalls() []MockMove {
+	if m == nil {
+		return nil
+	}
+	out := make([]MockMove, len(m.dragReleases))
+	copy(out, m.dragReleases)
+	return out
+}
+
+func (m *MockProvider) SwipeCalls() []MockSwipe {
+	if m == nil {
+		return nil
+	}
+	out := make([]MockSwipe, len(m.swipes))
+	copy(out, m.swipes)
+	return out
+}

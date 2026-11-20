@@ -84,6 +84,7 @@ jobs:
     outputs:
       kind: ${{ steps.plan.outputs.kind }}
       source_commit: ${{ steps.plan.outputs.source_commit }}
+      tag: ${{ steps.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -166,6 +167,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -179,10 +181,69 @@ jobs:
         env:
           APT_KEY_CONFIGURED: ${{ secrets.APT_SIGNING_PRIVATE_KEY != '' }}
         run: test "$APT_KEY_CONFIGURED" = true
+      - name: Resolve Aico Link image reference
+        id: image_ref
+        env:
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          image_name=$(printf '%s' "$REPOSITORY" | tr 'A-Z' 'a-z')
+          printf 'image=ghcr.io/%s:%s\n' "$image_name" "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Check release freshness before pushing the image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.plan.outputs.source_commit }}
+        run: |
+          # Use the existing release helpers so older source refs do not need a new CLI command.
+          PYTHONPATH=scripts/release python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          from release import assert_current, github_history, github_releases, verify
+
+          record = verify(Path('output/release/assets'))
+          repo, tag = record['repo'], record['tag']
+          if (repo.lower(), tag, record['source_commit']) != (
+              os.environ['GITHUB_REPOSITORY'].lower(), os.environ['RELEASE_TAG'], os.environ['SOURCE_COMMIT']
+          ):
+              raise SystemExit('Release assets do not match the image repository, tag, or source commit')
+          assert_current(record, github_history(repo))
+          if any(r['tag_name'] == tag and not r['draft'] for r in github_releases(repo)):
+              raise SystemExit('Published releases are immutable')
+          PY
+      # A failed image push must not leave a published release without its image.
+      - name: Build and publish Aico Link image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/dev/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.image_ref.outputs.image }}
+          build-args: |
+            AICO_VERSION=${{ needs.plan.outputs.tag }}
+            AICO_COMMIT=${{ needs.plan.outputs.source_commit }}
       - name: Verify, upload draft, verify downloads, then publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/release/release.py publish output/release/assets
+      - name: Record Aico Link image in the release summary
+        env:
+          IMAGE: ${{ steps.image_ref.outputs.image }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          printf 'Aico Link image: `%s`\n\nDigest: `%s`\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
 
   apt:
     needs: publish

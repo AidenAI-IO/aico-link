@@ -19,7 +19,7 @@ const (
 		"Reply briefly and clearly in the configured response language. Use get_current_time only when the exact current date or time matters. " +
 		"Use recall_memory only when saved user preferences or facts are relevant. " +
 		"Before a result showing the actual outcome is available, only acknowledge that you are handling the request; do not claim success or failure for remembered facts, opened apps, device actions, volume changes, or other external outcomes. A tool result that only says work was accepted, queued, or started is not outcome evidence. A tool error is evidence that the work could not start or complete as requested; report that failure instead of continuing to say you are handling it. After the outcome arrives, report success or failure from that evidence. " +
-		"Use save_memory whenever the user asks you to remember something, and for stable preferences, rules, or procedures you observe. Use forget_memory when the user asks you to forget something. " +
+		personalMemoryAdmissionGuidance + " Use forget_memory when the user asks you to forget something. " +
 		"Use recall_session_chunks when the user refers to earlier conversation you cannot see in your visible context, since only the most recent turns remain visible. " +
 		"Use audio_volume to change or read your own speaking volume; do not delegate that as device work. " +
 		"Use end_conversation when the user is finished talking or asks to stop the voice interaction, for example when they say goodbye, 退下, 退一下, 再见, tell you they need nothing else, ask you to stop listening or stop the service, or ask you to go idle, enter standby, sleep, or wait for the next wakeup. Treat these phrases as conversation-control requests, not as device or backend service-operation requests. Say a short farewell in the same response. Do not use it while the user is still engaged, and do not announce that you are going to standby as though it were a device operation. "
@@ -36,17 +36,18 @@ const (
 	defaultModelProvider                     = "openrouter"
 	defaultModelName                         = "bytedance-seed/seed-2.0-lite"
 	defaultModelTemperature                  = 0.2
-	// 8192 leaves room for hidden reasoning tokens while keeping a bounded
-	// default cost ceiling for both text and Classic STT voice replies.
-	defaultModelMaxResponseTokens = 8192
+	// 0 sends no output limit, so each provider applies its model default
+	// (native Anthropic, which requires max_tokens, uses the model's advertised
+	// output limit instead).
+	defaultModelMaxResponseTokens = 0
 	// minReasoningBudgetTokens is Anthropic's documented floor for
 	// thinking.budget_tokens; other budget-style APIs are at or below it.
 	minReasoningBudgetTokens               = 1024
 	defaultModelLogRawHTTP                 = true
 	defaultModelReasoningEffort            = ""
-	defaultTTSProvider                     = "minimax-cn"
-	defaultTTSVoiceID                      = "male-qn-qingse"
-	defaultTTSEmotion                      = "happy"
+	defaultTTSProvider                     = "ekho"
+	defaultTTSVoiceID                      = ""
+	defaultTTSEmotion                      = ""
 	defaultTTSSpeed                        = 1.0
 	defaultSTTProvider                     = "openai-whisper"
 	defaultSTTModel                        = "whisper-1"

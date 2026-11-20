@@ -244,6 +244,13 @@ func (m *ModelManager) Spec() model.ModelSpec {
 		}
 	}
 
+	// Native Anthropic requires max_tokens, so an unknown output limit still
+	// sends anthropicFallbackMaxTokens. Expose it here so the input budget
+	// reserves the same output the request sends.
+	if spec.MaxOutput <= 0 && effectiveModelProviderType(m.config.Provider, m.config.BaseURL) == "anthropic" {
+		spec.MaxOutput = anthropicFallbackMaxTokens
+	}
+
 	spec.Provider = m.config.Provider
 	spec.Name = m.config.Model
 	if spec.API == "" {

@@ -198,6 +198,7 @@ func (pb *PhoneBridge) handlePollCommands(w http.ResponseWriter, r *http.Request
 		r.URL.Query().Get("pip_bridge_enabled"),
 		r.URL.Query().Get("fgs_bridge_enabled"),
 	)
+	pb.noteHTTPPollOrientation(r.URL.Query().Get("device_orientation"))
 
 	status := pb.getStatus()
 	appState, appStateOK := normalizeAppState(r.URL.Query().Get("app_state"))
@@ -277,6 +278,21 @@ func (pb *PhoneBridge) noteHTTPPollState(platform, phoneID, appState, pipBridgeE
 	}
 	pb.mu.Unlock()
 	pb.notifyEnvironmentObserver()
+}
+
+// noteHTTPPollOrientation keeps the phone orientation a background app sends
+// with each command poll, since it is not on the WebSocket then.
+func (pb *PhoneBridge) noteHTTPPollOrientation(value string) {
+	orientation, ok := normalizeDeviceOrientation(value)
+	if !ok {
+		return
+	}
+	pb.mu.Lock()
+	changed := pb.noteDeviceOrientationLocked(orientation, time.Now())
+	pb.mu.Unlock()
+	if changed && pb.logger != nil {
+		pb.logger.Info("phone-bridge: device orientation updated (%s) via http poll", orientation)
+	}
 }
 
 func parseOptionalBoolQuery(value string) (bool, bool) {

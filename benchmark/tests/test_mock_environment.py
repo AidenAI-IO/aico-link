@@ -80,6 +80,35 @@ def test_recovery_state_is_readable_through_runner_contract(task_id, actions, er
         server.stop()
 
 
+@pytest.mark.parametrize(("start_at", "end_at"), [
+    ("2037-11-21T15:00:00+08:00", "2037-11-21T15:30:00+08:00"),
+    ("2037-11-21T07:00:00Z", "2037-11-21T07:30:00Z"),
+], ids=["offset", "utc"])
+def test_calendar_recovery_accepts_equivalent_timestamps_and_detects_duplicate_create(start_at, end_at):
+    path = Path(__file__).resolve().parents[1] / "suites" / "tool_recovery_v1.json"
+    task = next(t for t in load_suite(path).tasks if t.id == "calendar_verify_ambiguous_create")
+    server = MockEnvironmentServer(task.mock_environment, path.parent)
+    create = {
+        "action": "create", "title": "Fixture parking reminder",
+        "start_at": start_at, "end_at": end_at,
+    }
+    query = {"action": "query", "from": "2037-11-21T00:00:00Z", "to": "2037-11-21T23:59:59Z"}
+
+    def state_passes():
+        checks = evaluate_environment_state_assertions(server.snapshot(), task.environment_assertions)
+        return all(check.passed for check in checks)
+
+    timed_out = server.invoke("bridge_calendar", create)
+    assert timed_out.is_error and timed_out.output["error"] == "response_timeout"
+    too_short = server.invoke("bridge_calendar", {**query, "to": "2037-11-21T07:29:59Z"})
+    assert too_short.is_error and not state_passes()
+    recovered = server.invoke("bridge_calendar", query)
+    assert not recovered.is_error and len(recovered.output["events"]) == 1
+    assert state_passes()
+    assert server.invoke("bridge_calendar", create).is_error
+    assert not state_passes()
+
+
 def test_mock_environment_wildcard_bind_advertises_loopback(tmp_path):
     spec = MockEnvironmentSpec(
         platform="ios",

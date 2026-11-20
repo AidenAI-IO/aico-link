@@ -144,6 +144,13 @@ for static_executable in "${STATIC_EXECUTABLES[@]}"; do
         || fail "missing static executable: bin/${static_executable}"
 done
 
+[ -x "${APPS_DIR}/bin/ekho" ] || fail "missing Ekho executable"
+if [ ! -s "${APPS_DIR}/metadata/ekho-files.sha256" ]; then
+    fail "missing Ekho payload checksums"
+elif ! (cd "${APPS_DIR}" && sha256sum -c metadata/ekho-files.sha256 >/dev/null); then
+    fail "Ekho binary, voice data or source payload changed after staging"
+fi
+
 for go_executable in "${GO_EXECUTABLES[@]}"; do
     [ -x "${APPS_DIR}/bin/${go_executable}" ] \
         || fail "missing static Go executable: bin/${go_executable}"

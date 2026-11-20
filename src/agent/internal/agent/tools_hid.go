@@ -268,6 +268,8 @@ func (t *KeyboardTextTool) Call(ctx context.Context, input string) (string, erro
 // MouseMoveTool moves the mouse to coordinates without clicking.
 type MouseMoveTool struct {
 	mnkProvider mnk.Provider
+	// landscape corrects iOS landscape pointer orientation; nil disables it.
+	landscape *landscapePointerCorrector
 }
 
 func (t *MouseMoveTool) Name() string { return "mouse_move" }
@@ -284,7 +286,7 @@ func (t *MouseMoveTool) ArgsSchema() map[string]any {
 }
 
 func (t *MouseMoveTool) Call(ctx context.Context, input string) (string, error) {
-	adapter := mnk.NewMouseMoveToolAdapter(t.mnkProvider)
+	adapter := mnk.NewMouseMoveToolAdapter(t.landscape.session(t.mnkProvider))
 	output, err := adapter.Call(ctx, input)
 	return mapMNKAdapterResult(ctx, output, err)
 }
@@ -301,6 +303,8 @@ type TouchGestureTool struct {
 	// confirmTargets lets the decision model overrule a target change the
 	// pixel check saw; nil leaves the pixel check alone.
 	confirmTargets tapSequenceConfirmer
+	// landscape corrects iOS landscape pointer orientation; nil disables it.
+	landscape *landscapePointerCorrector
 }
 
 func (t *TouchGestureTool) Name() string { return "touch_gesture" }
@@ -308,6 +312,7 @@ func (t *TouchGestureTool) Name() string { return "touch_gesture" }
 func (t *TouchGestureTool) SetDeviceTypeFunc(fn func() string) {
 	if t != nil {
 		t.deviceTypeFn = fn
+		t.landscape.setDeviceTypeFunc(fn)
 	}
 }
 
@@ -387,15 +392,16 @@ func (t *TouchGestureTool) Call(ctx context.Context, input string) (string, erro
 	if err := t.ensureTouchscreenMapping(ctx); err != nil {
 		return toolErrorResultf(ctx, CodeToolExecutionFailed, "touchscreen mapping unavailable: %v", err), nil
 	}
-	adapter := mnk.NewTouchGestureToolAdapter(t.mnkProvider)
+	provider := t.landscape.session(t.mnkProvider)
+	adapter := mnk.NewTouchGestureToolAdapter(provider)
 	if points, guarded := tapSequenceInput(input); guarded && t.captureFrame != nil {
 		if err := mnk.ValidateTapSequenceInput(input); err != nil {
 			return mapMNKAdapterResult(ctx, "", err)
 		}
 		// Park the absolute-mode pointer on the first target so its hover
 		// state is part of the baseline instead of a change at its old spot.
-		if !t.touchscreen && t.mnkProvider != nil {
-			if err := t.mnkProvider.Move(ctx, points[0].X, points[0].Y); err == nil {
+		if !t.touchscreen && provider != nil {
+			if err := provider.Move(ctx, points[0].X, points[0].Y); err == nil {
 				if err := sleepWithContext(ctx, tapSequencePointerParkDelay); err != nil {
 					return toolErrorResultf(ctx, CodeToolExecutionFailed, "tap_sequence canceled before any tap: %v", err), nil
 				}
@@ -429,7 +435,7 @@ func (t *TouchGestureTool) recoverAfterUnstableScreen(ctx context.Context, input
 	if err != nil {
 		return fmt.Errorf("encode drag_start recovery: %w", err)
 	}
-	_, err = mnk.NewTouchGestureToolAdapter(t.mnkProvider).Call(ctx, string(releaseInput))
+	_, err = mnk.NewTouchGestureToolAdapter(t.landscape.session(t.mnkProvider)).Call(ctx, string(releaseInput))
 	return err
 }
 

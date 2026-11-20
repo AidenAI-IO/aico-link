@@ -1,0 +1,13 @@
+[Unit]
+Description=Record Aico core-service failure snapshot (%i)
+# Keep this unit out of the failure cascade for the service being recorded.
+DefaultDependencies=no
+RefuseManualStart=no
+
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=8s
+ExecStart=/usr/lib/aico/aico-service-incident %i

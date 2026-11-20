@@ -775,3 +775,20 @@ func TestHTTPCommandTimeout(t *testing.T) {
 		t.Error("expected no result for in-flight command")
 	}
 }
+
+// A backgrounded app is off the WebSocket and sends its orientation with each
+// command poll; the board must still see it.
+func TestHTTPPollCarriesDeviceOrientation(t *testing.T) {
+	bridge := newPhoneBridgeForTest()
+	defer bridge.queue.Stop()
+
+	request := httptest.NewRequest(http.MethodGet, "/api/phone-bridge/commands?platform=ios&app_state=background&device_orientation=landscape_right", nil)
+	response := httptest.NewRecorder()
+	bridge.handlePollCommands(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("poll status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got, _ := bridge.DeviceOrientation(); got != "landscape_right" {
+		t.Fatalf("orientation = %q, want landscape_right from the HTTP poll", got)
+	}
+}

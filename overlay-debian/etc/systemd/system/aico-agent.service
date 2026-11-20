@@ -1,5 +1,6 @@
 [Unit]
 Description=Aico AI Agent on Aico Link
+OnFailure=aico-service-incident@%p.service
 Requires=aico-userdata-migrate.service aico-environment.service aico-boot-timeline-init.service
 Requires=share.mount
 After=share.mount

@@ -163,6 +163,41 @@ The main curve also covers timed movements in predefined quick actions.
 The profile is shared in `mnk/motion_profile.go`; new touch tools should call
 `SwipeWithOptions` or `TouchActions` rather than implement their own curve.
 
+After an iPhone turns between portrait and landscape, iOS keeps the pointer
+bounds of the orientation the USB device was enumerated in: a phone enumerated
+in portrait cannot move the pointer past the portrait width in landscape. When
+`device_type = "iOS"`, `touch_gesture` and `mouse_move` therefore compare the
+screenshot active area's orientation with the one the gadget was last
+enumerated in and, when it changed, detach and reattach the pointer before the
+action through the same `aico-dynamic-keyboard isolate`/`restore` round trip
+that modified keyboard input uses. Without that helper the step is skipped. The first portrait sighting after the Agent starts is taken as the
+enumeration orientation; the first landscape sighting re-enumerates once,
+because the board cannot know the orientation at plug-in.
+
+An iPhone mirrors its landscape picture upright, but iOS can map the absolute
+pointer surface turned against that picture: a half turn sends `(x, y)` to
+`(1000-x, 1000-y)`, and a quarter turn sends it to `(y, 1000-x)`. Both have been
+seen, including in a landscape video picture on a phone held upright. The frame
+alone cannot show the turn. When `device_type = "iOS"` and the screenshot
+active area is wider than tall, `touch_gesture` and `mouse_move` therefore park
+the pointer, move it onto the call's first point, and compare the frames around
+the four places that point can land. Every point of the call is then sent
+through the inverse of the turn found. A `drag_release` reuses the turn found by
+its `drag_start` so the held contact is not moved. When the check cannot decide
+(for example a target near the screen centre, where the four places overlap),
+a decision from the last two minutes on the same active area is reused;
+otherwise the points are sent unchanged. When the companion app reports
+`phone_orientation`, an earlier decision is reused only while the phone is held
+the same way. While it reports the phone held in landscape (`landscape_left` or
+`landscape_right`), the interface follows gravity, so a decision from the last two
+minutes on the same active area is reused without moving the pointer again. A
+phone held upright or flat with a landscape picture means an app forced
+landscape, and is checked on every call. Separately, a `touch_gesture` or
+`mouse_move` is not sent when the screen turned between portrait and landscape
+after the screenshot the model chose its coordinates on; the tool returns the
+current screenshot so the model can choose the target again. Portrait screens, other device types, and the touchscreen pointer
+mode are not checked.
+
 The Agent's ADB input backend executes standard swipes as one continuous
 DOWN/MOVE/UP program using `sendevent`, with `input motionevent` as a fallback.
 Both paths use the same curve and eligible release tail for timed moves.

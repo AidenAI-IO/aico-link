@@ -2,6 +2,7 @@ package agent
 
 import (
 	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/screen"
 	"aico-agent/internal/logging"
 	"bytes"
 	"context"
@@ -93,6 +94,10 @@ type postActionScreenshotTool struct {
 	// pointer is set for pointer tools in absolute mouse mode; the pointer's
 	// own movement is excluded from screen_changed.
 	pointer *pointerTracker
+	// screen is set for pointer tools: an action is not sent when the screen
+	// turned between portrait and landscape after the screenshot the model
+	// chose its coordinates on.
+	screen *screen.ScreenState
 	// grounding reports the live ui_grounding_enabled setting. When it is on,
 	// the final screenshot is marked with Set-of-Mark boxes so the model can
 	// tap a detected element's center. Nil means off.
@@ -177,8 +182,15 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	touchscreenRCALogf("post_action start inner=%q input_len=%d", t.inner.Name(), len(input))
 	timing := postActionTiming{tool: t.inner.Name(), started: time.Now()}
 	defer timing.log()
-	baselineImage := t.captureBaseline(ctx)
+	seenWidth, seenHeight, seenOK := t.screen.ScreenshotDimensions()
+	baselineOutput, baselineImage := t.captureBaseline(ctx)
 	timing.mark(&timing.baselineMs)
+	if seenOK && baselineImage != nil && !releasesHeldContact(t.inner.Name(), input) {
+		bounds := baselineImage.Bounds()
+		if (seenWidth > seenHeight) != (bounds.Dx() > bounds.Dy()) {
+			return t.turnedScreenResult(seenWidth, seenHeight, bounds, baselineOutput), nil
+		}
+	}
 	pointerBefore := t.pointer.current()
 	actionOutput, err := t.inner.Call(ctx, input)
 	timing.mark(&timing.actionMs)
@@ -535,25 +547,56 @@ func drawMarkerRing(img *image.RGBA, centerX, centerY, radius, thickness int, c 
 	}
 }
 
-func (t *postActionScreenshotTool) captureBaseline(ctx context.Context) image.Image {
+func (t *postActionScreenshotTool) captureBaseline(ctx context.Context) (string, image.Image) {
 	baselineCtx, _ := WithToolError(ctx)
 	touchscreenRCALogf("post_action baseline start inner=%q", t.inner.Name())
 	output, err := t.screenshot.Call(baselineCtx, "{}")
 	if err != nil {
 		touchscreenRCALogf("post_action baseline unavailable inner=%q err_type=%T", t.inner.Name(), err)
-		return nil
+		return "", nil
 	}
 	if te := ToolErrorFromContext(baselineCtx); te != nil {
 		touchscreenRCALogf("post_action baseline unavailable inner=%q code=%q category=%q", t.inner.Name(), te.Code, te.Category)
-		return nil
+		return "", nil
 	}
 	img, _ := extractScreenshotImage(output)
 	if img == nil {
 		touchscreenRCALogf("post_action baseline unavailable inner=%q reason=invalid_screenshot", t.inner.Name())
-		return nil
+		return "", nil
 	}
 	touchscreenRCALogf("post_action baseline completed inner=%q", t.inner.Name())
-	return img
+	return output, img
+}
+
+// releasesHeldContact reports whether input ends a contact that drag_start
+// left down. Such a call must still run after the screen turned: holding it
+// back would leave the contact pressed and block every other pointer action.
+func releasesHeldContact(toolName, input string) bool {
+	if toolName != "touch_gesture" {
+		return false
+	}
+	var args struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(input), &args) == nil && strings.EqualFold(strings.TrimSpace(args.Type), "drag_release")
+}
+
+// turnedScreenResult returns the pre-action screenshot without sending the
+// action: its coordinates were chosen on a screen that has since turned
+// between portrait and landscape, so they point somewhere else now.
+func (t *postActionScreenshotTool) turnedScreenResult(seenWidth, seenHeight int, now image.Rectangle, baselineOutput string) string {
+	logging.Infof("agent", "tools_post_action_screenshot", "screen turned before action: tool=%s seen=%dx%d now=%dx%d; action not sent", t.inner.Name(), seenWidth, seenHeight, now.Dx(), now.Dy())
+	var result screenshotResult
+	_ = json.Unmarshal([]byte(baselineOutput), &result)
+	changed := true
+	payload := postActionScreenshotResult{
+		screenshotResult: result,
+		ActionOutput: fmt.Sprintf("not sent: the screen turned from %dx%d to %dx%d after the screenshot these coordinates were chosen on, so they no longer point at the same target. Choose the target again on this screenshot.",
+			seenWidth, seenHeight, now.Dx(), now.Dy()),
+		ScreenChanged: &changed,
+	}
+	out, _ := json.Marshal(payload)
+	return string(out)
 }
 
 func wrapPostActionSubtoolError(ctx context.Context, te *ToolError, format string, args ...any) string {
@@ -587,6 +630,13 @@ func postActionErrorCode(err error) string {
 // withPointerTracker shares an absolute-mode pointer tracker with this tool.
 func (t *postActionScreenshotTool) withPointerTracker(pointer *pointerTracker) *postActionScreenshotTool {
 	t.pointer = pointer
+	return t
+}
+
+// withTurnedScreenGuard stops a pointer action whose screenshot was taken
+// before the screen turned between portrait and landscape.
+func (t *postActionScreenshotTool) withTurnedScreenGuard(screenState *screen.ScreenState) *postActionScreenshotTool {
+	t.screen = screenState
 	return t
 }
 
