@@ -73,15 +73,23 @@ ensure_auth() {
     ( umask 077; printf '%s\n' "$TOKEN" > "$TOKEN_FILE" )
 }
 
-# Run a command on the board as root; always returns its stdout.
+# Run a command on the board as root; only return stdout from successful calls.
 rsh() {
-    bcurl -m "${2:-90}" -X POST -H 'Content-Type: application/json' "${AGENT}/api/tools/shell" \
-        -d "$(jq -nc --arg c "$1" '{input:{command:$c}}')" | jq -r '.output // .error // empty'
+    local response
+    response=$(bcurl -f -m "${2:-90}" -X POST -H 'Content-Type: application/json' "${AGENT}/api/tools/shell" \
+        -d "$(jq -nc --arg c "$1" '{input:{command:$c}}')") || return 1
+    jq -er 'select(.is_error != true) | .output | strings' <<< "$response"
 }
 val() { printf '%s\n' "$OUT" | sed -n "s/^$1=//p" | head -1; }
 agent_up() { bcurl -m 4 -o /dev/null -w '%{http_code}' "${AGENT}/api/history" 2>/dev/null | grep -q 200; }
 now_ms() { python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || echo "$(date -u +%s)000"; }
-boot_id() { rsh 'cat /proc/sys/kernel/random/boot_id 2>/dev/null' 15 | tr -d '[:space:]'; }
+boot_id() {
+    local id
+    id=$(rsh 'cat /proc/sys/kernel/random/boot_id 2>/dev/null' "${1:-15}") || return 0
+    if [[ $id =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        printf '%s\n' "$id"
+    fi
+}
 
 for tool in curl jq; do
     command -v "$tool" >/dev/null || { echo "missing host tool: $tool" >&2; exit 2; }
@@ -237,15 +245,19 @@ rm -rf "$T"; true')
 
 # Wait until the Agent answers with a boot ID other than $1. An Agent that
 # stays up, or only restarts, keeps the old boot ID and never satisfies this.
-# Returns 0 on a new boot, 1 on timeout (about 6 minutes).
+# A successful boot ID probe also confirms Agent reachability, so poll it directly.
+# Returns 0 on a new boot, 1 after the six-minute wait budget expires.
 wait_new_boot() {
-    local old=$1 id _
-    for _ in $(seq 1 120); do
-        if agent_up; then
-            id=$(boot_id)
-            if [ -n "$id" ] && [ "$id" != "$old" ]; then NEW_BOOT_ID=$id; return 0; fi
+    local old=$1 deadline=$(( SECONDS + 360 )) remaining id
+    while (( (remaining = deadline - SECONDS) > 0 )); do
+        id=$(boot_id "$(( remaining < 15 ? remaining : 15 ))")
+        if (( SECONDS < deadline )) && [ -n "$id" ] && [ "$id" != "$old" ]; then
+            NEW_BOOT_ID=$id
+            return 0
         fi
-        sleep 3
+        remaining=$(( deadline - SECONDS ))
+        (( remaining > 0 )) || break
+        sleep "$(( remaining < 3 ? remaining : 3 ))"
     done
     return 1
 }
@@ -255,11 +267,10 @@ cmd_reboot() {
     local before ack
     before=$(boot_id)
     if [ -z "$before" ]; then fail "cannot read the board boot ID before rebooting"; return 1; fi
-    ack=$(rsh '(sleep 2; systemctl reboot) >/dev/null 2>&1 & echo reboot-scheduled' 15)
-    case "$ack" in
-        *reboot-scheduled*) ;;
-        *) fail "the board did not accept the reboot request (${ack:-no answer})"; return 1 ;;
-    esac
+    if ! ack=$(rsh '(sleep 2; systemctl reboot) >/dev/null 2>&1 & echo reboot-scheduled' 15) || [ "$ack" != reboot-scheduled ]; then
+        fail "the board did not accept the reboot request (${ack:-no answer})"
+        return 1
+    fi
     say "  info  rebooting (boot ID ${before}), waiting for a new boot..."
     if ! wait_new_boot "$before"; then
         fail "the board did not come back with a new boot ID within 6 minutes"
