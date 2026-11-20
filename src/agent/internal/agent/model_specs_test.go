@@ -265,16 +265,22 @@ func TestModelsDevCatalogCachedAcrossManagers(t *testing.T) {
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		_, _ = io.WriteString(w, `{"anthropic":{"models":{"claude-a":{"limit":{"context":1000,"output":100}},"claude-b":{"limit":{"context":2000,"output":200}}}}}`)
+		_, _ = io.WriteString(w, `{"anthropic":{"models":{"claude-a":{"limit":{"context":1000,"output":100},"cost":{"input":1,"output":2}},"claude-b":{"limit":{"context":2000,"output":200}}}}}`)
 	}))
 	defer server.Close()
 
+	pricing := NewModelManager(ModelConfig{Provider: "anthropic", Model: "claude-a"}, ProxyConfig{},
+		WithModelsDevURL(server.URL), WithProviderMetadataHTTPClient(server.Client()))
+	pricing.prefetchModelsDevPricing()
 	for _, modelName := range []string{"claude-a", "claude-b"} {
 		mgr := NewModelManager(ModelConfig{Provider: "anthropic", Model: modelName}, ProxyConfig{},
 			WithModelsDevURL(server.URL), WithProviderMetadataHTTPClient(server.Client()))
 		if _, err := mgr.fetchModelsDevModelSpec(context.Background()); err != nil {
 			t.Fatalf("fetchModelsDevModelSpec(%s): %v", modelName, err)
 		}
+	}
+	if _, ok := modelsDevPriceKeyForConfig(pricing.config).estimate(pricing.cachedModelsDevCatalog(), 10, 0, 0, 5, false); !ok {
+		t.Fatal("the catalog used for capability discovery did not supply a price")
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("models.dev requests = %d, want one catalog fetch shared across managers", got)

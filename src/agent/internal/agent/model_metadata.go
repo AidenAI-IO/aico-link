@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,8 @@ import (
 )
 
 const providerModelMetadataTimeout = 5 * time.Second
+const modelsDevCatalogTimeout = 20 * time.Second
+const modelsDevCatalogMaxAge = 24 * time.Hour
 const providerModelMetadataCacheVersion = 1
 const maxModelsDevCatalogBytes = 8 * 1024 * 1024
 
@@ -41,6 +44,7 @@ func providerSupportsModelMetadata(provider string) bool {
 }
 
 func (m *ModelManager) prefetchProviderModelSpecIfNeeded() {
+	m.prefetchModelsDevPricing()
 	if !m.needsProviderModelMetadata() {
 		return
 	}
@@ -95,7 +99,11 @@ func (m *ModelManager) cachedProviderModelSpec() model.ModelSpec {
 }
 
 func (m *ModelManager) fetchProviderModelSpecInBackground() {
-	ctx, cancel := context.WithTimeout(context.Background(), providerModelMetadataTimeout)
+	timeout := providerModelMetadataTimeout
+	if m.providerMetadataEndpoint() == m.modelsDevEndpoint() {
+		timeout = modelsDevCatalogTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	spec, err := m.fetchProviderModelSpec(ctx)
@@ -274,12 +282,14 @@ func (m *ModelManager) fetchProviderModelSpec(ctx context.Context) (model.ModelS
 const defaultModelsDevURL = "https://models.dev/api.json"
 
 type modelsDevProvider struct {
+	Name   string                    `json:"name"`
 	API    string                    `json:"api"`
 	Models map[string]modelsDevModel `json:"models"`
 }
 
 type modelsDevModel struct {
 	ID               string                     `json:"id"`
+	Cost             *modelsDevCost             `json:"cost"`
 	Reasoning        bool                       `json:"reasoning"`
 	ReasoningOptions []modelsDevReasoningOption `json:"reasoning_options"`
 	Temperature      *bool                      `json:"temperature"`
@@ -300,12 +310,16 @@ type modelsDevReasoningOption struct {
 	Max    int      `json:"max"`
 }
 
-func (m *ModelManager) fetchModelsDevModelSpec(ctx context.Context) (model.ModelSpec, error) {
+func (m *ModelManager) modelsDevEndpoint() string {
 	endpoint := strings.TrimSpace(m.modelsDevURL)
 	if endpoint == "" {
 		endpoint = defaultModelsDevURL
 	}
-	catalog, err := m.loadModelsDevCatalog(ctx, endpoint)
+	return endpoint
+}
+
+func (m *ModelManager) fetchModelsDevModelSpec(ctx context.Context) (model.ModelSpec, error) {
+	catalog, err := m.loadModelsDevCatalog(ctx, m.modelsDevEndpoint())
 	if err != nil {
 		return model.ModelSpec{}, err
 	}
@@ -368,28 +382,51 @@ func (m *ModelManager) fetchModelsDevModelSpec(ctx context.Context) (model.Model
 	return spec, nil
 }
 
-func (m *ModelManager) loadModelsDevCatalog(ctx context.Context, endpoint string) (map[string]modelsDevProvider, error) {
+func (m *ModelManager) startModelsDevCatalog(endpoint string) *modelsDevCatalogCacheEntry {
 	pending := &modelsDevCatalogCacheEntry{ready: make(chan struct{})}
 	actual, loaded := modelsDevCatalogCache.LoadOrStore(endpoint, pending)
 	entry := actual.(*modelsDevCatalogCacheEntry)
-	if loaded {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-entry.ready:
-			return entry.catalog, entry.err
-		}
+	if !loaded {
+		// Complete the shared load even if its first caller stops waiting.
+		go m.populateModelsDevCatalog(endpoint, entry)
 	}
+	return entry
+}
 
-	entry.catalog, entry.err = m.downloadModelsDevCatalog(ctx, endpoint)
+func (m *ModelManager) loadModelsDevCatalog(ctx context.Context, endpoint string) (map[string]modelsDevProvider, error) {
+	entry := m.startModelsDevCatalog(endpoint)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-entry.ready:
+		return entry.catalog, entry.err
+	}
+}
+
+func (m *ModelManager) populateModelsDevCatalog(endpoint string, entry *modelsDevCatalogCacheEntry) {
+	ctx, cancel := context.WithTimeout(context.Background(), modelsDevCatalogTimeout)
+	defer cancel()
+	entry.catalog, entry.err = m.readOrDownloadModelsDevCatalog(ctx, endpoint)
 	if entry.err != nil {
+		logging.Warnf("agent", "model_spec", "load models.dev catalog: %v", entry.err)
 		modelsDevCatalogCache.Delete(endpoint)
 	}
 	close(entry.ready)
-	return entry.catalog, entry.err
 }
 
-func (m *ModelManager) downloadModelsDevCatalog(ctx context.Context, endpoint string) (map[string]modelsDevProvider, error) {
+func (m *ModelManager) readOrDownloadModelsDevCatalog(ctx context.Context, endpoint string) (map[string]modelsDevProvider, error) {
+	var cachePath string
+	if m.providerMetadataCachePath != "" && endpoint == defaultModelsDevURL {
+		cachePath = filepath.Join(filepath.Dir(m.providerMetadataCachePath), "models_dev_catalog.json")
+		if info, err := os.Stat(cachePath); err == nil && info.Size() <= maxModelsDevCatalogBytes &&
+			time.Since(info.ModTime()) < modelsDevCatalogMaxAge {
+			if data, err := os.ReadFile(cachePath); err == nil {
+				if catalog, err := decodeModelsDevCatalog(data); err == nil {
+					return catalog, nil
+				}
+			}
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -408,12 +445,28 @@ func (m *ModelManager) downloadModelsDevCatalog(ctx context.Context, endpoint st
 	if err != nil {
 		return nil, fmt.Errorf("read models.dev catalog: %w", err)
 	}
+	catalog, err := decodeModelsDevCatalog(body)
+	if err != nil {
+		return nil, err
+	}
+	if cachePath != "" {
+		if err := writeFileAtomic(cachePath, body, 0o644); err != nil {
+			logging.Warnf("agent", "model_spec", "write models.dev catalog: %v", err)
+		}
+	}
+	return catalog, nil
+}
+
+func decodeModelsDevCatalog(body []byte) (map[string]modelsDevProvider, error) {
 	if len(body) > maxModelsDevCatalogBytes {
 		return nil, fmt.Errorf("models.dev catalog exceeds %d-byte limit", maxModelsDevCatalogBytes)
 	}
 	var catalog map[string]modelsDevProvider
 	if err := json.Unmarshal(body, &catalog); err != nil {
 		return nil, fmt.Errorf("decode models.dev catalog: %w", err)
+	}
+	if len(catalog) == 0 {
+		return nil, errors.New("models.dev catalog is empty")
 	}
 	return catalog, nil
 }

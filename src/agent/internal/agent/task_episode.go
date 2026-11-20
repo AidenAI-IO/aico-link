@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,6 +32,8 @@ type taskEpisodeIndexCache struct {
 
 type TaskEpisode struct {
 	ID                  string                 `yaml:"id" json:"id"`
+	TaskID              string                 `yaml:"task_id,omitempty" json:"task_id,omitempty"`
+	TaskCreatedAt       string                 `yaml:"task_created_at,omitempty" json:"task_created_at,omitempty"`
 	Status              string                 `yaml:"status" json:"status"`
 	StartedAt           string                 `yaml:"started_at" json:"started_at"`
 	EndedAt             string                 `yaml:"ended_at" json:"ended_at"`
@@ -101,6 +104,7 @@ type episodeIndex struct {
 
 type episodeIndexEntry struct {
 	ID             string   `yaml:"id" json:"id"`
+	TaskID         string   `yaml:"task_id,omitempty" json:"task_id,omitempty"`
 	File           string   `yaml:"file" json:"file"`
 	EventsFile     string   `yaml:"events_file" json:"events_file"`
 	Status         string   `yaml:"status" json:"status"`
@@ -336,6 +340,17 @@ func (r *EpisodeRecorder) Finish(output string, metrics *RunMetrics, runErr erro
 		if metrics.CostUSD != nil {
 			episode.Extra["cost_usd"] = *metrics.CostUSD
 			episode.Extra["cost_source"] = metrics.CostSource
+		} else if calls := metrics.costReportedCalls + metrics.costFallbackCalls; calls > 0 {
+			// Keep the history amount separate from the provider-only billing
+			// field consumed by benchmark metrics.
+			if total, ok := costMetricFloat(metrics.reportedCostUSD + metrics.fallbackCostUSD); ok {
+				episode.Extra["history_cost_usd"] = total
+				episode.Extra["history_cost_calls"] = calls
+				if metrics.catalogCostCalls > 0 {
+					episode.Extra["history_catalog_calls"] = metrics.catalogCostCalls
+					episode.Extra["history_catalog_rates"] = strings.Join(metrics.catalogRates, "\n")
+				}
+			}
 		}
 		if metrics.CachedPromptTokens > 0 {
 			episode.Extra["cached_prompt_tokens"] = metrics.CachedPromptTokens
@@ -369,6 +384,13 @@ func (r *EpisodeRecorder) Finish(output string, metrics *RunMetrics, runErr erro
 	}
 	episode.Outcome.FinalState = inferEpisodeFinalState(episode.Events)
 	episode.DeviceScope = mergeEpisodeDeviceScope(episode.DeviceScope, episode.Events)
+	if episode.Extra == nil {
+		episode.Extra = make(map[string]interface{})
+	}
+	episode.Extra["last_tool_error"] = lastHistoryToolError(episode.Events)
+	if errors.Is(runErr, context.Canceled) {
+		episode.Extra["run_cancelled"] = true
+	}
 	return episode
 }
 
@@ -396,12 +418,16 @@ func (r *EpisodeRecorder) append(event TaskEpisodeEvent) {
 func (r *EpisodeRecorder) baseEpisodeLocked(status string, endedAt time.Time) TaskEpisode {
 	episode := TaskEpisode{
 		ID:                  r.id,
+		TaskID:              r.request.TaskID,
 		Status:              status,
 		StartedAt:           r.startedAt.Format(time.RFC3339Nano),
 		UserGoal:            strings.TrimSpace(r.request.Input),
 		DeviceScope:         r.deviceScope(),
 		RetrievedMemoryRefs: r.referencedMemoryIDsLocked(),
 		Events:              append([]TaskEpisodeEvent(nil), r.events...),
+	}
+	if !r.request.TaskCreatedAt.IsZero() {
+		episode.TaskCreatedAt = r.request.TaskCreatedAt.UTC().Format(time.RFC3339Nano)
 	}
 	if !endedAt.IsZero() {
 		episode.EndedAt = endedAt.Format(time.RFC3339Nano)
@@ -751,13 +777,8 @@ func (s *TaskEpisodeStore) getFromIndex(index episodeIndex, id string) (TaskEpis
 		if entry.ID != id {
 			continue
 		}
-		path := filepath.Join(s.rootDir, entry.File)
-		data, err := os.ReadFile(path)
+		episode, err := s.readEpisodeMetadata(entry)
 		if err != nil {
-			return TaskEpisode{}, true, err
-		}
-		var episode TaskEpisode
-		if err := yaml.Unmarshal(data, &episode); err != nil {
 			return TaskEpisode{}, true, err
 		}
 		if entry.EventsFile != "" {
@@ -770,6 +791,16 @@ func (s *TaskEpisodeStore) getFromIndex(index episodeIndex, id string) (TaskEpis
 		return episode, true, nil
 	}
 	return TaskEpisode{}, false, nil
+}
+
+func (s *TaskEpisodeStore) readEpisodeMetadata(entry episodeIndexEntry) (TaskEpisode, error) {
+	data, err := os.ReadFile(filepath.Join(s.rootDir, entry.File))
+	if err != nil {
+		return TaskEpisode{}, err
+	}
+	var episode TaskEpisode
+	err = yaml.Unmarshal(data, &episode)
+	return episode, err
 }
 
 func (s *TaskEpisodeStore) RebuildIndex(ctx context.Context) error {
@@ -952,6 +983,32 @@ func (s *TaskEpisodeStore) cachedIndex(signature, logSignature memoryFileSignatu
 	return cloneEpisodeIndex(s.indexCache.index), true
 }
 
+// taskHistoryAvailability only inspects the index. Keep the background-task
+// poll from cloning the cached entries or reading individual task records.
+func (s *TaskEpisodeStore) taskHistoryAvailability(active map[string]bool) *bool {
+	if s == nil {
+		available := false
+		return &available
+	}
+	signature, logSignature, err := s.indexSignatures()
+	if err != nil {
+		return nil
+	}
+	s.cacheMu.Lock()
+	if cached := s.indexCache; cached.valid && cached.signature == signature && cached.logSignature == logSignature {
+		available := hasTaskHistory(cached.index, active)
+		s.cacheMu.Unlock()
+		return &available
+	}
+	s.cacheMu.Unlock()
+	index, err := s.loadIndex()
+	if err != nil {
+		return nil
+	}
+	available := hasTaskHistory(index, active)
+	return &available
+}
+
 func (s *TaskEpisodeStore) storeIndexCache(signature, logSignature memoryFileSignature, index episodeIndex) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
@@ -1124,6 +1181,7 @@ func (s *TaskEpisodeStore) indexEntryForEpisode(episode TaskEpisode, dir string,
 	}
 	return episodeIndexEntry{
 		ID:             episode.ID,
+		TaskID:         episode.TaskID,
 		File:           filepath.ToSlash(relMeta),
 		EventsFile:     relEvents,
 		Status:         episode.Status,

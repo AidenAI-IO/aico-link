@@ -41,8 +41,9 @@ func (s *Server) agentTaskController() AgentTaskController {
 }
 
 type agentTaskListResponse struct {
-	Enabled bool             `json:"enabled"`
-	Tasks   []agenttask.Task `json:"tasks"`
+	Enabled    bool             `json:"enabled"`
+	Tasks      []agenttask.Task `json:"tasks"`
+	HasHistory *bool            `json:"has_history,omitempty"`
 }
 
 type agentTaskDetailResponse struct {
@@ -71,6 +72,7 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request) {
 		if tasks != nil {
 			response.Tasks = append(response.Tasks, tasks.Active()...)
 		}
+		response.HasHistory = s.episodeStore.taskHistoryAvailability(taskHistoryActiveIDs(response.Tasks))
 		writeJSON(w, response)
 	case rest == "order":
 		if r.Method != http.MethodPut {

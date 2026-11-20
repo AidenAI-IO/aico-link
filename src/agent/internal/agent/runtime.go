@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -151,6 +152,8 @@ type RunRequest struct {
 	// handler. It is optional so existing callers retain their current output.
 	StreamSink  stream.EventSink
 	StreamScope stream.EventScope
+	// TaskCreatedAt includes time spent in the background task queue.
+	TaskCreatedAt time.Time
 	// OnRunActive runs after the previous run and its resources have been
 	// preempted and this run owns the runtime gate. Callers can register
 	// request-scoped output here without that output being interrupted by this
@@ -268,6 +271,10 @@ type RunMetrics struct {
 	CostSource        string   `json:"cost_source,omitempty"`
 	costReportedCalls int
 	reportedCostUSD   float64
+	costFallbackCalls int
+	fallbackCostUSD   float64
+	catalogCostCalls  int
+	catalogRates      []string
 	// CachedPromptTokens accumulates provider-reported cached prompt tokens
 	// (usage.prompt_tokens_details.cached_tokens) across the run. The prompt-cache
 	// hit rate is CachedPromptTokens / PromptTokens.
@@ -373,6 +380,7 @@ type usageTrackingModel struct {
 	metrics         *RunMetrics
 	promptCapture   *telemetryPromptCapture
 	contextWindowFn ContextWindowFn
+	catalogEstimate func(map[string]any) (catalogPriceEstimate, bool)
 }
 
 func (m *usageTrackingModel) CallOptions() []chains.ChainCallOption { return m.inner.CallOptions() }
@@ -391,7 +399,7 @@ func (m *usageTrackingModel) Spec() model.ModelSpec {
 func (m *usageTrackingModel) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
 	startedAt := time.Now()
 	res, err := m.inner.GenerateContent(ctx, messages, options...)
-	recordModelCallMetrics(m.metrics, res, startedAt)
+	m.recordCallMetrics(res, startedAt)
 	if err == nil {
 		recordUsageMetrics(m.metrics, res)
 	}
@@ -414,7 +422,7 @@ func (m *usageTrackingModel) GenerateContentFromMessageList(ctx context.Context,
 
 	startedAt := time.Now()
 	res, err := inner.GenerateContentFromMessageList(ctx, messageList, options...)
-	recordModelCallMetrics(m.metrics, res, startedAt)
+	m.recordCallMetrics(res, startedAt)
 	if err == nil {
 		recordUsageMetrics(m.metrics, res)
 	}
@@ -422,6 +430,21 @@ func (m *usageTrackingModel) GenerateContentFromMessageList(ctx context.Context,
 		m.promptCapture.Record(ctx, startedAt, time.Now(), messages.ConvertMessageList(messageList), options, res, err, m.contextWindow())
 	}
 	return res, err
+}
+
+func (m *usageTrackingModel) recordCallMetrics(res *llms.ContentResponse, startedAt time.Time) {
+	if !recordModelCallMetrics(m.metrics, res, startedAt) || m.catalogEstimate == nil ||
+		res == nil || len(res.Choices) == 0 || res.Choices[0] == nil {
+		return
+	}
+	if estimate, ok := m.catalogEstimate(res.Choices[0].GenerationInfo); ok {
+		m.metrics.costFallbackCalls++
+		m.metrics.fallbackCostUSD += estimate.usd
+		m.metrics.catalogCostCalls++
+		if !slices.Contains(m.metrics.catalogRates, estimate.rate) {
+			m.metrics.catalogRates = append(m.metrics.catalogRates, estimate.rate)
+		}
+	}
 }
 
 func (m *usageTrackingModel) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
@@ -1084,12 +1107,14 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		metrics.TotalDuration = float64(time.Since(startTime).Milliseconds())
 		if episodeRecorder == nil && r.memoryPlane != nil {
 			retrieveReq := MemoryRetrieveRequest{
-				Input:        normalizedInput,
-				Attachments:  turnInput.Attachments,
-				ToolNames:    toolNamesFromTools(availableTools),
-				EpisodeID:    episodeID,
-				DeviceID:     defaultMemoryDeviceID,
-				CurrentHints: currentHints,
+				Input:         normalizedInput,
+				Attachments:   turnInput.Attachments,
+				ToolNames:     toolNamesFromTools(availableTools),
+				EpisodeID:     episodeID,
+				TaskID:        req.StreamScope.TaskID,
+				TaskCreatedAt: req.TaskCreatedAt,
+				DeviceID:      defaultMemoryDeviceID,
+				CurrentHints:  currentHints,
 			}
 			episodeRecorder = r.memoryPlane.NewEpisodeRecorder(retrieveReq, MemoryContext{})
 			if episodeRecorder != nil {
@@ -1128,6 +1153,14 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		}
 		return model.ModelSpec{}
 	}}
+	if manager, ok := r.models.(*ModelManager); ok {
+		key := modelsDevPriceKeyForConfig(cfg.Model)
+		if key.provider != "" {
+			m.catalogEstimate = func(info map[string]any) (catalogPriceEstimate, bool) {
+				return key.estimateUsage(manager.cachedModelsDevCatalog(), info)
+			}
+		}
+	}
 
 	sessionBeginStart := time.Now()
 	beginResult, err := r.beginSession(ctx, SessionBeginRequest{
@@ -1162,12 +1195,14 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	availableTools = r.availableTools()
 	availableTools = wrapSessionRecallTelemetry(availableTools, chunkRecalls)
 	retrieveReq := MemoryRetrieveRequest{
-		Input:        normalizedInput,
-		Attachments:  turnInput.Attachments,
-		ToolNames:    toolNamesFromTools(availableTools),
-		EpisodeID:    episodeID,
-		DeviceID:     defaultMemoryDeviceID,
-		CurrentHints: currentHints,
+		Input:         normalizedInput,
+		Attachments:   turnInput.Attachments,
+		ToolNames:     toolNamesFromTools(availableTools),
+		EpisodeID:     episodeID,
+		TaskID:        req.StreamScope.TaskID,
+		TaskCreatedAt: req.TaskCreatedAt,
+		DeviceID:      defaultMemoryDeviceID,
+		CurrentHints:  currentHints,
 	}
 	// Memories are no longer retrieved up front. The agent pulls what it needs
 	// on demand through the recall tools, which record the referenced IDs on the
@@ -2402,15 +2437,22 @@ func (h *runtimeCallbackHandler) HandleLLMGenerateContentEnd(ctx context.Context
 	recordUsageMetrics(h.metrics, res)
 }
 
-func recordModelCallMetrics(metrics *RunMetrics, res *llms.ContentResponse, startedAt time.Time) {
+// recordModelCallMetrics reports whether the call still needs a cost estimate.
+func recordModelCallMetrics(metrics *RunMetrics, res *llms.ContentResponse, startedAt time.Time) bool {
 	if metrics == nil {
-		return
+		return false
 	}
 	metrics.LLMCalls++
 	metrics.LLMTimeMs += float64(time.Since(startedAt)) / float64(time.Millisecond)
+	needsEstimate := false
 	if cost, ok := providerResponseCostUSD(res); ok {
 		metrics.costReportedCalls++
 		metrics.reportedCostUSD += cost
+	} else if cost, ok := telemetryCostDetails(res)["total"]; ok {
+		metrics.costFallbackCalls++
+		metrics.fallbackCostUSD += cost
+	} else {
+		needsEstimate = true
 	}
 	// One unpriced call makes the whole task's cost unknown. Never export a
 	// partial sum as a complete task bill, including after subsequent calls.
@@ -2421,25 +2463,25 @@ func recordModelCallMetrics(metrics *RunMetrics, res *llms.ContentResponse, star
 		metrics.CostUSD = &cost
 		metrics.CostSource = "provider_reported"
 	}
+	return needsEstimate
 }
 
 func providerResponseCostUSD(res *llms.ContentResponse) (float64, bool) {
 	if res == nil || len(res.Choices) == 0 || res.Choices[0] == nil {
 		return 0, false
 	}
-	info := res.Choices[0].GenerationInfo
-	valid := func(value any) (float64, bool) {
-		cost, ok := costMetricFloat(value)
-		return cost, ok && cost >= 0 && !math.IsNaN(cost) && !math.IsInf(cost, 0)
-	}
+	return providerCostUSD(res.Choices[0].GenerationInfo)
+}
+
+func providerCostUSD(info map[string]any) (float64, bool) {
 	for _, key := range []string{"cost_usd", "total_cost", "cost"} {
 		if value, exists := info[key]; exists {
-			return valid(value)
+			return costMetricFloat(value)
 		}
 	}
 	// Both components are required; estimated_cost is deliberately excluded.
-	input, inputOK := valid(firstMapValue(info, "input_cost", "prompt_cost"))
-	output, outputOK := valid(firstMapValue(info, "output_cost", "completion_cost"))
+	input, inputOK := costMetricFloat(firstMapValue(info, "input_cost", "prompt_cost"))
+	output, outputOK := costMetricFloat(firstMapValue(info, "output_cost", "completion_cost"))
 	total := input + output
 	return total, inputOK && outputOK && !math.IsInf(total, 0)
 }

@@ -50,9 +50,12 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 		AsyncEpisodeMaintenance: true,
 		UserActionHandler:       actionHandler,
 	}
-	if observation, ok := agenttask.TaskObservationFromContext(ctx); ok && observation.StreamSink != nil {
+	if observation, ok := agenttask.TaskObservationFromContext(ctx); ok {
 		request.StreamScope = stream.EventScope{TaskID: observation.Task.ID}
-		request.StreamSink = &backendCollaborationSink{sink: observation.StreamSink, taskContext: ctx}
+		request.TaskCreatedAt = observation.Task.CreatedAt
+		if observation.StreamSink != nil {
+			request.StreamSink = &backendCollaborationSink{sink: observation.StreamSink, taskContext: ctx}
+		}
 	}
 	var suppliedMu sync.Mutex
 	var suppliedSteer agenttask.SteerMessage
