@@ -69,6 +69,11 @@ type Capabilities struct {
 	// SupportedSampleRates lists output sample rates the provider supports.
 	SupportedSampleRates []int
 
+	// OutputChannels and OutputBitWidth declare a fixed PCM layout. Zero
+	// leaves that dimension to the caller's configured audio format.
+	OutputChannels int
+	OutputBitWidth int
+
 	// MaxTextLength is the maximum text length per request (0 = no limit).
 	MaxTextLength int
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -329,12 +330,12 @@ func (c *realtimeVoiceController) running() *RealtimeVoiceSession {
 }
 
 // chatAudioEnabled reports whether a typed chat request may use audio: a
-// prompt tone and a spoken reply. A text message is text only; it is spoken
-// only while a voice conversation runs, where the reply is part of that
-// conversation and plays on its route (the device, or the browser that
-// started it).
+// prompt tone and a spoken reply. Outside a voice conversation, text remains
+// silent unless an operator temporarily enables AICO_TEXT_CHAT_TTS=1. The
+// override uses the standalone TTS backend without opening the microphone;
+// an active voice conversation still owns its audio route and mute state.
 func (s *Server) chatAudioEnabled() bool {
-	return s.runningVoiceSession() != nil
+	return s.runningVoiceSession() != nil || os.Getenv("AICO_TEXT_CHAT_TTS") == "1"
 }
 
 // runningVoiceSession returns the running voice conversation, or nil.
@@ -466,11 +467,20 @@ func (s *Server) handleRealtimeVoice(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRealtimeVoiceStop serves POST /api/realtime/voice/stop. It ends the
-// session whichever route it uses.
+// session whichever route it uses. With ?tasks=1 it also stops the work the
+// conversation handed to the background agent, so "stop" ends everything the
+// user started, and nothing is announced afterwards.
 func (s *Server) handleRealtimeVoiceStop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+	if r.URL.Query().Get("tasks") == "1" {
+		if tasks := s.agentTaskController(); tasks != nil {
+			if cancelled := tasks.CancelAll(); len(cancelled) > 0 && s.logger != nil {
+				s.logger.Info("Voice stop cancelled %d background task(s)", len(cancelled))
+			}
+		}
 	}
 	s.stopRealtimeVoice()
 	writeJSON(w, s.RealtimeVoiceStatus())

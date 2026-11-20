@@ -55,6 +55,44 @@ func TestTTSBlockStreamReplacesToolSpeechBeforeNextResponse(t *testing.T) {
 	}
 }
 
+func TestTTSBlockStreamStopsPlaybackOnSynthesisFailure(t *testing.T) {
+	failure := errors.New("synthesis failed after PCM")
+	for _, canceled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "active", true: "canceled"}[canceled], func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			provider := &blockRecordingProvider{closeErr: failure}
+			backend := &blockRecordingPlayback{}
+			var latest latestTTSOutput
+			stream, err := beginManagedTTSBlockStream(ctx, tts.NewProviderManager(provider, nil), backend, Config{}, &latest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stream.interrupt()
+			stream.BeginSpeechBlock()
+			if _, err := stream.Write([]byte("First sentence.")); err != nil {
+				t.Fatal(err)
+			}
+			if canceled {
+				cancel()
+			}
+			if err := stream.closeAndWait(); !errors.Is(err, failure) {
+				t.Fatalf("close error = %v, want synthesis failure", err)
+			}
+			want := []string{"start", "stop"}
+			if canceled {
+				want = []string{"start"}
+			}
+			if got := backend.operations(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("playback operations = %v, want %v", got, want)
+			}
+			if !stream.emittedSpeech(failure) {
+				t.Fatal("partial speech was lost, allowing duplicate fallback playback")
+			}
+		})
+	}
+}
+
 func TestTTSBlockStreamReplacesConsecutiveTags(t *testing.T) {
 	provider := &blockRecordingProvider{}
 	backend := &blockRecordingPlayback{}
@@ -232,6 +270,7 @@ type blockRecordingProvider struct {
 	mu         sync.Mutex
 	sessions   []*blockRecordingSession
 	blockClose bool
+	closeErr   error
 	noPCM      bool
 	started    chan struct{}
 }
@@ -290,7 +329,7 @@ func (s *blockRecordingSession) Close() error {
 		<-s.ctx.Done()
 		return s.ctx.Err()
 	}
-	return nil
+	return s.provider.closeErr
 }
 func (s *blockRecordingSession) Abort() error { return nil }
 func (s *blockRecordingSession) Err() error   { return nil }

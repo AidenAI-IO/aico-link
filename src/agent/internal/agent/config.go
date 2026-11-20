@@ -1287,7 +1287,7 @@ func clearNonAllowedModelBaseURL(m *ModelConfig) {
 func normalizeTTSProvider(provider string) string {
 	switch normalized := strings.ToLower(strings.TrimSpace(provider)); normalized {
 	case "minimax-ws":
-		return defaultTTSProvider
+		return "minimax-cn"
 	default:
 		return normalized
 	}
