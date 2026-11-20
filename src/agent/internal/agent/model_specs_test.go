@@ -303,32 +303,40 @@ func TestModelsDevCatalogRetriesAfterFailure(t *testing.T) {
 		WithModelsDevURL(server.URL), WithProviderMetadataHTTPClient(server.Client()))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := manager.loadModelsDevCatalog(ctx, server.URL); err == nil {
-		t.Fatal("initial load should fail")
+	manager.cachedModelsDevCatalog()
+	current, ok := modelsDevCatalogCache.Load(server.URL)
+	if !ok {
+		t.Fatal("pricing lookup did not start the initial load")
 	}
-	current, _ := modelsDevCatalogCache.Load(server.URL)
 	failed := current.(*modelsDevCatalogCacheEntry)
+	select {
+	case <-failed.ready:
+		if failed.err == nil {
+			t.Fatal("initial load should fail")
+		}
+	case <-ctx.Done():
+		t.Fatalf("waiting for failed load: %v", ctx.Err())
+	}
 	if !failed.retryAt.After(time.Now()) {
 		t.Fatal("failed load did not enter backoff")
 	}
 	for range 5 {
-		manager.prefetchModelsDevPricing()
+		if manager.cachedModelsDevCatalog() != nil {
+			t.Fatal("pricing lookup returned a catalog after a failed load")
+		}
 	}
 	if current, _ := modelsDevCatalogCache.Load(server.URL); current != failed || requests.Load() != 1 {
-		t.Fatal("prefetch retried during backoff")
+		t.Fatal("pricing lookup retried during backoff")
 	}
 
 	// Expire the backoff without waiting on a real-time timer.
 	expired := *failed
 	expired.retryAt = time.Now().Add(-time.Second)
 	modelsDevCatalogCache.Store(server.URL, &expired)
-	if manager.cachedModelsDevCatalog() != nil {
-		t.Fatal("history should see no catalog after a failed load")
+	manager.cachedModelsDevCatalog()
+	if current, _ := modelsDevCatalogCache.Load(server.URL); current == &expired {
+		t.Fatal("pricing lookup did not retry after backoff")
 	}
-	if current, _ := modelsDevCatalogCache.Load(server.URL); current != &expired {
-		t.Fatal("reading cached prices started a request")
-	}
-	manager.prefetchModelsDevPricing()
 	if _, err := manager.loadModelsDevCatalog(ctx, server.URL); err != nil {
 		t.Fatalf("load after backoff: %v", err)
 	}

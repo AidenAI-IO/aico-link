@@ -81,13 +81,9 @@ func (m *ModelManager) prefetchModelsDevPricing() {
 	m.startModelsDevCatalog(m.modelsDevEndpoint())
 }
 
-// cachedModelsDevCatalog is deliberately nonblocking for task runs and history.
+// cachedModelsDevCatalog starts an eligible load and returns without waiting.
 func (m *ModelManager) cachedModelsDevCatalog() map[string]modelsDevProvider {
-	entry, ok := modelsDevCatalogCache.Load(m.modelsDevEndpoint())
-	if !ok {
-		return nil
-	}
-	pending := entry.(*modelsDevCatalogCacheEntry)
+	pending := m.startModelsDevCatalog(m.modelsDevEndpoint())
 	select {
 	case <-pending.ready:
 		return pending.catalog

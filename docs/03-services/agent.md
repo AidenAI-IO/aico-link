@@ -72,10 +72,10 @@ coverage.
 
 On startup or a model change, a recognized endpoint can trigger a background
 catalog load. Reasoning metadata and cost estimates share the same catalog
-load in the Agent process. After a failed load, a later model run can retry
-after a one-minute backoff. The Agent reuses a local snapshot for up to 24
-hours at startup. Task history uses local data even when telemetry export
-is disabled. The list displays a dash when no amount is available and
+load in the Agent process. After a failed load, a model run or a task history
+read can retry after a one-minute backoff. The Agent reuses a local snapshot
+for up to 24 hours at startup. Task history uses local data even when telemetry
+export is disabled. The list displays a dash when no amount is available and
 appends `+` to a partial total. Task details show the cost source.
 
 The read-only endpoints are `GET /api/agent-tasks/history` (with
