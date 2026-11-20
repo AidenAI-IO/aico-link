@@ -23,11 +23,12 @@ readonly GO_ROOT=${DEBIAN_APPS_GO_ROOT:-${REPO_ROOT}/.toolchains/go1.26.0.linux-
 readonly GO_BUILD_CACHE=${DEBIAN_APPS_GO_BUILD_CACHE:-${REPO_ROOT}/.cache/debian-apps/go-build}
 readonly GO_MODULE_CACHE=${DEBIAN_APPS_GO_MODULE_CACHE:-${REPO_ROOT}/.cache/debian-apps/go-mod}
 readonly OPENCV_SOURCE_CACHE=${DEBIAN_APPS_OPENCV_CACHE:-${REPO_ROOT}/.cache/debian-apps/opencv}
+readonly EKHO_SOURCE_CACHE=${DEBIAN_APPS_EKHO_CACHE:-${REPO_ROOT}/.cache/debian-apps/ekho}
 readonly BUILD_EPOCH=${SOURCE_DATE_EPOCH:-1767360516}
 
 usage() {
     cat <<'EOF'
-Usage: scripts/debian-apps/build-apps.sh [all|builder|opencv|apps|cli-tools|audit]
+Usage: scripts/debian-apps/build-apps.sh [all|builder|opencv|ekho|apps|cli-tools|audit]
 
 Environment:
   DEBIAN_APPS_OUTPUT_DIR    Output directory (defaults to output/debian-apps).
@@ -36,6 +37,7 @@ Environment:
   DEBIAN_APPS_GO_BUILD_CACHE/DEBIAN_APPS_GO_MODULE_CACHE
                             Persistent writable Go caches.
   DEBIAN_APPS_OPENCV_CACHE  Persistent OpenCV-Mobile source archive cache.
+  DEBIAN_APPS_EKHO_CACHE    Persistent pinned Ekho source and voice-data cache.
   SOURCE_DATE_EPOCH         Reproducible Go build timestamp.
   RK_JOBS                   Parallel build jobs (defaults to all host CPUs).
 EOF
@@ -91,8 +93,9 @@ run_container_script() {
     image_id=$(docker image inspect "${BUILD_IMAGE}" --format '{{.Id}}')
     source_git_common_dir=$(git -C "${REPO_ROOT}" rev-parse \
         --path-format=absolute --git-common-dir 2>/dev/null || true)
-    if [ ! -x "${GO_ROOT}/bin/go" ] || [ ! -f "${GO_ROOT}/VERSION" ] ||
-        ! grep -qx 'go1.26.0' "${GO_ROOT}/VERSION"; then
+    if [ "${script}" != scripts/debian-apps/container-build-ekho.sh ] && {
+        [ ! -x "${GO_ROOT}/bin/go" ] || [ ! -f "${GO_ROOT}/VERSION" ] ||
+        ! grep -qx 'go1.26.0' "${GO_ROOT}/VERSION"; }; then
         echo "Pinned Go 1.26.0 toolchain is missing: ${GO_ROOT}" >&2
         exit 1
     fi
@@ -102,7 +105,7 @@ run_container_script() {
         exit 1
         ;;
     esac
-    mkdir -p "${GO_BUILD_CACHE}" "${GO_MODULE_CACHE}"
+    mkdir -p "${GO_BUILD_CACHE}" "${GO_MODULE_CACHE}" "${EKHO_SOURCE_CACHE}"
     # Forward the module-fetch configuration only. The bare `-e NAME` form leaves
     # a variable undefined in the container when the host has not set it, so the
     # image defaults still apply. Without this the runner's GOPROXY stops at the
@@ -121,6 +124,7 @@ run_container_script() {
         -e "DEBIAN_APPS_BUILD_IMAGE_ID=${image_id}"
         -e "RK_JOBS=${JOBS}"
         -e "SOURCE_DATE_EPOCH=${BUILD_EPOCH}"
+        -e "DEBIAN_APPS_EKHO_CACHE=/ekho-cache"
         -e GOPROXY
         -e GONOPROXY
         -e GOPRIVATE
@@ -129,11 +133,14 @@ run_container_script() {
         -v "${REPO_ROOT}:/work"
         -v "${REPO_ROOT}:${REPO_ROOT}:ro"
         -v "${OUTPUT_DIR}:/out"
-        -v "${GO_ROOT}:/usr/local/go:ro"
+        -v "${EKHO_SOURCE_CACHE}:/ekho-cache"
         -v "${GO_BUILD_CACHE}:/go-build-cache"
         -v "${GO_MODULE_CACHE}:/go-mod-cache"
         -w /work
     )
+    if [ "${script}" != scripts/debian-apps/container-build-ekho.sh ]; then
+        docker_args+=(-v "${GO_ROOT}:/usr/local/go:ro")
+    fi
     if [ -n "${source_git_common_dir}" ]; then
         docker_args+=(
             -v "${source_git_common_dir}:${source_git_common_dir}:ro"
@@ -167,7 +174,7 @@ main() {
         usage
         return
         ;;
-    all | builder | opencv | apps | cli-tools | audit)
+    all | builder | opencv | ekho | apps | cli-tools | audit)
         ;;
     *)
         usage >&2
@@ -198,6 +205,9 @@ main() {
         ;;
     apps)
         run_apps
+        ;;
+    ekho)
+        run_container_script scripts/debian-apps/container-build-ekho.sh
         ;;
     cli-tools)
         run_cli_tools

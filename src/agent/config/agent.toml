@@ -322,15 +322,12 @@ provider = "openai-main"
 
 # Text-to-Speech (TTS) configuration
 # Required when input_mode = "stt"
-[voice_settings.classic.tts.providers.minimax-main]
-type = "minimax-cn"
-api_key = "$MINIMAX_API_KEY"
-voice_id = "male-qn-qingse"   # Voice ID from Minimax
-emotion = "happy"             # Emotion: happy, sad, angry, etc.
+[voice_settings.classic.tts.providers.ekho-local]
+type = "ekho"                # Local Ekho CLI and Mandarin voice data required
 
 [voice_settings.classic.tts]
-provider = "minimax-main"
-# speed = 1.0                 # Speech speed: 0.5 - 2.0
+provider = "ekho-local"
+# speed = 1.0                 # 0.5 - 2.0; Ekho baseline: -s 20 --english-speed -10 -a 0
 
 # Audio service configuration for Classic Mode
 [voice_settings.classic.audio]
