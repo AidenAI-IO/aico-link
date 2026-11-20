@@ -19,6 +19,10 @@ async function loadDecisionPage({catalogAvailable = true} = {}) {
   const el = (tag, options = {}, children = []) => ({
     tag, options, children, value: options.attrs?.value || '', listeners: {}, dataset: {},
     addEventListener(name, listener) { this.listeners[name] = listener; },
+    setAttribute(name, value) { (this.options.attrs ||= {})[name] = value; },
+    removeAttribute(name) { delete this.options.attrs?.[name]; },
+    classList: {toggle() {}},
+    scrollIntoView() {},
   });
   const mocks = {
     '../data.js': {
@@ -28,7 +32,11 @@ async function loadDecisionPage({catalogAvailable = true} = {}) {
         calls.push({path, body: options?.body ? JSON.parse(options.body) : null});
         if (path.startsWith('/api/models?')) {
           if (!catalogAvailable) throw new Error('catalog unavailable');
-          return {models: [{id: 'vendor/jev-special', name: 'Vendor: Jev'}]};
+          return {models: [
+            {id: 'vendor/jev-special', name: 'Vendor: Jev'},
+            {id: 'vendor/other-decision', name: 'Other Decision'},
+            {id: 'vendor/jev-next', name: 'Vendor: Jev Next'},
+          ]};
         }
         return {ok: true};
       },
@@ -90,12 +98,11 @@ test('OpenRouter model suggestions assist free input without changing the saved 
   model.value = 'jev';
   await model.listeners.focus();
   assert.equal(new URL(calls[0].path, 'https://device.local').searchParams.get('output_modalities'), 'decisions');
-  const suggestions = find(page, node => node.options?.attrs?.id === model.options.attrs.list);
-  assert.ok(suggestions.children.some(option => option.options.attrs.value === 'vendor/jev-special'));
+  const suggestions = find(page, node => node.options?.attrs?.id === model.options.attrs['aria-controls']);
+  assert.deepEqual(suggestions.children.map(option => option.options.data.value), ['vendor/jev-special', 'vendor/jev-next']);
   assert.equal(model.value, 'jev', 'loading suggestions must not replace typed text');
   assert.equal(patches.length, 0, 'suggestions must not save a model automatically');
-  model.value = 'vendor/jev-special';
-  await model.listeners.change();
+  await suggestions.children[0].options.on.click();
   const baseURL = find(page, 'edit-decision.base_url');
   baseURL.value = 'https://new-router.example/v1';
   await baseURL.listeners.change();
@@ -118,6 +125,34 @@ test('OpenRouter model suggestions assist free input without changing the saved 
   resetModel.value = '';
   await resetModel.listeners.change();
   assert.equal(patches.at(-1).patch.decision.model, null, 'clearing the input must restore Jev');
+});
+
+test('model suggestions support keyboard navigation, Escape, blur, and input composition', async () => {
+  const {page, patches} = await loadDecisionPage();
+  const model = find(page, 'edit-decision.model');
+  model.value = 'jev';
+  await model.listeners.focus();
+  const list = find(page, node => node.options?.attrs?.role === 'listbox');
+  const key = (value, options = {}) => model.listeners.keydown({key: value, preventDefault() {}, ...options});
+  key('ArrowDown', {isComposing: true});
+  assert.equal(model.options.attrs['aria-activedescendant'], undefined);
+  key('ArrowDown');
+  assert.equal(list.children[0].options.attrs['aria-selected'], 'true');
+  key('Escape');
+  assert.equal(list.hidden, true);
+  assert.equal(patches.length, 0);
+  key('ArrowUp');
+  assert.equal(list.children[1].options.attrs['aria-selected'], 'true');
+  key('Enter');
+  assert.equal(patches.at(-1).patch.decision.model, 'vendor/jev-next');
+  assert.equal(list.hidden, true);
+  const current = find(page, 'edit-decision.model');
+  await current.listeners.focus();
+  current.listeners.blur();
+  assert.equal(current.options.attrs['aria-expanded'], 'false');
+  current.value = 'unknown';
+  current.listeners.input();
+  assert.equal(current.options.attrs['aria-expanded'], 'false');
 });
 
 test('a failed model catalog does not prevent saving a model ID or clearing the Base URL', async () => {

@@ -773,35 +773,112 @@ export async function decisionPage(context) {
         type, value: decision()[key] || '', inputmode: type === 'url' ? 'url' : 'text',
         autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'done',
         placeholder: resolve(placeholder), 'aria-label': resolve(label),
-        list: suggestions ? listID : null,
+        role: suggestions ? 'combobox' : null,
+        'aria-autocomplete': suggestions ? 'list' : null,
+        'aria-controls': suggestions ? listID : null,
+        'aria-expanded': suggestions ? 'false' : null,
       },
       data: {action: `edit-decision.${key}`},
     });
-    input.addEventListener('keydown', event => {
-      if (event.key === 'Enter') input.blur();
-    });
-    input.addEventListener('change', async () => {
+    let submitted = input.value;
+    const commit = async () => {
       const value = input.value.trim();
-      if (value === (decision()[key] || '')) return;
+      if (value === submitted) return;
+      submitted = value;
       const outcome = await saver.change(`decision.${key}`, {decision: {[key]: value || null}});
-      if (outcome === 'invalid' || outcome === 'failed') input.value = decision()[key] || '';
-    });
-    const list = suggestions ? el('datalist', {attrs: {id: listID}}) : null;
+      if (outcome === 'invalid' || outcome === 'failed') input.value = submitted = decision()[key] || '';
+    };
+    input.addEventListener('change', commit);
+    const list = suggestions ? el('div', {
+      class: 'ds-suggestions',
+      attrs: {id: listID, role: 'listbox', 'aria-label': resolve(label), hidden: 'hidden'},
+    }) : null;
+    let active = -1;
+    let matches = [];
+    const close = () => {
+      if (!list) return;
+      list.hidden = true;
+      active = -1;
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+    };
     if (list) {
-      const showSuggestions = models => replace(list, models.map(entry => el('option', {
-        attrs: {value: entry.id, label: entry.name || entry.id},
-      })));
+      let models = [];
+      let show = false;
+      const highlight = () => {
+        Array.from(list.children).forEach((option, index) => {
+          option.classList.toggle('ds-suggestion--active', index === active);
+          option.setAttribute('aria-selected', String(index === active));
+        });
+        if (active < 0) input.removeAttribute('aria-activedescendant');
+        else {
+          input.setAttribute('aria-activedescendant', `${listID}-${active}`);
+          list.children[active].scrollIntoView({block: 'nearest'});
+        }
+      };
+      const choose = entry => {
+        input.value = entry.id;
+        show = false;
+        close();
+        return commit();
+      };
+      const showSuggestions = () => {
+        const query = input.value.trim().toLowerCase();
+        matches = query ? models.filter(entry => `${entry.id} ${entry.name || ''}`.toLowerCase().includes(query)) : [];
+        active = -1;
+        replace(list, matches.map((entry, index) => el('button', {
+          class: 'ds-suggestion',
+          attrs: {id: `${listID}-${index}`, type: 'button', role: 'option', tabindex: '-1', 'aria-selected': 'false'},
+          data: {action: 'choose-decision-model', value: entry.id},
+          on: {click: () => choose(entry)},
+        }, [
+          text(entry.name || entry.id, 'ds-suggestion__name'),
+          entry.name && entry.name !== entry.id ? text(entry.id, 'ds-suggestion__id') : null,
+        ])));
+        if (!show || !matches.length) close();
+        else {
+          list.hidden = false;
+          input.setAttribute('aria-expanded', 'true');
+          input.removeAttribute('aria-activedescendant');
+        }
+      };
       const loadSuggestions = async () => {
         if (!decisionModels) {
           decisionModels = request('/api/models?provider=openrouter&output_modalities=decisions&order=top-weekly')
             .then(payload => payload.models || [])
             .catch(() => { decisionModels = null; return []; });
         }
-        showSuggestions(await decisionModels);
+        models = await decisionModels;
+        showSuggestions();
       };
       // The catalog only suggests IDs; network errors never prevent free input.
-      input.addEventListener('focus', loadSuggestions);
+      input.addEventListener('focus', () => { show = true; showSuggestions(); return loadSuggestions(); });
+      input.addEventListener('input', () => { show = true; showSuggestions(); });
+      input.addEventListener('blur', () => { show = false; close(); });
+      // Keep focus on the input until the option's click commits its full ID.
+      list.addEventListener('mousedown', event => event.preventDefault());
+      input.addEventListener('keydown', event => {
+        if (event.isComposing) return;
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          show = false;
+          close();
+        } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && matches.length) {
+          event.preventDefault();
+          if (list.hidden) { show = true; showSuggestions(); }
+          active = active < 0 ? (event.key === 'ArrowDown' ? 0 : matches.length - 1)
+            : (active + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+          highlight();
+        } else if (event.key === 'Enter' && !list.hidden && active >= 0) {
+          event.preventDefault();
+          choose(matches[active]);
+        } else if (event.key === 'Enter') input.blur();
+      });
       if (decisionModels) loadSuggestions();
+    } else {
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Enter' && !event.isComposing) input.blur();
+      });
     }
     return el('div', {class: 'ds-form-card'}, [
       text(label, 'ds-form-card__title'),
