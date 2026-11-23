@@ -53,6 +53,38 @@ device** (`/api/concurrent` is always 1) and needs no Docker.
    and API key); see `benchmark/config/agent.toml.template`. The repo contains no
    secrets.
 
+## Unicode text with ADBKeyBoard
+
+For Chinese, emoji, multiline text, and literal `%s`, install
+[ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard) on the target device once.
+The upstream v2.5-dev APK includes the receiver fix for recent Android versions:
+
+```bash
+curl -fL https://github.com/senzhk/ADBKeyBoard/releases/download/v2.5-dev/keyboardservice-debug.apk -o /tmp/ADBKeyboard.apk
+shasum -a 256 /tmp/ADBKeyboard.apk
+# Expected SHA-256: 41a8a0996d7397a2390d1ca16a75cb66c4a7bdaa89cf4e63600a4d3fb346fbbb
+adb -s YOUR_ADB_SERIAL install -r /tmp/ADBKeyboard.apk
+adb -s YOUR_ADB_SERIAL shell ime enable com.android.adbkeyboard/.AdbIME
+```
+
+Keep your usual keyboard selected. The bridge advertises `insert_text` through
+`GET /api/providers/mnk` when ADBKeyBoard is enabled; installation does not
+require a bridge restart. The Agent's `enter_text` then uses its existing native
+Unicode insertion and screen-verification path. Each insertion saves the current
+IME, selects ADBKeyBoard, waits for its editor connection, sends UTF-8 text as
+Base64 with a package-targeted `ADB_INPUT_B64` broadcast, and restores the original
+IME even on failure. Internal replacement requests send `ADB_CLEAR_TEXT` first.
+No clipboard is modified. The direct bridge `enter_text` tool also uses this
+route and verifies editable text through UIAutomator.
+
+Input is limited to 1–4096 UTF-16 units and rejects control characters except
+newline/tab. A broadcast response alone cannot prove that an app accepted text;
+inspect the field after verification failures or timeouts before retrying.
+The bridge does not replay an uncertain insertion. A restore failure is reported
+explicitly; select your normal IME with `adb shell ime set YOUR_ORIGINAL_IME`.
+Devices without an enabled ADBKeyBoard retain the ASCII fallback; the low-level
+`keyboard_text` primitive remains ASCII-only.
+
 ## Quick start
 
 ### Option 1: CLI (recommended)
@@ -281,15 +313,13 @@ a gesture on failure). Pass `{"list": true}` to see the full catalog.
 
 ## Known limitations
 
-- **Text input is English-only**: `adb input text` cannot type Chinese/IME
-  composed text; non-ASCII returns an explicit error, and a literal `%s` in the
-  text is typed as a space (the `input text` escaping convention). Chinese input
-  would need a clipboard/IME approach, not yet implemented. For ASCII input, the
-  bridge temporarily switches to a known enabled Latin IME when available, then
-  restores the previous IME.
+- **Unicode needs ADBKeyBoard**: install and enable the optional IME as described
+  above. Without it, `adb input text` supports only ASCII and interprets literal
+  `%s` as a space. That fallback temporarily selects a known enabled Latin IME
+  when available, then restores the previous IME.
 - **Text entry is verified best-effort**: `enter_text` reports `ok:true` only
   when Android UIAutomator
-  exposes matching editable field text after `adb input text`. The bridge dumps
+  exposes matching editable field text after insertion. The bridge dumps
   UIAutomator XML to a temporary device file and reads it back because some
   devices do not emit XML for `/dev/tty`. When verification is unavailable or
   the field text differs, it returns `ok:false` with a next-step suggestion and post-action

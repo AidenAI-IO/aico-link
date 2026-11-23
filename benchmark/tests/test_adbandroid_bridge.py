@@ -23,6 +23,16 @@ class FakeADBAndroidDevice:
         self.serial = "127.0.0.1:6555"
         self.last_input_text = ""
         self.window_text_override: str | None = None
+        self.unicode_input = False
+
+    def supports_text_insertion(self):
+        return self.unicode_input
+
+    def insert_text(self, text, replace=False):
+        if not self.unicode_input:
+            raise ADBCommandError("ADBKeyBoard is not enabled")
+        self.calls.append(("insert_text", text, replace))
+        self.last_input_text = text
 
     def check_device(self):
         self.calls.append(("check_device",))
@@ -132,6 +142,49 @@ def test_concurrent_returns_data_concurrent(bridge):
     assert status == 200
     assert body["data"]["concurrent"] == 1
     assert body["data"]["env_count"] == 1
+
+
+def test_unicode_capability_tracks_keyboard_availability_and_ownership(bridge):
+    server, device, url = bridge
+    assert _request(url, "/api/providers/mnk")[1]["capabilities"]["insert_text"] is False
+    device.unicode_input = True
+    server.state.acquire("owner")
+    assert _request(url, "/api/providers/mnk", task_id="owner")[1]["capabilities"]["insert_text"] is True
+    assert _request(url, "/api/providers/mnk", task_id="other")[0] == 429
+
+
+def test_native_unicode_mnk_requires_session_and_preserves_text(bridge):
+    server, device, url = bridge
+    device.unicode_input = True
+    payload = {"operation": "insert_text", "insert_text": {"text": "你好，Aico 😸 %s\n第二行", "replace": True}}
+    assert _request(url, "/api/providers/mnk", method="POST", payload=payload)[0] == 409
+    server.state.acquire("owner")
+    assert _request(url, "/api/providers/mnk", method="POST", payload=payload, task_id="other")[0] == 429
+    assert _request(url, "/api/providers/mnk", method="POST", payload=payload, task_id="owner") == (200, {"success": True})
+    assert ("insert_text", payload["insert_text"]["text"], True) in device.calls
+    assert not any(call[0] == "screenshot_jpeg" for call in device.calls)
+
+
+@pytest.mark.parametrize("params", [None, {}, {"text": "\x00"}, {"text": "\ud800"}, {"text": "😸" * 2049}, {"text": "你好", "replace": "false"}, {"text": "你好", "unknown": 1}])
+def test_native_unicode_mnk_validates_before_device_actions(bridge, params):
+    server, device, url = bridge
+    server.state.acquire("owner")
+    status, _ = _request(url, "/api/providers/mnk", method="POST", payload={"operation": "insert_text", "insert_text": params}, task_id="owner")
+    assert status == 400
+    assert device.calls == []
+
+
+def test_native_unicode_mnk_does_not_replay_ambiguous_delivery(bridge):
+    server, device, url = bridge
+    server.state.acquire("owner")
+    def fail(text, replace=False):
+        device.calls.append(("insert_text", text, replace))
+        raise ADBCommandError("broadcast timed out; inspect the field")
+    device.insert_text = fail
+    status, body = _request(url, "/api/providers/mnk", method="POST", payload={"operation": "insert_text", "insert_text": {"text": "你好"}}, task_id="owner")
+    assert status == 500
+    assert "inspect the field" in body["error"]
+    assert device.calls == [("insert_text", "你好", False)]
 
 
 def test_setup_with_empty_task_id_creates_episode(bridge):

@@ -277,6 +277,25 @@ def test_enter_text_reports_unsupported_text_without_typing(bridge):
     assert all(call[0] != "input_text" for call in device.calls)
 
 
+def test_enter_text_uses_adbkeyboard_and_verifies_unicode(bridge):
+    _, device, base_url = bridge
+    device.unicode_input = True
+    status, body = _invoke(base_url, "enter_text", {"text": "你好，世界 😸 %s", "focus": {"x": 500, "y": 100}})
+    assert status == 200
+    result, _ = _text_entry_output(body)
+    assert result["ok"] is True
+    assert device.calls[:2] == [("tap", 540, 192), ("insert_text", "你好，世界 😸 %s", False)]
+    assert not any(call[0] == "input_text" for call in device.calls)
+
+
+def test_enter_text_rejects_invalid_unicode_before_focus(bridge):
+    _, device, base_url = bridge
+    device.unicode_input = True
+    _, body = _invoke(base_url, "enter_text", {"text": "你好\x00", "focus": {"x": 500, "y": 100}})
+    assert json.loads(body["output"])["ok"] is False
+    assert device.calls == []
+
+
 # ---- mouse tools --------------------------------------------------------------
 
 
