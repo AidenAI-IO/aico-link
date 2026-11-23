@@ -306,6 +306,7 @@
         "min_tool_calls": 2,
         "max_tool_calls": 14,
         "must_complete_within_sec": 180,
+        "allow_device_cli": true,
         "required_tool_calls": [
           {
             "tool": "enter_text",

@@ -170,6 +170,31 @@ func TestDeviceCLIDragReleasesOnCaptureFailure(t *testing.T) {
 	}
 }
 
+func TestStandaloneDeviceCLIDragStopsOnUnstableStart(t *testing.T) {
+	provider := &dragRecoveryProvider{}
+	shot := &stubTool{name: "screenshot", output: terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})}
+	gesture := newPostActionStableScreenshotTool(&TouchGestureTool{mnkProvider: provider},
+		&fakeInternalWaitTool{result: waitStableScreenResult{OK: true, Stable: false}}, shot, 0, ScreenStableDefaults{})
+	s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"touch_gesture": gesture}}}}
+	capture := &deviceCLICapture{}
+	result, err := executeDeviceCLI(context.Background(), s, []string{"drag", "100", "250", "800", "900"}, capture)
+	if err != nil || !result.IsError || len(capture.calls) != 1 || provider.dragActive || provider.releaseX != 100 || provider.releaseY != 250 {
+		t.Fatalf("unstable drag must release only at the origin: result=%+v err=%v calls=%+v provider=%+v", result.ToolError, err, capture.calls, provider)
+	}
+}
+
+func TestDeviceCLIRespectsHeadlessBenchmarkTools(t *testing.T) {
+	gesture := &stubTool{name: "touch_gesture", output: "ok"}
+	s := &Server{runtime: &Runtime{
+		config: Config{Benchmark: BenchmarkConfig{Headless: true, Token: "fixture"}},
+		tools:  &ToolSet{tools: map[string]langtools.Tool{"touch_gesture": gesture}},
+	}}
+	result, err := executeDeviceCLI(context.Background(), s, []string{"tap", "100", "250"}, &deviceCLICapture{deferObservation: true})
+	if (err == nil && !result.IsError) || len(gesture.inputs) != 0 {
+		t.Fatalf("headless benchmark must not dispatch gesture: error=%q err=%v calls=%v", result.Error, err, gesture.inputs)
+	}
+}
+
 func TestDeviceCLIDragStartCanBeReleasedFromAnotherShell(t *testing.T) {
 	provider := &dragRecoveryProvider{}
 	shot := &stubTool{name: "screenshot", output: terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})}
@@ -199,19 +224,57 @@ func TestDeviceCLIDragStartCanBeReleasedFromAnotherShell(t *testing.T) {
 	}
 }
 
+func TestDeviceCLIShellFinalCaptureAfterWait(t *testing.T) {
+	before := terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})
+	after := terminationPolicyScreenshotObservation(t, 400, 200, image.Rectangle{})
+	shot := &stubTool{name: "screenshot", output: before}
+	s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"screenshot": shot}}}}
+	capture := &deviceCLICapture{deferObservation: true}
+	ctx := context.Background()
+	if got, err := executeDeviceCLI(ctx, s, []string{"wait", "0"}, capture); err != nil || got.IsError {
+		t.Fatalf("wait failed: %+v, %v", got, err)
+	}
+	shot.output = after // The screen changes after wait but before the shell exits.
+	if err := capture.finishShell(ctx, s.runtime, true); err != nil || capture.frame.Result.Width != 400 || len(shot.inputs) != 2 {
+		t.Fatalf("expected a fresh final screenshot, got dimensions %dx%d and %d captures: %v", capture.frame.Result.Width, capture.frame.Result.Height, len(shot.inputs), err)
+	}
+}
+
+func TestDeviceCLICanceledFinalCaptureDoesNotHandOffContact(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	shot := &stubTool{name: "screenshot", callFn: func(context.Context, string) (string, error) {
+		cancel()
+		return terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{}), nil
+	}}
+	rt := &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"screenshot": shot}}}
+	released := false
+	capture := &deviceCLICapture{deferObservation: true, needsScreenshot: true, drag: compositeDrag{release: func(ctx context.Context) error {
+		released = true
+		return ctx.Err()
+	}}}
+	if err := capture.finishShell(ctx, rt, true); !errors.Is(err, context.Canceled) || !released {
+		t.Fatalf("canceled final capture must clean up contact: err=%v released=%t", err, released)
+	}
+}
+
 func TestDeviceCLIRotationRejectionReturnsErrorAndScreenshot(t *testing.T) {
 	state := &screen.ScreenState{}
 	state.UpdateScreenshot([]byte("seen"), 200, 400)
-	shot := &stubTool{name: "screenshot", output: terminationPolicyScreenshotObservation(t, 400, 200, image.Rectangle{})}
+	shot := &stubTool{name: "screenshot", output: terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})}
 	inner := &stubTool{name: "touch_gesture", output: "ok"}
 	tool := newPostActionScreenshotTool(inner, shot, 0).(*postActionScreenshotTool).withTurnedScreenGuard(state)
 	s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "screenshot": shot}}}}
 	capture := &deviceCLICapture{deferObservation: true}
+	if got, err := executeDeviceCLI(context.Background(), s, []string{"tap", "100", "250"}, capture); err != nil || got.IsError {
+		t.Fatalf("first tap should dispatch: error=%q err=%v", got.Error, err)
+	}
+	shot.output = terminationPolicyScreenshotObservation(t, 400, 200, image.Rectangle{})
 	res, err := executeDeviceCLI(context.Background(), s, []string{"tap", "100", "250"}, capture)
-	if err != nil || !res.IsError || !actionNotDispatched(res.ToolError) || !strings.Contains(res.Error, "not sent") || len(inner.inputs) != 0 {
+	if err != nil || !res.IsError || !actionNotDispatched(res.ToolError) || !strings.Contains(res.Error, "not sent") || len(inner.inputs) != 1 {
 		t.Fatalf("expected a skipped action error: error=%q tool error=%+v err=%v calls=%v", res.Error, res.ToolError, err, inner.inputs)
 	}
-	if len(capture.calls) != 1 || !capture.calls[0].NotDispatched || !capture.calls[0].IsError {
+	if len(capture.calls) != 2 || !capture.calls[1].NotDispatched || !capture.calls[1].IsError {
 		t.Fatalf("skipped gesture was not recorded correctly: %+v", capture.calls)
 	}
 	if err := capture.finishShell(context.Background(), s.runtime, false); err != nil || len(capture.frame.ImageBytes) == 0 {

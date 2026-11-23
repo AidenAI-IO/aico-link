@@ -128,8 +128,11 @@ A normal task follows this loop:
 2. Inspect live state. For a visual task, obtain a fresh `screenshot` or wait for a stable screen
    before choosing a target. For a phone API task, inspect bridge status and the relevant permission
    or capability fields.
-3. Select the narrowest valid path: a bridge tool for supported structured data, `device-cli open` or
-   `device-cli url` for semantic launch, or the `device-cli` skill for visible UI work.
+3. Select the narrowest valid path. Use the UI route named in the active system profile: if it
+   names `device-operator` (legacy mode), follow that skill and use the exposed device tools for
+   launch, screenshots and other UI work. If it names `device-cli`, use `device-cli open` or
+   `device-cli url` for semantic launch and follow the `device-cli` skill for visible UI work.
+   For structured data, use the route below for the active mode.
 4. Make the smallest useful action, then observe again. Reuse a stable-screen wait when a launch or
    navigation is asynchronous.
 5. Verify the result using the evidence appropriate to the operation. If a path fails, classify the
@@ -150,9 +153,11 @@ A normal task follows this loop:
 
 ### Tool Routing Quick Reference
 
-In Device CLI mode, when `app_connected || app_fgs_enabled || app_pip_enabled`
-is true, prefer the
-matching `device-cli app` data command. If all three are false, use the direct
+In legacy mode, ignore the Device CLI options in this table: use only the exposed
+Bridge tools for structured data and the `device-operator` skill for launch and
+visible UI, including screenshots. In Device CLI mode, when
+`app_connected || app_fgs_enabled || app_pip_enabled` is true, prefer the matching
+`device-cli app` data command. If all three are false, use the direct
 Bridge tool only if the runtime exposes it for the requested operation. This
 rule does not apply to notification queries, which read the board-side ring.
 

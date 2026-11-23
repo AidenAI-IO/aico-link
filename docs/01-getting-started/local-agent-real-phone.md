@@ -131,6 +131,8 @@ python3 scripts/local_agent.py ios --bridge-url http://127.0.0.1:8896
 Use `--agent-binary` to reuse a native binary, `--python` for a prepared bridge
 environment, and `--no-open` to print URLs without opening a browser. Override
 `--agent-port`, `--config-port`, `--bridge-port`, or `--share-port` when necessary.
+In Device CLI mode, a supplied Agent needs an executable `device-cli` beside it
+or on `PATH`.
 Run `python3 scripts/local_agent.py --help` for all options.
 
 ## Stop, Recover, or Switch Modes

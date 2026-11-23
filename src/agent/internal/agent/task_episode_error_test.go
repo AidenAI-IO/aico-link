@@ -59,7 +59,11 @@ func testEpisodeRedactsSensitiveToolResult(t *testing.T, toolName string) {
 	var deviceCalls []deviceCLIToolEvidence
 	if toolName == "shell" {
 		action.ToolInput = `{"command":"device-cli app clipboard read"}`
-		deviceCalls = []deviceCLIToolEvidence{{Tool: toolBridgeClipboard, Input: map[string]any{"action": "read"}}}
+		duration := int64(42)
+		deviceCalls = []deviceCLIToolEvidence{
+			{Tool: toolBridgeClipboard, Input: map[string]any{"text": secret}, DurationMs: &duration},
+			{Tool: "touch_gesture", Input: map[string]any{"type": "tap"}, IsError: true, NotDispatched: true},
+		}
 	}
 	recorder.RecordExecution(ToolCallExecutionResult{
 		Call: ToolCall{
@@ -86,6 +90,14 @@ func testEpisodeRedactsSensitiveToolResult(t *testing.T, toolName string) {
 			continue
 		}
 		foundRedactedResult = true
+		if toolName == "shell" {
+			calls, ok := event.Metadata["device_cli_calls"].([]deviceCLIToolEvidence)
+			if !ok || len(calls) != 2 || calls[0].Tool != toolBridgeClipboard || calls[0].Input == nil || len(calls[0].Input) != 0 ||
+				calls[0].DurationMs == nil || *calls[0].DurationMs != 42 || calls[1].Input == nil || len(calls[1].Input) != 0 ||
+				!calls[1].NotDispatched || !calls[1].IsError || deviceCalls[0].Input["text"] != secret {
+				t.Fatalf("redaction must clear only persisted nested inputs: %+v", calls)
+			}
+		}
 		if event.Content != sensitiveToolResultRedaction || event.RawObservation != "" {
 			t.Fatalf("sensitive tool result event = %#v", event)
 		}

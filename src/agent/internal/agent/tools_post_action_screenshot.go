@@ -191,13 +191,20 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	deferObservation := cli != nil && cli.deferObservation
 	seenWidth, seenHeight, seenOK := t.screen.ScreenshotDimensions()
 	var baselineImage image.Image
-	checkOrientation := seenOK && !releasesHeldContact(t.inner.Name(), input)
-	if !deferObservation || (checkOrientation && !cli.guardChecked) {
+	release := releasesHeldContact(t.inner.Name(), input)
+	checkOrientation := seenOK && !release
+	if deferObservation && t.screen != nil && !release {
+		// Baseline captures also update screen state. Keep comparing to the
+		// orientation from the start of the shell (or first available frame).
+		if cli.guardDimensions[0] == 0 && seenOK {
+			cli.guardDimensions = [2]int{seenWidth, seenHeight}
+		}
+		seenWidth, seenHeight = cli.guardDimensions[0], cli.guardDimensions[1]
+		checkOrientation = seenWidth > 0 && seenHeight > 0
+	}
+	if !deferObservation || checkOrientation {
 		var baselineOutput string
 		baselineOutput, baselineImage = t.captureBaseline(ctx)
-		if deferObservation && baselineImage != nil {
-			cli.guardChecked = true
-		}
 		if checkOrientation && baselineImage != nil {
 			bounds := baselineImage.Bounds()
 			if (seenWidth > seenHeight) != (bounds.Dx() > bounds.Dy()) {

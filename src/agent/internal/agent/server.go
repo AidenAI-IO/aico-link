@@ -3932,7 +3932,13 @@ func (s *Server) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 
 	if r.Context().Value(deviceCLICaptureKey{}) != nil {
 		// Scripted benchmark fixtures must see CLI actions as well as direct tools.
-		spec.Tool = benchmarkMockTools(s.runtime.ConfigSnapshot(), []langtools.Tool{spec.Tool})[0]
+		cfg := s.runtime.ConfigSnapshot()
+		tools := benchmarkHeadlessTools(cfg, benchmarkMockTools(cfg, []langtools.Tool{spec.Tool}))
+		if len(tools) == 0 {
+			http.Error(w, fmt.Sprintf("Unknown tool: %s", toolName), http.StatusNotFound)
+			return
+		}
+		spec.Tool = tools[0]
 	}
 
 	rawInput, err := decodeToolInvokeInput(r.Body)

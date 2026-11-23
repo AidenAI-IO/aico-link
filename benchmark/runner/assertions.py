@@ -159,8 +159,10 @@ _CLI_CHAIN = re.compile(rf"{_CLI_COMMAND}(?:[ \t]+&&[ \t]+{_CLI_COMMAND})*")
 
 
 def _is_device_cli_shell(tc: ToolCall) -> bool:
+    if tc.tool != "shell" or not isinstance(tc.input, dict):
+        return False
     command = tc.input.get("command")
-    return (tc.tool == "shell" and bool(tc.device_cli_calls) and isinstance(command, str)
+    return (bool(tc.device_cli_calls) and isinstance(command, str)
             and not tc.input.get("background") and "action" not in tc.input
             and _CLI_CHAIN.fullmatch(command.strip()) is not None)
 
@@ -578,7 +580,10 @@ def _prohibited_action_offenders(trace: Trace, prohibited_actions: list[str]) ->
     ]
     offenders: list[str] = []
     for tc in effective_tool_calls(trace):
-        for label, value in _semantic_trace_values(tc.tool, tc.input):
+        # A qualifying shell command is transport, not evidence about its text args.
+        # Its recorded device calls are still visited by effective_tool_calls.
+        values = [("tool", tc.tool)] if _is_device_cli_shell(tc) else _semantic_trace_values(tc.tool, tc.input)
+        for label, value in values:
             text = str(value)
             for _, pattern in patterns:
                 if pattern.search(text):

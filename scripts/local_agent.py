@@ -154,6 +154,11 @@ def agent_binary(args):
         binary = args.agent_binary.expanduser().resolve()
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise RuntimeError("--agent-binary must be an executable native Agent")
+        cli_name = "device-cli.exe" if os.name == "nt" else "device-cli"
+        if os.environ.get("AICO_LEGACY_DEVICE_TOOLS") != "1" and not (
+            shutil.which(str(binary.with_name(cli_name))) or shutil.which(cli_name)
+        ):
+            raise RuntimeError(f"--agent-binary requires an executable {cli_name} beside the Agent or on PATH")
         return str(binary)
     if not shutil.which("go"):
         raise RuntimeError("Install Go 1.26+, or pass --agent-binary")

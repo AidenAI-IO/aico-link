@@ -261,8 +261,10 @@ def derive_episode_metrics(episode: Mapping[str, Any] | None) -> dict[str, Any]:
         cli_evidence_seen |= bool(cli_calls)
         cli_actions = [call for call in cli_calls if _is_device_action(call.tool, call.input)]
         for call in cli_actions:
+            if call.not_dispatched:
+                continue
             device_actions_seen += 1
-            cli_action_count += int(not call.not_dispatched)
+            cli_action_count += 1
             if call.duration_ms is not None:
                 device_execution_ms += call.duration_ms
                 device_durations_seen += 1

@@ -42,7 +42,7 @@ type deviceCLICapture struct {
 	deferObservation bool // foreground shell, not standalone HTTP
 	needsScreenshot  bool
 	keyError         *ToolError // first failed key request, even if shell masks its exit status
-	guardChecked     bool
+	guardDimensions  [2]int     // screenshot orientation used for coordinates in this shell
 	frame            visualScreenshotObservation
 	drag             compositeDrag
 }
@@ -75,6 +75,9 @@ func openDeviceCLIScope(ctx context.Context, r *Runtime, capture *deviceCLICaptu
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return "", "", nil, err
+	}
+	if width, height, ok := r.screenState.ScreenshotDimensions(); ok {
+		capture.guardDimensions = [2]int{width, height}
 	}
 	token = uuid.NewString()
 	toolServer := &Server{runtime: r, logger: r.logger}
@@ -187,7 +190,7 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 		return ToolInvokeResponse{}, fmt.Errorf("device-cli action limit per shell reached; continue in a new shell call")
 	}
 	if calls[0].AppData {
-		// Data-only operations do not invalidate an earlier wait frame or trigger a capture.
+		// Data-only operations do not trigger a final capture.
 		return capture.invoke(scoped, s, calls[0])
 	}
 	if capture.deferObservation {
@@ -198,7 +201,7 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 	scoped = context.WithValue(scoped, compositeDragKey{}, drag)
 	defer drag.cleanup(scoped)
 	var result ToolInvokeResponse
-	for _, call := range calls {
+	for i, call := range calls {
 		if err := scoped.Err(); err != nil {
 			return result, err
 		}
@@ -208,6 +211,12 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 		}
 		if visual, ok := parseScreenshotObservation(result.Output); ok {
 			result.Output = visual.Result.ActionOutput
+			if i+1 < len(calls) && visual.Result.ScreenStable != nil && !*visual.Result.ScreenStable {
+				const message = "screen did not stabilize after drag start; destination release not sent"
+				result.IsError, result.Error = true, message
+				result.ToolError = NewToolError(CodeStepExpectationUnmet, message)
+				return result, nil
+			}
 		}
 	}
 	if err := scoped.Err(); err != nil {
@@ -225,7 +234,6 @@ func (c *deviceCLICapture) executeInShell(ctx context.Context, s *Server, calls 
 			return result, err
 		}
 		c.needsScreenshot = true
-		c.frame = visualScreenshotObservation{}
 		var err error
 		result, err = c.invoke(ctx, s, call)
 		if err != nil || result.IsError {
@@ -233,7 +241,6 @@ func (c *deviceCLICapture) executeInShell(ctx context.Context, s *Server, calls 
 		}
 		if call.Tool == "wait_for_stable_screen" || call.Tool == "screenshot" {
 			if visual, ok := parseScreenshotObservation(result.Output); ok {
-				c.frame = visual
 				result.Output = screenshotObservationStatusSummary(call.Tool, visual.Result)
 			}
 		}
@@ -245,27 +252,32 @@ func (c *deviceCLICapture) executeInShell(ctx context.Context, s *Server, calls 
 // Use the parent tool context so a shell deadline can still show partial effects.
 func (c *deviceCLICapture) finishShell(ctx context.Context, r *Runtime, succeeded bool) error {
 	defer c.drag.cleanup(ctx)
-	if !c.needsScreenshot || ctx.Err() != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !c.needsScreenshot {
 		return nil
 	}
 	if !succeeded && c.drag.release != nil {
 		c.drag.cleanup(ctx)
 		c.drag.release = nil
-		c.frame = visualScreenshotObservation{}
 	}
-	if len(c.frame.ImageBytes) == 0 {
-		shotCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		s := &Server{runtime: r, logger: r.logger}
-		result, err := invokeDeviceHTTP(shotCtx, s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
-		if err == nil && !result.IsError {
-			c.frame, _ = parseScreenshotObservation(result.Output)
-		}
+	// A wait only describes the screen at that point in the shell. Even a
+	// shell with no more CLI calls may have done other work since the wait.
+	shotCtx, cancel := context.WithTimeout(context.WithValue(ctx, deviceCLICaptureKey{}, c), 5*time.Second)
+	s := &Server{runtime: r, logger: r.logger}
+	result, err := invokeDeviceHTTP(shotCtx, s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
+	cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err == nil && !result.IsError {
+		c.frame, _ = parseScreenshotObservation(result.Output)
 	}
 	if len(c.frame.ImageBytes) == 0 {
 		return fmt.Errorf("final screenshot unavailable; inspect the screen before retrying any action")
 	}
-	// Ground the final model-facing frame only, including a reused explicit wait.
+	// Ground only the final model-facing frame.
 	// Keep the original capture if the detector is absent or fails.
 	tools := r.toolSnapshot()
 	if tools.UIGroundingEnabled() && c.frame.Result.Grounding == nil {
@@ -282,6 +294,9 @@ func (c *deviceCLICapture) finishShell(ctx context.Context, r *Runtime, succeede
 	}
 	c.frame = compressCLIFrame(c.frame)
 	c.frame.Result.Data = ""
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.drag.release = nil // a successful split start hands off to a later shell
 	return nil
 }

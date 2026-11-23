@@ -1854,9 +1854,9 @@ def test_required_calls_use_episode_evidence_when_it_aligns(tmp_path: Path):
 
 @pytest.mark.parametrize("mode", ["legacy", "cli", "shell_error", "skipped", "unrecorded", "mixed_shell", "forbidden_action"])
 def test_device_action_evidence_reaches_hard_assertions_and_judge(tmp_path, monkeypatch, mode):
-    command = 'device-cli tap 100 200 && device-cli type "café\ntext"'
+    command = 'device-cli tap 100 200 && device-cli type "send café\ntext"'
     tap = {"type": "tap", "point": {"x": 100, "y": 200}}
-    text = {"text": "café\ntext"}
+    text = {"text": "send café\ntext"}
     calls = [("touch_gesture", tap), ("enter_text", text)] if mode == "legacy" else [
         ("shell", {"command": command + ("; pwd" if mode == "mixed_shell" else "")})
     ]
@@ -1884,6 +1884,7 @@ def test_device_action_evidence_reaches_hard_assertions_and_judge(tmp_path, monk
             max_tool_calls=2 if mode == "legacy" else 1,
             forbidden_tools=["shell", "enter_text"] if mode == "forbidden_action" else ["shell"],
             allow_device_cli=True,
+            prohibited_actions=["send"],
             required_tools=["touch_gesture"],
             required_tool_calls=[RequiredToolCallSpec("touch_gesture", tap, first_attempt=True),
                                  RequiredToolCallSpec("enter_text", text)],
@@ -1913,3 +1914,4 @@ def test_device_action_evidence_reaches_hard_assertions_and_judge(tmp_path, monk
         assert result.metrics["screenshots_taken"] == 1
     if mode == "skipped":
         assert result.metrics["first_failure_stage"] == "device_execution"
+        assert result.metrics["device_execution_ms"] == 0

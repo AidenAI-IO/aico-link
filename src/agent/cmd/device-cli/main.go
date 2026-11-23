@@ -30,7 +30,7 @@ func main() {
 
 func run(base string, args []string) error {
 	client := &http.Client{Timeout: 5 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	scoped := base == os.Getenv("AICO_DEVICE_CLI_URL") && os.Getenv("AICO_DEVICE_CLI_TOKEN") != ""
+	scoped := base == strings.TrimRight(os.Getenv("AICO_DEVICE_CLI_URL"), "/") && os.Getenv("AICO_DEVICE_CLI_TOKEN") != ""
 	var look *devicecli.LookOptions
 	if len(args) > 0 && args[0] == "look" {
 		options, err := devicecli.ParseLookOptions(args[1:])

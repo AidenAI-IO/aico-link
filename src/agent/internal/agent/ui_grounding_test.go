@@ -524,13 +524,11 @@ func TestDeviceCLIFinalScreenshotGrounding(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name    string
-		reuse   bool
 		enabled bool
 		failure error
 	}{
 		{name: "final capture", enabled: true},
-		{name: "reuse wait frame", enabled: true, reuse: true},
-		{name: "disabled", reuse: true},
+		{name: "disabled"},
 		{name: "detector failure", enabled: true, failure: errors.New("detector unavailable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -544,13 +542,7 @@ func TestDeviceCLIFinalScreenshotGrounding(t *testing.T) {
 			tools.SetUIGroundingFunc(func() bool { return tc.enabled })
 			rt := &Runtime{tools: tools}
 			capture := deviceCLICapture{needsScreenshot: true}
-			wantCaptures := 1
-			if tc.reuse {
-				wantCaptures = 0
-				capture.frame = visualScreenshotObservation{ImageBytes: jpegData, MIMEType: "image/jpeg", Result: postActionScreenshotResult{
-					screenshotResult: screenshotResult{Width: width, Height: height, Format: "jpeg", Data: base64.StdEncoding.EncodeToString(jpegData)},
-				}}
-			}
+			const wantCaptures = 1
 			if err := capture.finishShell(context.Background(), rt, true); err != nil {
 				t.Fatal(err)
 			}

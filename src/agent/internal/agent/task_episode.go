@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -281,7 +282,8 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 	output := result.Result.EventOutput()
 	rawObservation := result.Step.Observation
 	toolError := cloneToolError(result.Result.Error)
-	if toolResultIsSensitive(toolName) || result.Result.containsPrivateDeviceData() {
+	redact := toolResultIsSensitive(toolName) || result.Result.containsPrivateDeviceData()
+	if redact {
 		output = sensitiveToolResultRedaction
 		rawObservation = ""
 		if toolError != nil {
@@ -299,8 +301,14 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 		IsError:        result.Result.IsError(),
 		ToolError:      toolError,
 	}
-	if len(result.Result.deviceCalls) > 0 {
-		resultEvent.Metadata = map[string]any{"device_cli_calls": result.Result.deviceCalls}
+	if calls := result.Result.deviceCalls; len(calls) > 0 {
+		if redact {
+			calls = slices.Clone(calls)
+			for i := range calls {
+				calls[i].Input = map[string]any{}
+			}
+		}
+		resultEvent.Metadata = map[string]any{"device_cli_calls": calls}
 	}
 
 	if result.Result.Duration > 0 {
