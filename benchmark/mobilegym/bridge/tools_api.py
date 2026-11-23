@@ -615,7 +615,7 @@ class ToolsAPIHandler:
             return self._execute_action(state, action, episode_id, tool_name="quick_action", tool_input=tool_input)
         if action == "dismiss_panel":
             return self._execute_input(state, episode_id, "quick_action", tool_input,
-                state.input.dismiss_panel)
+                lambda: state.input.dismiss_panel())
         if action == "send":
             action = build_action("key", {"key": "enter"})
             return self._execute_action(state, action, episode_id, tool_name="quick_action", tool_input=tool_input)

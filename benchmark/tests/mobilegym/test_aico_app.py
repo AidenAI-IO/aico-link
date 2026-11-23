@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import os
 import socket
 import struct
+import threading
 import urllib.parse
 
 import pytest
@@ -103,6 +104,33 @@ def test_duplicate_command_id_returns_the_cached_result_without_rerunning():
     command = {"id": "c1", "type": "clipboard_write", "payload": {"text": "hello"}}
     assert app.execute(command, run) == app.execute(command, run) == {"id": "c1", "method": "clipboard_write"}
     assert len(calls) == 1
+
+
+def test_concurrent_duplicate_command_ids_execute_once():
+    app = session()
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def run(operation):
+        calls.append(operation)
+        started.set()
+        assert release.wait(timeout=2)
+        return {"data": {"contact_id": "c_new"}}
+
+    command = {"id": "c1", "type": "contacts_create", "payload": {"name": "Morgan Lee"}}
+    responses = []
+    first = threading.Thread(target=lambda: responses.append(app.execute(command, run)))
+    first.start()
+    assert started.wait(timeout=2)
+    second = threading.Thread(target=lambda: responses.append(app.execute(command, run)))
+    second.start()
+    release.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert len(calls) == 1
+    assert responses == [{"id": "c1", "data": {"contact_id": "c_new"}}] * 2
 
 
 def test_page_errors_and_timeouts_map_to_tool_errors():

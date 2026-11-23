@@ -156,6 +156,9 @@ class AicoAppSession:
         self.config = config
         self.phone_id = phone_id
         self._lock = threading.Lock()
+        # Serializes commands so a duplicate id waits for the first execution
+        # and gets its cached result. Status reads only take _lock.
+        self._execute_lock = threading.Lock()
         self._connected = config.connected
         self._fault_budget = [fault.count for fault in config.faults]
         self._commands: list[dict[str, Any]] = []
@@ -191,16 +194,17 @@ class AicoAppSession:
         command_id = str(command.get("id") or "").strip()
         if not command_id:
             return error_response("", "invalid_arguments", "command id is required")
-        with self._lock:
-            cached = self._results.get(command_id)
-        if cached is not None:
-            # The real app re-sends a completed result for a duplicate id.
-            return cached
-        response = self._admit(command_id, command)
-        if response is None:
-            response = self._run(command_id, command, run)
-        self._record(command_id, command, response)
-        return response
+        with self._execute_lock:
+            with self._lock:
+                cached = self._results.get(command_id)
+            if cached is not None:
+                # The real app re-sends a completed result for a duplicate id.
+                return cached
+            response = self._admit(command_id, command)
+            if response is None:
+                response = self._run(command_id, command, run)
+            self._record(command_id, command, response)
+            return response
 
     def has_result(self, command_id: str) -> bool:
         with self._lock:
