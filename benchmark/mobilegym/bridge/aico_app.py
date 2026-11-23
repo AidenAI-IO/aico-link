@@ -584,9 +584,15 @@ async (op) => {
       if (op.app) {
         const installed = sim.getState().os.installedApps || [];
         const key = op.app.toLowerCase();
-        const appId = op.app_names[key]
-          ?? installed.find((a) => a.id.toLowerCase() === key || String(a.name).toLowerCase() === key)?.id;
-        if (!appId || !installed.some((a) => a.id === appId)) return fail('app_not_installed', `App not installed: ${op.app}`);
+        // bench_env's name map can point at app ids this build lacks (电话 and
+        // Phone -> phone while the dialer is contacts), so fall back to
+        // installed names matching the request or any alias of the mapped id.
+        const mapped = op.app_names[key];
+        const names = new Set([key, ...Object.keys(op.app_names).filter((name) => mapped && op.app_names[name] === mapped)]);
+        const appId = installed.some((a) => a.id === mapped)
+          ? mapped
+          : installed.find((a) => names.has(a.id.toLowerCase()) || names.has(String(a.name).toLowerCase()))?.id;
+        if (!appId) return fail('app_not_installed', `App not installed: ${op.app}`);
         os.openApp(appId);
         return { method: 'launch_package' };
       }
