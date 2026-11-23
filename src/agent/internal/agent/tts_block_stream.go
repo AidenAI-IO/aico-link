@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 
@@ -242,7 +243,13 @@ func (w *ttsBlockStream) closeAndWait() error {
 		defer release()
 	}
 	if current != nil {
-		return current.closeAndWait()
+		err = current.closeAndWait()
+		if err != nil && w.ctx.Err() == nil {
+			// Synthesis may fail after earlier PCM started playback. Close
+			// that playback before callers consider fallback speech. Cancelled
+			// runs retain their existing interruption path.
+			err = errors.Join(err, current.stopPlayback())
+		}
 	}
 	return err
 }

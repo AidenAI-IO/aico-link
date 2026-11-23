@@ -555,6 +555,64 @@
       },
       "prompt": "关闭通知弹框",
       "rubric": []
+    },
+    {
+      "id": "select_exact_appointment_slot",
+      "category": "perception",
+      "input_screenshot": "screenshots/appointment_slot_picker.jpg",
+      "mock_environment": {
+        "platform": "ios",
+        "single_frame": true,
+        "phone_bridge": {},
+        "screen": "screenshots/appointment_slot_picker.jpg",
+        "tools": {
+          "touch_gesture": {
+            "input_contains": {
+              "type": "tap",
+              "point": {
+                "x": {
+                  "$gte": 0,
+                  "$lte": 1000
+                },
+                "y": {
+                  "$gte": 0,
+                  "$lte": 1000
+                }
+              }
+            },
+            "output": {
+              "ok": true
+            }
+          }
+        }
+      },
+      "prompt": "Tap the Select button for the December 3 appointment at 10:30.",
+      "description_for_judge": "The screenshot has repeated Select buttons, another slot on December 3, and a December 4 slot at the same time. Require the first tap to land on the button in the row matching both December 3 and 10:30.",
+      "rubric": [],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "must_complete_within_sec": 120,
+        "response_required": false,
+        "required_tool_calls": [
+          {
+            "tool": "touch_gesture",
+            "input_contains": {
+              "type": "tap",
+              "point": {
+                "x": {
+                  "$gte": 712,
+                  "$lte": 900
+                },
+                "y": {
+                  "$gte": 509,
+                  "$lte": 559
+                }
+              }
+            },
+            "first_attempt": true
+          }
+        ]
+      }
     }
   ]
 }

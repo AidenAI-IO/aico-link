@@ -9,6 +9,7 @@ func TestBuildTTSProviderConfigForUsesRecords(t *testing.T) {
 		TTSProviders: map[string]TTSProvider{
 			"minimax-main": {Type: "minimax", APIKey: "sk-minimax", VoiceID: "male-qn-qingse"},
 			"fish-main":    {Type: "fish-audio", APIKey: "sk-fish", ReferenceID: "ref-abc"},
+			"local":        {Type: "ekho"},
 		},
 		TTS: TTSConfig{Provider: "minimax", APIKey: "sk-minimax", VoiceID: "male-qn-qingse"},
 	}
@@ -28,6 +29,10 @@ func TestBuildTTSProviderConfigForUsesRecords(t *testing.T) {
 	// Fish Audio does not use voice, and must not inherit minimax's.
 	if got.Voice != "" {
 		t.Errorf("voice = %q, want empty for fish-audio", got.Voice)
+	}
+	local := buildTTSProviderConfigFor(cfg, "local")
+	if local.Provider != "ekho" || local.APIKey != "" || local.Voice != "" || len(local.Extra) != 1 || local.Extra["pace_audio"] != true {
+		t.Fatalf("local provider inherited cloud settings: %#v", local)
 	}
 }
 

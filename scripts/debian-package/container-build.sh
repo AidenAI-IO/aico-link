@@ -8,7 +8,7 @@ readonly REVISION=${AICO_BUSINESS_REVISION}
 readonly PACKAGE_VERSION=${VERSION}-${REVISION}
 readonly PACKAGE_NAME=aico-business
 readonly BINARIES=(
-  agent device-cli audio_service audio_service_cli ble_service mcu_service cpu_vad frame_service
+  agent device-cli audio_service audio_service_cli ble_service mcu_service cpu_vad ekho frame_service
   frame_service_cli rknn_vad smart_turn_helper ui_grounding_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail ota abctl aico-environment ttyd
 )
 rm -rf "${PKG_ROOT}" "${OUTPUT_DIR}/${PACKAGE_NAME}_"*.deb
@@ -17,9 +17,19 @@ for binary in "${BINARIES[@]}"; do
   test -x "${APPS_DIR}/bin/${binary}" || { echo "missing application binary: ${binary}" >&2; exit 1; }
   install -m 0755 "${APPS_DIR}/bin/${binary}" "${PKG_ROOT}/usr/lib/aico/${binary}"
 done
+test -s "${APPS_DIR}/share/ekho-data/pinyin.voice" || { echo "missing Ekho Mandarin data" >&2; exit 1; }
+test -s "${APPS_DIR}/share/doc/ekho/build.txt" || { echo "missing Ekho build provenance" >&2; exit 1; }
+(cd "${APPS_DIR}" && sha256sum -c metadata/ekho-files.sha256 >/dev/null)
+rsync -aH --chown=0:0 "${APPS_DIR}/share/ekho-data/" "${PKG_ROOT}/usr/share/aico/ekho-data/"
+rsync -aH --chown=0:0 "${APPS_DIR}/share/doc/ekho/" "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}/ekho/"
 rsync -aH --chown=0:0 "${REPO_ROOT}/src/config_web/web/" "${PKG_ROOT}/usr/share/aico/config-web/"
 rsync -aH --chown=0:0 "${REPO_ROOT}/src/agent/config/skills/" "${PKG_ROOT}/usr/share/aico/skills/"
 install -m 0644 "${REPO_ROOT}/src/agent/internal/agent/quick_actions.json" "${PKG_ROOT}/usr/share/aico/quick_actions.json"
+install -d -m 0755 "${PKG_ROOT}/usr/share/aico/agent-tools"
+install -m 0644 "${REPO_ROOT}/scripts/generate_agent_files_report.py" \
+  "${REPO_ROOT}/scripts/agent_files_template.html" \
+  "${PKG_ROOT}/usr/share/aico/agent-tools/"
+install -m 0755 "${REPO_ROOT}/scripts/view_agent_files.sh" "${PKG_ROOT}/usr/share/aico/agent-tools/"
 rsync -aH --chown=0:0 "${REPO_ROOT}/assets/business/audio/" "${PKG_ROOT}/usr/share/aico/audio/"
 (cd "${REPO_ROOT}/assets/business/models/dtln" && sha256sum --check SHA256SUMS)
 (cd "${REPO_ROOT}/assets/business/models/ui-detr" && sha256sum --check SHA256SUMS)
@@ -33,11 +43,11 @@ Priority: optional
 Architecture: armhf
 Maintainer: Aico <contact@aico.link>
 Pre-Depends: python3
-Depends: libc6, systemd, sudo
+Depends: libc6, libgcc-s1, libstdc++6, libsndfile1, libflite1, libsonic0, libmpg123-0t64, systemd, sudo
 Homepage: https://aico.link
 Description: Aico Link firmware and Aico AI Agent runtime
  Aico AI Agent, Aico Link hardware services, configuration web assets, bundled skills
- and runtime models.
+ and runtime models, with local Ekho Mandarin and American English speech.
 CTL
 bash "${REPO_ROOT}/scripts/debian-package/write-maintainer-scripts.sh" "${PKG_ROOT}/DEBIAN"
 python3 "${REPO_ROOT}/scripts/release/contract.py" package \
@@ -45,6 +55,7 @@ python3 "${REPO_ROOT}/scripts/release/contract.py" package \
 find "${PKG_ROOT}" -type d -exec chmod 0755 {} +
 find "${PKG_ROOT}" -type f ! -path '*/DEBIAN/*' -exec chmod 0644 {} +
 for binary in "${BINARIES[@]}"; do chmod 0755 "${PKG_ROOT}/usr/lib/aico/${binary}"; done
+chmod 0755 "${PKG_ROOT}/usr/share/aico/agent-tools/view_agent_files.sh"
 python3 "${REPO_ROOT}/scripts/debian-package/system_config.py" stage "${PKG_ROOT}"
 dpkg-deb --build --root-owner-group "${PKG_ROOT}" "${OUTPUT_DIR}/${PACKAGE_NAME}_${PACKAGE_VERSION}_armhf.deb"
 dpkg-deb --info "${OUTPUT_DIR}/${PACKAGE_NAME}_${PACKAGE_VERSION}_armhf.deb" >"${OUTPUT_DIR}/${PACKAGE_NAME}.deb.info"

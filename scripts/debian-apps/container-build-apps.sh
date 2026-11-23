@@ -46,6 +46,8 @@ rm -rf "${BUILD_DIR}" "${DIST_DIR}"
 mkdir -p "${BUILD_DIR}" "${DIST_DIR}/bin" "${DIST_DIR}/lib" \
     "${DIST_DIR}/maps" "${DIST_DIR}/metadata"
 
+bash "${REPO_ROOT}/scripts/debian-apps/container-build-ekho.sh"
+
 ttyd_download=${BUILD_DIR}/${TTYD_ASSET}
 ttyd_cache=/work/.cache/debian-apps/${TTYD_ASSET}
 if [ -f "${ttyd_cache}" ] && echo "${TTYD_SHA256}  ${ttyd_cache}" | sha256sum -c - >/dev/null 2>&1; then

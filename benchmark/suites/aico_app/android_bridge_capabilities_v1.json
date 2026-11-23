@@ -226,6 +226,101 @@
           {"tool": "enter_text", "input_contains": {"text": "Aiden résumé check #42"}}
         ]
       }
+    },
+    {
+      "id": "calendar_create_verify_batch_and_finish",
+      "foreground_app_id": "link.aico.app",
+      "category": "multi_step",
+      "android_bridge_fixture": "calendar",
+      "description_for_judge": "Create three distinct reminders in a reserved emulator calendar, confirm exact fields and uniqueness from a structured read-back, then finish without extra writes or redundant verification. The harness removes the reserved calendar after the run.",
+      "prompt": "Use the connected phone’s Bridge to add three reminders to the benchmark calendar: “AidenBridgeBatchReminder A” on November 18, “AidenBridgeBatchReminder B” on November 19, and “AidenBridgeBatchReminder C” on November 20 of 2037. Each lasts from 15:00 to 15:30 at UTC+08:00 and has a 10-minute alarm. Read back the test date range and report which reminders you confirmed. Leave the test events in place. Do not modify unrelated calendar entries.",
+      "rubric": [
+        {
+          "id": "exactly_three_distinct_writes",
+          "check": "Exactly three successful creates appear in the trace, one per requested title and date. Each create requests alarm_minutes_before=10. There are no extra creates, updates or deletes."
+        },
+        {
+          "id": "all_events_verified",
+          "check": "After creating the events, a successful bridge_calendar query returns exactly one record for each requested title at the correct start and end instants. UTC-equivalent timestamps are valid. No duplicate matching title is present."
+        },
+        {
+          "id": "finishes_after_verification",
+          "check": "After the first query confirming all three correct events, the agent reports the confirmed results and makes no further tool calls."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 4,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 240,
+        "required_tools": [
+          "bridge_calendar"
+        ],
+        "forbidden_tools": [
+          "shell",
+          "open_app",
+          "search_launch_app",
+          "touch_gesture"
+        ],
+        "required_tool_calls": [
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "query",
+              "from": {"$rfc3339_lte": "2037-11-18T15:00:00+08:00"},
+              "to": {"$rfc3339_gte": "2037-11-20T15:30:00+08:00"}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "settings_search_replace_with_mixed_unicode",
+      "category": "device_operation",
+      "description_for_judge": "Replace a seeded ASCII Settings query with a mixed Chinese and Latin string. Aico App write evidence and the exact editable field text are checked by the harness.",
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open Android Settings search and leave its editable field containing exactly sample draft. Do not submit the query or change settings.",
+        "timeout_sec": 180,
+        "clear_history_after": true,
+        "device_prepare": {
+          "recipe": "settings_search",
+          "params": {
+            "query": "sample draft"
+          }
+        }
+      },
+      "prompt": "In the current Android Settings search screen, clear the old query using the visible clear control or another supported edit action. Confirm the editable field is empty, then use the connected companion app text-entry route (device-cli app type if using the CLI) to enter exactly: 行程 A-17（周五）. Leave the new query visible. Do not submit it or change any settings.",
+      "android_bridge_input_text": "行程 A-17（周五）",
+      "rubric": [
+        {
+          "id": "seed_query_visible",
+          "scope": "precondition",
+          "check": "The Android Settings editable search field visibly contains exactly sample draft."
+        },
+        {
+          "id": "replacement_exact",
+          "check": "The post-screenshot shows the Android Settings search field containing exactly 行程 A-17（周五）, with the original query removed and no extra or repeated characters."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 14,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "enter_text",
+            "input_contains": {
+              "text": "行程 A-17（周五）"
+            }
+          }
+        ],
+        "forbidden_tools": [
+          "keyboard_text",
+          "bridge_clipboard",
+          "shell",
+          "request_user_action"
+        ]
+      }
     }
   ]
 }

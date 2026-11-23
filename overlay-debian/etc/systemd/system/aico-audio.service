@@ -1,5 +1,6 @@
 [Unit]
 Description=Aico Link audio capture and playback service
+OnFailure=aico-service-incident@%p.service
 Requires=aico-environment.service aico-media-modules.service aico-audio-mixer.service
 After=aico-environment.service aico-media-modules.service aico-audio-mixer.service sound.target
 StartLimitIntervalSec=60s

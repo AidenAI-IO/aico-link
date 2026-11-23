@@ -18,14 +18,19 @@ const (
 	// (gemini-decision-1). Like OpenAI Luna it has no box questions, so
 	// tap-point decisions stay with the main model.
 	DecisionProviderGemini = "gemini"
+	// DecisionProviderOpenRouter routes native Decisions requests through
+	// OpenRouter, with Jev as the default model.
+	DecisionProviderOpenRouter = "openrouter"
 
 	defaultTypeSafeBaseURL = "https://api.typesafe.ai/v1"
 	// jev-preview tracks Jev 1.14, the first release that answers box questions.
-	defaultTypeSafeModel = "jev-preview"
-	defaultOpenAIBaseURL = "https://api.openai.com/v1"
-	defaultOpenAIModel   = "gpt-6-luna"
-	defaultGeminiBaseURL = "https://generativelanguage.googleapis.com/v1beta"
-	defaultGeminiModel   = "gemini-decision-1"
+	defaultTypeSafeModel     = "jev-preview"
+	defaultOpenAIBaseURL     = "https://api.openai.com/v1"
+	defaultOpenAIModel       = "gpt-6-luna"
+	defaultGeminiBaseURL     = "https://generativelanguage.googleapis.com/v1beta"
+	defaultGeminiModel       = "gemini-decision-1"
+	defaultOpenRouterBaseURL = "https://openrouter.ai/api/alpha"
+	defaultOpenRouterModel   = "~typesafe/jev-latest"
 
 	defaultDecisionMinConfidence = 0.8
 )
@@ -52,8 +57,8 @@ const (
 )
 
 // DecisionModelConfig configures the optional decision model (TypeSafe Jev,
-// OpenAI Luna, or Gemini Decision 1): a classifier that answers fixed-choice
-// questions (choice, yes/no, score) inside deterministic workflows, such as
+// OpenAI Luna, Gemini Decision 1, or OpenRouter): a classifier that answers
+// fixed-choice questions (choice, yes/no, score) inside deterministic workflows, such as
 // reading the input method state or confirming that an app opened. It is off
 // by default and needs an API key to be turned on; when off, or when an answer
 // falls below MinConfidence, callers keep using the main model.
@@ -89,6 +94,8 @@ func (c DecisionModelConfig) BaseURLOrDefault() string {
 		return defaultOpenAIBaseURL
 	case DecisionProviderGemini:
 		return defaultGeminiBaseURL
+	case DecisionProviderOpenRouter:
+		return defaultOpenRouterBaseURL
 	default:
 		return defaultTypeSafeBaseURL
 	}
@@ -103,6 +110,8 @@ func (c DecisionModelConfig) ModelOrDefault() string {
 		return defaultOpenAIModel
 	case DecisionProviderGemini:
 		return defaultGeminiModel
+	case DecisionProviderOpenRouter:
+		return defaultOpenRouterModel
 	default:
 		return defaultTypeSafeModel
 	}
@@ -119,9 +128,9 @@ func (c DecisionModelConfig) MinConfidenceOrDefault() float64 {
 
 func (c DecisionModelConfig) validate() error {
 	switch provider := c.ProviderOrDefault(); provider {
-	case DecisionProviderTypeSafe, DecisionProviderOpenAI, DecisionProviderGemini:
+	case DecisionProviderTypeSafe, DecisionProviderOpenAI, DecisionProviderGemini, DecisionProviderOpenRouter:
 	default:
-		return fmt.Errorf("invalid decision.provider: %s (expected %s, %s, or %s)", c.Provider, DecisionProviderTypeSafe, DecisionProviderOpenAI, DecisionProviderGemini)
+		return fmt.Errorf("invalid decision.provider: %s (expected %s, %s, %s, or %s)", c.Provider, DecisionProviderTypeSafe, DecisionProviderOpenAI, DecisionProviderGemini, DecisionProviderOpenRouter)
 	}
 	if math.IsNaN(c.MinConfidence) || c.MinConfidence < 0 || c.MinConfidence > 1 {
 		return fmt.Errorf("decision.min_confidence must be between 0 and 1, got %g", c.MinConfidence)

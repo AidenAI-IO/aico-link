@@ -350,6 +350,9 @@ func translateQwenEvent(body []byte) (Event, bool) {
 		if isQwenNoActiveResponseCancelError(event.Error.Type, event.Error.Param, event.Error.Message) {
 			return Event{}, false
 		}
+		if isQwenResponseInProgressError(event.Error.Type, event.Error.Param, event.Error.Message) {
+			return Event{Kind: EventResponseRejected, Error: errors.New(event.Error.Message)}, true
+		}
 		return Event{Kind: EventError, Error: classifyServerErrorMessage(event.Error.Message)}, true
 	default:
 		return Event{}, false
@@ -365,6 +368,19 @@ func isQwenNoActiveResponseCancelError(errorType, param, message string) bool {
 	}
 	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(message)), ".")
 	return normalized == "conversation has no active response"
+}
+
+// isQwenResponseInProgressError reports a response.create refused because a
+// response, usually one the server started for detected speech, is running.
+func isQwenResponseInProgressError(errorType, param, message string) bool {
+	if !strings.EqualFold(strings.TrimSpace(errorType), "invalid_request_error") {
+		return false
+	}
+	if param = strings.TrimSpace(param); param != "" && param != "response.create" {
+		return false
+	}
+	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(message)), ".")
+	return normalized == "cannot create response while another response is in progress"
 }
 
 var _ Provider = QwenProvider{}

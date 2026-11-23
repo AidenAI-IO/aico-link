@@ -677,6 +677,7 @@ func TestServerHandleChatStreamsToolAndAssistantMessages(t *testing.T) {
 }
 
 func TestServerHandleChatStreamsLeadingToolSpeechWithoutDuplicatePlayback(t *testing.T) {
+	t.Setenv("AICO_TEXT_CHAT_TTS", "1")
 	const requestID = "streaming-tts-cleanup"
 	toolSpeech := true
 	toolContent := "<tts>Check volume.</tts>\nChecking volume."
@@ -712,7 +713,6 @@ func TestServerHandleChatStreamsLeadingToolSpeechWithoutDuplicatePlayback(t *tes
 	)
 	defer runtime.Close()
 	server := newServerForTest(runtime)
-	startDeviceVoiceForTest(t, server)
 	provider := &flushRecordingTTSProvider{name: "server-provider"}
 	server.ttsManager = ttsmodule.NewProviderManager(provider, nil)
 	server.audioClient = NewAudioServiceClient(startTTSPlaybackAudioSocket(t))
@@ -1691,15 +1691,20 @@ func TestServerAsyncChatAppendsVoiceNotificationOnlyToFinalSpeech(t *testing.T) 
 	waitForServerRequestFinished(t, server, requestID)
 }
 
-// A typed chat request is text only: outside a voice conversation it plays
-// no prompt tone and no reply, not even the spoken replacement for a failed
-// LLM turn. During a voice conversation the reply is spoken on its route.
-func TestServerAsyncChatSpeaksOnlyDuringVoiceConversation(t *testing.T) {
+// Text stays silent by default. Voice conversations and the temporary text
+// TTS override both speak failures through the existing playback lifecycle.
+func TestServerAsyncChatAudioPolicy(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		voice bool
-	}{{"text only", false}, {"voice conversation", true}} {
+		name    string
+		voice   bool
+		textTTS string
+	}{
+		{name: "text only"},
+		{name: "voice conversation", voice: true},
+		{name: "temporary text TTS", textTTS: "1"},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AICO_TEXT_CHAT_TTS", tc.textTTS)
 			streamingDisabled := false
 			runtime := NewRuntimeWithDeps(
 				withTestConfigDir(t, Config{
@@ -1751,14 +1756,14 @@ func TestServerAsyncChatSpeaksOnlyDuringVoiceConversation(t *testing.T) {
 				t.Fatalf("decode start response: %v", err)
 			}
 			requestID := start["request_id"]
-			if tc.voice {
+			if tc.voice || tc.textTTS == "1" {
 				waitForProviderTextCount(t, provider, 1)
 				if got := provider.texts(); len(got) != 1 || got[0] != "当前网络不可用，暂时无法完成这个请求。" {
 					t.Fatalf("spoken replacement = %#v", got)
 				}
 			}
 			waitForServerRequestFinished(t, server, requestID)
-			if !tc.voice {
+			if !tc.voice && tc.textTTS != "1" {
 				// The prompt tone starts asynchronously; give it time to show.
 				time.Sleep(100 * time.Millisecond)
 				if got := provider.texts(); len(got) != 0 {
