@@ -664,6 +664,27 @@ built. When a section is named exactly like a provider type, the section wins.
 | `context_window`          | Optional total context window override in tokens. Unset or `0` uses provider metadata for OpenRouter/Ollama when available, then the built-in registry, then memory fallback.                                                                        |
 | `model_max_output_tokens` | Optional advertised max output override in tokens. Unset or `0` uses provider metadata when fetched, then the built-in registry.                                                                                                                     |
 
+### Automatic provider retries
+
+Model requests automatically retry timeouts, transient network failures, HTTP
+408/409/429, and HTTP 5xx responses. Each call allows up to five retries (six
+attempts total), with delays of 2, 4, 6, 8, and 10 seconds. A provider's valid
+`Retry-After` header (seconds or HTTP date) extends the delay when necessary.
+No additional configuration is required.
+
+Each non-streaming attempt has a fresh 30-second timeout, including response
+body reads. Streaming calls keep their caller-controlled lifetime. The caller's
+deadline and cancellation always bound the complete call and interrupt retry
+waits. Authentication, validation, and context-window errors are returned
+without a transient retry; context-window recovery remains the context
+manager's responsibility.
+
+A streaming request can retry only before it delivers text or reasoning to a
+consumer. Once output is delivered, failures are returned to avoid duplicating
+displayed text or spoken audio. Transport and transient stream retries share
+the same attempt budget; Anthropic's existing semantic-response repair remains
+separate. Retries are recorded under the `provider_retry` log component.
+
 ### Moonshot Kimi K3
 
 Use the dedicated `kimi` (global) or `kimi-cn` (mainland China) provider. Each has a built-in Moonshot OpenAI-compatible endpoint, so only `model` and the API key are required. The `kimi-k3` context window and max output are in the built-in registry, so the metadata overrides can stay unset.

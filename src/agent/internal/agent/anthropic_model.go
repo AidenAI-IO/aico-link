@@ -362,6 +362,9 @@ func (m *anthropicModel) generateContent(ctx context.Context, messages []llms.Me
 			}
 			retryLimit := m.streamMaxRetries
 			retryDelay := m.streamRetryDelay
+			if providerRetryManaged(ctx) {
+				retryLimit = 0
+			}
 			var responseProtocolErr *anthropicResponseProtocolError
 			if errors.As(streamErr, &responseProtocolErr) {
 				retryLimit = m.protocolRetries
