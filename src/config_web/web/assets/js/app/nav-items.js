@@ -35,6 +35,7 @@ export const LOCAL_ITEMS = [
   {id: 'overview', label: msg('local.overview', '运行概览'), route: '/'},
   {id: 'model', label: msg('ui.nav_model', '模型设置'), route: '/model'},
   {id: 'conversation', label: msg('ui.nav_conversation', '对话与工具'), route: '/conversation'},
+  {id: 'mcp', label: 'MCP', route: '/advanced/mcp'},
   {id: 'language', label: msg('basic.language_title', '语言与时区'), route: '/basic/language'},
   {id: 'logs', label: msg('advanced.logs', '日志'), route: '/advanced/logs'},
 ];

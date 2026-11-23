@@ -2,7 +2,133 @@
 sidebar_position: 3.5
 ---
 
-# MCP (Streamable HTTP)
+# MCP
+
+## Install MCP tools for the Agent
+
+Open **Config Web → Advanced → MCP → Install MCP for Agent → Install MCP**.
+In local Agent settings, open **MCP** in the navigation. Paste the server
+provider's `mcpServers` JSON and select **Install and connect**. The Agent
+initializes each server and discovers its tools before saving the import.
+Successful imports become available to the conversational Agent on its next
+request, without restarting. A failed import leaves the installed catalog
+unchanged. Server names must contain 1–32 letters, digits, underscores or hyphens.
+An existing name must be uninstalled before importing a replacement.
+
+Remote Streamable HTTP example:
+
+```json
+{
+  "mcpServers": {
+    "remote": {
+      "type": "http",
+      "url": "https://your-provider.example/mcp",
+      "headers": {"Authorization": "Bearer YOUR_PROVIDER_TOKEN"}
+    }
+  }
+}
+```
+
+Local stdio example:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@2.4.0", "/path/to/allowed/files"]
+    }
+  }
+}
+```
+
+The command runs **on the Agent host**, with the Agent's permissions, directly
+without a shell. Install only trusted servers. Node.js/npm (`npx`), Python/uv
+(`uvx`), or another required runtime must already be installed and accessible
+to the Agent service. Desktop paths do not refer to the board's filesystem.
+Package launchers can download dependencies, so their first start requires
+network access; preinstall packages and use an absolute executable path when
+startup exceeds the 30-second connection timeout. `env` supplies additional
+environment variables for stdio servers. The transport can be omitted: `url`
+selects HTTP, otherwise `command` selects stdio. `streamable-http` is also
+accepted as an HTTP type. `disabled: true` saves an entry without starting it.
+
+Select an installed server to inspect its tools, enable/disable it, reconnect,
+or uninstall it. Uninstalling removes the saved connection and closes the
+session; package caches or provider-side data are not deleted. Enabled servers
+reconnect in the background when the Agent starts. If a connection fails, use
+**Reconnect** after fixing the runtime, endpoint or credentials. The catalog
+is refreshed on connect/reconnect; dynamic tool-list changes require reconnect.
+
+Credentials are stored in `mcp-servers.json` beside `agent.toml`, with mode
+`0600`. Management responses contain status and tool names, never the saved
+environment or HTTP headers. Do not share this file. Configuration imports
+are limited to 64 KiB and 16 installed servers; each server can expose up to
+256 tools. Tool calls time out after 60 seconds. Imported names use a stable
+`mcp_<server>_<tool>_<hash>` namespace and preserve the server's JSON argument
+schema, text/structured content and tool-error result. Other MCP content blocks
+are preserved as JSON; this release does not attach MCP images/audio as native
+multimodal model inputs. These tools are available to the conversational Agent,
+and are not re-exported through the device's `/mcp` or `/api/tools` endpoints.
+
+This client supports tool servers over stdio and Streamable HTTP (JSON or SSE
+responses). Legacy HTTP+SSE endpoints, OAuth login, resources, prompts, sampling
+and elicitation are not supported. For a provider requiring a token, configure
+its HTTP headers or stdio environment. Resource-only and prompt-only servers
+are rejected with an explanatory error.
+
+### Three reference servers
+
+The integration test uses independent reference implementations with distinct
+capabilities:
+
+| Server | Capability | Verified operation |
+| --- | --- | --- |
+| `@modelcontextprotocol/server-filesystem@2.4.0` | Files constrained to allowed directories | Read a temporary text file |
+| `@modelcontextprotocol/server-memory@2.2.1` | Persistent knowledge graph | Create an entity with observations |
+| `@modelcontextprotocol/server-sequential-thinking@2.2.0` | Stateful reasoning steps | Submit a final thought |
+
+For repeatable validation, install these versions into a temporary npm prefix
+outside the checkout, then run the focused test in the pinned test image with
+Node.js 24+ and that prefix mounted. These reference packages require Node.js
+24+, while the standard test image includes Node.js 22 for the normal suites.
+For the opt-in test, install Node.js into the temporary prefix as well:
+
+```bash
+npm install --prefix /tmp/aico-mcp-node --no-save --package-lock=false node@24.13.1
+export PATH="/tmp/aico-mcp-node/node_modules/node/bin:$PATH"
+npm install --prefix /tmp/aico-mcp-reference --no-save --package-lock=false \
+  @modelcontextprotocol/server-filesystem@2.4.0 \
+  @modelcontextprotocol/server-memory@2.2.1 \
+  @modelcontextprotocol/server-sequential-thinking@2.2.0
+# Inside the pinned test container, from src/agent:
+AICO_MCP_REFERENCE_ROOT=/tmp/aico-mcp-reference \
+  go test -count=1 -v -run '^TestMCPReferenceServers$' ./internal/mcpclient
+```
+
+The test creates its own allowed directory and memory file. It makes real MCP
+tool calls, without an LLM provider or physical device. Deterministic tests also
+cover stdio, JSON HTTP and SSE HTTP, credentials, disable/uninstall, stale tool
+handles, persistence/restart, import rollback and cancellation. See
+[Testing and Validation](../01-getting-started/testing.md) for the Docker test
+workflow.
+
+### Management API
+
+Config Web provides these authenticated endpoints (local settings require
+same-origin loopback requests):
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/mcp/servers` | Status and discovered tool names |
+| `POST` | `/api/mcp/servers` | Import a `mcpServers` JSON document |
+| `PATCH` | `/api/mcp/servers/<name>` | `{"enabled": true}` connects/reconnects; `false` disables |
+| `DELETE` | `/api/mcp/servers/<name>` | Uninstall a saved connection |
+
+Config Web proxies only to the Agent's fixed loopback management endpoint.
+The device's MCP access tokens do not authorize installation or management.
+
+## Connect an external client to the device
 
 The Agent HTTP server exposes Model Context Protocol over
 [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)

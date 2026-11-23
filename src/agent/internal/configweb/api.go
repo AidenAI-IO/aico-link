@@ -74,6 +74,8 @@ const (
 	apiMCPTokensGet
 	apiMCPTokensCreate
 	apiMCPTokenRevoke
+	apiMCPServers
+	apiMCPServersChange
 	apiUSBInternetGet
 	apiUSBInternetPut
 	apiUSBInternetSessionPut
@@ -88,6 +90,8 @@ type apiRoute struct {
 }
 
 var apiRoutes = []apiRoute{
+	{apiMCPServers, routeVariant{http.MethodGet, apiPrefix + "/mcp/servers"}},
+	{apiMCPServersChange, routeVariant{http.MethodPost, apiPrefix + "/mcp/servers"}},
 	{apiIPhoneMirroring, routeVariant{http.MethodGet, apiPrefix + "/device/iphone-mirroring"}},
 	{apiIPhoneMirroringReconnect, routeVariant{http.MethodPost, apiPrefix + "/device/iphone-mirroring/reconnect"}},
 	{apiUSBInternetGet, routeVariant{http.MethodGet, apiPrefix + "/network/usb-internet"}},
@@ -207,6 +211,9 @@ func matchAPIRequest(r *http.Request) apiMatch {
 		}
 	}
 	const mcpTokenPrefix = apiPrefix + "/security/mcp-tokens/"
+	if name, ok := strings.CutPrefix(r.URL.Path, apiPrefix+"/mcp/servers/"); ok && name != "" && !strings.Contains(name, "/") && (r.Method == http.MethodPatch || r.Method == http.MethodDelete) {
+		return apiMatch{endpoint: apiMCPServersChange, suffix: name}
+	}
 	if id, ok := strings.CutPrefix(r.URL.Path, mcpTokenPrefix); ok && id != "" && !strings.Contains(id, "/") && r.Method == http.MethodDelete {
 		return apiMatch{endpoint: apiMCPTokenRevoke, suffix: id}
 	}
@@ -364,6 +371,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleClearPassword(w, r)
 	case apiMCPTokensGet:
 		s.handleMCPTokensList(w, r)
+	case apiMCPServers, apiMCPServersChange:
+		s.handleMCPServers(w, r, match.suffix)
 	case apiMCPTokensCreate:
 		s.handleMCPTokenCreate(w, r)
 	case apiMCPTokenRevoke:
@@ -379,7 +388,7 @@ func endpointConflictsWithMaintenance(endpoint apiEndpoint) bool {
 		apiWiFiRegionUpdate,
 		apiSystemEnvironmentPut, apiSystemEnvironmentApply, apiOTAUpdate,
 		apiDeviceReboot, apiAgentRestart, apiUSBReenumerate, apiLLMLogImport,
-		apiLANAccessPut, apiPasswordClear, apiUSBInternetPut:
+		apiLANAccessPut, apiPasswordClear, apiUSBInternetPut, apiMCPServersChange:
 		return true
 	default:
 		return false
