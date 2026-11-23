@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/providerretry"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -1279,7 +1280,7 @@ func responsesErrorHTTPStatus(apiErr *responsesError) int {
 	case strings.Contains(markers, "invalid_request"), strings.Contains(markers, "invalid_prompt"), strings.Contains(markers, "context_length"), strings.Contains(markers, "content_policy"):
 		return http.StatusBadRequest
 	default:
-		return http.StatusInternalServerError
+		return providerretry.ProviderStatus(errorType, code)
 	}
 }
 

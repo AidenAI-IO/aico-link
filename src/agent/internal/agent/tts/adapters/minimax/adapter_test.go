@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/providerretry"
 )
 
 func TestWebSocketRequestsSinkSampleRate(t *testing.T) {
@@ -409,3 +410,18 @@ func (s *recordingSink) WritePCM(data []byte) error {
 }
 func (s *recordingSink) Drain(context.Context) error { return nil }
 func (s *recordingSink) Stop() error                 { return nil }
+
+func TestMiniMaxStructuredServiceErrors(t *testing.T) {
+	for _, tt := range []struct {
+		code  int
+		retry bool
+	}{{1001, true}, {1002, true}, {1024, true}, {1033, true}, {1039, true}, {1004, false}} {
+		err := minimaxError(map[string]any{"base_resp": map[string]any{"status_code": float64(tt.code), "status_msg": "rejected"}})
+		if err == nil {
+			t.Fatalf("code=%d lost provider rejection", tt.code)
+		}
+		if providerretry.Retryable(err) != tt.retry {
+			t.Errorf("code=%d error=%v", tt.code, err)
+		}
+	}
+}

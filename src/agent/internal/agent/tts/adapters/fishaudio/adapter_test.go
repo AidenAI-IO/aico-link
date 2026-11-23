@@ -2,6 +2,7 @@ package fishaudio
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 
 	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/providerretry"
 )
 
 func TestFishAudioUsesDefaultReferenceIDWhenEmpty(t *testing.T) {
@@ -267,3 +269,91 @@ func (s *deadlineCheckingSink) Drain(ctx context.Context) error {
 	return nil
 }
 func (s *deadlineCheckingSink) Stop() error { return nil }
+
+func TestFishAudioFinishReasonPreservesSynthesisFailures(t *testing.T) {
+	for _, tt := range []struct {
+		reason, code  string
+		failed, retry bool
+	}{
+		{"stop", "", false, false}, {"", "", false, false}, {"error", "", true, false}, {"error", "503", true, true}, {"unexpected", "", true, false},
+	} {
+		t.Run(tt.reason+tt.code, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				for {
+					_, raw, err := conn.ReadMessage()
+					if err != nil {
+						return
+					}
+					var msg map[string]any
+					_ = msgpack.Unmarshal(raw, &msg)
+					if msg["event"] == "stop" {
+						body, _ := msgpack.Marshal(map[string]any{"event": "finish", "reason": tt.reason, "code": tt.code})
+						_ = conn.WriteMessage(websocket.BinaryMessage, body)
+						return
+					}
+				}
+			}))
+			defer server.Close()
+			provider, err := New(tts.ProviderConfig{APIKey: "k", Endpoint: "ws" + strings.TrimPrefix(server.URL, "http")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer provider.Close()
+			session, err := provider.BeginStream(context.Background(), noopSink{format: tts.AudioFormat{SampleRate: 16000, Channels: 1, BitWidth: 16}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = session.Close()
+			if (err != nil) != tt.failed || providerretry.Retryable(err) != tt.retry {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
+func TestClosePreservesRejectionAfterConnectionCloses(t *testing.T) {
+	for _, event := range []string{"error", "finish"} {
+		t.Run(event, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+				body, _ := msgpack.Marshal(map[string]any{"event": event, "reason": "error", "code": 401, "message": "rejected"})
+				_ = conn.WriteMessage(websocket.BinaryMessage, body)
+			}))
+			defer server.Close()
+			provider, err := New(tts.ProviderConfig{APIKey: "k", Endpoint: "ws" + strings.TrimPrefix(server.URL, "http")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer provider.Close()
+			stream, err := provider.BeginStream(context.Background(), noopSink{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := stream.(*session)
+			select {
+			case err := <-raw.readDone:
+				raw.readDone <- err
+			case <-time.After(time.Second):
+				t.Fatal("reader did not receive rejection")
+			}
+			raw.closeConn() // Make Flush fail deterministically after the rejection.
+			err = stream.Close()
+			var status *providerretry.StatusError
+			if !errors.As(err, &status) || status.Status != 401 || providerretry.Retryable(err) {
+				t.Fatalf("lost permanent rejection: %v", err)
+			}
+		})
+	}
+}

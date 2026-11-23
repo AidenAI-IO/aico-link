@@ -1,9 +1,6 @@
 package agent
 
 import (
-	"aico-agent/internal/agent/messages"
-	"aico-agent/internal/agent/model"
-	"aico-agent/internal/logging"
 	"bytes"
 	"context"
 	"errors"
@@ -16,6 +13,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
 
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
@@ -151,9 +153,9 @@ func (m *ModelManager) GenerateContent(ctx context.Context, messages []llms.Mess
 	if err != nil {
 		return nil, err
 	}
-	requestCtx, cancel := withDefaultLLMRequestTimeout(ctx, options...)
-	defer cancel()
-	return model.GenerateContent(requestCtx, messages, options...)
+	return withProviderRetry(ctx, defaultProviderRetryPolicy(), options, func(attemptCtx context.Context, attemptOptions []llms.CallOption) (*llms.ContentResponse, error) {
+		return model.GenerateContent(attemptCtx, messages, attemptOptions...)
+	})
 }
 
 // GenerateContentFromMessageList preserves provider-specific transcript
@@ -170,14 +172,14 @@ func (m *ModelManager) GenerateContentFromMessageList(ctx context.Context, messa
 	if err != nil {
 		return nil, err
 	}
-	requestCtx, cancel := withDefaultLLMRequestTimeout(ctx, options...)
-	defer cancel()
-	if contextModel, ok := model.(interface {
-		GenerateContentFromMessageList(context.Context, []messages.Message, ...llms.CallOption) (*llms.ContentResponse, error)
-	}); ok {
-		return contextModel.GenerateContentFromMessageList(requestCtx, messageList, options...)
-	}
-	return model.GenerateContent(requestCtx, messages.ConvertMessageList(messageList), options...)
+	return withProviderRetry(ctx, defaultProviderRetryPolicy(), options, func(attemptCtx context.Context, attemptOptions []llms.CallOption) (*llms.ContentResponse, error) {
+		if contextModel, ok := model.(interface {
+			GenerateContentFromMessageList(context.Context, []messages.Message, ...llms.CallOption) (*llms.ContentResponse, error)
+		}); ok {
+			return contextModel.GenerateContentFromMessageList(attemptCtx, messageList, attemptOptions...)
+		}
+		return model.GenerateContent(attemptCtx, messages.ConvertMessageList(messageList), attemptOptions...)
+	})
 }
 
 func (m *ModelManager) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
@@ -188,9 +190,9 @@ func (m *ModelManager) Call(ctx context.Context, prompt string, options ...llms.
 	if err != nil {
 		return "", err
 	}
-	requestCtx, cancel := withDefaultLLMRequestTimeout(ctx, options...)
-	defer cancel()
-	return model.Call(requestCtx, prompt, options...)
+	return withProviderRetry(ctx, defaultProviderRetryPolicy(), options, func(attemptCtx context.Context, attemptOptions []llms.CallOption) (string, error) {
+		return model.Call(attemptCtx, prompt, attemptOptions...)
+	})
 }
 
 func (m *ModelManager) CallOptions() []chains.ChainCallOption {
@@ -391,7 +393,7 @@ func (m *ModelManager) buildContext() ModelBuildContext {
 	}
 	return ModelBuildContext{
 		HTTPClient:        newRetryHTTPClient(m.proxy),
-		OllamaHTTPClient:  newProxyHTTPClient(m.proxy),
+		OllamaHTTPClient:  newRetryHTTPClient(m.proxy),
 		RawHTTPLogger:     logger,
 		SessionIDProvider: m.bindings().CurrentSessionID,
 		PromptCachePolicy: m.cachedOpenRouterPromptCachePolicy(),
@@ -440,17 +442,6 @@ func resolveToken(cfg ModelConfig) string {
 	return resolveProviderAPIKey(cfg.APIKey)
 }
 
-func withDefaultLLMRequestTimeout(ctx context.Context, options ...llms.CallOption) (context.Context, context.CancelFunc) {
-	callOpts := llms.CallOptions{}
-	for _, option := range options {
-		option(&callOpts)
-	}
-	if callOpts.StreamingFunc != nil || callOpts.StreamingReasoningFunc != nil {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, defaultLLMHTTPTimeout)
-}
-
 // retryTransport retries transient HTTP and transport failures with backoff.
 type retryTransport struct {
 	wrapped        http.RoundTripper
@@ -459,6 +450,16 @@ type retryTransport struct {
 }
 
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if state, ok := req.Context().Value(providerRetryContextKey{}).(*providerRetryAttempt); ok {
+		// ModelManager retries the complete attempt, including response reads.
+		// Retrying here as well would multiply the request budget.
+		resp, err := providerretry.RoundTrip(t.wrapped, req, state.streamIdleTimeout)
+		if resp != nil {
+			state.statusCode = resp.StatusCode
+			state.retryAfter = providerRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		}
+		return resp, err
+	}
 	// Read body so we can replay it on retry
 	var bodyBytes []byte
 	if req.Body != nil {
@@ -539,7 +540,8 @@ func shouldRetryTransportError(ctx context.Context, err error) bool {
 }
 
 func shouldRetryHTTPStatus(statusCode int) bool {
-	return statusCode == http.StatusTooManyRequests || statusCode >= 500
+	return statusCode == http.StatusRequestTimeout || statusCode == http.StatusConflict ||
+		statusCode == http.StatusTooManyRequests || statusCode >= 500 && statusCode < 600
 }
 
 func newRetryHTTPClient(proxy ProxyConfig) *http.Client {

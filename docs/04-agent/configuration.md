@@ -664,6 +664,66 @@ built. When a section is named exactly like a provider type, the section wins.
 | `context_window`          | Optional total context window override in tokens. Unset or `0` uses provider metadata for OpenRouter/Ollama when available, then the built-in registry, then memory fallback.                                                                        |
 | `model_max_output_tokens` | Optional advertised max output override in tokens. Unset or `0` uses provider metadata when fetched, then the built-in registry.                                                                                                                     |
 
+### Automatic provider retries
+
+Model requests automatically retry timeouts, transient network failures, HTTP
+408/409/429, and HTTP 5xx responses. Each call allows up to five retries (six
+attempts total), with delays of 2, 4, 6, 8, and 10 seconds. A provider's valid
+`Retry-After` header (seconds or HTTP date) extends the delay when necessary.
+No additional configuration is required.
+
+Each non-streaming attempt has a fresh 30-second timeout, including response
+body reads. Streaming calls have a 30-second timeout for response headers and
+for each blocked response-body read; ongoing data or SSE heartbeats keep a long
+response alive. Time spent in consumer callbacks does not count toward the read
+timeout. The caller's deadline and cancellation always bound the complete call
+and interrupt retry waits. Authentication, validation, and context-window errors
+are returned without a transient retry; context-window recovery remains the context
+manager's responsibility.
+
+A streaming request can retry only before it delivers text or reasoning to a
+consumer. Once output is delivered, failures are returned to avoid duplicating
+displayed text or spoken audio. Transport and transient stream retries share
+the same attempt budget; Anthropic's existing semantic-response repair remains
+separate. Structured SSE error envelopes (including numeric status codes and
+provider rate-limit/overload codes) are classified even when HTTP returns 200.
+An interrupted stream without a completion marker or finish reason is returned
+as an error. Retries are recorded under the `provider_retry` log component.
+
+Speech and decision requests also retry transient failures without additional
+configuration:
+
+- **STT:** Whisper, OpenRouter, Google Cloud, Tencent ASR, and DashScope allow
+  two retries with 500 ms and 1 s delays and a fresh 30-second timeout per
+  buffered-WAV attempt. The complete recording is retained and rebuilt on each
+  attempt. Tencent and DashScope streaming uploaders retry connection/session
+  setup before audio upload; once upload starts, existing full-recording fallback
+  remains responsible for recognition failures.
+- **TTS:** All provider sessions opened through the shared provider holder use
+  one two-retry budget across connection setup and synthesis operations, with
+  500 ms and 1 s delays. Blocking setup/synthesis operations before the first
+  PCM write are bounded to 30 seconds. Input is retained only until audio starts
+  (up to 256 KiB); failed attempts are canceled and closed before replay, and
+  they cannot finalize the shared playback sink. Once any PCM is submitted to
+  playback, failures are returned without replaying speech. Provider-specific
+  synthesis/playback timeouts still apply after audio starts.
+- **Decision models:** TypeSafe, OpenAI, Gemini, and OpenRouter share two retries
+  with 400 ms and 800 ms delays and a 15-second
+  overall budget (or a shorter caller deadline).
+- **Realtime:** OpenAI, Qwen, Gemini Live, xAI, Moss, and Speko retry failed
+  connection/session setup twice, with 500 ms and 1 s delays. WebSocket upgrade
+  failures preserve HTTP status and `Retry-After`; setup timeouts and structured
+  transient server errors are retryable. Setup remains bounded by the caller's
+  connection deadline and adapter handshake/readiness timeouts. Nested mint and
+  WebSocket requests share the setup budget, and Speko retains the same mint
+  idempotency key across attempts. Active-session audio, tool results, and
+  conversation turns are never replayed automatically.
+
+All of these paths honor a longer valid `Retry-After` and stop immediately on
+caller cancellation. Unknown provider business codes are treated as permanent
+failures unless explicitly mapped; error-message text alone does not trigger a
+retry.
+
 ### Moonshot Kimi K3
 
 Use the dedicated `kimi` (global) or `kimi-cn` (mainland China) provider. Each has a built-in Moonshot OpenAI-compatible endpoint, so only `model` and the API key are required. The `kimi-k3` context window and max output are in the built-in registry, so the metadata overrides can stay unset.

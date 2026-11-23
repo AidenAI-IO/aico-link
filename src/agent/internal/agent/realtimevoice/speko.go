@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"aico-agent/internal/providerretry"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -125,7 +127,7 @@ func (p SpekoProvider) Open(ctx context.Context, cfg SessionConfig) (Session, er
 		}
 	}
 	req.Header.Set("Idempotency-Key", idempotencyKey)
-	resp, err := hc.Do(req)
+	resp, err := providerretry.HTTP(ctx, hc, req)
 	if err != nil {
 		return nil, fmt.Errorf("speko session mint: %w", err)
 	}

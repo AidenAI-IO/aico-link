@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 
+	"aico-agent/internal/providerretry"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -47,7 +49,7 @@ func (p QwenProvider) Open(ctx context.Context, cfg SessionConfig) (Session, err
 	if dialer == nil {
 		dialer = websocket.DefaultDialer
 	}
-	conn, resp, err := dialer.DialContext(ctx, endpoint, header)
+	conn, resp, err := providerretry.Dial(ctx, dialer, endpoint, header)
 	if err != nil {
 		return nil, dialError("qwen realtime", resp, err)
 	}
@@ -353,7 +355,7 @@ func translateQwenEvent(body []byte) (Event, bool) {
 		if isQwenResponseInProgressError(event.Error.Type, event.Error.Param, event.Error.Message) {
 			return Event{Kind: EventResponseRejected, Error: errors.New(event.Error.Message)}, true
 		}
-		return Event{Kind: EventError, Error: classifyServerErrorMessage(event.Error.Message)}, true
+		return Event{Kind: EventError, Error: providerServerError(body, event.Error.Message)}, true
 	default:
 		return Event{}, false
 	}
