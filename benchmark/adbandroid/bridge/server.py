@@ -13,7 +13,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from mnk_provider import execute_mnk_request
+from mnk_provider import execute_mnk_request, validate_insert_text
 from setup_token_registry import SetupTokenRegistry, setup_token_from_payload
 
 from .adb import ADBAndroidDevice, ADBCommandError
@@ -92,6 +92,13 @@ def _handler_for(bridge: ADBBridgeServer):
                 return
             if path == "/api/concurrent":
                 self._send_json(200, bridge_ok(_concurrent_payload(bridge)))
+                return
+            if path == "/api/providers/mnk":
+                # The Agent probes this before enter_text: with insert_text it
+                # sends Unicode text in one request instead of typing keys.
+                device = bridge.state.device
+                supported = bool(getattr(device, "supports_unicode_text", lambda: False)())
+                self._send_json(200, {"capabilities": {"insert_text": supported}})
                 return
             if path != "/health":
                 self._send_error(404, "not_found", "unknown endpoint")
@@ -232,15 +239,16 @@ def _handler_for(bridge: ADBBridgeServer):
             if not bridge.state.active_episode_id:
                 self._send_json(409, {"error": "no active episode; call /api/setup first"})
                 return
+            def invoke(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+                return bridge.tools_api._submit_tool_call(name, tool_input, capture_screenshot=False)
+
             try:
                 # The MNK transport returns only a flat success/error body, so a
                 # post-action frame would be encoded, sent and dropped.
-                status, response = execute_mnk_request(
-                    payload,
-                    lambda name, tool_input: bridge.tools_api._submit_tool_call(
-                        name, tool_input, capture_screenshot=False
-                    ),
-                )
+                if str(payload.get("operation", "")).strip().lower() == "insert_text":
+                    status, response = _execute_insert_text(payload, invoke)
+                else:
+                    status, response = execute_mnk_request(payload, invoke)
             except ADBCommandError as exc:
                 status, response = 500, {"error": str(exc)}
             self._send_json(status, response)
@@ -281,6 +289,25 @@ def _handler_for(bridge: ADBBridgeServer):
             self.wfile.write(data)
 
     return ADBBridgeRequestHandler
+
+
+def _execute_insert_text(payload: dict[str, Any], invoke) -> tuple[int, dict[str, Any]]:
+    """Run an MNK insert_text request: Unicode text into the focused field."""
+    params = payload.get("insert_text")
+    if not isinstance(params, dict):
+        return 400, {"error": "insert_text params required"}
+    text = params.get("text")
+    try:
+        validate_insert_text(text)
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    replace = params.get("replace", False)
+    if not isinstance(replace, bool):
+        return 400, {"error": "replace must be a boolean"}
+    result = invoke("insert_text", {"text": text, "replace": replace})
+    if result.get("is_error"):
+        return 500, {"error": str(result.get("output") or "insert_text failed")}
+    return 200, {"success": True}
 
 
 def _health_payload(bridge: ADBBridgeServer, device_info: dict[str, Any]) -> dict[str, Any]:

@@ -254,3 +254,125 @@ def test_input_text_reuses_the_cached_input_method_probe(monkeypatch):
     device.input_text("second")
 
     assert len(ime_lists) == 1
+
+
+def test_encode_modified_utf7_matches_rfc3501():
+    from adbandroid.bridge.adb import encode_modified_utf7
+
+    assert encode_modified_utf7("hello aico") == "hello aico"
+    assert encode_modified_utf7("小红书") == "&XA9+ok5m-"
+    assert encode_modified_utf7("Hi 你好 & 😀") == "Hi &T2BZfQ- &- &2D3eAA-"
+    # Base64 "/" is written as "," in modified UTF-7.
+    assert "/" not in encode_modified_utf7("瑞幸咖啡的新品，云南豆子，还不错。")
+
+
+def _unicode_ime_device(monkeypatch, *, installed, enabled, current):
+    device = ADBAndroidDevice("serial-1")
+    calls = []
+
+    def fake_run_text(args, *, timeout=None):
+        calls.append(("text", args))
+        if args == ["shell", "ime", "list", "-a", "-s"]:
+            return "\n".join(installed) + "\n"
+        if args == ["shell", "ime", "list", "-s"]:
+            return "\n".join(enabled) + "\n"
+        if args == ["shell", "settings", "get", "secure", "default_input_method"]:
+            return current + "\n"
+        if args[0:3] in (["shell", "ime", "set"], ["shell", "ime", "enable"]):
+            return f"Input method {args[3]} ok"
+        if args == ["shell", "input"]:
+            return "Usage: input [<source>] <command> ... keycombination ..."
+        if args[0:3] == ["shell", "input", "keycombination"]:
+            calls.append(("run", args))
+            return ""
+        raise AssertionError(f"unexpected _run_text args: {args!r}")
+
+    def fake_run(args, *, timeout=None, binary=False):
+        calls.append(("run", args))
+        return b""
+
+    monkeypatch.setattr(device, "_run_text", fake_run_text)
+    monkeypatch.setattr(device, "_run", fake_run)
+    monkeypatch.setattr("adbandroid.bridge.adb.time.sleep", lambda _seconds: None)
+    return device, calls
+
+
+def test_insert_unicode_text_types_utf7_through_appium_ime_and_restores(monkeypatch):
+    sogou = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME"
+    device, calls = _unicode_ime_device(
+        monkeypatch,
+        installed=[sogou, "io.appium.settings/.AppiumIME", "io.appium.settings/.UnicodeIME"],
+        enabled=[sogou, "io.appium.settings/.UnicodeIME"],
+        current=sogou,
+    )
+
+    assert device.supports_unicode_text() is True
+    device.insert_unicode_text("小红书 ok")
+
+    sent = [c for c in calls if c[0] == "run"]
+    assert sent == [("run", ["shell", "input", "text", "'&XA9+ok5m-%sok'"])]
+    sets = [c[1][3] for c in calls if c[1][0:3] == ["shell", "ime", "set"]]
+    assert sets == ["io.appium.settings/.UnicodeIME", sogou]
+    assert not any(c[1][0:3] == ["shell", "ime", "enable"] for c in calls)
+
+
+def test_insert_unicode_text_enables_the_ime_and_clears_on_replace(monkeypatch):
+    sogou = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME"
+    device, calls = _unicode_ime_device(
+        monkeypatch,
+        installed=[sogou, "io.appium.settings/.AppiumIME", "io.appium.settings/.UnicodeIME"],
+        enabled=[sogou],
+        current=sogou,
+    )
+
+    device.insert_unicode_text("你好", replace=True)
+
+    assert ("text", ["shell", "ime", "enable", "io.appium.settings/.UnicodeIME"]) in calls
+    sent = [c[1] for c in calls if c[0] == "run"]
+    assert sent == [
+        ["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"],
+        ["shell", "input", "keyevent", "KEYCODE_DEL"],
+        ["shell", "input", "text", "'&T2BZfQ-'"],
+    ]
+    sets = [c[1][3] for c in calls if c[1][0:3] == ["shell", "ime", "set"]]
+    assert sets == ["io.appium.settings/.UnicodeIME", sogou]
+
+
+def test_insert_unicode_text_restores_the_ime_when_typing_fails(monkeypatch):
+    sogou = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME"
+    device, calls = _unicode_ime_device(
+        monkeypatch,
+        installed=[sogou, "io.appium.settings/.UnicodeIME"],
+        enabled=[sogou, "io.appium.settings/.UnicodeIME"],
+        current=sogou,
+    )
+
+    def failing_run(args, *, timeout=None, binary=False):
+        raise ADBCommandError("input text failed")
+
+    monkeypatch.setattr(device, "_run", failing_run)
+    with pytest.raises(ADBCommandError, match="input text failed"):
+        device.insert_unicode_text("你好")
+    sets = [c[1][3] for c in calls if c[1][0:3] == ["shell", "ime", "set"]]
+    assert sets == ["io.appium.settings/.UnicodeIME", sogou]
+
+
+def test_insert_unicode_text_requires_appium_settings(monkeypatch):
+    sogou = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME"
+    # AppiumIME alone does not decode UTF-7, so it does not count.
+    device, calls = _unicode_ime_device(
+        monkeypatch, installed=[sogou, "io.appium.settings/.AppiumIME"], enabled=[sogou], current=sogou
+    )
+
+    assert device.supports_unicode_text() is False
+    with pytest.raises(ADBCommandError, match="Appium Settings"):
+        device.insert_unicode_text("你好")
+    assert not any(c[0] == "run" for c in calls)
+
+
+def test_insert_unicode_text_rejects_literal_percent_s(monkeypatch):
+    device, _ = _unicode_ime_device(
+        monkeypatch, installed=["io.appium.settings/.UnicodeIME"], enabled=[], current="x/.Y"
+    )
+    with pytest.raises(ValueError, match="%s"):
+        device.insert_unicode_text("50%s off")

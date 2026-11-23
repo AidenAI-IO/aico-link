@@ -556,3 +556,60 @@ def test_failed_idempotent_resetup_keeps_existing_ownership(bridge):
     status, body = _request(base_url, "/api/setup", method="POST", task_id="suite:task-2")
     assert status == 429
     assert body["error"]["code"] == "no_bridge_env_available"
+
+
+def test_mnk_capabilities_report_insert_text_only_with_a_unicode_ime(bridge):
+    _, device, base_url = bridge
+    status, body = _request(base_url, "/api/providers/mnk")
+    assert status == 200 and body == {"capabilities": {"insert_text": False}}
+
+    device.supports_unicode_text = lambda: True
+    status, body = _request(base_url, "/api/providers/mnk")
+    assert status == 200 and body == {"capabilities": {"insert_text": True}}
+
+
+def test_mnk_insert_text_sends_unicode_to_the_device(bridge):
+    _, device, base_url = bridge
+    inserted = []
+    device.insert_unicode_text = lambda text, replace=False: inserted.append((text, replace))
+    assert _request(base_url, "/api/setup", method="POST", task_id="suite:insert")[0] == 200
+    device.calls.clear()
+
+    status, body = _request(
+        base_url,
+        "/api/providers/mnk",
+        method="POST",
+        task_id="suite:insert",
+        payload={"operation": "insert_text", "insert_text": {"text": "瑞幸咖啡 😀", "replace": True}},
+    )
+
+    assert status == 200 and body == {"success": True}
+    assert inserted == [("瑞幸咖啡 😀", True)]
+    assert ("screenshot_jpeg",) not in device.calls
+
+
+def test_mnk_insert_text_validates_and_reports_device_errors(bridge):
+    _, device, base_url = bridge
+    assert _request(base_url, "/api/setup", method="POST", task_id="suite:insert-err")[0] == 200
+
+    for payload in (
+        {"operation": "insert_text"},
+        {"operation": "insert_text", "insert_text": {"text": ""}},
+        {"operation": "insert_text", "insert_text": {"text": "a\x00b"}},
+        {"operation": "insert_text", "insert_text": {"text": "你好", "replace": "yes"}},
+    ):
+        status, _ = _request(base_url, "/api/providers/mnk", method="POST", task_id="suite:insert-err", payload=payload)
+        assert status == 400, payload
+
+    def missing_ime(text, replace=False):
+        raise ADBCommandError("Unicode text input needs the Appium Settings app")
+
+    device.insert_unicode_text = missing_ime
+    status, body = _request(
+        base_url,
+        "/api/providers/mnk",
+        method="POST",
+        task_id="suite:insert-err",
+        payload={"operation": "insert_text", "insert_text": {"text": "你好"}},
+    )
+    assert status == 500 and "Appium Settings" in body["error"]

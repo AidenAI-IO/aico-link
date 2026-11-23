@@ -281,12 +281,19 @@ a gesture on failure). Pass `{"list": true}` to see the full catalog.
 
 ## Known limitations
 
-- **Text input is English-only**: `adb input text` cannot type Chinese/IME
-  composed text; non-ASCII returns an explicit error, and a literal `%s` in the
-  text is typed as a space (the `input text` escaping convention). Chinese input
-  would need a clipboard/IME approach, not yet implemented. For ASCII input, the
-  bridge temporarily switches to a known enabled Latin IME when available, then
-  restores the previous IME.
+- **Unicode text needs Appium Settings**: `adb input text` types only ASCII,
+  and a literal `%s` is typed as a space (the `input text` escaping
+  convention). When the Appium Settings app (`io.appium.settings`) is installed,
+  `GET /api/providers/mnk` reports `{"capabilities": {"insert_text": true}}`
+  and the Agent's `enter_text` sends Chinese, emoji and other Unicode text
+  through MNK `insert_text`. The bridge enables and selects the Appium Unicode
+  IME, types the text as modified UTF-7, which the IME decodes, then restores
+  the previous IME. `replace: true` clears the field with Ctrl+A and Delete and
+  needs `input keycombination`. Without Appium Settings, `insert_text` is not
+  advertised and non-ASCII text returns an explicit error. The bridge's own
+  `keyboard_text` and `enter_text` tools stay ASCII-only; for ASCII input they
+  temporarily switch to a known enabled Latin IME when available, then restore
+  the previous IME.
 - **Text entry is verified best-effort**: `enter_text` reports `ok:true` only
   when Android UIAutomator
   exposes matching editable field text after `adb input text`. The bridge dumps

@@ -393,6 +393,8 @@ class ADBToolsAPIHandler:
             return self._call_keyboard_tap(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "enter_text":
             return self._call_enter_text(tool_input, capture_screenshot=capture_screenshot)
+        elif tool_name == "insert_text":
+            return self._call_insert_text(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "mouse_move":
             return self._call_mouse_move(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "mouse_scroll":
@@ -720,6 +722,27 @@ class ADBToolsAPIHandler:
                 "size": screenshot.get("size", 0),
             })
         return {"output": json.dumps(output_data, ensure_ascii=False), "is_error": False}
+
+    def _call_insert_text(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
+        """Insert Unicode text into the focused field (MNK ``insert_text``).
+
+        Only reached through the MNK provider, which validates the text; the
+        Agent verifies the field from its own screenshot afterwards.
+        """
+        text = tool_input.get("text")
+        replace = tool_input.get("replace", False)
+        if not isinstance(text, str) or text == "":
+            return {"output": "error: text is required", "is_error": True}
+        if not isinstance(replace, bool):
+            return {"output": "error: replace must be a boolean", "is_error": True}
+        device = self.state.device
+        return self._execute_device(
+            lambda: device.insert_unicode_text(text, replace=replace),
+            tool_name="insert_text",
+            tool_input=tool_input,
+            adb_summary="input text (Unicode IME)",
+            capture_screenshot=capture_screenshot,
+        )
 
     def _call_keyboard_text(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
         text = tool_input.get("text", "")
@@ -1092,6 +1115,7 @@ def _unknown_tool_fields(tool_name: str, tool_input: dict[str, Any]) -> list[str
         },
         "mouse_move": {"x", "y"},
         "quick_action": {"action", "list", "alternative", "alternative_index"},
+        "insert_text": {"text", "replace"},
     }.get(tool_name)
     return [] if allowed is None else sorted(set(tool_input) - allowed)
 

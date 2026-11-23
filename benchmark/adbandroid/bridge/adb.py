@@ -9,6 +9,7 @@ translate those into protocol responses.
 
 from __future__ import annotations
 
+import base64
 import io
 import re
 import subprocess
@@ -24,6 +25,18 @@ PREFERRED_ASCII_INPUT_METHODS = (
     "com.android.inputmethod.latin/.LatinIME",
 )
 DEFAULT_TEXT_RESTORE_WAIT_SEC = 0.08
+# Appium Settings input method that decodes modified UTF-7 (RFC 3501) typed
+# through `adb shell input text` into Unicode. Installing io.appium.settings on
+# the device enables Chinese, emoji and other non-ASCII text; without it only
+# ASCII can be typed. (Its AppiumIME does not decode UTF-7 in Appium Settings
+# 3.4.0, so it is not used.)
+UNICODE_INPUT_METHODS = ("io.appium.settings/.UnicodeIME",)
+# After `ime set` the new IME needs time to bind to the focused field; text
+# typed sooner reaches the field undecoded. 1 s was reliable on a Redmi Note 10
+# Pro (MIUI 14, Android 13).
+UNICODE_IME_BIND_WAIT_SEC = 1.0
+# The decoding IME must still be selected while it commits the last characters.
+UNICODE_TEXT_COMMIT_WAIT_SEC = 0.3
 
 # Characters adb `input text` can type reliably on a US keyboard layout.
 # Deliberately excludes newline/tab (input text cannot type them) and any
@@ -71,6 +84,7 @@ class ADBAndroidDevice:
         self._screen_size: tuple[int, int] | None = None
         self._supports_keycombination: bool | None = None
         self._preferred_ime: str | None = None
+        self._unicode_ime: str | None = None
 
     # ---- low-level -------------------------------------------------------
 
@@ -203,6 +217,61 @@ class ADBAndroidDevice:
             self._run(["shell", "input", "text", escape_adb_text(text)])
         finally:
             self._restore_input_method(restore_ime)
+
+    def unicode_input_method(self) -> str:
+        """Return the installed Unicode-capable IME, or "" when none is installed.
+
+        The installed-IME list is static for a device session, so the probe is
+        cached. A failed probe is not cached, so a later call can retry.
+        """
+        if self._unicode_ime is not None:
+            return self._unicode_ime
+        try:
+            output = self._run_text(["shell", "ime", "list", "-a", "-s"], timeout=5)
+        except ADBCommandError:
+            return ""
+        installed = {line.strip() for line in output.splitlines() if line.strip()}
+        self._unicode_ime = next((ime for ime in UNICODE_INPUT_METHODS if ime in installed), "")
+        return self._unicode_ime
+
+    def supports_unicode_text(self) -> bool:
+        return bool(self.unicode_input_method())
+
+    def insert_unicode_text(self, text: str, replace: bool = False) -> None:
+        """Type any Unicode text through the Appium Settings Unicode IME.
+
+        The text is encoded as modified UTF-7, which uses only ASCII, typed with
+        `input text`, and decoded back to Unicode by the IME. The previously
+        selected IME is restored afterwards. With ``replace`` the focused field
+        is cleared first (select all, then delete).
+        """
+        if not isinstance(text, str) or text == "":
+            raise ValueError("text is required")
+        if "%s" in text:
+            raise ValueError('text must not contain "%s": adb input text types it as a space')
+        ime = self.unicode_input_method()
+        if not ime:
+            raise ADBCommandError(
+                "Unicode text input needs the Appium Settings app (io.appium.settings) installed on the device"
+            )
+        if ime not in self.list_input_methods():
+            output = self._run_text(["shell", "ime", "enable", ime], timeout=5)
+            if "error" in output.lower() or "unknown" in output.lower():
+                raise ADBCommandError(f"enable input method {ime!r} failed: {output.strip()}")
+            self._preferred_ime = None
+        original_ime = self.current_input_method()
+        if original_ime != ime:
+            self.set_input_method(ime)
+            time.sleep(UNICODE_IME_BIND_WAIT_SEC)
+        try:
+            if replace:
+                self.keycombination(["KEYCODE_CTRL_LEFT", "KEYCODE_A"])
+                self.keyevent("KEYCODE_DEL")
+            self._run(["shell", "input", "text", escape_adb_text(encode_modified_utf7(text))])
+            time.sleep(UNICODE_TEXT_COMMIT_WAIT_SEC)
+        finally:
+            if original_ime != ime:
+                self._restore_input_method(original_ime)
 
     def dump_window_xml(self) -> str:
         """Return the current Android UI hierarchy XML.
@@ -415,6 +484,32 @@ class ADBAndroidDevice:
 
 def unsupported_adb_text_chars(text: str) -> str:
     return "".join(ch for ch in text if ch not in ADB_TEXT_CHARS)
+
+
+def encode_modified_utf7(text: str) -> str:
+    """Encode text as modified UTF-7 (RFC 3501), as the Appium Unicode IME expects.
+
+    Printable ASCII stays as is, except that "&" becomes "&-". Every other run
+    of characters becomes "&" + base64 of its UTF-16BE bytes, with "," instead
+    of "/" and no padding, + "-".
+    """
+    out: list[str] = []
+    pending: list[str] = []
+
+    def flush() -> None:
+        if pending:
+            encoded = base64.b64encode("".join(pending).encode("utf-16-be")).decode("ascii")
+            out.append("&" + encoded.rstrip("=").replace("/", ",") + "-")
+            pending.clear()
+
+    for ch in text:
+        if 0x20 <= ord(ch) <= 0x7E:
+            flush()
+            out.append("&-" if ch == "&" else ch)
+        else:
+            pending.append(ch)
+    flush()
+    return "".join(out)
 
 
 def escape_adb_text(text: str) -> str:
