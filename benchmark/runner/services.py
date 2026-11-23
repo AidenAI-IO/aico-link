@@ -176,10 +176,13 @@ def cmd_start_agent_daemon(args: argparse.Namespace) -> int:
         print(f"Error: invalid device type override: {exc}", file=sys.stderr)
         return 2
     target_platform = ""
+    local_phone_bridge = False
     if environment_bridge_endpoint:
         try:
+            health = read_environment_health(environment_bridge_endpoint)
+            local_phone_bridge = health.get("bridge_type") == "adb_android"
             resolution = resolve_environment_platform(
-                read_environment_health(environment_bridge_endpoint),
+                health,
                 constraint=device_type_constraint or None,
             )
             target_platform = resolution.value
@@ -225,6 +228,7 @@ def cmd_start_agent_daemon(args: argparse.Namespace) -> int:
             benchmark_task_id=benchmark_task_id if docker_environment_bridge_endpoint else "",
             device_type=target_platform if environment_bridge_endpoint or device_type_constraint else "",
             environment_bridge_mode=bool(docker_environment_bridge_endpoint),
+            benchmark_local_phone_bridge=local_phone_bridge,
             log_path=log_path,
         )
         if host_port == 0:

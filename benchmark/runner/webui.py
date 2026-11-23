@@ -886,8 +886,10 @@ class BenchmarkWebApp:
             self._raise_if_job_stop_requested(job)
             self._set_job(job, status="preparing", started_at=now_iso(), message="preparing config")
             agent_config_text = self.get_agent_config()["content"]
+            local_phone_bridge = job.environment_type == "adb_android"
             if job.environment_type != "mock":
                 health = read_environment_health(job.environment_endpoint or job.endpoint)
+                local_phone_bridge = local_phone_bridge or health.get("bridge_type") == "adb_android"
                 resolution = resolve_environment_platform(health)
                 preflight_mobilegym_environment(
                     job.environment_endpoint or job.endpoint,
@@ -957,6 +959,7 @@ class BenchmarkWebApp:
                 environment_bridge_endpoint=job.docker_endpoint,
                 benchmark_task_id=job_benchmark_task_id(job.id),
                 device_type=job.target_platform,
+                benchmark_local_phone_bridge=local_phone_bridge,
                 log_path=Path(job.runner_log),
                 stop_requested=lambda: self._job_stop_requested(job),
             )

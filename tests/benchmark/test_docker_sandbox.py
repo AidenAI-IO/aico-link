@@ -760,6 +760,7 @@ class DockerSandboxContractTest(unittest.TestCase):
             agent = temporary_path / "fake-agent.sh"
             agent.write_text(
                 "#!/bin/sh\n"
+                'printf "%s\\n" "$*" > "$AICO_FAKE_AGENT_ARGUMENTS"\n'
                 'printf "started\\n" >> "$AICO_FAKE_AGENT_STARTS"\n'
                 'if [ "${AICO_FAKE_AGENT_CRASH:-0}" = 1 ]; then exit 7; fi\n'
                 "trap 'exit 0' INT TERM\n"
@@ -794,6 +795,8 @@ class DockerSandboxContractTest(unittest.TestCase):
                     "AICO_BRIDGE_WAIT_ATTEMPTS": "1",
                     "AICO_ENVIRONMENT_BRIDGE_MODE": "true",
                     "AICO_FAKE_AGENT_STARTS": str(starts_file),
+                    "AICO_FAKE_AGENT_ARGUMENTS": str(temporary_path / "agent-arguments"),
+                    "AICO_LOCAL_PHONE_BRIDGE": "0",
                 }
             )
             first_bridge = BridgeServer(fail_setup_once=True)
@@ -873,6 +876,7 @@ class DockerSandboxContractTest(unittest.TestCase):
                     first_setup_token,
                 )
                 self.assertEqual(first_bridge.reset_count_snapshot(), 1)
+                self.assertNotIn("--local-phone-bridge", (temporary_path / "agent-arguments").read_text())
                 stop_supervisor(first_supervisor)
 
                 first_environment["AICO_FAKE_AGENT_CRASH"] = "0"
@@ -964,6 +968,7 @@ class DockerSandboxContractTest(unittest.TestCase):
                 second_environment = environment(
                     second_bridge.endpoint, "task-two", "episode-two"
                 )
+                second_environment["AICO_LOCAL_PHONE_BRIDGE"] = "1"
                 fifth_supervisor = start_supervisor(second_environment)
                 wait_until(
                     lambda: len(setup_requests(second_bridge)) == 1,
@@ -1011,6 +1016,7 @@ class DockerSandboxContractTest(unittest.TestCase):
                     "restart after blocked setup did not reach the fake Agent",
                 )
                 self.assertEqual(second_bridge.reset_count_snapshot(), 1)
+                self.assertIn("--local-phone-bridge", (temporary_path / "agent-arguments").read_text())
                 wait_until(
                     lambda: any(
                         request[1:3] == ("/api/release", "task-two")

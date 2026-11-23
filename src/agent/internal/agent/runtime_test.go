@@ -35,6 +35,7 @@ import (
 	fakellm "github.com/tmc/langchaingo/llms/fake"
 	"github.com/tmc/langchaingo/schema"
 	langtools "github.com/tmc/langchaingo/tools"
+	"nhooyr.io/websocket"
 )
 
 func TestEffectiveMaxIterationsDefaultsAndUnlimited(t *testing.T) {
@@ -4134,13 +4135,20 @@ func TestRuntimeCloseStopsStoragePoller(t *testing.T) {
 	}
 }
 
-func TestRuntimeKeepsPhoneBridgeLocalWithBenchmarkADBEnvironment(t *testing.T) {
+func TestRuntimeKeepsPhoneBridgeLocalWithADBEnvironment(t *testing.T) {
+	var bridgeRequests atomic.Int32
+	adbBridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bridgeRequests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer adbBridge.Close()
 	rt, err := NewRuntime(Config{
 		ConfigDir: ensureTestConfigDir(t, t.TempDir()),
 		Model:     ModelConfig{Provider: "fake"},
+		Device:    DeviceConfig{DeviceType: "Android"},
 		EnvironmentBridge: EnvironmentBridgeConfig{
 			Enabled:          true,
-			Endpoint:         "http://127.0.0.1:18080",
+			Endpoint:         adbBridge.URL,
 			LocalPhoneBridge: true,
 		},
 	})
@@ -4150,6 +4158,98 @@ func TestRuntimeKeepsPhoneBridgeLocalWithBenchmarkADBEnvironment(t *testing.T) {
 	defer rt.Close()
 	if rt.phoneBridge.proxyMode {
 		t.Fatal("Phone Bridge must stay local when the ADB environment handles screen and input")
+	}
+	server := NewServer(rt, "")
+	defer server.Close()
+	local := httptest.NewServer(server.Handler())
+	defer local.Close()
+	client := &http.Client{Timeout: 2 * time.Second}
+	requestJSON := func(method, path, body string, wantCode int, result any) {
+		t.Helper()
+		req, err := http.NewRequest(method, local.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != wantCode {
+			t.Fatalf("%s %s returned %d, want %d", method, path, resp.StatusCode, wantCode)
+		}
+		if result != nil {
+			if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var status PhoneBridgeStatus
+	for range 20 {
+		requestJSON(http.MethodGet, "/api/phone-bridge/status", "", http.StatusOK, &status)
+		if status.Connected || status.Platform != "android" {
+			t.Fatalf("status without companion App = %+v", status)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	appURL := "ws" + strings.TrimPrefix(local.URL, "http") + "/api/phone-bridge?platform=android&phone_id=local-phone"
+	appConn, _, err := websocket.Dial(ctx, appURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer appConn.Close(websocket.StatusNormalClosure, "")
+	for !rt.phoneBridge.getStatus().Connected && ctx.Err() == nil {
+		time.Sleep(time.Millisecond)
+	}
+	requestJSON(http.MethodGet, "/api/phone-bridge/status", "", http.StatusOK, &status)
+	if !status.Connected || status.PhoneID != "local-phone" {
+		t.Fatalf("local App connection missing from status: %+v", status)
+	}
+	commandDone := make(chan error, 1)
+	go func() {
+		resp, err := rt.phoneBridge.SendCommand(ctx, BridgeCommand{ID: "local-ws", Type: "clipboard_read"})
+		if err == nil && (resp.Error != nil || string(resp.Data) != `{"text":"local clipboard"}`) {
+			err = fmt.Errorf("unexpected local command response: %+v", resp)
+		}
+		commandDone <- err
+	}()
+	_, commandData, err := appConn.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var command BridgeCommand
+	if err := json.Unmarshal(commandData, &command); err != nil || command.ID != "local-ws" {
+		t.Fatalf("local App command = %s, err = %v", commandData, err)
+	}
+	if err := appConn.Write(ctx, websocket.MessageText, []byte(`{"id":"local-ws","data":{"text":"local clipboard"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-commandDone; err != nil {
+		t.Fatal(err)
+	}
+	// The Android FGS HTTP transport must use the same local queue and status.
+	pollPath := "/api/phone-bridge/commands?platform=android&phone_id=local-phone&app_state=background&fgs_bridge_enabled=true"
+	requestJSON(http.MethodGet, pollPath, "", http.StatusOK, nil)
+	requestJSON(http.MethodPost, "/api/phone-bridge/commands", `{"command":{"id":"local-http","type":"clipboard_read"}}`, http.StatusAccepted, nil)
+	var poll PollCommandsResponse
+	requestJSON(http.MethodGet, pollPath, "", http.StatusOK, &poll)
+	if len(poll.Commands) != 1 || poll.Commands[0].ID != "local-http" {
+		t.Fatalf("local HTTP commands = %+v", poll.Commands)
+	}
+	requestJSON(http.MethodPost, "/api/phone-bridge/results", `{"id":"local-http","data":{"text":"background clipboard"}}`, http.StatusOK, nil)
+	var result GetResultResponse
+	requestJSON(http.MethodGet, "/api/phone-bridge/results/local-http", "", http.StatusOK, &result)
+	if result.Result == nil || string(result.Result.Data) != `{"text":"background clipboard"}` {
+		t.Fatalf("local HTTP result = %+v", result)
+	}
+	requestJSON(http.MethodGet, "/api/phone-bridge/status", "", http.StatusOK, &status)
+	if status.FgsBridgeEnabled == nil || !*status.FgsBridgeEnabled || status.AppState != "background" {
+		t.Fatalf("local FGS state missing from status: %+v", status)
+	}
+	if got := bridgeRequests.Load(); got != 0 {
+		t.Fatalf("Phone Bridge sent %d requests to the ADB screen/input bridge", got)
 	}
 }
 

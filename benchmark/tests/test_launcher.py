@@ -547,6 +547,9 @@ def test_build_overrides_only_configured_sources(tmp_path: Path, build_settings,
 @pytest.mark.parametrize(
     ("bridge_type", "config", "os_name", "bind_host", "expected"),
     [
+        ("adb_android", {"serial": "emulator-5554"}, "darwin", "127.0.0.1",
+         {"python": "launcher", "module": "adbandroid.scripts.start_bridge", "bind": "127.0.0.1", "route_flag": None,
+          "device": "Android", "preset": None}),
         ("desktop", {"confirm_control": True}, "darwin", "127.0.0.1",
          {"python": "venv", "module": "desktop.scripts.start_bridge", "bind": "127.0.0.1", "route_flag": None,
           "device": "macOS", "preset": None}),
@@ -570,7 +573,7 @@ def test_host_bridges_start_with_route_python_and_bind_host(
 ):
     fake.os = os_name
     fake.bind_host = bind_host
-    fake.health = {"status": "ok", "platform": {"macOS": "mac", "linux": "linux", "iOS": "ios"}[expected["device"]]}
+    fake.health = {"status": "ok", "platform": {"macOS": "mac", "linux": "linux", "iOS": "ios", "Android": "android"}[expected["device"]]}
     created = app.instances.create(body("Device", bridge_type, config))
     app.instances.start(created["id"])
     instance = wait_settled(app, created["id"])
@@ -583,7 +586,7 @@ def test_host_bridges_start_with_route_python_and_bind_host(
     else:
         assert argv[0] == sys.executable
     assert argv[1:4] == ["-u", "-m", expected["module"]]
-    port = argv[argv.index("--bridge-port" if bridge_type == "desktop" else "--port") + 1]
+    port = argv[argv.index("--bridge-port" if bridge_type in {"desktop", "adb_android"} else "--port") + 1]
     assert fake.health_urls[-1] == f"http://{expected['bind']}:{port}"
     route = f"launcher-{created['id']}"
     if expected["route_flag"]:
@@ -596,6 +599,7 @@ def test_host_bridges_start_with_route_python_and_bind_host(
     assert env["AICO_ENVIRONMENT_BRIDGE_ENDPOINT"] == f"http://host.docker.internal:{port}"
     assert env["AICO_DEVICE_TYPE"] == expected["device"]
     assert env.get("AICO_QUICK_ACTIONS_PRESET") == expected["preset"]
+    assert (env.get("AICO_LOCAL_PHONE_BRIDGE") == "1") == (bridge_type == "adb_android")
 
     # Bridges whose route lease lapses after 30 idle minutes get it claimed again.
     app.instances.renew_routes()
