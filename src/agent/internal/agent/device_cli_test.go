@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"image"
 	"image/jpeg"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"aico-agent/internal/agent/mnk"
 	"aico-agent/internal/agent/screen"
@@ -306,11 +306,25 @@ func (d *cliTestKeyboard) Write(data []byte) error {
 }
 func (*cliTestKeyboard) Close() {}
 
-func TestDeviceCLIAppDataRequiresConnectionWithoutCapturingScreen(t *testing.T) {
-	for _, connected := range []bool{false, true} {
-		t.Run(fmt.Sprint(connected), func(t *testing.T) {
+func TestDeviceCLIAppDataRequiresTransportWithoutCapturingScreen(t *testing.T) {
+	for _, tc := range []struct {
+		name, platform                              string
+		connected, fgs, pip, staleFGS, wantDispatch bool
+	}{
+		{name: "no route"},
+		{name: "connected", connected: true, wantDispatch: true},
+		{name: "FGS without WebSocket", platform: "android", fgs: true, wantDispatch: true},
+		{name: "PiP without WebSocket", platform: "ios", pip: true, wantDispatch: true},
+		{name: "expired FGS", platform: "android", fgs: true, staleFGS: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			bridge := newTestPhoneBridge(t)
-			bridge.connected = connected
+			bridge.platform, bridge.appState, bridge.connected = tc.platform, "background", tc.connected
+			bridge.fgsBridgeSeen, bridge.fgsBridgeEnabled, bridge.fgsBridgeAt = tc.fgs, tc.fgs, time.Now()
+			bridge.pipBridgeSeen, bridge.pipBridgeEnabled = tc.pip, tc.pip
+			if tc.staleFGS {
+				bridge.fgsBridgeAt = time.Now().Add(-time.Minute)
+			}
 			contacts := &stubTool{name: toolBridgeContacts, output: `{"ok":true,"contacts":[{"name":"Alice"}]}`}
 			shot := &stubTool{name: "screenshot"}
 			s := &Server{runtime: &Runtime{tools: &ToolSet{phoneBridge: bridge, tools: map[string]langtools.Tool{
@@ -319,7 +333,7 @@ func TestDeviceCLIAppDataRequiresConnectionWithoutCapturingScreen(t *testing.T) 
 			args := []string{"app", "contacts", "query", `{"query":"Alice","limit":5}`}
 			assertResult := func(result ToolInvokeResponse) {
 				t.Helper()
-				if connected {
+				if tc.wantDispatch {
 					if result.IsError || result.Output != contacts.output {
 						t.Fatalf("unexpected result: %+v", result)
 					}
@@ -333,7 +347,7 @@ func TestDeviceCLIAppDataRequiresConnectionWithoutCapturingScreen(t *testing.T) 
 				t.Fatal(err)
 			}
 			assertResult(result)
-			if len(capture.calls) != 1 || capture.calls[0].IsError == connected || capture.calls[0].NotDispatched == connected || capture.needsScreenshot {
+			if len(capture.calls) != 1 || capture.calls[0].IsError == tc.wantDispatch || capture.calls[0].NotDispatched == tc.wantDispatch || capture.needsScreenshot {
 				t.Fatalf("unexpected shell evidence or capture request: %+v", capture)
 			}
 			body, _ := json.Marshal(args)
@@ -343,7 +357,7 @@ func TestDeviceCLIAppDataRequiresConnectionWithoutCapturingScreen(t *testing.T) 
 				t.Fatalf("HTTP response: %d %s", w.Code, w.Body)
 			}
 			assertResult(result)
-			if len(shot.inputs) != 0 || (!connected && len(contacts.inputs) != 0) || (connected && len(contacts.inputs) != 2) {
+			if len(shot.inputs) != 0 || (!tc.wantDispatch && len(contacts.inputs) != 0) || (tc.wantDispatch && len(contacts.inputs) != 2) {
 				t.Fatalf("unexpected dispatch: captures=%d, contacts=%v", len(shot.inputs), contacts.inputs)
 			}
 		})

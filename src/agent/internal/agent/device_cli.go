@@ -303,15 +303,11 @@ func (c *deviceCLICapture) invoke(ctx context.Context, s *Server, call devicecli
 	return result, err
 }
 
-func phoneBridgeConnected(bridge *PhoneBridge) bool {
-	return bridge != nil && bridge.getStatus().Connected
-}
-
 func invokeDeviceHTTP(ctx context.Context, s *Server, call devicecli.Call) (ToolInvokeResponse, error) {
 	if call.AppData {
 		tools := s.runtime.toolSnapshot()
-		if tools == nil || !phoneBridgeConnected(tools.phoneBridge) {
-			te := NewToolErrorWithDetails(CodeBridgeNotConnected, "App commands require app_connected: true.", map[string]any{actionDispatchedDetail: false})
+		if tools == nil || !phoneBridgeCanAttemptAppCLI(tools.phoneBridge) {
+			te := NewToolErrorWithDetails(CodeBridgeNotConnected, appCLIRouteUnavailable, map[string]any{actionDispatchedDetail: false})
 			return ToolInvokeResponse{IsError: true, Error: te.Message, ToolError: te}, nil
 		}
 	}

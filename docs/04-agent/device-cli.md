@@ -32,13 +32,15 @@ focus coordinates or chooses a field for you.
 
 - `device-cli type TEXT` uses device input (native insertion where available,
   otherwise HID/IME). It does not use the companion app.
-- `device-cli app type TEXT` requires `app_connected: true` and a usable Phone
-  Bridge clipboard route. It writes or reuses the clipboard and pastes into
-  the focused field. It never falls back to device typing. If paste may have
+- `device-cli app type TEXT` requires a usable Phone Bridge clipboard route. It
+  writes or reuses the clipboard and pastes into the focused field. It never falls back to device typing. If paste may have
   reached the field but verification fails, inspect the screen before retrying
-  or switching routes.
+  or switching routes. On iOS without PiP, this command needs a recently
+  prepared matching clipboard.
 
-The `app` namespace is for commands that require the connected companion app.
+Try `device-cli app` when `app_connected`, `app_fgs_enabled`, or
+`app_pip_enabled` is true. This permits an attempt; each operation still checks
+its own route, permissions, and prerequisites.
 Without an active shell scope, the executable accepts `--url` to target a
 daemon directly (default `http://127.0.0.1:8080`).
 
@@ -49,8 +51,9 @@ A successful `drag-start` intentionally leaves it held for a later
 
 ## Companion app data
 
-These commands require `app_connected: true` and the permissions needed for the
-requested operation. They return structured data and do not attach a screenshot.
+These commands use the same connection, FGS, or PiP check as `app type` and
+still require the permissions needed for the requested operation. They return
+structured data and do not attach a screenshot.
 
 ```sh
 device-cli app clipboard read

@@ -150,12 +150,18 @@ A normal task follows this loop:
 
 ### Tool Routing Quick Reference
 
+In Device CLI mode, when `app_connected || app_fgs_enabled || app_pip_enabled`
+is true, prefer the
+matching `device-cli app` data command. If all three are false, use the direct
+Bridge tool only if the runtime exposes it for the requested operation. This
+rule does not apply to notification queries, which read the board-side ring.
+
 | User need | Preferred path | Required verification |
 | --- | --- | --- |
-| Read or write clipboard | `bridge_clipboard` | Structured bridge result; use a screenshot only if the clipboard is being pasted into visible UI |
-| Create, query, or delete calendar events | `bridge_calendar` | Structured result and, for user-facing display, a screenshot |
-| Search or edit contacts | `bridge_contacts` | Structured result; confirm identity before writes |
-| Send a notification | `bridge_notification` with `action=send` | Result or scheduled status; do not claim delivery without event evidence |
+| Read or write clipboard | `device-cli app clipboard` or `bridge_clipboard` | Structured bridge result; use a screenshot only if the clipboard is being pasted into visible UI |
+| Create, query, or delete calendar events | `device-cli app calendar` or `bridge_calendar` | Structured result and, for user-facing display, a screenshot |
+| Search or edit contacts | `device-cli app contacts` or `bridge_contacts` | Structured result; confirm identity before writes |
+| Send a notification | `device-cli app notification send` or `bridge_notification` with `action=send` | Result or scheduled status; do not claim delivery without event evidence |
 | Open an app or URL | `device-cli open` or `device-cli url` | Fresh screenshot of the destination |
 | Use an app's visible screen | `device-cli` in the foreground shell | Screenshot before and after the action |
 | Read phone notifications | `bridge_notification` with `action=query` | Notification ring generation and event IDs |

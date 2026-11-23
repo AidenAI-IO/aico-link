@@ -96,7 +96,7 @@ func (t *EnterTextTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
 		"text":  stringArgSchema("Exact text that must appear in the field when done."),
 		"focus": focusPointArgSchema("Optional legacy hint. Omit when the Agent has already focused the field."),
-		"route": stringEnumArgSchema("Optional: device uses native input or HID/IME without Phone Bridge; app requires a connected companion app and never falls back to device typing.", devicecli.TextRouteDevice, devicecli.TextRouteApp),
+		"route": stringEnumArgSchema("Optional: device uses native input or HID/IME without Phone Bridge; app uses the companion clipboard via a connected, FGS, or PiP route and never falls back to device typing.", devicecli.TextRouteDevice, devicecli.TextRouteApp),
 	}, "text")
 }
 
@@ -140,8 +140,8 @@ func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, option
 		appOnly := publicArgs.Route == devicecli.TextRouteApp
 		if appOnly {
 			bridge := t.bridgeTool.currentBridge()
-			if !phoneBridgeConnected(bridge) {
-				return enterTextToolFailure(batchCtx, CodeBridgeNotConnected, "App text entry requires app_connected: true."), nil
+			if !phoneBridgeCanAttemptAppCLI(bridge) {
+				return enterTextToolFailure(batchCtx, CodeBridgeNotConnected, appCLIRouteUnavailable), nil
 			}
 		} else if result, handled := t.engine.runNativeTextInsertion(batchCtx, args); handled {
 			if !result.OK {
@@ -161,7 +161,7 @@ func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, option
 			}
 			if appOnly {
 				if !attempted {
-					return enterTextToolFailure(batchCtx, CodeModuleUnavailable, "The connected app cannot paste into the current field. Check its clipboard route and app state."), nil
+					return enterTextToolFailure(batchCtx, CodeModuleUnavailable, "The companion app cannot paste into the current field. Check its clipboard route and app state."), nil
 				}
 				return enterTextToolFailure(batchCtx, CodeToolExecutionFailed, "App text entry failed before paste. Check the app connection and field focus."), nil
 			}

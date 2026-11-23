@@ -305,8 +305,9 @@ fully decides it. Such a task is scored without the judge. The perception suite
 uses this to check the first tap's normalized coordinates against the target's
 bounds; later calls on the static frame do not affect the score.
 
-`device-cli type` uses device input only. `device-cli app type` requires a
-connected companion app and uses only its clipboard route. Legacy `enter_text`
+`device-cli type` uses device input only. `device-cli app type` uses only the companion
+app clipboard route and can be attempted when `app_connected`,
+`app_fgs_enabled`, or `app_pip_enabled` is true. Legacy `enter_text`
 without an explicit route still selects automatically. The clipboard route in
 the real Go tool works as follows:
 

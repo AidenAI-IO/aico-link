@@ -518,13 +518,15 @@ func TestEnterTextDoesNotReplayPossibleBridgePaste(t *testing.T) {
 
 func TestDeviceCLITextRoutesDoNotSwitchBackends(t *testing.T) {
 	for _, tc := range []struct {
-		name, route, platform, code string
-		connected, writeFails       bool
-		wantWrites, wantPastes      int
-		wantDevice                  bool
+		name, route, platform, code     string
+		connected, fgs, pip, writeFails bool
+		wantWrites, wantPastes          int
+		wantDevice                      bool
 	}{
 		{name: "type bypasses connected app", route: "type", platform: "android", connected: true, wantDevice: true},
-		{name: "app requires connection even with cached clipboard", route: "app", platform: "android", code: CodeBridgeNotConnected},
+		{name: "app requires transport even with cached clipboard", route: "app", platform: "android", code: CodeBridgeNotConnected},
+		{name: "app pastes through FGS without WebSocket", route: "app", platform: "android", fgs: true, wantWrites: 1, wantPastes: 1},
+		{name: "app pastes through PiP without WebSocket", route: "app", platform: "ios", pip: true, wantWrites: 1, wantPastes: 1},
 		{name: "app only pastes", route: "app", platform: "android", connected: true, wantWrites: 1, wantPastes: 1},
 		{name: "app write failure does not fall back", route: "app", platform: "android", connected: true, writeFails: true, wantWrites: 1, code: CodeToolExecutionFailed},
 		{name: "connected but no usable paste route", route: "app", platform: "ios", connected: true, code: CodeModuleUnavailable},
@@ -532,8 +534,12 @@ func TestDeviceCLITextRoutesDoNotSwitchBackends(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			const text = "hello"
 			pb := newTestPhoneBridge(t)
-			pb.platform, pb.connected, pb.appState = tc.platform, tc.connected, "foreground"
-			if !tc.connected {
+			pb.platform, pb.connected, pb.appState = tc.platform, tc.connected, "active"
+			if tc.fgs || tc.pip {
+				pb.appState = "background"
+				pb.fgsBridgeSeen, pb.fgsBridgeEnabled, pb.fgsBridgeAt = tc.fgs, tc.fgs, time.Now()
+				pb.pipBridgeSeen, pb.pipBridgeEnabled = tc.pip, tc.pip
+			} else if !tc.connected {
 				pb.NoteClipboardWrite(text)
 			}
 			typing := &recordingTextInputTool{name: "keyboard_text", out: "ok"}

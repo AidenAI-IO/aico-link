@@ -109,6 +109,19 @@ func phoneBridgeCanUseFGSBackground(status PhoneBridgeStatus, commandType string
 	return true
 }
 
+const appCLIRouteUnavailable = "App commands require at least one of app_connected, app_fgs_enabled, or app_pip_enabled to be true."
+
+// phoneBridgeCanAttemptAppCLI checks live status using the same transport
+// predicates as UpdateState. Individual operations still validate their route.
+func phoneBridgeCanAttemptAppCLI(bridge *PhoneBridge) bool {
+	if bridge == nil {
+		return false
+	}
+	status := bridge.getStatus()
+	return status.Connected || phoneBridgeCanUseFGSBackground(status, "clipboard_read") ||
+		phoneBridgeCanUsePiPBackground(status, "clipboard_read")
+}
+
 func phoneBridgeCanUseBLEBackground(status PhoneBridgeStatus, commandType string) bool {
 	if !phoneBridgeIsIOS(status) || !phoneBridgeBLEBackgroundCommandType(commandType) {
 		return false

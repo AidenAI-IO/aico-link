@@ -19,7 +19,7 @@ const Usage = `device-cli [--url URL] COMMAND
   app contacts query|create|update JSON
   app notification send JSON
   open APP | url URL | quick ACTION | scroll DY | move X Y
-App commands require app_connected: true. Quote JSON as a single object argument.
+App commands require at least one of app_connected, app_fgs_enabled, or app_pip_enabled to be true. Quote JSON as a single object argument.
 For chords, use key meta+a or key meta a. Use key '+' for a literal plus.
 Coordinates are integers from 0 to 1000. Quote text as one shell argument.
 look saves a JPEG (default: /tmp). wait 0 captures without waiting for stability.`
