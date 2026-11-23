@@ -83,7 +83,7 @@ func (s *Server) allowLocalRequest(w http.ResponseWriter, r *http.Request) bool 
 
 func localAgentEndpoint(endpoint apiEndpoint) bool {
 	switch endpoint {
-	case apiIPhoneMirroring, apiIPhoneMirroringReconnect, apiDeviceSnapshot, apiDeviceStatus, apiConfigGet, apiConfigSchema, apiConfigUpdate,
+	case apiMCPServers, apiMCPServersChange, apiIPhoneMirroring, apiIPhoneMirroringReconnect, apiDeviceSnapshot, apiDeviceStatus, apiConfigGet, apiConfigSchema, apiConfigUpdate,
 		apiConfigPlan, apiConfigLocale, apiConfigApplication, apiConfigTest, apiModels,
 		apiConversationReset, apiAgentLogs, apiLLMLogs, apiLLMLogExport, apiLLMLogImport:
 		return true
@@ -95,7 +95,7 @@ func isLocalSettingsRoute(path string) bool {
 	switch strings.TrimRight(path, "/") {
 	case "", "/basic/language", "/conversation", "/conversation/prompt", "/conversation/tools",
 		"/conversation/tools/provider", "/model", "/model/main", "/model/decision", "/model/providers",
-		"/model/providers/edit", "/model/models", "/advanced/logs", "/advanced/logs/agent", "/advanced/logs/level":
+		"/model/providers/edit", "/model/models", "/advanced/logs", "/advanced/logs/agent", "/advanced/logs/level", "/advanced/mcp":
 		return true
 	}
 	return false
