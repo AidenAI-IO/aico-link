@@ -39,8 +39,7 @@ usbutils
 i2c-tools
 alsa-utils
 # Runtime dependencies of the business package's local bilingual TTS.
-libespeak-ng1
-espeak-ng-data
+libflite1
 libsndfile1
 libsonic0
 libmpg123-0t64

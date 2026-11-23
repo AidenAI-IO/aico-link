@@ -34,14 +34,16 @@ func nextBoundary(text string, flush bool) int {
 		case '.':
 			if end < len(text) && utf8.FullRuneInString(text[end:]) {
 				next, _ := utf8.DecodeRuneInString(text[end:])
-				if unicode.IsSpace(next) || strings.ContainsRune("\"'”’)]}", next) {
+				if unicode.IsSpace(next) || unicode.Is(unicode.Han, next) || strings.ContainsRune("\"'”’)]}", next) {
 					// Common abbreviations and initials are not sentence ends.
 					words := strings.Fields(text[:i])
 					word := ""
 					if len(words) > 0 {
 						word = strings.ToLower(words[len(words)-1])
 					}
-					if !strings.Contains("|mr|mrs|ms|dr|prof|sr|jr|e.g|i.e|", "|"+word+"|") && utf8.RuneCountInString(word) != 1 {
+					initial, size := utf8.DecodeRuneInString(word)
+					isInitial := size == len(word) && unicode.Is(unicode.Latin, initial)
+					if !strings.Contains("|mr|mrs|ms|dr|prof|sr|jr|e.g|i.e|", "|"+word+"|") && !isInitial {
 						return end
 					}
 				}

@@ -1,0 +1,242 @@
+--- a/configure.ac
++++ b/configure.ac
+@@ -70,7 +70,15 @@
+     [AC_MSG_FAILURE([sndfile test failed])],[]
+ )
+ 
+-AC_CHECK_LIB([espeak-ng], [main], [], [AC_MSG_FAILURE([espeak-ng test failed])],[])
++AC_ARG_ENABLE([flite],
++    [AS_HELP_STRING([--enable-flite], [synthesize English through Flite SLT])],
++    [], [enable_flite=no])
++LIB_ESPEAK=""
++AS_IF([test "x$enable_flite" != xyes], [
++    AC_CHECK_LIB([espeak-ng], [espeak_Initialize],
++        [LIB_ESPEAK="-lespeak-ng"], [AC_MSG_FAILURE([espeak-ng test failed])])
++])
++AC_SUBST([LIB_ESPEAK])
+ 
+ AC_CHECK_LIB([sonic], [main], [], [AC_MSG_FAILURE([sonic test failed])],[])
+ 
+@@ -111,17 +119,19 @@
+ 
+ AC_SUBST([LIB_FLITE])
+ AC_SUBST([CFLAG_FLITE])
+-AC_ARG_ENABLE(flite,
+-    [AS_HELP_STRING([--enable-flite],[synthesize English through Flite])],
+-    [
+-        AC_DEFINE(ENABLE_FLITE,,[Enable Flite])
+-        LIB_FLITE="${srcdir}/flite/build/x86_64-darwin21.6.0/lib/*.a"
+-        CFLAG_FLITE="-I${srcdir}/flite/include"
+-    ], [
+-        LIB_FLITE=""
+-        CFLAG_FLITE=""
+-    ])
+-        
++LIB_FLITE=""
++CFLAG_FLITE=""
++AS_IF([test "x$enable_flite" = xyes], [
++    AC_CHECK_HEADER([flite/flite.h], [],
++        [AC_MSG_FAILURE([Flite headers not found; install flite1-dev])])
++    AC_CHECK_LIB([flite_cmu_us_slt], [register_cmu_us_slt], [],
++        [AC_MSG_FAILURE([Flite SLT voice not found])],
++        [-lflite_usenglish -lflite_cmulex -lflite -lm])
++    AC_DEFINE([ENABLE_FLITE], [1], [Enable Flite SLT])
++    LIB_FLITE="-lflite_cmu_us_slt -lflite_usenglish -lflite_cmulex -lflite -lm"
++    CFLAG_FLITE="-I/usr/include/flite"
++])
++
+ AC_SUBST([LIB_FESTIVAL])
+ AC_SUBST([CFLAG_FESTIVAL])
+ AC_ARG_ENABLE(festival,
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -11,7 +11,7 @@
+ 
+ libekho_a_SOURCES = src/english.cpp src/libekho.cpp src/libekho_impl.cpp src/ssml.cpp src/audio.cpp src/phonetic_symbol.cpp src/word.cpp src/ekho_dict.cpp src/number.cpp src/server.cpp src/musicxml.cpp src/zhy_symbol_map.cpp src/zh_symbol_map.cpp src/symbol_array.cpp
+ libekho_a_CXXFLAGS = $(AM_CXXFLAGS) @CFLAG_PULSEAUDIO@ @CFLAG_FESTIVAL@ @CFLAG_FLITE@ -pthread -std=c++11 #-I$(srcdir)/libmusicxml/src/elements -I$(srcdir)/libmusicxml/src/lib -I$(srcdir)/libmusicxml/src/visitors -I$(srcdir)/libmusicxml/src/files -I$(srcdir)/libmusicxml/src/parser #@CFLAG_MUSICXML@
+-LIBEKHO_LIB = @LIB_PULSEAUDIO@ @LIB_FESTIVAL@ @LIB_FLITE@ @LIB_MP3LAME@ @LIB_MPG123@ -lsonic -lsndfile -lespeak-ng @LIB_SOXR@ #@LIB_MUSICXML@ @CFLAG_FRISO@ @LIB_FRISO@
++LIBEKHO_LIB = @LIB_PULSEAUDIO@ @LIB_FESTIVAL@ @LIB_FLITE@ @LIB_MP3LAME@ @LIB_MPG123@ -lsonic -lsndfile @LIB_ESPEAK@ @LIB_SOXR@ #@LIB_MUSICXML@ @CFLAG_FRISO@ @LIB_FRISO@
+ 
+ #if ENABLE_FRISO
+ #noinst_LIBRARIES += libfriso.a
+--- a/src/ekho.h
++++ b/src/ekho.h
+@@ -38,7 +38,7 @@
+ 
+ #ifdef ANDROID
+ #define ENABLE_FLITE
+-#else
++#elif !defined(ENABLE_FLITE)
+ #define ENABLE_ESPEAK
+ #endif
+ 
+--- a/src/ekho_impl.h
++++ b/src/ekho_impl.h
+@@ -176,7 +176,13 @@
+   void setSpeed(int tempo_delta);
+   int getSpeed(void) { return this->tempoDelta + 30 /* @TODO: 30 is for bd voice?? */; }
+   void setEnglishSpeed(int delta); /* -50 .. 150 */
+-  int getEnglishSpeed(void) { return this->englishSpeedDelta - 20 /* @TODO: slower for bd voice?? */; }
++  int getEnglishSpeed(void) {
++#ifdef ENABLE_FLITE
++    return this->englishSpeedDelta;
++#else
++    return this->englishSpeedDelta - 20;
++#endif
++  }
+ 
+   /* Set pitch delta
+    * Parameter:
+--- a/src/libekho_impl.cpp
++++ b/src/libekho_impl.cpp
+@@ -46,6 +46,9 @@
+ #ifdef ENABLE_FESTIVAL
+ #include "festival/festival.h"
+ #endif
++#ifdef ENABLE_FLITE
++extern "C" void unregister_cmu_us_slt(cst_voice *voice);
++#endif
+ 
+ using namespace ekho;
+ using namespace std;
+@@ -62,6 +65,10 @@
+   }
+ 
+   isEspeakInited = false;
++#ifdef ENABLE_FLITE
++  mFliteVoice = NULL;
++#endif
++  englishSpeedDelta = 0;
+   mIsMale = false;
+   mPendingFrames = 0;
+   supportSsml = true;
+@@ -124,6 +131,13 @@
+   if (isEspeakInited) {
+     espeak_Terminate();
+     isEspeakInited = false;
++  }
++#endif
++
++#ifdef ENABLE_FLITE
++  if (mFliteVoice) {
++    unregister_cmu_us_slt(mFliteVoice);
++    mFliteVoice = NULL;
+   }
+ #endif
+ 
+--- a/src/english.cpp
++++ b/src/english.cpp
+@@ -31,7 +31,7 @@
+ 
+ #ifdef ENABLE_FLITE
+ #include "flite.h"
+-extern "C" cst_voice *register_cmu_us_kal16(const char *voxdir);
++extern "C" cst_voice *register_cmu_us_slt(const char *voxdir);
+ #endif
+ 
+ #ifdef DEBUG_ANDROID
+@@ -101,8 +101,14 @@
+ #endif
+ 
+ #ifdef ENABLE_FLITE
+-  flite_init();
+-  mFliteVoice = register_cmu_us_kal16(NULL);
++  if (!mFliteVoice) {
++    flite_init();
++    mFliteVoice = register_cmu_us_slt(NULL);
++  }
++  this->setEnglishSpeed(this->englishSpeedDelta);
++  if (mDebug) {
++    cerr << "Flite English voice: slt" << endl;
++  }
+ #ifdef DEBUG_ANDROID
+   LOGD("EkhoImpl::initEnglish end");
+ #endif
+@@ -110,6 +116,15 @@
+ }
+ 
+ void EkhoImpl::setEnglishSpeed(int delta) {
++#ifdef ENABLE_FLITE
++  if (delta >= -50 && delta <= 150) {
++    this->englishSpeedDelta = delta;
++    if (mFliteVoice) {
++      feat_set_float(mFliteVoice->features, "duration_stretch",
++                     100.0f / (100 + delta));
++    }
++  }
++#endif
+ #ifdef ENABLE_ESPEAK
+   if (mDict.mSfinfo.samplerate == 0) {
+     cerr << "Voice sample rate not set. Maybe you have not setVoice first." << endl;
+@@ -173,37 +188,43 @@
+ 
+ // It's caller's responsibility to delete the returned pointer
+ const char* EkhoImpl::getPcmFromFlite(string text, int& size) {
+-#ifdef ENABLE_FLITE
+-  cerr << "EkhoImpl::getPcmFromFlite: " << text << endl;
+-#ifdef DEBUG_ANDROID
+-  LOGD("Ekho::getPcmFromFlite(%s, %d)", text.c_str(), size);
+-#endif
+-
++  size = 0;
++#ifdef ENABLE_FLITE
++  if (mDebug) {
++    cerr << "EkhoImpl::getPcmFromFlite: " << text << endl;
++  }
+   if (!mFliteVoice) {
+     initEnglish();
+   }
+-
+-  if (mFliteVoice) {
+-    //Ekho::synthCallback(0, 0, gEkho, OVERLAP_NONE);  // flush pending pcm
+-    //this->audio->setSampleRate(8000);
+-    cst_wave* flite_wave = flite_text_to_wave(text.c_str(), mFliteVoice);
+-    // 需要在callback里数据处理完后再把sampleRate设回来
+-    // this->audio->setSampleRate(this->audio->sampleRate);
+-    short* pcm = flite_wave->samples;
+-    size = flite_wave->num_samples * 2;
+-    // free(flite_wave); why free here?
+-#ifdef DEBUG_ANDROID
+-    LOGD("flite_text_to_wave got %d samples", size);
+-#endif
+-    return (const char*)pcm;
+-  } else {
+-#ifdef DEBUG_ANDROID
+-    LOGD("mFliteVoice not inited");
+-#endif
+-    return 0;
+-  }
+-#endif
+-  
++  if (mFliteVoice && !isStopped) {
++    cst_wave* wave = flite_text_to_wave(text.c_str(), mFliteVoice);
++    if (!wave) {
++      return NULL;
++    }
++    // Match the Mandarin source rate before the common Sonic output pipeline.
++    // This keeps pitch and duration correct across language boundaries.
++    if (wave->sample_rate != this->audio->sampleRate) {
++      cst_wave_resample(wave, this->audio->sampleRate);
++    }
++    if (wave->num_channels != 1 || wave->num_samples <= 0) {
++      delete_wave(wave);
++      return NULL;
++    }
++    // Match Flite English to Mandarin loudness with 2x gain and PCM16 saturation.
++    for (int i = 0; i < wave->num_samples; ++i) {
++      int sample = static_cast<int>(wave->samples[i]) * 2;
++      if (sample > 32767) sample = 32767;
++      if (sample < -32768) sample = -32768;
++      wave->samples[i] = static_cast<short>(sample);
++    }
++    size = wave->num_samples * sizeof(short);
++    // Callers own a new[] buffer, not Flite's malloc-allocated wave samples.
++    char* pcm = new char[size];
++    memcpy(pcm, wave->samples, size);
++    delete_wave(wave);
++    return pcm;
++  }
++#endif
+   return NULL;
+ }
+ 
