@@ -862,6 +862,10 @@ func capturedPictureLandscape(client screenshotFrameClient, screenState *screen.
 	if meta == nil {
 		return false, fmt.Errorf("frame service returned no metadata")
 	}
+	if meta.Stale {
+		// A stale frame may predate a turn back to portrait.
+		return false, fmt.Errorf("frame service: STALE_FRAME")
+	}
 	width, height := meta.Width, meta.Height
 	if meta.CropWidth > 0 && meta.CropHeight > 0 {
 		width, height = meta.CropWidth, meta.CropHeight
