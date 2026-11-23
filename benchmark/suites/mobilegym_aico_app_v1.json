@@ -2,19 +2,19 @@
   "name": "mobilegym_aico_app_v1",
   "suite_category": "MobileGym",
   "version": "1.0",
-  "description": "Phone Bridge coverage in MobileGym with the simulated Aico App: every bridge command (app and URL launch, dialing, clipboard, calendar create/query/delete, contacts query/create/update, immediate and scheduled notifications), foreground/background/disconnected states, denied permissions, transient and disconnect faults, and Chinese text entry through the bridge clipboard. Final calendar, contacts, clipboard, notification, route and Aico App command state are checked through /state.",
+  "description": "Phone Bridge coverage in MobileGym with the simulated Aico App: every bridge command (app and URL launch, dialing, clipboard, calendar create/query/delete, contacts query/create/update, immediate and scheduled notifications), foreground/background/disconnected states, denied permissions, transient and disconnect faults, and non-ASCII text entry through the bridge clipboard. Final calendar, contacts, clipboard, notification, route and Aico App command state are checked through /state.",
   "prompt_prefix": "",
   "global_reset": {},
   "tasks": [
     {
       "id": "calendar_create_via_bridge",
       "category": "single_step",
-      "prompt": "帮我在手机日历里加一个日程：2026年6月2日 北京时间下午3点到4点，牙医复诊，地点仁爱诊所。信息都确认过了，直接创建。",
+      "prompt": "Add an event to my phone calendar: June 2, 2026, 3-4 PM Beijing time (UTC+8), Dentist follow-up, at Renai Clinic. The details are confirmed, so go ahead without asking me again.",
       "description_for_judge": "The simulated Aico App is connected and in the foreground. The agent creates the event through the Phone Bridge calendar tool with the requested time, title and location.",
       "rubric": [
         {
           "id": "event_created",
-          "check": "The agent confirms that the dentist appointment was added for 2026-06-02 15:00-16:00 Beijing time."
+          "check": "The agent confirms that the Dentist follow-up was added for 2026-06-02 15:00-16:00 Beijing time."
         }
       ],
       "hard_assertions": {
@@ -41,10 +41,10 @@
       ],
       "aico_app": {},
       "environment_assertions": {
-        "apps.calendar.events.0.title": "牙医复诊",
+        "apps.calendar.events.0.title": "Dentist follow-up",
         "apps.calendar.events.0.startTs": 1780383600000,
         "apps.calendar.events.0.endTs": 1780387200000,
-        "apps.calendar.events.0.location": "仁爱诊所",
+        "apps.calendar.events.0.location": "Renai Clinic",
         "aico_app.command_counts.calendar_create": {
           "min": 1
         }
@@ -53,7 +53,7 @@
     {
       "id": "open_app_via_bridge",
       "category": "single_step",
-      "prompt": "打开手机上的天气。",
+      "prompt": "Open the Weather app on my phone.",
       "description_for_judge": "The simulated Aico App is connected and in the foreground, so the agent can launch Weather, which is not on the home screen, through the Phone Bridge open_app command.",
       "rubric": [
         {
@@ -83,7 +83,7 @@
     {
       "id": "background_clipboard_then_launch",
       "category": "multi_step",
-      "prompt": "把 ORDER-7731 复制到剪贴板，然后打开计算器。",
+      "prompt": "Copy ORDER-7731 to my phone's clipboard, then open the Calculator app.",
       "description_for_judge": "The simulated Aico App runs in the background with its foreground service enabled. Clipboard writes still work through the Phone Bridge, but launching another app through the bridge is rejected, so the agent opens Calculator from the screen.",
       "rubric": [
         {
@@ -124,7 +124,7 @@
     {
       "id": "contacts_permission_denied_gui_fallback",
       "category": "multi_step",
-      "prompt": "帮我在手机上新建一个联系人：Alex Wang，电话 13800001234。信息都确认过了，直接保存。我现在没法操作手机，你自己在手机上搞定。",
+      "prompt": "Create a contact on my phone: Alex Wang, phone 13800001234. The details are confirmed, so go ahead without asking me again. I can't use my phone right now, so handle it on the phone yourself.",
       "description_for_judge": "The simulated Aico App is connected but contacts access is denied, so the Phone Bridge contacts tool returns permission_denied. The agent creates the contact through the Contacts app on screen instead.",
       "rubric": [
         {
@@ -162,7 +162,7 @@
     {
       "id": "contacts_disconnect_gui_fallback",
       "category": "multi_step",
-      "prompt": "帮我在手机上新建一个联系人：Jamie Lee，电话 13900005678。信息都确认过了，直接保存。我现在没法操作手机，你自己在手机上搞定。",
+      "prompt": "Create a contact on my phone: Jamie Lee, phone 13900005678. The details are confirmed, so go ahead without asking me again. I can't use my phone right now, so handle it on the phone yourself.",
       "description_for_judge": "The simulated Aico App drops its connection on the first contacts command. Later Phone Bridge calls report that the phone is not connected, so the agent creates the contact in the Contacts app on screen.",
       "rubric": [
         {
@@ -204,12 +204,12 @@
     {
       "id": "scheduled_reminder_via_bridge",
       "category": "single_step",
-      "prompt": "在我的手机上设一条定时通知：2030年1月1日 北京时间上午9点，提醒我交房租。直接设置，不用再跟我确认。",
+      "prompt": "Schedule a notification on my phone for January 1, 2030 at 9 AM Beijing time (UTC+8) reminding me to pay the rent. The details are confirmed, so go ahead without asking me again.",
       "description_for_judge": "The agent schedules a local notification through the Phone Bridge notification tool for 2030-01-01 09:00 Beijing time.",
       "rubric": [
         {
           "id": "reminder_scheduled",
-          "check": "The agent confirms a reminder to pay rent at 2030-01-01 09:00 Beijing time."
+          "check": "The agent confirms a phone notification reminding the user to pay the rent at 2030-01-01 09:00 Beijing time."
         }
       ],
       "hard_assertions": {
@@ -231,7 +231,7 @@
     {
       "id": "clipboard_round_trip",
       "category": "multi_step",
-      "prompt": "把 AICO-CLIP-42 写进我手机的剪贴板，然后再读一次剪贴板确认内容对不对。",
+      "prompt": "Write AICO-CLIP-42 to my phone's clipboard, then read the clipboard back to check it.",
       "description_for_judge": "The agent writes AICO-CLIP-42 through the Phone Bridge clipboard tool, then reads the clipboard back to confirm it.",
       "rubric": [
         {
@@ -271,16 +271,16 @@
     {
       "id": "calendar_query_day",
       "category": "single_step",
-      "prompt": "我手机日历上 2026年6月2日 有哪些安排？",
-      "description_for_judge": "The phone calendar holds 站会 (09:30-10:00) and 产品评审 (14:00-15:00, 3号会议室) on 2026-06-02 and 团队周会 on 2026-06-03. The agent queries the calendar through the Phone Bridge and lists only the June 2 events.",
+      "prompt": "What's on my phone calendar on June 2, 2026?",
+      "description_for_judge": "The phone calendar holds Standup (09:30-10:00) and Product review (14:00-15:00, Room 3) on 2026-06-02 and Team weekly on 2026-06-03. The agent queries the calendar through the Phone Bridge and lists only the June 2 events.",
       "rubric": [
         {
           "id": "listed_events",
-          "check": "The final response lists 站会 at 09:30-10:00 and 产品评审 at 14:00-15:00 on June 2."
+          "check": "The final response lists Standup at 09:30-10:00 and Product review at 14:00-15:00 on June 2."
         },
         {
           "id": "no_other_day",
-          "check": "The final response does not present 团队周会 as a June 2 event."
+          "check": "The final response does not present Team weekly as a June 2 event."
         }
       ],
       "hard_assertions": {
@@ -309,7 +309,7 @@
               {
                 "id": "evt_seed_standup",
                 "type": "event",
-                "title": "站会",
+                "title": "Standup",
                 "allDay": false,
                 "startTs": 1780363800000,
                 "endTs": 1780365600000
@@ -317,16 +317,16 @@
               {
                 "id": "evt_seed_review",
                 "type": "event",
-                "title": "产品评审",
+                "title": "Product review",
                 "allDay": false,
                 "startTs": 1780380000000,
                 "endTs": 1780383600000,
-                "location": "3号会议室"
+                "location": "Room 3"
               },
               {
                 "id": "evt_seed_weekly",
                 "type": "event",
-                "title": "团队周会",
+                "title": "Team weekly",
                 "allDay": false,
                 "startTs": 1780452000000,
                 "endTs": 1780455600000
@@ -347,12 +347,12 @@
     {
       "id": "calendar_delete_event",
       "category": "multi_step",
-      "prompt": "把我手机日历里 2026年6月3日 的团队周会删掉。已经确认过了，直接删。",
-      "description_for_judge": "The agent finds the 团队周会 event on 2026-06-03 through the Phone Bridge calendar query and deletes it, leaving 站会 on June 2.",
+      "prompt": "Delete the Team weekly event on June 3, 2026 from my phone calendar. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The agent finds the Team weekly event on 2026-06-03 through the Phone Bridge calendar query and deletes it, leaving Standup on June 2.",
       "rubric": [
         {
           "id": "deleted",
-          "check": "The final response confirms that the June 3 团队周会 was deleted."
+          "check": "The final response confirms that the June 3 Team weekly event was deleted."
         }
       ],
       "hard_assertions": {
@@ -381,7 +381,7 @@
               {
                 "id": "evt_seed_weekly",
                 "type": "event",
-                "title": "团队周会",
+                "title": "Team weekly",
                 "allDay": false,
                 "startTs": 1780452000000,
                 "endTs": 1780455600000
@@ -389,7 +389,7 @@
               {
                 "id": "evt_seed_standup",
                 "type": "event",
-                "title": "站会",
+                "title": "Standup",
                 "allDay": false,
                 "startTs": 1780363800000,
                 "endTs": 1780365600000
@@ -400,7 +400,7 @@
       },
       "aico_app": {},
       "environment_assertions": {
-        "apps.calendar.events.0.title": "站会",
+        "apps.calendar.events.0.title": "Standup",
         "aico_app.command_counts.calendar_delete": {
           "min": 1
         },
@@ -410,12 +410,12 @@
     {
       "id": "calendar_conflict_then_create",
       "category": "multi_step",
-      "prompt": "2026年6月2日 北京时间下午3点到4点我手机日历上有空吗？有空就加一个日程“牙医复诊”；如果冲突，就改成同一天下午4点到5点。信息都确认过了，直接创建。",
-      "description_for_judge": "The phone calendar already has 客户电话 on 2026-06-02 15:00-16:00. The agent checks the calendar, finds the conflict, and creates 牙医复诊 for 16:00-17:00 Beijing time instead.",
+      "prompt": "Am I free on June 2, 2026 from 3 to 4 PM Beijing time (UTC+8) on my phone calendar? If so, add an event called Dentist follow-up; if there's a conflict, book it the same day from 4 to 5 PM instead. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The phone calendar already has Client call on 2026-06-02 15:00-16:00. The agent checks the calendar, finds the conflict, and creates Dentist follow-up for 16:00-17:00 Beijing time instead.",
       "rubric": [
         {
           "id": "explained_conflict",
-          "check": "The final response mentions the 15:00-16:00 conflict and that 牙医复诊 was booked for 16:00-17:00."
+          "check": "The final response mentions the 15:00-16:00 conflict and that Dentist follow-up was booked for 16:00-17:00."
         }
       ],
       "hard_assertions": {
@@ -450,7 +450,7 @@
               {
                 "id": "evt_seed_client",
                 "type": "event",
-                "title": "客户电话",
+                "title": "Client call",
                 "allDay": false,
                 "startTs": 1780383600000,
                 "endTs": 1780387200000
@@ -461,7 +461,7 @@
       },
       "aico_app": {},
       "environment_assertions": {
-        "apps.calendar.events.0.title": "牙医复诊",
+        "apps.calendar.events.0.title": "Dentist follow-up",
         "apps.calendar.events.0.startTs": 1780387200000,
         "apps.calendar.events.0.endTs": 1780390800000
       }
@@ -469,12 +469,12 @@
     {
       "id": "transient_timeout_retry",
       "category": "multi_step",
-      "prompt": "帮我在手机日历里加一个日程：2026年6月8日 北京时间上午9点到10点，周计划。信息都确认过了，直接创建。",
+      "prompt": "Add an event to my phone calendar: June 8, 2026, 9-10 AM Beijing time (UTC+8), Weekly planning. The details are confirmed, so go ahead without asking me again.",
       "description_for_judge": "The first Phone Bridge calendar create times out. The agent retries the bridge command and the event is created.",
       "rubric": [
         {
           "id": "event_created",
-          "check": "The final response confirms the 周计划 event on 2026-06-08 09:00-10:00."
+          "check": "The final response confirms the Weekly planning event on 2026-06-08 09:00-10:00."
         }
       ],
       "hard_assertions": {
@@ -500,7 +500,7 @@
         ]
       },
       "environment_assertions": {
-        "apps.calendar.events.0.title": "周计划",
+        "apps.calendar.events.0.title": "Weekly planning",
         "apps.calendar.events.0.startTs": 1780880400000,
         "aico_app.failed_command_counts.calendar_create": 1,
         "aico_app.command_counts.calendar_create": {
@@ -511,12 +511,12 @@
     {
       "id": "contacts_lookup_answer",
       "category": "single_step",
-      "prompt": "张三的手机号是多少？",
-      "description_for_judge": "The agent looks up 张三 through the Phone Bridge contacts query and reports +86 13800138000 without changing contacts.",
+      "prompt": "What's Alice Chen's phone number?",
+      "description_for_judge": "The agent looks up Alice Chen through the Phone Bridge contacts query and reports +86 13900138001 without changing contacts.",
       "rubric": [
         {
           "id": "reported_number",
-          "check": "The final response gives 张三's phone number as +86 13800138000."
+          "check": "The final response gives Alice Chen's phone number as +86 13900138001."
         }
       ],
       "hard_assertions": {
@@ -542,17 +542,66 @@
         },
         "aico_app.command_counts.contacts_create": 0,
         "aico_app.command_counts.contacts_update": 0
+      },
+      "initial_state": {
+        "os": {
+          "providers": {
+            "contacts": {
+              "contacts": [
+                {
+                  "id": "c_seed_alice",
+                  "displayName": "Alice Chen",
+                  "phones": [
+                    {
+                      "id": "c_seed_alice_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13900138001",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_ben",
+                  "displayName": "Ben Carter",
+                  "phones": [
+                    {
+                      "id": "c_seed_ben_mobile",
+                      "label": "Mobile",
+                      "number": "+86 15600001111",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_dana",
+                  "displayName": "Dana Wu",
+                  "phones": [
+                    {
+                      "id": "c_seed_dana_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13912345678",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                }
+              ]
+            }
+          }
+        }
       }
     },
     {
       "id": "contacts_update_company",
       "category": "multi_step",
-      "prompt": "把我手机通讯录里李四的公司改成 Aiden Robotics。已经确认过了，直接改。",
-      "description_for_judge": "The agent finds 李四 through the Phone Bridge contacts query, then updates the contact's organization to Aiden Robotics with the returned contact id.",
+      "prompt": "Change Ben Carter's company in my phone contacts to Aiden Robotics. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The agent finds Ben Carter through the Phone Bridge contacts query, then updates the contact's organization to Aiden Robotics with the returned contact id.",
       "rubric": [
         {
           "id": "updated",
-          "check": "The final response confirms that 李四's company is now Aiden Robotics."
+          "check": "The final response confirms that Ben Carter's company is now Aiden Robotics."
         }
       ],
       "hard_assertions": {
@@ -579,20 +628,69 @@
       ],
       "aico_app": {},
       "environment_assertions": {
-        "os.providers.contacts.contacts.1.displayName": "李四",
+        "os.providers.contacts.contacts.1.displayName": "Ben Carter",
         "os.providers.contacts.contacts.1.company": "Aiden Robotics",
         "aico_app.failed_command_counts.contacts_update": 0
+      },
+      "initial_state": {
+        "os": {
+          "providers": {
+            "contacts": {
+              "contacts": [
+                {
+                  "id": "c_seed_alice",
+                  "displayName": "Alice Chen",
+                  "phones": [
+                    {
+                      "id": "c_seed_alice_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13900138001",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_ben",
+                  "displayName": "Ben Carter",
+                  "phones": [
+                    {
+                      "id": "c_seed_ben_mobile",
+                      "label": "Mobile",
+                      "number": "+86 15600001111",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_dana",
+                  "displayName": "Dana Wu",
+                  "phones": [
+                    {
+                      "id": "c_seed_dana_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13912345678",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                }
+              ]
+            }
+          }
+        }
       }
     },
     {
       "id": "call_contact_via_bridge",
       "category": "multi_step",
-      "prompt": "用手机给王五打个电话。不用再确认，直接拨。",
-      "description_for_judge": "The agent looks up 王五's number through the Phone Bridge contacts query and starts the call with a tel: link through the Phone Bridge. The dialer opens with 8613912345678 on the dial pad (the simulator drops the leading +); pressing a call button places the simulated call.",
+      "prompt": "Call Dana Wu on my phone. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The agent looks up Dana Wu's number through the Phone Bridge contacts query and starts the call with a tel: link through the Phone Bridge. The dialer opens with 8613912345678 on the dial pad (the simulator drops the leading +); pressing a call button places the simulated call.",
       "rubric": [
         {
           "id": "dialed",
-          "check": "The post-screenshot or final response shows the dial pad holding 王五's number (8613912345678 or 13912345678) or a simulated call to it."
+          "check": "The post-screenshot or final response shows the dial pad holding Dana Wu's number (8613912345678 or 13912345678) or a simulated call to it."
         }
       ],
       "hard_assertions": {
@@ -620,12 +718,61 @@
         "aico_app.command_counts.contacts_query": {
           "min": 1
         }
+      },
+      "initial_state": {
+        "os": {
+          "providers": {
+            "contacts": {
+              "contacts": [
+                {
+                  "id": "c_seed_alice",
+                  "displayName": "Alice Chen",
+                  "phones": [
+                    {
+                      "id": "c_seed_alice_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13900138001",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_ben",
+                  "displayName": "Ben Carter",
+                  "phones": [
+                    {
+                      "id": "c_seed_ben_mobile",
+                      "label": "Mobile",
+                      "number": "+86 15600001111",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_dana",
+                  "displayName": "Dana Wu",
+                  "phones": [
+                    {
+                      "id": "c_seed_dana_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13912345678",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                }
+              ]
+            }
+          }
+        }
       }
     },
     {
       "id": "open_url_via_bridge",
       "category": "single_step",
-      "prompt": "用手机浏览器打开 https://example.com",
+      "prompt": "Open https://example.com in my phone's browser.",
       "description_for_judge": "The agent opens the URL through the Phone Bridge open_url route instead of typing it into the browser. The browser shows https://example.com in its address bar; page rendering depends on the simulator's network, so only the launch is checked.",
       "rubric": [
         {
@@ -655,12 +802,12 @@
     {
       "id": "notification_send_now",
       "category": "single_step",
-      "prompt": "现在给我手机发一条通知，标题“喝水”，内容“记得喝水”。直接发，不用确认。",
+      "prompt": "Send a notification to my phone now, titled \"Hydrate\" with the text \"Time to drink water\". The details are confirmed, so go ahead without asking me again.",
       "description_for_judge": "The agent posts an immediate local notification through the Phone Bridge notification tool.",
       "rubric": [
         {
           "id": "sent",
-          "check": "The final response confirms that the 喝水 notification was sent."
+          "check": "The final response confirms that the Hydrate notification was sent."
         }
       ],
       "hard_assertions": {
@@ -676,14 +823,14 @@
       ],
       "aico_app": {},
       "environment_assertions": {
-        "os.notifications.items.0.title": "喝水",
+        "os.notifications.items.0.title": "Hydrate",
         "aico_app.failed_command_counts.notification_send": 0
       }
     },
     {
       "id": "notification_permission_denied",
       "category": "single_step",
-      "prompt": "现在给我手机发一条通知，标题“站会”，内容“10点开站会”。直接发，不用确认。",
+      "prompt": "Send a notification to my phone now, titled \"Standup\" with the text \"Standup at 10 AM\". The details are confirmed, so go ahead without asking me again.",
       "description_for_judge": "Notification permission is denied for the simulated Aico App, and there is no screen path to post a phone notification. The agent must report that notification permission is needed, either in its reply or by requesting the user's action, instead of claiming success.",
       "rubric": [
         {
@@ -721,7 +868,7 @@
     {
       "id": "disconnected_phone_gui_only",
       "category": "multi_step",
-      "prompt": "帮我在手机上新建一个联系人：Chris Park，电话 13700002222。信息都确认过了，直接保存。我现在没法操作手机，你自己在手机上搞定。",
+      "prompt": "Create a contact on my phone: Chris Park, phone 13700002222. The details are confirmed, so go ahead without asking me again. I can't use my phone right now, so handle it on the phone yourself.",
       "description_for_judge": "The Aico App is not connected for the whole task, so Phone Bridge tools are unavailable. The agent creates the contact in the Contacts app on screen.",
       "rubric": [
         {
@@ -753,14 +900,14 @@
       }
     },
     {
-      "id": "cjk_note_via_bridge_clipboard",
+      "id": "non_ascii_note_via_bridge_clipboard",
       "category": "multi_step",
-      "prompt": "在手机的笔记里新建一条笔记，正文是“周五前提交季度报告”。",
-      "description_for_judge": "Notes is open with no notes. The agent creates a note on screen; Chinese text entry goes through the Phone Bridge clipboard because the simulator keyboard only types ASCII.",
+      "prompt": "Create a new note in the Notes app on my phone with the text \"Résumé review at the café on Friday\".",
+      "description_for_judge": "Notes is open with no notes. The agent creates a note on screen; the accented text cannot be typed on the simulator's ASCII keyboard, so text entry goes through the Phone Bridge clipboard.",
       "rubric": [
         {
           "id": "note_saved",
-          "check": "The post-screenshot or final response shows a note containing 周五前提交季度报告."
+          "check": "The post-screenshot or final response shows a note containing Résumé review at the café on Friday."
         }
       ],
       "hard_assertions": {
@@ -787,7 +934,7 @@
       },
       "aico_app": {},
       "environment_assertions": {
-        "apps.notes.notes.0.content": "周五前提交季度报告",
+        "apps.notes.notes.0.content": "Résumé review at the café on Friday",
         "aico_app.command_counts.clipboard_write": {
           "min": 1
         }
@@ -796,7 +943,7 @@
     {
       "id": "contacts_create_via_bridge",
       "category": "single_step",
-      "prompt": "帮我在手机通讯录里新建联系人：Morgan Lee，电话 13600003333，邮箱 morgan@example.com，公司 Aiden Robotics，备注“产品顾问”。信息都确认过了，直接保存。",
+      "prompt": "Add a contact to my phone: Morgan Lee, phone 13600003333, email morgan@example.com, company Aiden Robotics, notes \"Product advisor\". The details are confirmed, so go ahead without asking me again.",
       "description_for_judge": "The agent creates the contact with phone, email, organization and notes through the Phone Bridge contacts tool.",
       "rubric": [
         {
@@ -826,19 +973,19 @@
         "os.providers.contacts.contacts.0.phones.0.number": "13600003333",
         "os.providers.contacts.contacts.0.emails.0.email": "morgan@example.com",
         "os.providers.contacts.contacts.0.company": "Aiden Robotics",
-        "os.providers.contacts.contacts.0.notes": "产品顾问",
+        "os.providers.contacts.contacts.0.notes": "Product advisor",
         "aico_app.failed_command_counts.contacts_create": 0
       }
     },
     {
       "id": "calendar_all_day_with_notes",
       "category": "single_step",
-      "prompt": "帮我在手机日历里加一个全天日程：2026年6月12日，公司团建，备注“带运动鞋”。信息都确认过了，直接创建。",
+      "prompt": "Add an all-day event to my phone calendar on June 12, 2026: Team outing, with the note \"Bring sneakers\". The details are confirmed, so go ahead without asking me again.",
       "description_for_judge": "The agent creates an all-day event with notes through the Phone Bridge calendar tool.",
       "rubric": [
         {
           "id": "created",
-          "check": "The final response confirms the all-day 公司团建 event on 2026-06-12 with the note 带运动鞋."
+          "check": "The final response confirms the all-day Team outing event on 2026-06-12 with the note Bring sneakers."
         }
       ],
       "hard_assertions": {
@@ -863,20 +1010,20 @@
       ],
       "aico_app": {},
       "environment_assertions": {
-        "apps.calendar.events.0.title": "公司团建",
+        "apps.calendar.events.0.title": "Team outing",
         "apps.calendar.events.0.allDay": true,
-        "apps.calendar.events.0.description": "带运动鞋"
+        "apps.calendar.events.0.description": "Bring sneakers"
       }
     },
     {
       "id": "calendar_permission_denied",
       "category": "single_step",
-      "prompt": "帮我在手机日历里加一个日程：2026年6月9日 北京时间下午2点到3点，复盘会。信息都确认过了，直接创建。",
+      "prompt": "Add an event to my phone calendar: June 9, 2026, 2-3 PM Beijing time (UTC+8), Retro. The details are confirmed, so go ahead without asking me again.",
       "description_for_judge": "Calendar permission is denied for the simulated Aico App. The agent must not claim the event was created; it either reports that calendar permission is needed or requests the user's action. Creating the event on screen also counts.",
       "rubric": [
         {
           "id": "handled_denial",
-          "check": "The final response or user-action request says calendar permission must be granted, or the post-screenshot shows the 复盘会 event created on screen."
+          "check": "The final response or user-action request says calendar permission must be granted, or the post-screenshot shows the Retro event created on screen."
         },
         {
           "id": "no_false_success",
@@ -912,7 +1059,7 @@
     {
       "id": "open_app_launch_failure_fallback",
       "category": "single_step",
-      "prompt": "打开手机上的天气。",
+      "prompt": "Open the Weather app on my phone.",
       "description_for_judge": "The Phone Bridge launch fails once with app_launch_failed. The open_app tool falls back to the visible system search, so Weather still opens.",
       "rubric": [
         {
@@ -947,12 +1094,12 @@
     {
       "id": "background_without_fgs",
       "category": "single_step",
-      "prompt": "帮我在手机日历里加一个日程：2026年6月15日 北京时间上午11点到12点，供应商电话。信息都确认过了，直接创建。",
+      "prompt": "Add an event to my phone calendar: June 15, 2026, 11 AM-12 PM Beijing time (UTC+8), Supplier call. The details are confirmed, so go ahead without asking me again.",
       "description_for_judge": "The simulated Aico App is in the background without its foreground service. On Android, background-safe data commands still run over the WebSocket, so the agent creates the event through the Phone Bridge.",
       "rubric": [
         {
           "id": "created",
-          "check": "The final response confirms the 供应商电话 event on 2026-06-15 11:00-12:00."
+          "check": "The final response confirms the Supplier call event on 2026-06-15 11:00-12:00."
         }
       ],
       "hard_assertions": {
@@ -978,7 +1125,7 @@
         "app_state": "background"
       },
       "environment_assertions": {
-        "apps.calendar.events.0.title": "供应商电话",
+        "apps.calendar.events.0.title": "Supplier call",
         "apps.calendar.events.0.startTs": 1781492400000,
         "apps.calendar.events.0.endTs": 1781496000000,
         "aico_app.failed_command_counts.calendar_create": 0

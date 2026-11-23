@@ -210,7 +210,7 @@ before `foreground_app_id` opens:
 
 ```json
 "initial_state": {"apps": {"calendar": {"events": [
-  {"id": "evt_seed", "type": "event", "title": "站会", "allDay": false,
+  {"id": "evt_seed", "type": "event", "title": "Standup", "allDay": false,
    "startTs": 1780363800000, "endTs": 1780365600000}
 ]}}}
 ```
