@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"aico-agent/internal/providerretry"
@@ -213,44 +214,44 @@ func TestFinishInputContextDeadlineBoundsRetries(t *testing.T) {
 func TestPreAudioTimeoutAndPCMSerialize(t *testing.T) {
 	for _, audioFirst := range []bool{true, false} {
 		t.Run(map[bool]string{true: "audio-first", false: "timeout-first"}[audioFirst], func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			playback := &retryPlaybackSink{}
-			sink := &retryAudioSink{AudioSink: playback}
-			attempt := &attemptAudioSink{retryAudioSink: sink}
-			session := &retrySession{ctx: context.Background(), sink: sink, attemptCancel: cancel}
-			err := session.bounded(context.Background(), 10*time.Millisecond, func() error {
-				if audioFirst {
-					if err := attempt.WritePCM([]byte{1}); err != nil {
-						return err
-					}
-					select {
-					case <-ctx.Done():
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				playback := &retryPlaybackSink{}
+				sink := &retryAudioSink{AudioSink: playback}
+				attempt := &attemptAudioSink{retryAudioSink: sink}
+				session := &retrySession{ctx: context.Background(), sink: sink, attemptCancel: cancel}
+				err := session.bounded(context.Background(), 10*time.Millisecond, func() error {
+					if audioFirst {
+						if err := attempt.WritePCM([]byte{1}); err != nil {
+							return err
+						}
+						// Virtual time cannot advance until this goroutine blocks,
+						// so PCM is submitted before the timeout can fire.
+						time.Sleep(30 * time.Millisecond)
 						return ctx.Err()
-					case <-time.After(30 * time.Millisecond):
-						return nil
 					}
+					<-ctx.Done()
+					if err := attempt.WritePCM([]byte{1}); !errors.Is(err, context.Canceled) {
+						t.Errorf("late PCM accepted: %v", err)
+					}
+					return ctx.Err()
+				})
+				if audioFirst {
+					if err != nil {
+						t.Fatal(err)
+					}
+					if sink.retirePreAudio() {
+						t.Fatal("retired audible attempt")
+					}
+					_ = attempt.Stop()
+					if playback.stops != 1 {
+						t.Fatal("audible attempt lost playback cleanup")
+					}
+				} else if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("error=%v", err)
 				}
-				<-ctx.Done()
-				if err := attempt.WritePCM([]byte{1}); !errors.Is(err, context.Canceled) {
-					t.Errorf("late PCM accepted: %v", err)
-				}
-				return ctx.Err()
 			})
-			if audioFirst {
-				if err != nil {
-					t.Fatal(err)
-				}
-				if sink.retirePreAudio() {
-					t.Fatal("retired audible attempt")
-				}
-				_ = attempt.Stop()
-				if playback.stops != 1 {
-					t.Fatal("audible attempt lost playback cleanup")
-				}
-			} else if !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("error=%v", err)
-			}
 		})
 	}
 }

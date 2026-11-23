@@ -8,6 +8,7 @@ package fishaudio
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -281,17 +282,21 @@ func (s *session) readLoop(conn *websocket.Conn) {
 func (s *session) Close() error {
 	s.closeOnce.Do(func() {
 		// Flush so server emits remaining audio.
-		if err := s.Flush(); err != nil {
-			s.recordErr(fmt.Errorf("flush: %w", err))
-		}
+		flushErr := s.Flush()
 		// Stop tells the server to send a final "finish" event and end the stream.
 		_ = s.writeMsg(map[string]any{"event": "stop"})
 
 		// Wait for the read loop to drain.
 		waitCtx, cancel := context.WithTimeout(s.ctx, synthesisTimeout)
-		if err := s.waitReadDone(waitCtx); err != nil {
-			s.recordErr(err)
+		readErr := s.waitReadDone(waitCtx)
+		var status interface{ HTTPStatusCode() int }
+		if errors.As(readErr, &status) {
+			s.recordErr(readErr)
 		}
+		if flushErr != nil {
+			s.recordErr(fmt.Errorf("flush: %w", flushErr))
+		}
+		s.recordErr(readErr)
 		cancel()
 
 		// Drain the playback buffer (waits until audio fully plays).
@@ -308,9 +313,19 @@ func (s *session) waitReadDone(ctx context.Context) error {
 	select {
 	case err := <-s.readDone:
 		return err
+	default:
+	}
+	select {
+	case err := <-s.readDone:
+		return err
 	case <-ctx.Done():
 		s.closeConn()
-		return ctx.Err()
+		select {
+		case err := <-s.readDone:
+			return err
+		default:
+			return ctx.Err()
+		}
 	}
 }
 

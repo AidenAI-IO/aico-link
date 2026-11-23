@@ -204,7 +204,7 @@ func (c *Client) post(ctx context.Context, endpoint string, body []byte, headers
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
-	if err != nil {
+	if err != nil && resp.StatusCode >= 200 && resp.StatusCode <= 299 {
 		return Response{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {

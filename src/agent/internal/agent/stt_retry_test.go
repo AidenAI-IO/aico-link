@@ -1,19 +1,23 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gorilla/websocket"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestSTTRetriesBufferedAudio(t *testing.T) {
@@ -102,26 +106,36 @@ func TestSTTRetriesBufferedAudio(t *testing.T) {
 }
 
 func TestSTTCancelStopsRetryAfter(t *testing.T) {
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.Header().Set("Retry-After", "3600")
-		w.WriteHeader(503)
-	}))
-	defer server.Close()
-	client := NewOpenAIWhisperSTT("k", "m", server.URL, "", server.Client())
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	_, err := client.TranscribeWAVWithContext(ctx, []byte("wav"))
-	if !errors.Is(err, context.DeadlineExceeded) || calls.Load() != 1 {
-		t.Fatalf("err=%v calls=%d", err, calls.Load())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": {"3600"}}, Body: http.NoBody, Request: req}, nil
+		})}
+		client := NewOpenAIWhisperSTT("k", "m", "http://stt.test", "", httpClient)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { _, err := client.TranscribeWAVWithContext(ctx, []byte("wav")); done <- err }()
+		// The transport is synchronous; the only remaining blocking operation
+		// is the retry timer. Wait until the client has reached it.
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("returned before cancellation: %v", err)
+		default:
+		}
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) || calls.Load() != 1 {
+			t.Fatalf("err=%v calls=%d", err, calls.Load())
+		}
+	})
 }
 
 func TestDashScopeSTTRetriesCompleteBufferedWAV(t *testing.T) {
 	var calls atomic.Int32
 	upgrader := websocket.Upgrader{}
-	received := make(chan string, 2)
+	received := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -130,7 +144,7 @@ func TestDashScopeSTTRetriesCompleteBufferedWAV(t *testing.T) {
 		}
 		defer conn.Close()
 		_ = conn.WriteJSON(map[string]any{"type": "session.created"})
-		var audio string
+		var audio []byte
 		for {
 			_, body, err := conn.ReadMessage()
 			if err != nil {
@@ -139,7 +153,12 @@ func TestDashScopeSTTRetriesCompleteBufferedWAV(t *testing.T) {
 			var event struct{ Type, Audio string }
 			_ = json.Unmarshal(body, &event)
 			if event.Type == "input_audio_buffer.append" {
-				audio += event.Audio
+				chunk, err := base64.StdEncoding.DecodeString(event.Audio)
+				if err != nil {
+					t.Errorf("decode PCM: %v", err)
+					return
+				}
+				audio = append(audio, chunk...)
 			}
 			if event.Type == "input_audio_buffer.commit" {
 				break
@@ -154,13 +173,24 @@ func TestDashScopeSTTRetriesCompleteBufferedWAV(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewDashScopeRealtimeSTT("k", "m", "ws"+strings.TrimPrefix(server.URL, "http"), "en")
-	text, err := client.TranscribeWAV(pcm16MonoToWAV([]int16{1, 2, 3}, 16000))
+	samples := make([]int16, 3207)
+	for i := range samples {
+		samples[i] = int16(i*7 + 1)
+	}
+	wav := pcm16MonoToWAV(samples, 16000)
+	var expected bytes.Buffer
+	if err := binary.Write(&expected, binary.LittleEndian, samples); err != nil {
+		t.Fatal(err)
+	}
+	text, err := client.TranscribeWAV(wav)
 	if err != nil || text != "hello" || calls.Load() != 2 {
 		t.Fatalf("text=%q err=%v calls=%d", text, err, calls.Load())
 	}
 	first, second := <-received, <-received
-	if first == "" || first != second {
-		t.Fatalf("audio replay=%q, %q", first, second)
+	for i, audio := range [][]byte{first, second} {
+		if !bytes.Equal(audio, expected.Bytes()) {
+			t.Fatalf("attempt %d PCM mismatch: got %d bytes, want %d", i+1, len(audio), expected.Len())
+		}
 	}
 }
 

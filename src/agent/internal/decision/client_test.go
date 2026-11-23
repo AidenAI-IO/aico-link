@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"aico-agent/internal/providerretry"
 )
 
 func jpegBase64(t *testing.T, width, height int) string {
@@ -362,5 +364,31 @@ func TestAskAllowsResponseWithinOverallBudget(t *testing.T) {
 	_, err := c.Ask(context.Background(), Request{State: "s", Questions: map[string]Question{"q": {Type: TypeNoul, Instructions: "?"}}})
 	if err != nil || calls.Load() != 1 {
 		t.Fatalf("calls=%d error=%v", calls.Load(), err)
+	}
+}
+
+func TestPostPreservesStatusAndDelayWhenRejectionIsTruncated(t *testing.T) {
+	for _, code := range []int{200, 401, 429, 529} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Length", "100")
+				w.Header().Set("Retry-After", "120")
+				w.WriteHeader(code)
+				_, _ = io.WriteString(w, "partial rejection")
+			}))
+			defer server.Close()
+			c := &Client{APIKey: "k", HTTP: server.Client()}
+			_, err := c.post(context.Background(), server.URL, nil, nil, decodeTypeSafe)
+			var status *StatusError
+			if code == 200 {
+				if errors.As(err, &status) || !errors.Is(err, io.ErrUnexpectedEOF) {
+					t.Fatalf("lost successful response read error: %v", err)
+				}
+				return
+			}
+			if !errors.As(err, &status) || status.StatusCode != code || status.After != 120*time.Second || status.Body != "partial rejection" || providerretry.Retryable(err) != (code != 401) {
+				t.Fatalf("status=%+v error=%v", status, err)
+			}
+		})
 	}
 }

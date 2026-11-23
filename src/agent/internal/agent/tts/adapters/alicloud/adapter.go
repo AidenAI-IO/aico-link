@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -132,7 +133,7 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 		ctx:        ctx,
 		conn:       conn,
 		sink:       sink,
-		readDone:   make(chan error, 1),
+		readDone:   make(chan struct{}),
 	}
 
 	// Wait for session.created from server.
@@ -190,7 +191,9 @@ type session struct {
 	sink       tts.AudioSink
 
 	writeMu    sync.Mutex
-	readDone   chan error
+	readDone   chan struct{}
+	readEnded  bool
+	readErr    error
 	responseMu sync.Mutex
 	pending    *pendingResponse
 
@@ -273,6 +276,14 @@ func (s *session) Flush() error {
 	}
 	pending := &pendingResponse{done: make(chan struct{})}
 	s.responseMu.Lock()
+	if s.readEnded {
+		err := s.readErr
+		s.responseMu.Unlock()
+		if err == nil {
+			err = tts.ErrSessionClosed
+		}
+		return err
+	}
 	s.pending = pending
 	s.responseMu.Unlock()
 	err := s.writeEvent(map[string]any{
@@ -281,6 +292,9 @@ func (s *session) Flush() error {
 	})
 	if err != nil {
 		s.completePendingResponse(err)
+	}
+	if _, readErr := s.readerResult(); readErr != nil {
+		return readErr
 	}
 	return err
 }
@@ -334,8 +348,7 @@ func (s *session) readLoop(conn *websocket.Conn) {
 		case "response.done":
 			s.completePendingResponse(nil)
 		case "session.finished":
-			s.completePendingResponse(nil)
-			s.readDone <- nil
+			s.finishRead(nil)
 			return
 		case "error":
 			s.finishRead(&providerretry.StatusError{Status: providerretry.JSONStatus(raw), Body: string(raw)})
@@ -357,11 +370,13 @@ func (s *session) Close() error {
 			s.recordErr(err)
 		}
 		// Tell server no more text is coming; it flushes and closes.
-		if err := s.writeEvent(map[string]any{
-			"event_id": newEventID(),
-			"type":     "session.finish",
-		}); err != nil {
-			s.recordErr(fmt.Errorf("session.finish: %w", err))
+		if ended, _ := s.readerResult(); !ended {
+			if err := s.writeEvent(map[string]any{
+				"event_id": newEventID(),
+				"type":     "session.finish",
+			}); err != nil {
+				s.recordErr(fmt.Errorf("session.finish: %w", err))
+			}
 		}
 
 		// Wait for reader to drain remaining audio.
@@ -410,6 +425,11 @@ func (s *session) Abort() error {
 
 func (s *session) waitForPendingResponse() error {
 	s.responseMu.Lock()
+	if s.readEnded {
+		err := s.readErr
+		s.responseMu.Unlock()
+		return err
+	}
 	pending := s.pending
 	s.responseMu.Unlock()
 	if pending == nil {
@@ -422,8 +442,14 @@ func (s *session) waitForPendingResponse() error {
 			s.pending = nil
 		}
 		s.responseMu.Unlock()
+		if _, err := s.readerResult(); err != nil {
+			return err
+		}
 		return pending.err
 	case <-s.ctx.Done():
+		if _, err := s.readerResult(); err != nil {
+			return err
+		}
 		return s.ctx.Err()
 	}
 }
@@ -442,17 +468,36 @@ func (s *session) completePendingResponse(err error) {
 }
 
 func (s *session) finishRead(err error) {
-	s.completePendingResponse(err)
-	s.readDone <- err
+	s.responseMu.Lock()
+	defer s.responseMu.Unlock()
+	s.readEnded = true
+	s.readErr = err
+	if pending := s.pending; pending != nil {
+		pending.once.Do(func() {
+			pending.err = err
+			close(pending.done)
+		})
+	}
+	close(s.readDone)
+}
+
+func (s *session) readerResult() (bool, error) {
+	s.responseMu.Lock()
+	defer s.responseMu.Unlock()
+	return s.readEnded, s.readErr
 }
 
 func (s *session) waitReadDone() error {
 	waitCtx, cancel := context.WithTimeout(s.ctx, connectTimeout)
 	defer cancel()
 	select {
-	case err := <-s.readDone:
+	case <-s.readDone:
+		_, err := s.readerResult()
 		return err
 	case <-waitCtx.Done():
+		if ended, err := s.readerResult(); ended {
+			return err
+		}
 		return waitCtx.Err()
 	}
 }
@@ -464,9 +509,13 @@ func (s *session) Err() error {
 }
 
 func (s *session) recordErr(err error) {
+	if err == nil {
+		return
+	}
 	s.errMu.Lock()
 	defer s.errMu.Unlock()
-	if s.lastErr == nil {
+	var incoming, existing interface{ HTTPStatusCode() int }
+	if s.lastErr == nil || (errors.As(err, &incoming) && !errors.As(s.lastErr, &existing)) {
 		s.lastErr = err
 	}
 }
