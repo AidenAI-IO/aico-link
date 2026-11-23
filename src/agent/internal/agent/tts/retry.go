@@ -13,6 +13,7 @@ import (
 type retryAudioSink struct {
 	AudioSink
 	mu        sync.Mutex
+	writeMu   sync.Mutex
 	epoch     int
 	delivered atomic.Bool
 }
@@ -23,14 +24,19 @@ type attemptAudioSink struct {
 }
 
 func (s *attemptAudioSink) WritePCM(data []byte) error {
+	// Serialize PCM writes independently of the attempt state so Stop can
+	// reach the underlying sink while a forwarded write is blocked.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.epoch != s.retryAudioSink.epoch {
+		s.mu.Unlock()
 		return context.Canceled
 	}
 	if len(data) > 0 {
 		s.delivered.Store(true)
 	}
+	s.mu.Unlock()
 	return s.AudioSink.WritePCM(data)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -195,6 +196,51 @@ type retryPlaybackSink struct {
 
 func (s *retryPlaybackSink) Drain(context.Context) error { s.drains++; return nil }
 func (s *retryPlaybackSink) Stop() error                 { s.stops++; return nil }
+
+type stopUnblocksPCMSink struct {
+	noopSink
+	started, stopped chan struct{}
+	stopOnce         sync.Once
+}
+
+func (s *stopUnblocksPCMSink) WritePCM([]byte) error {
+	close(s.started)
+	<-s.stopped
+	return context.Canceled
+}
+
+func (s *stopUnblocksPCMSink) Stop() error {
+	s.stopOnce.Do(func() { close(s.stopped) })
+	return nil
+}
+
+func TestAttemptStopInterruptsForwardedPCMWrite(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		playback := &stopUnblocksPCMSink{started: make(chan struct{}), stopped: make(chan struct{})}
+		defer playback.Stop()
+		sink := &retryAudioSink{AudioSink: playback}
+		attempt := &attemptAudioSink{retryAudioSink: sink}
+		writeDone := make(chan error, 1)
+		go func() { writeDone <- attempt.WritePCM([]byte{1, 2}) }()
+		<-playback.started
+		stopDone := make(chan error, 1)
+		go func() { stopDone <- attempt.Stop() }()
+		select {
+		case err := <-stopDone:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Stop waited behind the forwarded PCM write")
+		}
+		if err := <-writeDone; !errors.Is(err, context.Canceled) {
+			t.Fatalf("write error=%v", err)
+		}
+		if sink.retirePreAudio() {
+			t.Fatal("retired an attempt that submitted PCM")
+		}
+	})
+}
 
 func TestFinishInputContextDeadlineBoundsRetries(t *testing.T) {
 	p := &retryTestProvider{fail: "flush"}
