@@ -468,7 +468,8 @@ expect_audit_failure() {
 
 run_audit "${TEST_ROOT}/report-pass"
 grep -qx 'status=pass' "${TEST_ROOT}/report-pass/summary.txt"
-grep -qx 'elf_count=15' "${TEST_ROOT}/report-pass/summary.txt"
+awk -F '\t' '$1 == "static-go" && $9 == "bin/device-cli" { found = 1 } END { exit !found }' \
+    "${TEST_ROOT}/report-pass/elf-audit.tsv" || fail "device-cli was not audited as a static Go binary"
 
 printf 'tampered\n' >>"${apps_dir}/share/ekho-data/pinyin.voice"
 expect_audit_failure changed-ekho-data
