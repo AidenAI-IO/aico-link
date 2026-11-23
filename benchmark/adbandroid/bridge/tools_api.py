@@ -18,6 +18,8 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler
 from typing import Any, Callable
 
+from mnk_provider import validate_insert_text
+
 from .adb import (
     ADBCommandError,
     KEYCODE_APP_SWITCH,
@@ -188,7 +190,7 @@ class ADBToolsAPIHandler:
             },
             {
                 "name": "enter_text",
-                "description": "Enter target text into an input field on the Android device: taps the focus point, types via adb input text, verifies the editable field with Android UIAutomator, and returns a post-action screenshot.",
+                "description": "Enter text into an Android field using ADBKeyBoard when enabled (including Unicode), otherwise adb input text (ASCII). Taps the focus point, verifies with UIAutomator, and returns a screenshot.",
                 "args_schema": {
                     "type": "object",
                     "additionalProperties": False,
@@ -393,6 +395,8 @@ class ADBToolsAPIHandler:
             return self._call_keyboard_tap(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "enter_text":
             return self._call_enter_text(tool_input, capture_screenshot=capture_screenshot)
+        elif tool_name == "insert_text":
+            return self._call_insert_text(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "mouse_move":
             return self._call_mouse_move(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "mouse_scroll":
@@ -626,7 +630,7 @@ class ADBToolsAPIHandler:
         return {"output": f"error: unsupported quick_action: {tool_input.get('action')!r}", "is_error": True}
 
     def _call_enter_text(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
-        """Execute enter_text through adb input text."""
+        """Prefer committed Unicode input, with the legacy ASCII fallback."""
         unknown = sorted(set(tool_input) - {"text", "focus"})
         if unknown:
             output = {"ok": False, "suggestion": f"Remove unsupported enter_text arguments: {unknown!r}."}
@@ -637,15 +641,21 @@ class ADBToolsAPIHandler:
         if text == "":
             output = {"ok": False, "suggestion": "Provide non-empty text, then retry enter_text."}
             return {"output": json.dumps(output), "is_error": False}
+        device = self.state.device
+        try:
+            validate_insert_text(text)
+        except ValueError as exc:
+            return {"output": json.dumps({"ok": False, "suggestion": str(exc)}), "is_error": False}
+        with self.state.lock:
+            native = device.supports_text_insertion()
         unsupported = unsupported_adb_text_chars(text)
-        if unsupported:
+        if unsupported and not native:
             output = {
                 "ok": False,
-                "suggestion": f"adb input text supports only US-keyboard ASCII characters; unsupported: {unsupported!r}",
+                "suggestion": "adb input text supports only US-keyboard ASCII characters; install and enable ADBKeyBoard for Unicode input.",
             }
             return {"output": json.dumps(output, ensure_ascii=False), "is_error": False}
 
-        device = self.state.device
         focus = tool_input.get("focus")
         focus_pixels: tuple[int, int] | None = None
         if not isinstance(focus, dict):
@@ -668,7 +678,10 @@ class ADBToolsAPIHandler:
             if focus_pixels is not None:
                 device.tap(*focus_pixels)
                 time.sleep(FOCUS_SETTLE_SEC)
-            device.input_text(text)
+            if native:
+                device.insert_text(text)
+            else:
+                device.input_text(text)
 
         with self.state.lock:
             started = time.monotonic()
@@ -694,6 +707,7 @@ class ADBToolsAPIHandler:
             xml_text,
             text,
             xml_error=xml_error,
+            case_sensitive=native,
         )
         text_output: dict[str, Any] = {"ok": committed}
         if not committed:
@@ -720,6 +734,23 @@ class ADBToolsAPIHandler:
                 "size": screenshot.get("size", 0),
             })
         return {"output": json.dumps(output_data, ensure_ascii=False), "is_error": False}
+
+    def _call_insert_text(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
+        if set(tool_input) - {"text", "replace"}:
+            return {"output": "error: unsupported insert_text arguments", "is_error": True}
+        text = tool_input.get("text")
+        replace = tool_input.get("replace", False)
+        try:
+            validate_insert_text(text)
+            if not isinstance(replace, bool):
+                raise ValueError("replace must be a boolean")
+        except ValueError as exc:
+            return {"output": f"error: {exc}", "is_error": True}
+        return self._execute_device(
+            lambda: self.state.device.insert_text(text, replace),
+            tool_name="insert_text", tool_input=tool_input,
+            adb_summary="ADBKeyBoard Base64 input", capture_screenshot=capture_screenshot,
+        )
 
     def _call_keyboard_text(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
         text = tool_input.get("text", "")
@@ -1135,6 +1166,7 @@ def _verify_adb_text_entry(
     target_text: str,
     *,
     xml_error: str = "",
+    case_sensitive: bool = False,
 ) -> tuple[bool, str, bool, str, list[str]]:
     """Verify adb text entry from Android's focused/editable UIAutomator nodes."""
     steps: list[str] = []
@@ -1148,7 +1180,9 @@ def _verify_adb_text_entry(
             steps,
         )
 
-    editable_texts, visible_texts, parse_error = _uiautomator_texts(xml_text)
+    editable_texts, visible_texts, parse_error = _uiautomator_texts(
+        xml_text, preserve_editable_whitespace=True,
+    )
     if parse_error:
         steps.append(f"uiautomator parse failed: {parse_error}")
         return (
@@ -1169,7 +1203,7 @@ def _verify_adb_text_entry(
         )
 
     for field_text in editable_texts:
-        if _field_text_matches(field_text, target_text):
+        if _field_text_matches(field_text, target_text, case_sensitive=case_sensitive):
             steps.append(f"uiautomator verified editable field text {field_text!r}")
             return (
                 True,
@@ -1188,7 +1222,9 @@ def _verify_adb_text_entry(
     return False, field_text, wrong_ime, reason, steps
 
 
-def _uiautomator_texts(xml_text: str) -> tuple[list[str], list[str], str]:
+def _uiautomator_texts(
+    xml_text: str, *, preserve_editable_whitespace: bool = False,
+) -> tuple[list[str], list[str], str]:
     xml_text = _extract_uiautomator_xml(xml_text)
     if not xml_text:
         return [], [], "uiautomator output did not contain hierarchy XML"
@@ -1201,7 +1237,8 @@ def _uiautomator_texts(xml_text: str) -> tuple[list[str], list[str], str]:
     other_editable: list[str] = []
     visible: list[str] = []
     for node in root.iter("node"):
-        text = str(node.attrib.get("text", "") or "").strip()
+        raw_text = str(node.attrib.get("text", "") or "")
+        text = raw_text.strip()
         content_desc = str(node.attrib.get("content-desc", "") or "").strip()
         for value in (text, content_desc):
             if value:
@@ -1209,12 +1246,17 @@ def _uiautomator_texts(xml_text: str) -> tuple[list[str], list[str], str]:
         class_name = str(node.attrib.get("class", "") or "")
         focused = str(node.attrib.get("focused", "") or "").lower() == "true"
         is_editable = "EditText" in class_name or "AutoCompleteTextView" in class_name
-        if is_editable and text:
+        editable_text = raw_text if preserve_editable_whitespace else text
+        if is_editable and editable_text:
             if focused:
-                focused_editable.append(text)
+                focused_editable.append(editable_text)
             else:
-                other_editable.append(text)
-    return _unique_texts(focused_editable + other_editable), _unique_texts(visible), ""
+                other_editable.append(editable_text)
+    return (
+        _unique_texts(focused_editable + other_editable, preserve_whitespace=preserve_editable_whitespace),
+        _unique_texts(visible),
+        "",
+    )
 
 
 def _extract_uiautomator_xml(raw: str) -> str:
@@ -1230,11 +1272,12 @@ def _extract_uiautomator_xml(raw: str) -> str:
     return raw[start:]
 
 
-def _unique_texts(values: list[str]) -> list[str]:
+def _unique_texts(values: list[str], *, preserve_whitespace: bool = False) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for value in values:
-        value = value.strip()
+        if not preserve_whitespace:
+            value = value.strip()
         if not value or value in seen:
             continue
         seen.add(value)
@@ -1242,9 +1285,9 @@ def _unique_texts(values: list[str]) -> list[str]:
     return out
 
 
-def _field_text_matches(field_text: str, target_text: str) -> bool:
-    field_text = field_text.strip()
-    target_text = target_text.strip()
+def _field_text_matches(field_text: str, target_text: str, *, case_sensitive: bool = False) -> bool:
+    if case_sensitive:
+        return field_text.endswith(target_text)
     return field_text.lower().endswith(target_text.lower())
 
 

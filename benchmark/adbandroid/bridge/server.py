@@ -13,7 +13,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from mnk_provider import execute_mnk_request
+from mnk_provider import execute_mnk_request, validate_insert_text
 from setup_token_registry import SetupTokenRegistry, setup_token_from_payload
 
 from .adb import ADBAndroidDevice, ADBCommandError
@@ -92,6 +92,17 @@ def _handler_for(bridge: ADBBridgeServer):
                 return
             if path == "/api/concurrent":
                 self._send_json(200, bridge_ok(_concurrent_payload(bridge)))
+                return
+            if path == "/api/providers/mnk":
+                try:
+                    bridge.state.check_task_access(benchmark_task_id_from_headers(self.headers))
+                    with bridge.state.lock:
+                        supported = bridge.state.device.supports_text_insertion()
+                    self._send_json(200, {"capabilities": {"insert_text": supported}})
+                except NoBridgeEnvAvailableError as exc:
+                    self._send_error(429, "no_bridge_env_available", str(exc))
+                except ADBCommandError as exc:
+                    self._send_error(503, "adb_error", str(exc))
                 return
             if path != "/health":
                 self._send_error(404, "not_found", "unknown endpoint")
@@ -233,6 +244,21 @@ def _handler_for(bridge: ADBBridgeServer):
                 self._send_json(409, {"error": "no active episode; call /api/setup first"})
                 return
             try:
+                if payload.get("operation") == "insert_text":
+                    params = payload.get("insert_text")
+                    if not isinstance(params, dict) or set(params) - {"text", "replace"}:
+                        raise ValueError("insert_text requires text and optional replace")
+                    validate_insert_text(params.get("text"))
+                    if not isinstance(params.get("replace", False), bool):
+                        raise ValueError("replace must be a boolean")
+                    result = bridge.tools_api._submit_tool_call(
+                        "insert_text", params, capture_screenshot=False
+                    )
+                    if result.get("is_error"):
+                        self._send_json(500, {"error": result["output"]})
+                    else:
+                        self._send_json(200, {"success": True})
+                    return
                 # The MNK transport returns only a flat success/error body, so a
                 # post-action frame would be encoded, sent and dropped.
                 status, response = execute_mnk_request(

@@ -9,11 +9,14 @@ translate those into protocol responses.
 
 from __future__ import annotations
 
+import base64
 import io
 import re
 import subprocess
 import time
 from typing import Any
+
+from mnk_provider import validate_insert_text
 
 
 DEFAULT_SCREENSHOT_MAX_WIDTH = 720
@@ -24,10 +27,12 @@ PREFERRED_ASCII_INPUT_METHODS = (
     "com.android.inputmethod.latin/.LatinIME",
 )
 DEFAULT_TEXT_RESTORE_WAIT_SEC = 0.08
+ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
+ADB_KEYBOARD_PACKAGE = "com.android.adbkeyboard"
 
 # Characters adb `input text` can type reliably on a US keyboard layout.
 # Deliberately excludes newline/tab (input text cannot type them) and any
-# non-ASCII text (needs a clipboard/IME path, out of scope for v1).
+# non-ASCII text (handled separately by insert_text through ADBKeyBoard).
 ADB_TEXT_CHARS = set(
     "abcdefghijklmnopqrstuvwxyz"
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -203,6 +208,78 @@ class ADBAndroidDevice:
             self._run(["shell", "input", "text", escape_adb_text(text)])
         finally:
             self._restore_input_method(restore_ime)
+
+    def supports_text_insertion(self) -> bool:
+        """Probe enabled IMEs each time so installation needs no bridge restart."""
+        return ADB_KEYBOARD_IME in self.list_input_methods()
+
+    def insert_text(self, text: str, replace: bool = False) -> None:
+        """Commit Unicode once through ADBKeyBoard, restoring the user's IME.
+
+        Broadcast completion is not proof that an editor accepted the text;
+        callers must verify the field and must not replay an ambiguous failure.
+        """
+        validate_insert_text(text)
+        if not isinstance(replace, bool):
+            raise ValueError("replace must be a boolean")
+        if not self.supports_text_insertion():
+            raise ADBCommandError(
+                "Install ADBKeyBoard and enable com.android.adbkeyboard/.AdbIME before Unicode input"
+            )
+        original_ime = self.current_input_method()
+        if not original_ime or original_ime.lower() == "null":
+            raise ADBCommandError("cannot determine the input method to restore; no text was sent")
+        try:
+            if original_ime != ADB_KEYBOARD_IME:
+                self.set_input_method(ADB_KEYBOARD_IME)
+            if self.current_input_method() != ADB_KEYBOARD_IME:
+                raise ADBCommandError("ADBKeyBoard selection failed; no text was sent")
+            self._wait_for_adb_keyboard()
+            if replace:
+                self._keyboard_broadcast("ADB_CLEAR_TEXT")
+            encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
+            self._keyboard_broadcast("ADB_INPUT_B64", ["--es", "msg", encoded])
+        finally:
+            if original_ime != ADB_KEYBOARD_IME:
+                try:
+                    self.set_input_method(original_ime)
+                    if self.current_input_method() != original_ime:
+                        raise ADBCommandError("input method did not change")
+                except ADBCommandError:
+                    raise ADBCommandError(
+                        "could not restore the original input method; inspect the field before retrying"
+                    ) from None
+
+    def _wait_for_adb_keyboard(self) -> None:
+        deadline = time.monotonic() + 3
+        while True:
+            state = self._run_text(["shell", "dumpsys", "input_method"], timeout=5)
+            service = re.search(
+                r"Input method service state for [^\n]*com\.android\.adbkeyboard[^\n]*:", state,
+            )
+            if service:
+                details = re.split(r"\n(?=\S)", state[service.end():].lstrip("\n"), maxsplit=1)[0]
+                if (re.search(r"\bmInputStarted=true\b", details) and
+                        re.search(r"\bmStartedInputConnection=(?!null\b)\S+", details)):
+                    return
+            if time.monotonic() >= deadline:
+                raise ADBCommandError("ADBKeyBoard has no active editor connection; focus an input field first")
+            time.sleep(0.1)
+
+    def _keyboard_broadcast(self, action: str, extras: list[str] | None = None) -> None:
+        # Package targeting prevents another receiver from seeing the payload.
+        # Do not include the Base64 payload in errors: it contains user text.
+        try:
+            output = self._run_text([
+                "shell", "am", "broadcast", "-p", ADB_KEYBOARD_PACKAGE,
+                "-a", action, *(extras or []),
+            ])
+        except ADBCommandError:
+            raise ADBCommandError(
+                f"{action} failed or timed out; inspect the field before retrying"
+            ) from None
+        if "Broadcast completed:" not in output or re.search(r"Error|Exception", output, re.I):
+            raise ADBCommandError(f"{action} was not confirmed; inspect the field before retrying")
 
     def dump_window_xml(self) -> str:
         """Return the current Android UI hierarchy XML.

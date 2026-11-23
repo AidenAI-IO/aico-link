@@ -116,9 +116,12 @@ python3 scripts/local_agent.py ios --xctrunner YOUR_RUNNER_ID.xctrunner --permis
 
 Unknown or ambiguous permission prompts remain visible. See the
 [direct iOS reference](../../benchmark/ios_device/README.md) for rule matching,
-512-UTF-16-unit input limits, and secure-surface restrictions. Android's ADB
-text backend supports ASCII; direct Chinese input needs an additional IME or
-clipboard integration. Mirroring supports committed Unicode through the Mac.
+512-UTF-16-unit input limits, and secure-surface restrictions. Android supports
+committed Unicode through the optional
+[ADBKeyBoard setup](../../benchmark/adbandroid/README.md#unicode-text-with-adbkeyboard).
+The bridge temporarily selects that IME for Base64 input and restores the
+original keyboard; devices without it retain the ASCII fallback. Mirroring
+supports committed Unicode through the Mac.
 
 For an existing bridge, pass its loopback origin. The launcher verifies that
 its type matches the mode and claims the same task route; it leaves that bridge
