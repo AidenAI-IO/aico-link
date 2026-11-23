@@ -107,6 +107,10 @@ type Runtime struct {
 	telemetryExports        asyncRuntimeWork
 	episodeMemoryInitErr    error
 	routines                *routines.Manager
+
+	// turnDecisionWorkerDone, when set by a test before any turn, runs after
+	// a turn decision worker has sent its result and cancelled its context.
+	turnDecisionWorkerDone func()
 }
 
 // ConfigSnapshot returns an immutable copy of the currently active runtime
@@ -733,6 +737,7 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 		rt.startMemoryWorker(nil)
 	}
 	rt.stateManager.RegisterUpdater(&deviceStateUpdater{snapshot: rt.ConfigSnapshot})
+	rt.stateManager.RegisterUpdater(&sharedFilesStateUpdater{snapshot: rt.ConfigSnapshot})
 	skillManager.SetDeviceTypeFunc(rt.deviceTypeFromState)
 	rt.tools.SetRuntimeDeviceTypeFn(rt.deviceTypeFromState)
 	rt.tools.SetDecisionConfigFn(rt.decisionConfig)
@@ -1378,6 +1383,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	agentLoop.ToolResultObserver = newScreenToolResultObserver(r.screenState)
 	agentLoop.SteerInterrupt = req.SteerInterrupt
 	agentLoop.SteerProvider = req.SteerProvider
+	agentLoop.FinalSteerProvider = req.FinalSteerProvider
 	agentLoop.SteerWaiter = req.SteerWaiter
 	agentLoop.TerminationPolicy = NewTerminationPolicy(cfg.TerminationPolicy)
 	agentLoop.DevicePlatform = r.devicePlatformFromState()
@@ -1458,6 +1464,31 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		SleepRequested:         waitForWakeupRequested,
 		SleepReason:            waitForWakeupReason,
 	}, nil
+}
+
+// UserProfilePrompt returns the saved profile, preference, and rule memories
+// in the format the backend system prompt carries. It returns "" with a nil
+// error only when the user has none; a read failure is an error, so callers
+// keep the profile they already have.
+func (r *Runtime) UserProfilePrompt(ctx context.Context) (string, error) {
+	if r == nil {
+		return "", nil
+	}
+	userProfile, err := r.memories.UserProfilePrompt(ctx)
+	if err != nil {
+		r.memories.warnProfileReadFailure(err)
+	}
+	return userProfile, err
+}
+
+// StoredUserContextProfile returns the user profile section the saved
+// realtime user context carries, or "" when it has none.
+func (r *Runtime) StoredUserContextProfile() string {
+	systemPrompt, ok, err := r.currentUserContextSystemPrompt()
+	if err != nil || !ok {
+		return ""
+	}
+	return userProfileSection(systemPrompt)
 }
 
 func (r *Runtime) getSystemPrompt() string {

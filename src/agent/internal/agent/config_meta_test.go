@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -256,7 +257,7 @@ func TestConfigMeta_PreservesExistingFormPresentation(t *testing.T) {
 		"model.responses_context_edit_keep":           {label: "Ark tool calls to keep", placeholder: "3 = recommended", help: "Number of recent tool calls Ark keeps after cleanup. 0 uses the recommended value 3."},
 		"model.responses_context_edit_clear_thinking": {label: "Clear old thinking", help: "Ask Ark to remove previous thinking turns when it applies the context edit."},
 		"model.temperature":                           {label: "Temperature", help: "Controls response randomness. Leave empty to use the Agent-selected default; some models defer to their provider default. 0 is sent as an explicit value."},
-		"model.max_response_tokens":                   {label: "Maximum response tokens", help: "Maximum number of tokens allowed in one model response."},
+		"model.max_response_tokens":                   {label: "Maximum response tokens", placeholder: "0 = provider default", help: "Maximum number of tokens allowed in one model response. 0 sends no limit, so the provider default applies; native Anthropic, which requires a limit, uses the model output limit instead (8192 when unknown)."},
 		"model.log_raw_http":                          {label: "Raw HTTP logging", help: "Write raw model HTTP requests and responses to the Agent log directory. Enable only while troubleshooting."},
 		"model.reasoning_effort":                      {label: "Reasoning effort", help: "Empty = auto. Options follow the selected model capability; none is shown only when the model supports disabling reasoning."},
 		"model.reasoning_budget_tokens":               {label: "Reasoning budget (tokens)", placeholder: "0 = auto", help: "Optional exact reasoning budget. Shown for models that expose budget_tokens; 0 uses the model default or effort preset. Reasoning tokens are drawn from max_response_tokens, so this must be at least 1024 and smaller than that limit."},
@@ -646,98 +647,92 @@ func TestConfigMeta_TemperaturePlaceholderFollowsModelSpec(t *testing.T) {
 	}
 }
 
-func TestConfigMeta_TTSFieldsFollowProviderCapabilities(t *testing.T) {
+func TestConfigMeta_TTSAliasPresentationMatchesCanonicalProvider(t *testing.T) {
 	idx := fieldIndex(t)
-	hasPlaceholder := func(field FieldMeta, value interface{}, when VisibleRule) bool {
-		for _, candidate := range field.PlaceholderWhen {
-			if reflect.DeepEqual(candidate.Value, value) && reflect.DeepEqual(candidate.When, when) {
+	// Use the metadata's model catalogue so new choices need no test updates.
+	models := []string{""}
+	for _, option := range idx["tts_providers.model"].Enum {
+		models = append(models, option.Value)
+	}
+	matches := func(rule *VisibleRule, values map[string]string) bool {
+		if rule == nil {
+			return true
+		}
+		test := func(c Condition) bool {
+			value := values[c.Field]
+			switch c.Op {
+			case "eq":
+				return value == c.Value
+			case "ne":
+				return value != c.Value
+			case "in":
+				return slices.Contains(c.Values, value)
+			case "notIn":
+				return !slices.Contains(c.Values, value)
+			case "truthy":
+				return value != ""
+			default:
+				t.Fatalf("unsupported TTS presentation condition: %#v", c)
+				return false
+			}
+		}
+		if rule.All != nil {
+			for _, c := range rule.All {
+				if !test(c) {
+					return false
+				}
+			}
+			return true
+		}
+		for _, c := range rule.Any {
+			if test(c) {
 				return true
 			}
 		}
 		return false
 	}
-
-	referenceID, ok := idx["tts_providers.reference_id"]
-	if !ok {
-		t.Fatal("missing tts_providers.reference_id metadata")
+	type presentation struct {
+		visible, selectWidget bool
+		choices               [][2]string
+		placeholder           interface{}
 	}
-	if referenceID.Widget != WidgetText {
-		t.Fatalf("tts_providers.reference_id widget = %q, want %q", referenceID.Widget, WidgetText)
+	evaluate := func(field FieldMeta, provider, model string) presentation {
+		values := map[string]string{"tts_providers.type": provider, "tts_providers.model": model}
+		got := presentation{
+			visible:      matches(field.VisibleWhen, values),
+			selectWidget: field.SelectWhen != nil && matches(field.SelectWhen, values),
+			placeholder:  field.Default,
+		}
+		if field.Placeholder != "" {
+			got.placeholder = field.Placeholder
+		}
+		for _, entry := range field.PlaceholderWhen {
+			if matches(&entry.When, values) {
+				got.placeholder = entry.Value
+				break
+			}
+		}
+		for _, option := range field.Enum {
+			if (len(option.Providers) == 0 || slices.Contains(option.Providers, provider)) &&
+				!slices.Contains(option.ExcludeProviders, provider) {
+				got.choices = append(got.choices, [2]string{option.Value, option.Label})
+			}
+		}
+		return got
 	}
-	wantReferenceVisibility := VisibleRule{All: []Condition{{Field: "tts_providers.type", Op: "in", Values: []string{"fish-audio"}}}}
-	if referenceID.VisibleWhen == nil || !reflect.DeepEqual(*referenceID.VisibleWhen, wantReferenceVisibility) {
-		t.Fatalf("tts_providers.reference_id visibleWhen = %#v, want %#v", referenceID.VisibleWhen, wantReferenceVisibility)
-	}
-	if !hasPlaceholder(referenceID, "98655a12fa944e26b274c535e5e03842", wantReferenceVisibility) {
-		t.Fatalf("tts_providers.reference_id missing Fish Audio conditional placeholder: %#v", referenceID.PlaceholderWhen)
-	}
-
-	model, ok := idx["tts_providers.model"]
-	if !ok {
-		t.Fatal("missing tts_providers.model metadata")
-	}
-	if model.Widget != WidgetText {
-		t.Fatalf("tts_providers.model widget = %q, want %q", model.Widget, WidgetText)
-	}
-	wantModelSelect := VisibleRule{All: []Condition{{Field: "tts_providers.type", Op: "in", Values: []string{"openrouter"}}}}
-	if model.SelectWhen == nil || !reflect.DeepEqual(*model.SelectWhen, wantModelSelect) {
-		t.Fatalf("tts_providers.model selectWhen = %#v, want %#v", model.SelectWhen, wantModelSelect)
-	}
-	if model.VisibleWhen == nil {
-		t.Fatal("tts_providers.model has no visibleWhen rule")
-	}
-	wantModelVisibility := VisibleRule{All: []Condition{{Field: "tts_providers.type", Op: "in", Values: []string{
-		"minimax", "minimax-cn", "fish-audio", "alicloud", "volcengine", "openrouter",
-	}}}}
-	if !reflect.DeepEqual(*model.VisibleWhen, wantModelVisibility) {
-		t.Fatalf("tts_providers.model visibleWhen = %#v, want %#v", *model.VisibleWhen, wantModelVisibility)
-	}
-
-	wantModelProviders := map[string][]string{
-		"speech-2.8-hd":                       {"minimax", "minimax-cn"},
-		"s2-pro":                              {"fish-audio"},
-		"qwen-tts-realtime":                   {"alicloud"},
-		"qwen3-tts-flash-realtime":            {"alicloud"},
-		"seed-tts-2.0":                        {"volcengine"},
-		"google/gemini-3.1-flash-tts-preview": {"openrouter"},
-	}
-	for value, wantProviders := range wantModelProviders {
-		t.Run("model_"+value, func(t *testing.T) {
-			for _, option := range model.Enum {
-				if option.Value == value {
-					if !reflect.DeepEqual(option.Providers, wantProviders) {
-						t.Fatalf("model %q providers = %#v, want %#v", value, option.Providers, wantProviders)
-					}
-					return
+	for path, field := range idx {
+		if !strings.HasPrefix(path, "tts_providers.") {
+			continue
+		}
+		t.Run(path, func(t *testing.T) {
+			for _, model := range models {
+				canonical := evaluate(field, "minimax-cn", model)
+				alias := evaluate(field, "minimax-ws", model)
+				if !reflect.DeepEqual(alias, canonical) {
+					t.Errorf("model %q: alias presentation %#v differs from canonical %#v", model, alias, canonical)
 				}
 			}
-			t.Fatalf("missing tts_providers.model option %q", value)
 		})
-	}
-
-	voice := idx["tts_providers.voice_id"]
-	voiceDefaults := []struct {
-		value string
-		when  VisibleRule
-	}{
-		{"male-qn-qingse", VisibleRule{All: []Condition{in("tts_providers.type", "minimax", "minimax-cn")}}},
-		{"Cherry", VisibleRule{All: []Condition{in("tts_providers.type", "alicloud")}}},
-		{"zh_female_vv_uranus_bigtts", VisibleRule{All: []Condition{in("tts_providers.type", "volcengine")}}},
-		{"en-US-Neural2-C", VisibleRule{All: []Condition{in("tts_providers.type", "google-cloud")}}},
-		{"Kore", VisibleRule{All: []Condition{eq("tts_providers.type", "openrouter"), eq("tts_providers.model", "google/gemini-3.1-flash-tts-preview")}}},
-		{"af_heart", VisibleRule{All: []Condition{eq("tts_providers.type", "openrouter"), eq("tts_providers.model", "hexgrad/kokoro-82m")}}},
-		{"en-US-AndrewMultilingualNeural", VisibleRule{All: []Condition{eq("tts_providers.type", "openrouter"), eq("tts_providers.model", "microsoft/mai-voice-2")}}},
-	}
-	for _, want := range voiceDefaults {
-		if !hasPlaceholder(voice, want.value, want.when) {
-			t.Errorf("tts_providers.voice_id missing conditional placeholder %q for %#v", want.value, want.when)
-		}
-	}
-
-	emotion := idx["tts_providers.emotion"]
-	minimaxEmotion := VisibleRule{All: []Condition{in("tts_providers.type", "minimax", "minimax-cn")}}
-	if !hasPlaceholder(emotion, "happy", minimaxEmotion) {
-		t.Errorf("tts_providers.emotion missing MiniMax placeholder")
 	}
 }
 

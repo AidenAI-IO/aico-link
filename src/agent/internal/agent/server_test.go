@@ -39,6 +39,7 @@ import (
 	"aico-agent/internal/agent/screenprovider"
 	speechtext "aico-agent/internal/agent/speech"
 	ttsmodule "aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
 	streamcontract "aico-agent/internal/stream"
 )
 
@@ -676,6 +677,7 @@ func TestServerHandleChatStreamsToolAndAssistantMessages(t *testing.T) {
 }
 
 func TestServerHandleChatStreamsLeadingToolSpeechWithoutDuplicatePlayback(t *testing.T) {
+	t.Setenv("AICO_TEXT_CHAT_TTS", "1")
 	const requestID = "streaming-tts-cleanup"
 	toolSpeech := true
 	toolContent := "<tts>Check volume.</tts>\nChecking volume."
@@ -711,7 +713,6 @@ func TestServerHandleChatStreamsLeadingToolSpeechWithoutDuplicatePlayback(t *tes
 	)
 	defer runtime.Close()
 	server := newServerForTest(runtime)
-	startDeviceVoiceForTest(t, server)
 	provider := &flushRecordingTTSProvider{name: "server-provider"}
 	server.ttsManager = ttsmodule.NewProviderManager(provider, nil)
 	server.audioClient = NewAudioServiceClient(startTTSPlaybackAudioSocket(t))
@@ -1690,15 +1691,20 @@ func TestServerAsyncChatAppendsVoiceNotificationOnlyToFinalSpeech(t *testing.T) 
 	waitForServerRequestFinished(t, server, requestID)
 }
 
-// A typed chat request is text only: outside a voice conversation it plays
-// no prompt tone and no reply, not even the spoken replacement for a failed
-// LLM turn. During a voice conversation the reply is spoken on its route.
-func TestServerAsyncChatSpeaksOnlyDuringVoiceConversation(t *testing.T) {
+// Text stays silent by default. Voice conversations and the temporary text
+// TTS override both speak failures through the existing playback lifecycle.
+func TestServerAsyncChatAudioPolicy(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		voice bool
-	}{{"text only", false}, {"voice conversation", true}} {
+		name    string
+		voice   bool
+		textTTS string
+	}{
+		{name: "text only"},
+		{name: "voice conversation", voice: true},
+		{name: "temporary text TTS", textTTS: "1"},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AICO_TEXT_CHAT_TTS", tc.textTTS)
 			streamingDisabled := false
 			runtime := NewRuntimeWithDeps(
 				withTestConfigDir(t, Config{
@@ -1750,14 +1756,14 @@ func TestServerAsyncChatSpeaksOnlyDuringVoiceConversation(t *testing.T) {
 				t.Fatalf("decode start response: %v", err)
 			}
 			requestID := start["request_id"]
-			if tc.voice {
+			if tc.voice || tc.textTTS == "1" {
 				waitForProviderTextCount(t, provider, 1)
 				if got := provider.texts(); len(got) != 1 || got[0] != "当前网络不可用，暂时无法完成这个请求。" {
 					t.Fatalf("spoken replacement = %#v", got)
 				}
 			}
 			waitForServerRequestFinished(t, server, requestID)
-			if !tc.voice {
+			if !tc.voice && tc.textTTS != "1" {
 				// The prompt tone starts asynchronously; give it time to show.
 				time.Sleep(100 * time.Millisecond)
 				if got := provider.texts(); len(got) != 0 {
@@ -3059,6 +3065,33 @@ func TestTerminalReverseProxyPreservesPublicHostAndRewritesFrameHeaders(t *testi
 	}
 	if got := recorder.Header().Get("Location"); got != "/webtty/" {
 		t.Fatalf("Location = %q, want /webtty/", got)
+	}
+}
+
+func TestTerminalReverseProxyExplainsMissingTerminal(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	target, _ := url.Parse("http://" + listener.Addr().String())
+	_ = listener.Close()
+
+	var proxyLog bytes.Buffer
+	restoreOutput := logging.SetOutput(&proxyLog)
+	defer restoreOutput()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/webtty/", nil)
+	newTerminalReverseProxyForTarget(target).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "AICO_ENABLE_TERMINAL=1") {
+		t.Fatalf("body = %q, want instructions to enable the terminal", recorder.Body.String())
+	}
+	if !strings.Contains(proxyLog.String(), listener.Addr().String()) {
+		t.Fatalf("log = %q, want the upstream error for %s", proxyLog.String(), listener.Addr())
 	}
 }
 
@@ -5260,4 +5293,106 @@ func startDeviceVoiceForTest(t *testing.T, server *Server) {
 	server.SetRealtimeVoiceActivation(func() {})
 	voice := server.ClaimRealtimeVoiceSession(Config{}, RealtimeAudioRouteDevice)
 	t.Cleanup(func() { server.EndRealtimeVoiceSession(voice, "") })
+}
+
+func TestServerHandleChatActiveReportsLatestRun(t *testing.T) {
+	server := &Server{activeRuns: make(map[string]context.CancelFunc)}
+	get := func() ChatActiveResponse {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		server.handleChatActive(rec, httptest.NewRequest(http.MethodGet, "/api/chat/active", nil))
+		var resp ChatActiveResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return resp
+	}
+
+	if resp := get(); resp.Status != "idle" || resp.RequestID != "" {
+		t.Fatalf("idle response = %+v", resp)
+	}
+	server.registerActiveRun("req-old", func() {})
+	server.registerActiveRun("req-new", func() {})
+	server.activeRunStartedAt["req-old"] = time.Now().Add(-time.Minute)
+	if resp := get(); resp.Status != "running" || resp.RequestID != "req-new" || !resp.Steerable || resp.Steer != nil {
+		t.Fatalf("running response = %+v, want steerable req-new", resp)
+	}
+	server.setPendingSteer("req-new", "change direction")
+	if resp := get(); resp.Steer == nil || resp.Steer.Content != "change direction" {
+		t.Fatalf("response with queued steer = %+v", resp)
+	}
+	// A run that refuses steers, such as a realtime run, is not offered as steerable.
+	server.closeSteerAcceptance("req-new")
+	if resp := get(); resp.RequestID != "req-new" || resp.Steerable {
+		t.Fatalf("response after steers close = %+v, want unsteerable req-new", resp)
+	}
+	server.unregisterActiveRun("req-new")
+	if resp := get(); resp.RequestID != "req-old" || resp.ElapsedMS < time.Minute.Milliseconds() {
+		t.Fatalf("remaining response = %+v, want req-old with its elapsed time", resp)
+	}
+	// A run speaking its final reply stays registered but is no longer busy.
+	server.settleActiveRun("req-old")
+	if resp := get(); resp.Status != "idle" {
+		t.Fatalf("response after the loop settles = %+v", resp)
+	}
+	if !server.cancelActiveRun("req-old") {
+		t.Fatal("settled run is no longer cancelable")
+	}
+	server.unregisterActiveRun("req-old")
+}
+
+func TestServerRunWithoutSteersIsNeverSteerable(t *testing.T) {
+	server := &Server{
+		activeRuns:         make(map[string]context.CancelFunc),
+		terminatedRequests: make(map[string]struct{}),
+	}
+	for i := 0; i < 200; i++ {
+		requestID := fmt.Sprintf("req-realtime-%d", i)
+		var wg sync.WaitGroup
+		var accepted, reportedSteerable atomic.Bool
+		stop := make(chan struct{})
+		wg.Add(2)
+		// Steers and status reads race the run's registration and removal.
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, ok := server.setPendingSteer(requestID, "change direction"); ok {
+					accepted.Store(true)
+				}
+				runtime.Gosched()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if resp := server.activeRunSnapshot(); resp.RequestID == requestID && resp.Steerable {
+					reportedSteerable.Store(true)
+				}
+				runtime.Gosched()
+			}
+		}()
+		if !server.registerActiveRunWithoutSteers(requestID, func() {}) {
+			t.Fatalf("registerActiveRunWithoutSteers(%q) failed", requestID)
+		}
+		runtime.Gosched()
+		server.unregisterActiveRun(requestID)
+		close(stop)
+		wg.Wait()
+		if accepted.Load() {
+			t.Fatalf("steer accepted for run %q registered without steers", requestID)
+		}
+		if reportedSteerable.Load() {
+			t.Fatalf("run %q registered without steers was reported steerable", requestID)
+		}
+	}
 }

@@ -24,8 +24,8 @@
  *
  * The decision model (`decision`) is a separate, optional classifier for fixed
  * workflow checks, so it has its own page rather than a group under the main
- * model's parameters. Its Base URL and model keep their defaults here;
- * they are edited in the TOML file when they ever need to change.
+ * model's parameters. OpenRouter exposes its model and Base URL here; the
+ * dedicated decision APIs keep those overrides in the TOML file.
  */
 
 import {adoptSaved, ensureSnapshot, request, t} from '../data.js';
@@ -150,6 +150,10 @@ export const DECISION_PROVIDERS = [
     help: msg('model.decision_provider_typesafe_help', '在 typesafe.ai 获取 API Key')},
   {value: 'openai', label: msg('model.decision_provider_openai', 'OpenAI Luna'),
     help: msg('model.decision_provider_openai_help', '使用 OpenAI 的 Decisions API；它不能定位点击位置，这类判断仍交给主模型')},
+  {value: 'gemini', label: msg('model.decision_provider_gemini', 'Gemini Decision 1'),
+    help: msg('model.decision_provider_gemini_help', '使用 Google Gemini Decisions API；它不能定位点击位置，这类判断仍交给主模型。在 aistudio.google.com/apikey 获取 API Key')},
+  {value: 'openrouter', label: 'OpenRouter',
+    help: msg('model.decision_provider_openrouter_help', '在 openrouter.ai/keys 获取 API Key；使用原生 Decisions 模型，默认 Jev')},
 ];
 
 function decisionProvider(value) {
@@ -362,7 +366,7 @@ export async function mainModelPage(context) {
             parse.optionalRange(0, 2), msg('model.temperature_invalid', '请输入 0 到 2 之间的数，或留空'),
             {placeholder: msg('model.auto', '自动')}),
           effortRow(),
-          numberRow('max_response_tokens', msg('model.max_response_tokens', '最大响应 Token 数'), null,
+          numberRow('max_response_tokens', msg('model.max_response_tokens', '最大响应 Token 数'), msg('model.max_response_tokens_help', '0 表示不设上限，使用提供商默认值（原生 Anthropic 使用模型输出上限，未知时为 8192）'),
             parse.integer(0), msg('model.integer_invalid', '请输入 0 或正整数'), {inputmode: 'numeric'}),
         ],
       }),
@@ -697,16 +701,25 @@ export async function modelsPage(context) {
 export async function decisionPage(context) {
   const snapshot = await ensureSnapshot(context);
   const body = el('div');
+  const drafts = new Map();
+  const submissions = new Map();
+  const valueInputs = new Map();
   const saver = createSaver(context, {
     title: msg('model.decision', '决策模型'),
     back: '/model',
     root: body,
-    onSaved: payload => {
+    onPersisted: payload => {
+      const provider = decision().provider;
       adoptSaved(snapshot)(payload);
+      if (provider !== decision().provider) {
+        drafts.clear();
+        submissions.clear();
+      }
       render();
     },
   });
   const decision = () => decisionConfig(snapshot);
+  let decisionModels;
 
   function apiKeyField() {
     const input = el('input', {
@@ -760,6 +773,141 @@ export async function decisionPage(context) {
     await saver.change('decision.provider', patch);
   }
 
+  function decisionValueField(key, label, placeholder, {type = 'text', help, suggestions = false} = {}) {
+    const listID = 'decision-model-suggestions';
+    const input = el('input', {
+      class: 'ds-input',
+      attrs: {
+        type, value: drafts.has(key) ? drafts.get(key) : decision()[key] || '', inputmode: type === 'url' ? 'url' : 'text',
+        autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'done',
+        placeholder: resolve(placeholder), 'aria-label': resolve(label),
+        role: suggestions ? 'combobox' : null,
+        'aria-autocomplete': suggestions ? 'list' : null,
+        'aria-controls': suggestions ? listID : null,
+        'aria-expanded': suggestions ? 'false' : null,
+      },
+      data: {action: `edit-decision.${key}`},
+    });
+    valueInputs.set(key, input);
+    const commit = async () => {
+      const value = input.value.trim();
+      const submitted = submissions.get(key);
+      if (value === (submitted ? submitted.value : decision()[key] || '')) return;
+      // Keep pending/staged values across renders, but never treat a failed
+      // attempt as saved or let an older attempt roll back a newer one.
+      const attempt = {value};
+      submissions.set(key, attempt);
+      const draft = input.value;
+      drafts.set(key, draft);
+      const outcome = await saver.change(`decision.${key}`, {decision: {[key]: value || null}});
+      if (submissions.get(key) !== attempt) return;
+      if (outcome !== 'staged') submissions.delete(key);
+      if (drafts.get(key) === draft && (outcome === 'saved' || outcome === 'invalid' || outcome === 'failed')) {
+        drafts.delete(key);
+        if (outcome !== 'saved') valueInputs.get(key).value = decision()[key] || '';
+      }
+    };
+    input.addEventListener('change', commit);
+    const list = suggestions ? el('div', {
+      class: 'ds-suggestions',
+      attrs: {id: listID, role: 'listbox', 'aria-label': resolve(label), hidden: 'hidden'},
+    }) : null;
+    let active = -1;
+    let matches = [];
+    const close = () => {
+      if (!list) return;
+      list.hidden = true;
+      active = -1;
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+    };
+    if (list) {
+      let models = [];
+      let show = false;
+      const highlight = () => {
+        Array.from(list.children).forEach((option, index) => {
+          option.classList.toggle('ds-suggestion--active', index === active);
+          option.setAttribute('aria-selected', String(index === active));
+        });
+        if (active < 0) input.removeAttribute('aria-activedescendant');
+        else {
+          input.setAttribute('aria-activedescendant', `${listID}-${active}`);
+          list.children[active].scrollIntoView({block: 'nearest'});
+        }
+      };
+      const choose = entry => {
+        input.value = entry.id;
+        drafts.set(key, input.value);
+        show = false;
+        close();
+        return commit();
+      };
+      const showSuggestions = () => {
+        const query = input.value.trim().toLowerCase();
+        matches = query ? models.filter(entry => `${entry.id} ${entry.name || ''}`.toLowerCase().includes(query)) : [];
+        active = -1;
+        replace(list, matches.map((entry, index) => el('button', {
+          class: 'ds-suggestion',
+          attrs: {id: `${listID}-${index}`, type: 'button', role: 'option', tabindex: '-1', 'aria-selected': 'false'},
+          data: {action: 'choose-decision-model', value: entry.id},
+          on: {click: () => choose(entry)},
+        }, [
+          text(entry.name || entry.id, 'ds-suggestion__name'),
+          entry.name && entry.name !== entry.id ? text(entry.id, 'ds-suggestion__id') : null,
+        ])));
+        if (!show || !matches.length) close();
+        else {
+          list.hidden = false;
+          input.setAttribute('aria-expanded', 'true');
+          input.removeAttribute('aria-activedescendant');
+        }
+      };
+      const loadSuggestions = async () => {
+        if (!decisionModels) {
+          decisionModels = request('/api/models?provider=openrouter&output_modalities=decisions&order=top-weekly')
+            .then(payload => payload.models || [])
+            .catch(() => { decisionModels = null; return []; });
+        }
+        models = await decisionModels;
+        showSuggestions();
+      };
+      // The catalog only suggests IDs; network errors never prevent free input.
+      input.addEventListener('focus', () => { show = true; showSuggestions(); return loadSuggestions(); });
+      input.addEventListener('input', () => { drafts.set(key, input.value); show = true; showSuggestions(); });
+      input.addEventListener('blur', () => { show = false; close(); });
+      // Keep focus on the input until the option's click commits its full ID.
+      list.addEventListener('mousedown', event => event.preventDefault());
+      input.addEventListener('keydown', event => {
+        if (event.isComposing) return;
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          show = false;
+          close();
+        } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && matches.length) {
+          event.preventDefault();
+          if (list.hidden) { show = true; showSuggestions(); }
+          active = active < 0 ? (event.key === 'ArrowDown' ? 0 : matches.length - 1)
+            : (active + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+          highlight();
+        } else if (event.key === 'Enter' && !list.hidden && active >= 0) {
+          event.preventDefault();
+          choose(matches[active]);
+        } else if (event.key === 'Enter') input.blur();
+      });
+      if (decisionModels) loadSuggestions();
+    } else {
+      input.addEventListener('input', () => drafts.set(key, input.value));
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Enter' && !event.isComposing) input.blur();
+      });
+    }
+    return el('div', {class: 'ds-form-card'}, [
+      text(label, 'ds-form-card__title'),
+      help ? text(help, 'ds-form-card__help') : null,
+      input, list,
+    ]);
+  }
+
   /** Sends one small question with the saved settings and reports the reply. */
   async function testConnection(action) {
     action.disabled = true;
@@ -782,6 +930,7 @@ export async function decisionPage(context) {
   }
 
   function render() {
+    valueInputs.clear();
     const provider = decisionProvider(decision().provider);
     const toggle = switchControl({
       checked: Boolean(decision().enabled),
@@ -819,6 +968,18 @@ export async function decisionPage(context) {
         }),
       })]}),
       group({rows: [apiKeyField()]}),
+      provider.value === 'openrouter' ? group({rows: [decisionValueField(
+        'model', msg('config.fields.decision.model.label', '决策模型'), '~typesafe/jev-latest', {
+          suggestions: true,
+          help: msg('model.decision_openrouter_model_help', '留空默认使用 Jev；输入时显示模型建议，也可填写其他模型 ID'),
+        },
+      )]}) : null,
+      provider.value === 'openrouter' ? group({rows: [decisionValueField(
+        'base_url', msg('config.fields.decision.base_url.label', '决策模型 Base URL'),
+        'https://openrouter.ai/api/alpha', {
+          type: 'url', help: msg('model.decision_base_url_help', '留空使用官方地址'),
+        },
+      )]}) : null,
       group({
         rows: [inlineValueRow({
           key: 'decision.min_confidence',

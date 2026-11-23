@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"aico-agent/internal/agenttask"
 	"aico-agent/internal/logging"
 	streamcontract "aico-agent/internal/stream"
+	"aico-agent/internal/util"
 
 	"github.com/google/uuid"
 	langtools "github.com/tmc/langchaingo/tools"
@@ -70,6 +72,10 @@ type realtimeChatCommand struct {
 type realtimeToolResult struct {
 	call   realtimevoice.Event
 	output string
+	// visual holds the image a visual tool returned. output then carries the
+	// tool result with a placeholder for the image, for a model that cannot
+	// receive images; a model that can gets the image with the result.
+	visual *agent.VisualToolObservation
 }
 
 // realtimeSemanticEmitter is the observer-side adapter for native realtime
@@ -871,8 +877,17 @@ func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Run
 	if prompt := strings.TrimSpace(cfg.Prompt); prompt != "" {
 		instructionParts = append(instructionParts, prompt)
 	}
-	instructionParts = append(instructionParts, agent.ResponseLanguageGuidance(cfg.LocaleOrDefault()))
+	instructionParts = append(instructionParts, agent.RealtimeResponseLanguageGuidance(cfg.LocaleOrDefault()))
 	instructions := strings.TrimSpace(strings.Join(instructionParts, "\n\n"))
+	// The saved profile closes the instructions, as it closes the backend
+	// system prompt. Each provider session reads it when it opens, so a
+	// profile saved during a conversation applies from the next session. A
+	// failed read keeps the section the stored user context already carries.
+	profile, profileErr := runtime.UserProfilePrompt(context.Background())
+	if profileErr != nil {
+		profile = runtime.StoredUserContextProfile()
+	}
+	instructions = agent.WithUserProfileSection(instructions, profile)
 	enableEmotion := cfg.VoiceModel.EnableSpeechEmotion
 	if enableEmotion == nil {
 		v := true
@@ -1021,6 +1036,9 @@ var realtimeDelegatedTools = []string{
 var realtimeBackendCommunicationRuntimeTools = map[string]struct{}{
 	realtimeRequestUserActionTool: {},
 	realtimeWaitForWakeupTool:     {},
+	// read_image returns an image the realtime protocol cannot attach; the
+	// realtime model would receive it as base64 text.
+	"read_image": {},
 }
 
 func realtimeVoiceToolDefinitions(cfg agent.Config, runtime *agent.Runtime) []realtimevoice.Tool {
@@ -1196,6 +1214,36 @@ func newRealtimeVoiceToolExecutor(runtime *agent.Runtime, tasks *agenttask.Manag
 	return executor
 }
 
+// result runs a tool call and separates the image a visual tool returns from
+// its text, so the image never reaches the provider as base64 text.
+func (e realtimeVoiceToolExecutor) result(ctx context.Context, call realtimevoice.Event) realtimeToolResult {
+	result := realtimeToolResult{call: call, output: e.call(ctx, call.Name, call.Arguments)}
+	if observation, ok := agent.SplitVisualToolOutput(e.delegated[call.Name], result.output); ok {
+		result.output = observation.ToolContentWithoutImages(agent.ImageOmittedModelUnsupported)
+		result.visual = &observation
+	}
+	return result
+}
+
+// sendRealtimeToolResult returns a tool result to the provider. A model that
+// accepts images gets a visual tool's images with the result, as the backend
+// model gets them in the following state message; any other model gets the
+// result with a placeholder for each image.
+func sendRealtimeToolResult(ctx context.Context, sender realtimevoice.ToolResultSender, imageSender realtimevoice.ImageToolResultSender, result realtimeToolResult) error {
+	if result.visual != nil && imageSender != nil {
+		return imageSender.SendToolResultWithImages(ctx, result.call.CallID, result.visual.ToolContent(), realtimeImages(result.visual.Images()))
+	}
+	return sender.SendToolResult(ctx, result.call.CallID, result.output)
+}
+
+func realtimeImages(images []agent.VisualImage) []realtimevoice.Image {
+	converted := make([]realtimevoice.Image, 0, len(images))
+	for _, image := range images {
+		converted = append(converted, realtimevoice.Image{Caption: image.Caption, MIMEType: image.MIMEType, Data: image.Data})
+	}
+	return converted
+}
+
 func (e realtimeVoiceToolExecutor) call(ctx context.Context, name, arguments string) string {
 	switch name {
 	case realtimeCurrentTimeTool:
@@ -1337,10 +1385,7 @@ func startRealtimeToolCall(ctx context.Context, executor realtimeVoiceToolExecut
 	go func() {
 		callCtx, cancel := context.WithTimeout(ctx, realtimeToolCallTimeout)
 		defer cancel()
-		result := realtimeToolResult{
-			call:   call,
-			output: executor.call(callCtx, call.Name, call.Arguments),
-		}
+		result := executor.result(callCtx, call)
 		select {
 		case results <- result:
 		case <-ctx.Done():
@@ -1562,6 +1607,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	if err != nil {
 		return fmt.Errorf("initialize realtime user context: %w", err)
 	}
+	if err := agent.SyncUserProfileSection(userContext, sessionConfig.Instructions); err != nil {
+		logging.Warnf("agent", "realtime", "Refresh user profile in realtime user context failed: %v", err)
+	}
 
 	providerName := realtimeProviderType(cfg)
 	logging.Infof("agent", "realtime", "Connecting: provider=%s model=%s region=%s workspace_configured=%t endpoint_override=%t",
@@ -1599,13 +1647,20 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	canInterrupt := responseInterrupter != nil
 	toolResultSender := session.ToolResultSender
 	canSendToolResult := toolResultSender != nil
+	// Only a model on the image-input list gets images; others get a
+	// placeholder in their place.
+	var imageToolResultSender realtimevoice.ImageToolResultSender
+	if realtimevoice.SupportsImageInput(providerName, cfg.VoiceModel.Model) {
+		imageToolResultSender = session.ImageToolResultSender
+	}
+	imageInput := imageToolResultSender != nil
 	responseContinuer := session.ResponseContinuer
 	textSession := session.TextSession
 	supportsText := textSession != nil
 	contextReplayer := session.ContextReplayer
 	canReplayContext := contextReplayer != nil
 	if supportsText && canReplayContext {
-		if err := replayRealtimeContext(ctx, contextReplayer, userContext); err != nil {
+		if err := replayRealtimeContext(ctx, contextReplayer, userContext, imageInput); err != nil {
 			return markRealtimeProviderFailure(fmt.Errorf("restore realtime user context: %w", err))
 		}
 	}
@@ -1907,7 +1962,65 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			tasks.RestoreUserActionTasks(tasks.PendingUserActionTasks())
 		}
 	}()
+	// rejectedResponseRetry is set when the provider refused a response the
+	// session asked for because its own response was running. The request is
+	// made again once the provider is idle; what it was for (a chat, a task
+	// update, a notification) is already in the provider's conversation.
+	// rejectedChat is the chat that asked when one was active: it stays open,
+	// receives none of the provider's competing response, and completes only
+	// with its retried one. Cancelling that chat drops its retry.
+	rejectedResponseRetry := false
+	var rejectedChat *realtimeChatCommand
+	// requestOwner is the chat the last explicit response request was made
+	// for, nil for a task update or notification. A refusal names no request,
+	// so it is attributed to this one.
+	var requestOwner *realtimeChatCommand
+	// chatOutput is the chat the current response answers, if any.
+	chatOutput := func() *realtimeChatCommand {
+		if rejectedChat != nil {
+			return nil
+		}
+		return activeChat
+	}
+	tryRetryRejectedResponse := func() error {
+		if !rejectedResponseRetry {
+			return nil
+		}
+		admission := currentAdmission()
+		retryCtx := ctx
+		if rejectedChat != nil {
+			// The chat itself is the one waiting; only the provider's
+			// response and the other gates must be clear. A chat command
+			// still on the bridge does not wait for it: it is turned away as
+			// busy while this chat is open, so it must not hold the retry.
+			admission.activeChat = false
+			admission.bridgePending = false
+			retryCtx = rejectedChat.ctx
+		}
+		if !admission.canInjectBackgroundResponse() {
+			return nil
+		}
+		if rejectedChat != nil {
+			// Only the retried response answers the chat, under its turn.
+			chatMode = ""
+			chatText.Reset()
+			chatTranscript.Reset()
+			currentTurnID = rejectedChat.request.RequestID
+		}
+		requestOwner = rejectedChat
+		rejectedResponseRetry = false
+		rejectedChat = nil
+		if err := textSession.CreateResponse(retryCtx); err != nil {
+			return markRealtimeProviderFailure(fmt.Errorf("retry rejected realtime response: %w", err))
+		}
+		requestResponse()
+		logging.Infof("agent", "realtime", "Retried a response the provider had refused while its own was running: request_id=%s", realtimeChatRequestID(activeChat))
+		return nil
+	}
 	tryInjectTaskUpdates := func() error {
+		if err := tryRetryRejectedResponse(); err != nil || rejectedResponseRetry {
+			return err
+		}
 		if !currentAdmission().canInjectTaskUpdates() {
 			return nil
 		}
@@ -1941,6 +2054,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		pendingResponseRequestID = uuid.NewString()
 		recordForeground("task.result_injected", map[string]any{"updates": updates}, "",
 			&streamcontract.Collaboration{Version: 1, UpdateIDs: append([]string(nil), pendingResponseUpdateIDs...)})
+		requestOwner = nil
 		if err := textSession.CreateResponse(ctx); err != nil {
 			return markRealtimeProviderFailure(fmt.Errorf("respond to background task update: %w", err))
 		}
@@ -1977,6 +2091,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, err)
 			return markRealtimeProviderFailure(fmt.Errorf("inject realtime voice notification: %w", err))
 		}
+		requestOwner = nil
 		if err := textSession.CreateResponse(ctx); err != nil {
 			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, err)
 			return markRealtimeProviderFailure(fmt.Errorf("respond to realtime voice notification: %w", err))
@@ -2006,6 +2121,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		requestResponse()
 		pendingResponseRequestID = uuid.NewString()
 		pendingResponseUpdateIDs = nil
+		requestOwner = &command
 		if err := textSession.CreateResponse(command.ctx); err != nil {
 			// The write may have partially reached the provider. Only closing
 			// the session prevents a delayed answer from owning the next chat.
@@ -2151,14 +2267,14 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			if !canSendToolResult {
 				return fmt.Errorf("realtime provider %s cannot send tool results", providerName)
 			}
-			if err := toolResultSender.SendToolResult(ctx, call.CallID, result.output); err != nil {
+			if err := sendRealtimeToolResult(ctx, toolResultSender, imageToolResultSender, result); err != nil {
 				return markRealtimeProviderFailure(fmt.Errorf("send realtime tool result: %w", err))
 			}
 			recordForeground(streamcontract.EventToolCompleted, map[string]any{"tool": call.Name, "call_id": call.CallID,
 				"arguments": call.Arguments, "output": result.output}, "", nil)
 			watchdog.progress()
 			if activeNotificationToken == "" && !suppressedNotificationResponsePending && !hasSuppressedNotificationResponse(suppressedNotificationResponseIDs, call.ResponseID) {
-				if err := appendRealtimeToolExecution(userContext, call, result.output); err != nil {
+				if err := appendRealtimeToolExecution(userContext, call, result.output, result.visual); err != nil {
 					return fmt.Errorf("persist realtime tool call and result: %w", err)
 				}
 				if call.Name == realtimeEndConversationTool {
@@ -2170,6 +2286,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if responseContinuer == nil {
 					return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
 				}
+				requestOwner = chatOutput()
 				if err := responseContinuer.CreateResponse(ctx); err != nil {
 					return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 				}
@@ -2279,6 +2396,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				logging.Warnf("agent", "realtime", "Chat rejected busy: request_id=%s active_request_id=%s", command.request.RequestID, realtimeChatRequestID(activeChat))
 				sendRealtimeChatEvent(command, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventError, Error: "realtime response is busy"})
 				close(command.events)
+				// The command may have been what held a refused response back.
+				if err := tryInjectTaskUpdates(); err != nil {
+					return err
+				}
 				continue
 			}
 			if sleep.abandon() {
@@ -2309,6 +2430,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				return fmt.Errorf("stop canceled realtime playback: %w", err)
 			}
 			logging.Infof("agent", "realtime", "Chat canceled: request_id=%s response_id=%s; awaiting terminal acknowledgement", realtimeChatRequestID(activeChat), turnState.responseID)
+			if rejectedChat != nil && rejectedChat == activeChat {
+				// Its refused request must not be made after the cancel.
+				rejectedResponseRetry = false
+				rejectedChat = nil
+			}
 			cancelPending = true
 			startCancelAckTimer()
 			cancelForegroundTools(turnState.responseID)
@@ -2467,9 +2593,13 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					if event.Text != "" {
 						watchdog.progress()
 					}
-					if recordRealtimeFinalTranscript(event.Text, &responseTranscript, &chatText, &chatTranscript) && activeChat != nil {
-						chatMode = "transcript"
-						sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
+					if chat := chatOutput(); chat != nil {
+						if recordRealtimeFinalTranscript(event.Text, &responseTranscript, &chatText, &chatTranscript) {
+							chatMode = "transcript"
+							sendRealtimeChatEvent(*chat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
+						}
+					} else if responseTranscript.Len() == 0 {
+						responseTranscript.WriteString(event.Text)
 					}
 					if semanticEmitter != nil {
 						semanticEmitter.emit(event)
@@ -2561,24 +2691,24 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				}
 				if event.TextSource == "text" {
 					responseText.WriteString(event.Text)
-					if activeChat != nil {
+					if chat := chatOutput(); chat != nil {
 						if chatMode == "" {
 							chatMode = "text"
 						}
 						if chatMode == "text" && event.Text != "" {
 							chatText.WriteString(event.Text)
-							sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
+							sendRealtimeChatEvent(*chat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
 						}
 					}
 				} else {
 					responseTranscript.WriteString(event.Text)
-					if activeChat != nil {
+					if chat := chatOutput(); chat != nil {
 						if chatMode == "" {
 							chatMode = "transcript"
 						}
 						if chatMode == "transcript" && event.Text != "" {
 							chatTranscript.WriteString(event.Text)
-							sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
+							sendRealtimeChatEvent(*chat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
 						}
 					}
 				}
@@ -2667,6 +2797,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					if responseContinuer == nil {
 						return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
 					}
+					requestOwner = chatOutput()
 					if err := responseContinuer.CreateResponse(ctx); err != nil {
 						return fmt.Errorf("continue realtime response after tool cancellation: %w", err)
 					}
@@ -2732,6 +2863,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						if responseContinuer == nil {
 							continue
 						}
+						requestOwner = chatOutput()
 						if err := responseContinuer.CreateResponse(ctx); err != nil {
 							return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 						}
@@ -2769,14 +2901,18 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					"status": feedbackStatus}, "", &streamcontract.Collaboration{Version: 1,
 					ResponseRequestID: responseRequestID, UpdateIDs: responseUpdateIDs, ProviderSessionID: info.ID})
 				responseRequestID, responseUpdateIDs = "", nil
-				if activeChat != nil {
-					logging.Infof("agent", "realtime", "Chat completed: request_id=%s occupied_ms=%d", activeChat.request.RequestID, watchdog.age().Milliseconds())
+				if chat := chatOutput(); chat != nil {
+					logging.Infof("agent", "realtime", "Chat completed: request_id=%s occupied_ms=%d", chat.request.RequestID, watchdog.age().Milliseconds())
 					content := chatText.String()
 					if content == "" {
 						content = chatTranscript.String()
 					}
 					sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDone, Response: content, ResponseID: event.ResponseID, ProviderSessionID: info.ID})
 					close(activeChat.events)
+					if requestOwner == activeChat {
+						// Served; a later refusal is not this chat's.
+						requestOwner = nil
+					}
 					activeChat = nil
 				}
 				currentTurnID = ""
@@ -2862,6 +2998,24 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if semanticEmitter != nil {
 					semanticEmitter.emit(event)
 				}
+			case realtimevoice.EventResponseRejected:
+				// Our response.create lost a race with the provider's own
+				// response (usually to speech it just detected). The request
+				// we made will never start: forget it, and ask again once
+				// the provider's response has finished.
+				logging.Infof("agent", "realtime", "Provider refused a requested response while its own was running; will retry: %v", event.Error)
+				if turnState.responseRequestPending {
+					turnState.responseRequestPending = false
+				}
+				if requestOwner != nil && requestOwner != activeChat {
+					// The chat that asked was cancelled (a served chat clears
+					// its ownership); nothing is owed to it.
+					logging.Infof("agent", "realtime", "Dropping the refused response of a cancelled chat: request_id=%s", requestOwner.request.RequestID)
+					requestOwner = nil
+					break
+				}
+				rejectedResponseRetry = true
+				rejectedChat = requestOwner
 			case realtimevoice.EventError:
 				if event.Error != nil {
 					if semanticEmitter != nil {
@@ -3422,11 +3576,17 @@ func appendRealtimeAssistantMessage(manager *contextmanager.ContextManager, cont
 
 // appendRealtimeToolExecution persists the protocol pair only after the tool
 // has produced an output, so an interrupted call cannot remain in user context.
-func appendRealtimeToolExecution(manager *contextmanager.ContextManager, call realtimevoice.Event, output string) error {
+// A visual tool's result is stored as the backend loop stores it: the tool
+// result without the image, followed by a state message with the image as an
+// attachment, whichever model is in use.
+func appendRealtimeToolExecution(manager *contextmanager.ContextManager, call realtimevoice.Event, output string, visual *agent.VisualToolObservation) error {
 	if manager == nil {
 		return nil
 	}
-	return manager.AppendMessages([]messages.Message{
+	if visual != nil {
+		output = visual.ToolContent()
+	}
+	pair := []messages.Message{
 		{
 			Role: messages.MessageRoleToolCall,
 			ToolCalls: []messages.ToolCall{{
@@ -3443,17 +3603,46 @@ func appendRealtimeToolExecution(manager *contextmanager.ContextManager, call re
 				Content:    output,
 			}},
 		},
-	})
+	}
+	if visual != nil {
+		pair = append(pair, visual.StateMessages(manager)...)
+	}
+	return manager.AppendMessages(pair)
 }
 
-func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextReplayer, manager *contextmanager.ContextManager) error {
+func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextReplayer, manager *contextmanager.ContextManager, imageInput bool) error {
 	if session == nil || manager == nil {
 		return nil
 	}
+	recent := recentRealtimeContextMessages(manager.MessageListDump().Messages, realtimeContextReplayTurns)
+	toolStates := realtimeToolStateMessages(recent)
+	// Only the latest image is replayed: earlier screens are stale, and
+	// replaying every one would grow each restored context.
+	latestImage := -1
+	if imageInput {
+		for i, message := range recent {
+			if message.Role == messages.MessageRoleState && realtimeStateHasImage(message) {
+				latestImage = i
+			}
+		}
+	}
 	var items []realtimevoice.ContextItem
-	for _, message := range recentRealtimeContextMessages(manager.MessageListDump().Messages, realtimeContextReplayTurns) {
+	for i, message := range recent {
 		content := strings.TrimSpace(message.Content)
 		if message.Role == messages.MessageRoleSystem {
+			continue
+		}
+		if message.Role == messages.MessageRoleState {
+			text, images := replayedRealtimeState(manager, message, imageInput, i == latestImage)
+			if toolStates[i] {
+				// A state message that follows a tool result carries that
+				// result's image and is replayed with it.
+				item := &items[len(items)-1]
+				item.Output = strings.TrimSpace(item.Output + "\n" + text)
+				item.Images = append(item.Images, images...)
+			} else if text != "" || len(images) > 0 {
+				items = append(items, realtimevoice.ContextItem{Type: "message", Role: "user", Content: text, Images: images})
+			}
 			continue
 		}
 		if message.Role == messages.MessageRoleToolCall {
@@ -3478,6 +3667,69 @@ func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextRep
 		items = append(items, realtimevoice.ContextItem{Type: "message", Role: role, Content: content})
 	}
 	return session.ReplayContext(ctx, items)
+}
+
+// realtimeToolStateMessages marks the state messages that follow a tool
+// result, directly or after another such state message.
+func realtimeToolStateMessages(recent []messages.Message) map[int]bool {
+	marked := make(map[int]bool)
+	afterToolResult := false
+	for i, message := range recent {
+		switch message.Role {
+		case messages.MessageRoleSystem:
+		case messages.MessageRoleToolResult:
+			afterToolResult = len(message.ToolResults) > 0
+		case messages.MessageRoleState:
+			marked[i] = afterToolResult
+		default:
+			afterToolResult = false
+		}
+	}
+	return marked
+}
+
+func realtimeStateHasImage(message messages.Message) bool {
+	for _, attachment := range message.Attachments {
+		if strings.HasPrefix(strings.ToLower(attachment.MIMEType), "image/") {
+			return true
+		}
+	}
+	return false
+}
+
+// replayedRealtimeState restores a state message for replay: its images for
+// the latest image of a model that accepts images, otherwise its caption with
+// a placeholder for each image.
+func replayedRealtimeState(manager *contextmanager.ContextManager, state messages.Message, imageInput, latest bool) (string, []realtimevoice.Image) {
+	caption := strings.TrimSpace(state.Content)
+	if !realtimeStateHasImage(state) {
+		if caption == "" {
+			return "", nil
+		}
+		return util.STag("state", caption), nil
+	}
+	if imageInput && latest {
+		var images []realtimevoice.Image
+		for _, attachment := range state.Attachments {
+			if !strings.HasPrefix(strings.ToLower(attachment.MIMEType), "image/") {
+				continue
+			}
+			data, err := manager.ReadAttachment(filepath.Base(attachment.FilePath))
+			if err != nil || len(data) == 0 {
+				logging.Warnf("agent", "realtime", "Replay omitted a stored image: %v", err)
+				continue
+			}
+			images = append(images, realtimevoice.Image{Caption: caption, MIMEType: attachment.MIMEType, Data: data})
+		}
+		if len(images) > 0 {
+			return "", images
+		}
+	}
+	reason := agent.ImageOmittedModelUnsupported
+	if imageInput {
+		reason = agent.ImageOmittedNotReplayed
+	}
+	return agent.ToolResultWithOmittedImages("", []string{caption}, reason), nil
 }
 
 func recentRealtimeContextMessages(all []messages.Message, maxTurns int) []messages.Message {
@@ -3509,6 +3761,16 @@ func recentRealtimeContextMessages(all []messages.Message, maxTurns int) []messa
 			break
 		}
 		seen++
+	}
+	// A user turn's state message is stored before the user message, so it
+	// starts the turn with it. State that follows a tool result belongs to
+	// that earlier turn and is left out with it.
+	first := start
+	for first > 0 && all[first-1].Role == messages.MessageRoleState {
+		first--
+	}
+	if first == 0 || all[first-1].Role != messages.MessageRoleToolResult {
+		start = first
 	}
 	return all[start:]
 }

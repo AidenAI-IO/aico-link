@@ -940,6 +940,34 @@ func TestUpdateConfigFileSwitchesDecisionProviderAndClearsKey(t *testing.T) {
 	if text := string(data); strings.Contains(text, "ts-secret") || strings.Contains(text, "ts.example") || strings.Contains(text, "jev-1.14.0") {
 		t.Fatalf("old provider settings survived the switch:\n%s", text)
 	}
+
+	result, err = NewService().Update(path, []byte(`{"config":{"decision":{"provider":"gemini","api_key":"","enabled":false,"base_url":null,"model":null}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = result.Config.Decision
+	if got.Provider != "gemini" || got.HasAPIKey || got.Enabled ||
+		got.BaseURL != "https://generativelanguage.googleapis.com/v1beta" || got.Model != "gemini-decision-1" {
+		t.Fatalf("decision after gemini switch = %+v", got)
+	}
+	result, err = NewService().Update(path, []byte(`{"config":{"decision":{"provider":"openrouter","api_key":"sk-or-new","enabled":true,"base_url":null,"model":null}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = result.Config.Decision
+	if got.Provider != "openrouter" || !got.HasAPIKey || !got.Enabled || got.APIKey != "" ||
+		got.BaseURL != "https://openrouter.ai/api/alpha" || got.Model != "~typesafe/jev-latest" {
+		t.Fatalf("decision after openrouter switch = %+v", got)
+	}
+	// Editing the model and endpoint keeps the independently saved key.
+	_, err = NewService().Update(path, []byte(`{"config":{"decision":{"model":"vendor/vision","base_url":"https://router.example/v1"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agent.LoadResolvedConfig(path)
+	if err != nil || cfg.Decision.APIKey != "sk-or-new" || cfg.Decision.ModelOrDefault() != "vendor/vision" || cfg.Decision.BaseURLOrDefault() != "https://router.example/v1" {
+		t.Fatalf("OpenRouter overrides did not persist with the saved key: err = %v", err)
+	}
 }
 
 func TestUpdateConfigFileRejectsEnablingDecisionModelWithoutKey(t *testing.T) {

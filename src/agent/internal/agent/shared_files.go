@@ -38,6 +38,8 @@ type sharedFile struct {
 	MIMEType    string    `json:"mime_type,omitempty"`
 	DownloadURL string    `json:"download_url,omitempty"`
 	Modified    time.Time `json:"modified"`
+	// SharedBy is "user" for uploads and "aico" for files the Agent wrote.
+	SharedBy string `json:"shared_by,omitempty"`
 }
 
 func validSharedName(name string) bool {
@@ -278,27 +280,163 @@ func uploadSharedFileWithLimit(w http.ResponseWriter, r *http.Request, limit int
 		http.Error(w, "Cannot persist upload", http.StatusInsufficientStorage)
 		return
 	}
-	// Link publishes the completed file atomically and never replaces an existing file.
-	published := name
-	for attempts := 0; ; attempts++ {
-		err = root.Link(temp, published)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, os.ErrExist) || attempts >= 8 {
-			http.Error(w, "Cannot publish upload", http.StatusInsufficientStorage)
-			return
-		}
-		published = sharedCollisionName(name)
+	published, err := publishSharedUpload(root, temp, name)
+	if err != nil {
+		http.Error(w, "Cannot publish upload", http.StatusInsufficientStorage)
+		return
 	}
 	info, err := root.Stat(published)
 	if err != nil {
 		http.Error(w, "Cannot inspect upload", http.StatusInternalServerError)
 		return
 	}
+	item := sharedFileInfo(published, info)
+	item.SharedBy = sharedByUser
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, sharedFileInfo(published, info))
+	writeJSON(w, item)
+}
+
+// publishSharedUpload links the completed temporary file to name, or to a
+// suffixed name when name is taken, and records it as shared by the user.
+// Link publishes the file atomically and never replaces an existing file.
+// Publishing and recording the name happen under one lock with deletes.
+func publishSharedUpload(root *os.Root, temp, name string) (string, error) {
+	if sharedPublishHook != nil {
+		sharedPublishHook()
+	}
+	sharedUploadsMu.Lock()
+	defer sharedUploadsMu.Unlock()
+	published := name
+	for attempts := 0; ; attempts++ {
+		err := root.Link(temp, published)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrExist) || attempts >= 8 {
+			return "", err
+		}
+		published = sharedCollisionName(name)
+	}
+	recordSharedUploadLocked(root, published)
+	return published, nil
+}
+
+// saveSharedUpload stores data as a file the user shared, as an upload through
+// POST /api/files would. Chat images use it so they appear in /share too.
+func saveSharedUpload(name string, data []byte) (sharedFile, error) {
+	if !validSharedName(name) {
+		return sharedFile{}, fmt.Errorf("invalid shared file name")
+	}
+	if int64(len(data)) > maxSharedFileBytes {
+		return sharedFile{}, fmt.Errorf("file exceeds the shared file limit")
+	}
+	if err := os.MkdirAll(sharedFilesDir(), 0755); err != nil {
+		return sharedFile{}, err
+	}
+	root, err := os.OpenRoot(sharedFilesDir())
+	if err != nil {
+		return sharedFile{}, err
+	}
+	defer root.Close()
+	temp := ".upload-" + uuid.NewString()
+	file, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return sharedFile{}, err
+	}
+	defer root.Remove(temp)
+	_, err = file.Write(data)
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return sharedFile{}, err
+	}
+	published, err := publishSharedUpload(root, temp, name)
+	if err != nil {
+		return sharedFile{}, err
+	}
+	info, err := root.Stat(published)
+	if err != nil {
+		return sharedFile{}, err
+	}
+	item := sharedFileInfo(published, info)
+	item.SharedBy = sharedByUser
+	return item, nil
+}
+
+// sharedImageName turns a chat image's name into a valid shared file name
+// that ends in an image extension. A name without one gets the extension of
+// its MIME type.
+func sharedImageName(name, mimeType string) string {
+	name = strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || unicode.IsControl(r) {
+			return '_'
+		}
+		return r
+	}, strings.TrimSpace(name))
+	name = strings.TrimLeft(name, ".")
+	ext := strings.ToLower(filepath.Ext(name))
+	if !sharedImageExtensionKnown(ext) {
+		ext = sharedImageExtension(mimeType)
+		name += ext
+	}
+	if strings.TrimSuffix(name, ext) == "" {
+		name = "image" + ext
+	}
+	if len(name) > 240 {
+		stem := strings.TrimSuffix(name, ext)[:240-len(ext)]
+		for !utf8.ValidString(stem) {
+			stem = stem[:len(stem)-1]
+		}
+		name = stem + ext
+	}
+	return name
+}
+
+// sharedImageExtensions maps image MIME types to the extension a saved chat
+// image gets. Unknown image types fall back to .png.
+var sharedImageExtensions = map[string]string{
+	"image/png":     ".png",
+	"image/jpeg":    ".jpg",
+	"image/jpg":     ".jpg",
+	"image/gif":     ".gif",
+	"image/webp":    ".webp",
+	"image/bmp":     ".bmp",
+	"image/svg+xml": ".svg",
+	"image/avif":    ".avif",
+	"image/tiff":    ".tiff",
+	"image/heic":    ".heic",
+	"image/heif":    ".heif",
+}
+
+func sharedImageExtension(mimeType string) string {
+	mimeType, _, _ = strings.Cut(strings.ToLower(strings.TrimSpace(mimeType)), ";")
+	if ext, ok := sharedImageExtensions[strings.TrimSpace(mimeType)]; ok {
+		return ext
+	}
+	return ".png"
+}
+
+// sharedImageExtensionKnown reports whether ext already names an image type,
+// so the name is kept as is. The system MIME table may lack some image
+// types, so the extensions above count too.
+func sharedImageExtensionKnown(ext string) bool {
+	if ext == "" {
+		return false
+	}
+	if strings.HasPrefix(mime.TypeByExtension(ext), "image/") || ext == ".jpeg" || ext == ".tif" {
+		return true
+	}
+	for _, known := range sharedImageExtensions {
+		if ext == known {
+			return true
+		}
+	}
+	return false
 }
 
 // deleteSharedFile removes one regular file or one empty folder below the
@@ -322,7 +460,15 @@ func deleteSharedFile(w http.ResponseWriter, r *http.Request, rel string) {
 		return
 	}
 	defer root.Close()
-	if err := removeSharedEntry(root, rel); err != nil {
+	// Removing the file and forgetting its record happen under one lock with
+	// uploads, so a same-name upload in between keeps its record.
+	sharedUploadsMu.Lock()
+	err = removeSharedEntry(root, rel)
+	if err == nil {
+		forgetSharedUploadLocked(root, rel)
+	}
+	sharedUploadsMu.Unlock()
+	if err != nil {
 		switch {
 		case errors.Is(err, os.ErrNotExist):
 			http.NotFound(w, r)
@@ -339,6 +485,10 @@ func deleteSharedFile(w http.ResponseWriter, r *http.Request, rel string) {
 // sharedRemoveHook runs between validating the parent folder and removing the
 // entry; tests use it to swap folders in that window.
 var sharedRemoveHook func()
+
+// sharedPublishHook, when set by a test, runs just before an upload takes
+// the lock to publish its file.
+var sharedPublishHook func()
 
 // removeSharedEntry removes rel without following symbolic links. It opens each
 // parent folder in turn and checks that the open handle is the folder Lstat saw,
@@ -411,6 +561,9 @@ func listSharedFiles(rel string) ([]sharedFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	sharedUploadsMu.Lock()
+	uploads := readSharedUploads(root)
+	sharedUploadsMu.Unlock()
 	result := make([]sharedFile, 0, len(entries))
 	for _, entry := range entries {
 		if !validSharedName(entry.Name()) || entry.Type()&os.ModeSymlink != 0 {
@@ -420,7 +573,11 @@ func listSharedFiles(rel string) ([]sharedFile, error) {
 		if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
 			continue
 		}
-		result = append(result, sharedFileInfo(path.Join(rel, entry.Name()), info))
+		item := sharedFileInfo(path.Join(rel, entry.Name()), info)
+		if item.Kind == "file" {
+			item.SharedBy = sharedFileSource(uploads, path.Join(rel, entry.Name()))
+		}
+		result = append(result, item)
 	}
 	return result, nil
 }

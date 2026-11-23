@@ -98,6 +98,7 @@ func main() {
 		lanAccessFile             = flag.String("lan-access-file", lanaccess.DefaultEnabledPath, "LAN access marker used by -lan-guard")
 		usbInterface              = flag.String("usb-interface", "usb0", "USB link interface trusted by -lan-guard")
 		usbAddress                = flag.String("usb-address", "192.168.42.1", "Board address on the USB link trusted by -lan-guard")
+		classicVoice              = flag.Bool("classic-voice", true, "Allow Classic (stt) voice conversations; false keeps the stt input mode text only and never starts the VAD")
 	)
 	flag.Parse()
 	environmentPath := os.Getenv("AICO_SYSTEM_ENV")
@@ -245,6 +246,10 @@ func main() {
 	}
 	defer server.Close()
 	inputs := newInputLifecycle(runtime, server)
+	if !*classicVoice {
+		inputs.classicVoiceDisabled = true
+		logging.Infof("agent", "startup", "Classic voice disabled by -classic-voice=false: the stt input mode is text only; realtime is unaffected")
+	}
 	if err := inputs.Start(cfg); err != nil {
 		logging.Errorf("agent", "input", "startup failed: %v", err)
 		exitCode = 1

@@ -10,11 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/model"
 
 	langtools "github.com/tmc/langchaingo/tools"
@@ -590,5 +593,62 @@ func TestRestartAfterOfflineConfigChange(t *testing.T) {
 				t.Fatalf("session descends from the first = %t, want %t", ancestor, tc.keepsHistory)
 			}
 		})
+	}
+}
+
+// The realtime user context holds plain messages any voice provider can
+// replay, so only a backend model change starts a new one. Switching the voice
+// provider (for example to one that then fails to start) keeps it, whether the
+// change is applied live, saved while stopped, or recorded by an older build.
+func TestUserContextSurvivesVoiceModelChange(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ConfigDir = t.TempDir()
+	cfg.Model.Provider = "fake"
+	cfg.VoiceModel.Provider = "qwen"
+	r, err := NewRuntime(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	folder := agentpath.UserContextManagerSessionFolder(cfg.ConfigDir)
+	if err := r.PrepareUserContext("system"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := contextmanager.NewContextManager(folder, "system"); err != nil {
+		t.Fatal(err)
+	}
+	conversation := contextmanager.CurrentSessionID(folder)
+	keeps := func(step string) {
+		t.Helper()
+		if err := r.PrepareUserContext("system"); err != nil {
+			t.Fatal(err)
+		}
+		if got := contextmanager.CurrentSessionID(folder); got != conversation {
+			t.Fatalf("%s started user context %q, want %q kept", step, got, conversation)
+		}
+	}
+
+	next := r.ConfigSnapshot()
+	next.VoiceModel.Provider = "moss"
+	if err := r.ApplyConfigSnapshot(next); err != nil {
+		t.Fatal(err)
+	}
+	keeps("live voice model change")
+
+	if err := os.WriteFile(filepath.Join(folder, conversationIdentityFile), []byte(legacyUserConversationIdentity(r.ConfigSnapshot())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keeps("identity recorded before the voice model stopped counting")
+
+	next = r.ConfigSnapshot()
+	next.Model.Model = "another-model"
+	if err := r.ApplyConfigSnapshot(next); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.PrepareUserContext("system"); err != nil {
+		t.Fatal(err)
+	}
+	if contextmanager.CurrentSessionID(folder) == conversation {
+		t.Fatal("backend model change kept the old user context")
 	}
 }

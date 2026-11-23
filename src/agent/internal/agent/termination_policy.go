@@ -443,9 +443,9 @@ func (p *TerminationPolicy) interventionDecision() TerminationDecision {
 func (p *TerminationPolicy) noticeForTier(tier InterventionTier) string {
 	switch tier {
 	case TierSoftNotice:
-		return "Loop guard: recent tool calls are repeating without new results. Change strategy, verify with observation tools, or call request_user_action if blocked."
+		return "Loop guard: recent tool calls are repeating without new results. Change strategy, verify with observation tools, give your final answer with the evidence you have, or call request_user_action if only the user can unblock the task on the device."
 	case TierFinalWarning:
-		return "Loop guard: tool calls are still repeating without new results, and the run will stop if this continues. Change strategy now, or call request_user_action if blocked."
+		return "Loop guard: tool calls are still repeating without new results, and the run will stop if this continues. Change strategy now, give your final answer with the evidence you have, or call request_user_action if only the user can unblock the task on the device."
 	default:
 		return ""
 	}

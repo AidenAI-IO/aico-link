@@ -1,6 +1,6 @@
 {
   "name": "app_workflow_v1",
-  "version": "1.1",
+  "version": "1.2",
   "suite_category": "End-to-End Workflow",
   "description": "Real-world multi-step app workflows — covers messaging, content creation, information retrieval, and utility tasks on a real phone device.",
   "prompt_prefix": "",
@@ -38,6 +38,45 @@
         "min_tool_calls": 1,
         "max_tool_calls": 30,
         "must_complete_within_sec": 300
+      }
+    },
+    {
+      "id": "wechat_search_and_send_new_message",
+      "category": "multi_step",
+      "description_for_judge": "Exercise global search and grounded delivery to WeChat File Transfer Assistant. Compare the latest message in the captured starting chat against the outgoing message in the final screenshot. A previous benchmark message, an unsent draft, or the agent’s confirmation alone is insufficient.",
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open WeChat and leave the File Transfer Assistant (文件传输助手) conversation visible at the newest message, or at the empty chat if there are no messages. Do not send, draft, or delete a message.",
+        "timeout_sec": 90,
+        "clear_history_after": true
+      },
+      "prompt": "Look at the latest message in File Transfer Assistant (文件传输助手). If it is exactly 「Aico 回归 A-17（中文）」, use 「Aico 回归 B-29（中文）」 for this run. Otherwise use 「Aico 回归 A-17（中文）」. Return to the WeChat chat list and reopen File Transfer Assistant using the global search field. Send the chosen text exactly once in this chat and confirm that the latest outgoing message shows it.",
+      "rubric": [
+        {
+          "id": "visible_baseline",
+          "scope": "precondition",
+          "check": "The pre-screenshot is the File Transfer Assistant (文件传输助手) conversation at the most recent message, or an empty conversation. If a message is present, the latest message can be read to determine whether it is Aico 回归 A-17（中文）."
+        },
+        {
+          "id": "reopened_from_search",
+          "check": "The trace shows the agent leaves the initial chat, enters the top-level WeChat search and opens the File Transfer Assistant result, not an unrelated chat."
+        },
+        {
+          "id": "correct_new_bubble",
+          "check": "If the latest pre-screenshot message was Aico 回归 A-17（中文）, the post-screenshot shows Aico 回归 B-29（中文） as the latest outgoing bubble. Otherwise it shows Aico 回归 A-17（中文）. The header identifies File Transfer Assistant (文件传输助手) and the message is sent, not in the edit field or marked as failed."
+        },
+        {
+          "id": "single_send",
+          "check": "The action trace shows only one send of the chosen text, and there is no send to another conversation. A second send after an unclear result fails this check."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 35,
+        "must_complete_within_sec": 300,
+        "forbidden_tools": [
+          "shell"
+        ]
       }
     },
     {

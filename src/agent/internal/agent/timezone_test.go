@@ -65,9 +65,15 @@ func TestApplyTimezoneSetsPortableChildProcessTimezone(t *testing.T) {
 	}
 }
 
-func TestDeviceStateIncludesConfiguredTimezone(t *testing.T) {
+func TestDeviceStateIncludesConfiguredTimezoneAndTime(t *testing.T) {
+	originalNow := promptNow
+	promptNow = func() time.Time { return time.Date(2026, time.September, 14, 18, 30, 0, 0, time.UTC) }
+	t.Cleanup(func() { promptNow = originalNow })
 	state := newDeviceStateUpdater(Config{Timezone: "Asia/Tokyo"}).UpdateState()
 	if got := state["controller_timezone"]; got != "Asia/Tokyo" {
 		t.Fatalf("controller_timezone = %q, want Asia/Tokyo", got)
+	}
+	if got, want := state["controller_time"], "2026-09-15 03:30:00 +09:00 (Tuesday)"; got != want {
+		t.Fatalf("controller_time = %q, want %q", got, want)
 	}
 }

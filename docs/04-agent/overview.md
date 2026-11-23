@@ -35,7 +35,7 @@ In the firmware, it is installed by default to:
 - Single-agent execution loop with streamlined tool calling and response handling
 - Conversation memory persistence, session memory compaction; see [Session Memory Compaction](session-memory.md)
 - Device and Task Episode memory; see [Memory Plane](memory-plane.md)
-- Web UI: chat history, browser recording, attachments, Tool Lab, Skill Export
+- Web UI: chat history, browser recording, attachments, an inspector sidebar (connected device and screen, hardware resources, background tasks, shared files), Skill Export
 - iOS Live Activity / Dynamic Island task status; see [Live Activity / Dynamic Island](live-activity.md)
 - Device-side voice pipeline: VAD / STT / TTS; [Realtime Voice](realtime-voice.md)
 
@@ -65,6 +65,15 @@ the MCU service with a bounded timeout. Missing or unreadable metrics appear as
 hidden pages pause polling, and failed requests clear stale readings and retry.
 The resource snapshot is available over the same connections as the Web UI;
 the existing MCU control endpoints remain restricted to USB and loopback.
+
+Beside hardware resources, the inspector lists **Core services** (Agent, Frame,
+Audio, BLE, Config Web, MCU, Wi-Fi Proxy, Terminal). That panel polls
+`GET /api/diagnostics/services` every five seconds while visible and shows each
+unit's severity, CPU/memory sample, and restart count. Failure history comes
+from `GET /api/diagnostics/incidents`, backed by
+`/userdata/diagnostics/service-events.jsonl` written by
+`aico-service-incident` when a core unit's `OnFailure=` fires. Support log
+exports include that events file and the per-unit `last/` log tails.
 
 ## Run Modes
 

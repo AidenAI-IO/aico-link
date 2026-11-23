@@ -72,6 +72,7 @@ type Server struct {
 	lanAccessMu              sync.Mutex
 	usbTerminal              *http.Server
 	usbInternetClient        *http.Client
+	decisionModelsClient     *http.Client
 	usbInternetSetTime       func(context.Context, time.Time) error
 
 	restartMu               sync.Mutex

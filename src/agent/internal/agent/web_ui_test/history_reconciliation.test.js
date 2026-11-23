@@ -487,6 +487,22 @@ assert.equal(streamingAssistantDrafts[laterRunId].content, 'New draft',
     'late SSE text should not change a local NDJSON run after its request ID clears');
 
 renderHistory([]);
+const steerRunId = 'steer-run';
+let pendingSteerRenders = 0;
+global.renderPendingSteer = () => { pendingSteerRenders++; };
+addMessage({type: 'user', request_id: steerRunId, content: 'summarize'});
+handleChatStreamEvent({type: 'assistant_delta', request_id: steerRunId, delta: 'First answer.'});
+pendingSteer = {request_id: steerRunId, content: 'also list risks'};
+handleChatStreamEvent({type: 'message', message: {type: 'user', request_id: steerRunId, content: 'also list risks'}});
+assert.equal(pendingSteer, null, 'the published steer should clear the pending steer');
+assert.ok(pendingSteerRenders > 0, 'clearing the pending steer should re-render it');
+handleChatStreamEvent({type: 'assistant_delta', request_id: steerRunId, delta: 'Risks: none.'});
+handleChatStreamEvent({type: 'message', message: {type: 'assistant', request_id: steerRunId, content: 'Risks: none.'}});
+assert.deepEqual(Array.from(messagesDiv.children).map(node => node._message.content),
+    ['summarize', 'First answer.', 'also list risks', 'Risks: none.'],
+    'the reply to a steer should follow the steer, after the earlier answer');
+
+renderHistory([]);
 const externalRunId = 'external-ordering-run';
 handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: externalRunId,
     payload: {text: 'Before tool'}});
@@ -733,11 +749,15 @@ globalThis.verifySemanticResyncReleasesExternalDrafts = async function() {
     assert.deepEqual(Array.from(messagesDiv.children).map(node => node._message.content),
         ['Earlier answer', 'What is the weather?', 'It is sunny'],
         'a user transcript should appear above the reply that is already streaming');
-    handleSemanticEvent({schema_version: 2, kind: 'text.delta', response_id: 'voice-response',
-        payload: {Text: ' today.'}});
+    // A realtime provider may call a tool mid-reply and keep speaking the same
+    // response; no tool.completed event follows on the semantic stream.
+    handleSemanticEvent({schema_version: 2, kind: 'tool.call_ready', origin: 'realtimevoice',
+        response_id: 'voice-response', call_id: 'voice-call', payload: {Name: 'weather'}});
+    handleSemanticEvent({schema_version: 2, kind: 'text.delta', origin: 'realtimevoice',
+        response_id: 'voice-response', payload: {Text: ' today.'}});
     assert.deepEqual(Array.from(messagesDiv.children).map(node => node._message.content),
         ['Earlier answer', 'What is the weather?', 'It is sunny today.'],
-        'the reply should keep streaming below the transcript');
+        'the reply should keep streaming below the transcript, across a realtime tool call');
     handleSemanticEvent({schema_version: 2, kind: 'transcript.segment_final', item_id: 'voice-item-2',
         payload: {Text: '   ', Role: 'user'}});
     assert.equal(messagesDiv.children.length, 3, 'an empty transcript should render nothing');

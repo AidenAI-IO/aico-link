@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -221,5 +222,86 @@ func TestAskOpenAITranslatesQuestionsAndAnswers(t *testing.T) {
 	}
 	if _, err := resp.Answer("where", TypeBox); err == nil {
 		t.Fatal("OpenAI must not produce a box answer")
+	}
+}
+
+func TestAskGeminiTranslatesQuestionsAndAnswers(t *testing.T) {
+	var got geminiRequest
+	var auth, googKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		googKey = r.Header.Get("x-goog-api-key")
+		if r.URL.Path != "/v1beta/decisions" || r.Header.Get(imagesHeader) != "" {
+			t.Errorf("request = %s %s headers=%v", r.Method, r.URL.Path, r.Header)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		_, _ = io.WriteString(w, `{"model":"gemini-decision-1","answers":{`+
+			`"found":{"type":"noul","noul":0.91,"confidence":0.9},`+
+			`"mode":{"type":"choice","choice":"ascii","confidence":0.88,"probabilities":{"ascii":0.94,"composition":0.06}},`+
+			`"severity":{"type":"score","score":1.1,"confidence":0.8,"probabilities":{"0":0.1,"1":0.7,"2":0.2}}`+
+			`},"usage":{"total_input_tokens":12,"total_output_tokens":0,"total_tokens":12}}`)
+	}))
+	defer server.Close()
+
+	shot, err := PrepareJPEG(jpegBase64(t, 400, 600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{Provider: ProviderGemini, BaseURL: server.URL + "/v1beta", APIKey: "AIza-test", Model: "gemini-decision-1", HTTP: server.Client()}
+	resp, err := client.Ask(context.Background(), Request{
+		State:  map[string]any{"screen": shot.Ref, "query": "微信"},
+		Assets: map[string]Asset{shot.Ref: shot.Asset},
+		Questions: map[string]Question{
+			"found":    {Type: TypeNoul, Instructions: "Is `query` visible in `screen`?"},
+			"where":    {Type: TypeBox, Instructions: "the result in `screen`"},
+			"mode":     {Type: TypeChoice, Instructions: "Which mode?", Criteria: map[string]any{"ascii": "plain", "composition": nil}},
+			"severity": {Type: TypeScore, Instructions: "How messy?", Criteria: []any{"Clean", "Minor", "Major"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth != "" || googKey != "AIza-test" {
+		t.Fatalf("auth headers Authorization=%q x-goog-api-key=%q", auth, googKey)
+	}
+	if got.Model != "gemini-decision-1" || len(got.Questions) != 3 {
+		t.Fatalf("questions = %+v; the box question must be left out", got.Questions)
+	}
+	if got.Questions["found"].Type != TypeNoul || got.Questions["mode"].Type != TypeChoice || got.Questions["severity"].Type != TypeScore {
+		t.Fatalf("questions = %+v", got.Questions)
+	}
+	criteria, _ := got.Questions["mode"].Criteria.(map[string]any)
+	if fmt.Sprint(criteria["ascii"]) != "plain" || fmt.Sprint(criteria["composition"]) != "" {
+		t.Fatalf("choice criteria = %#v", got.Questions["mode"].Criteria)
+	}
+	levels, ok := got.Questions["severity"].Criteria.([]any)
+	if !ok || len(levels) != 3 || levels[0] != "Clean" {
+		t.Fatalf("score criteria = %#v", got.Questions["severity"].Criteria)
+	}
+	if len(got.Input) != 3 || !strings.Contains(got.Input[0].Text, `"query":"微信"`) ||
+		got.Input[1].Text != "`screen` is this image:" || got.Input[2].Type != "image" ||
+		got.Input[2].MIMEType != "image/jpeg" || got.Input[2].Data == "" {
+		t.Fatalf("input = %+v", got.Input)
+	}
+	found, err := resp.Answer("found", TypeNoul)
+	if err != nil || *found.Noul != 0.91 {
+		t.Fatalf("found = %+v, %v", found, err)
+	}
+	mode, err := resp.Answer("mode", TypeChoice)
+	if err != nil || mode.Choice != "ascii" || !mode.Confident(0.8) || mode.Probabilities["composition"] != 0.06 {
+		t.Fatalf("mode = %+v, %v", mode, err)
+	}
+	severity, ok := resp.Answers["severity"]
+	if !ok || severity.Type != TypeScore || severity.Score == nil || *severity.Score != 1.1 {
+		t.Fatalf("severity = %+v", severity)
+	}
+	if resp.Usage.InputTokens != 12 || resp.Usage.OutputTokens != 0 {
+		t.Fatalf("usage = %+v", resp.Usage)
+	}
+	if _, err := resp.Answer("where", TypeBox); err == nil {
+		t.Fatal("Gemini must not produce a box answer")
 	}
 }

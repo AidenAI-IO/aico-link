@@ -106,7 +106,8 @@ func (t *HumanHandoffTool) Name() string {
 }
 
 func (t *HumanHandoffTool) Description() string {
-	return `Request user action for credentials, CAPTCHA, verification codes, sensitive operations, or when stuck. ` +
+	return `Request user action for credentials, CAPTCHA, verification codes, sensitive operations, or when the task is blocked on something only the user can do on the device. ` +
+		`Do not use it when information simply cannot be found or a lookup failed; give a final answer with the evidence you have instead. ` +
 		`suggested_action should tell the human what to do without asking them to share private credentials in chat. ` +
 		`This tool returns immediately with a handoff marker; wait for the user to continue, then verify the result with a screenshot before proceeding.`
 }

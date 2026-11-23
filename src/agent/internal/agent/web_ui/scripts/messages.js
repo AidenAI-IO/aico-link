@@ -51,11 +51,6 @@ function createMessageNode(msg) {
         body.appendChild(contentDiv);
     }
 
-    if (msg.type === 'assistant' || msg.type === 'proactive') {
-        const downloads = renderMessageAttachments(sharedLinksFromText(msg.content));
-        if (downloads) body.appendChild(downloads);
-    }
-
     // Add audio playback button for voice messages with archived audio
     if (msg.audio_file && msg.audio_file !== '') {
         const audioBtn = document.createElement('button');
@@ -601,9 +596,9 @@ function composerPrimaryMode() {
     // Typed text always goes to the conversation: steer a running request,
     // otherwise send. With an empty box, a voice session's End stays
     // reachable even while a request runs; Stop still cancels the request.
-    if (composerHasDraft()) return currentChatRequestId ? 'steer' : 'send';
+    if (composerHasDraft()) return steerableRequestId() ? 'steer' : 'send';
     if (voiceModeActive()) return 'end';
-    if (currentChatRequestId) return 'steer';
+    if (steerableRequestId()) return 'steer';
     return voiceStatus.available ? 'voice' : 'send';
 }
 
@@ -676,7 +671,7 @@ function setActivityRunning(isLoading) {
         activityTimer = null;
         return;
     }
-    if (!activityStartedAt) activityStartedAt = currentChatStartedAt || Date.now();
+    if (!activityStartedAt) activityStartedAt = currentChatStartedAt || externalActiveStartedAt || Date.now();
     if (!activityTimer) activityTimer = setInterval(renderActivity, 250);
     renderActivity();
 }

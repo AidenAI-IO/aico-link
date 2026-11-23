@@ -18,17 +18,6 @@ const stateModalKickerEl = document.getElementById('stateModalKicker');
 const stateModalTitleEl = document.getElementById('stateModalTitle');
 const stateModalBodyEl = document.getElementById('stateModalBody');
 const stateModalCloseEl = document.getElementById('stateModalClose');
-const toolSelectEl = document.getElementById('toolSelect');
-const toolDescriptionEl = document.getElementById('toolDescription');
-const toolInputEl = document.getElementById('toolInput');
-const toolExampleBtnEl = document.getElementById('toolExampleBtn');
-const toolInvokeBtnEl = document.getElementById('toolInvokeBtn');
-const toolStatusEl = document.getElementById('toolStatus');
-const toolResultPanelEl = document.getElementById('toolResultPanel');
-const toolResultMetaEl = document.getElementById('toolResultMeta');
-const toolResultPreviewWrapEl = document.getElementById('toolResultPreviewWrap');
-const toolResultPreviewEl = document.getElementById('toolResultPreview');
-const toolResultOutputEl = document.getElementById('toolResultOutput');
 const maxDraftImageAttachments = 4;
 const maxDraftAttachments = 16;
 
@@ -36,9 +25,17 @@ let fileUploadPending = false;
 let nextAttachmentId = 1;
 let draftAttachments = [];
 let composerHintTimer = null;
-let toolCatalog = [];
 let currentChatRequestId = '';
 let externalActiveRequestId = '';
+let externalActiveStartedAt = 0;
+// Only a run reported by /api/chat/active accepts steers; a Live Activity
+// that waits on the phone does not.
+let externalActiveSteerable = false;
+// Bumped by a steer, a stop, or a run this page starts, so a refresh read
+// before the change cannot overwrite it.
+let externalActiveGeneration = 0;
+let externalActiveRefreshInFlight = false;
+let externalActiveRefreshQueued = false;
 let currentChatAbortController = null;
 let currentChatCancelRequested = false;
 let currentChatStartedAt = 0;
@@ -51,6 +48,7 @@ let stopRunArmedUntil = 0;
 let stopRunArmTimer = null;
 let pendingSteer = null;
 let pendingSteerSubmitting = false;
+let pendingSteerCanceling = false;
 let eventSource = null;
 let renderedMessageKeys = new Set();
 let renderedMessageNodes = new Map();

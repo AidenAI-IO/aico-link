@@ -74,6 +74,14 @@ This workflow will:
 4. Cross-compile the Go Agent and BLE daemon for `linux/arm GOARM=7`;
 5. Audit the application and shared-library bundle under `output/debian-apps/`.
 
+The application stage also builds the pinned Ekho 9.0 source with the American
+English Flite SLT female-voice patch and stages Mandarin data for `aico-business`.
+To rebuild only Ekho, run `scripts/debian-apps/build-apps.sh builder` followed by
+`scripts/debian-apps/build-apps.sh ekho`; this action does not require Go or
+OpenCV. `DEBIAN_APPS_EKHO_CACHE` overrides the persistent source/voice archive
+cache at `.cache/debian-apps/ekho`. The source checksum is verified before
+extraction. See [Ekho build inputs](../../scripts/debian-apps/ekho/README.md).
+
 Use `./debian_build.sh` for the complete signed local firmware image set. It
 builds applications, the RV1106 BSP, the Debian rootfs with its business package, A/B images, and
 the local OTA manifest in one workflow.

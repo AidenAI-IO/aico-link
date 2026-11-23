@@ -1,6 +1,6 @@
 .PHONY: all configure build clean test check check-fast check-full check-docker check-production \
 	test-configure test-build test-agent-webui test-clean test-production \
-	sandbox-start sandbox-logs sandbox-stop
+	sandbox-start sandbox-logs sandbox-stop launcher
 
 # The host is only a Docker client. Every compiler, test runner, and production
 # build command runs in docker/test/Dockerfile.
@@ -51,3 +51,8 @@ sandbox-logs:
 
 sandbox-stop:
 	docker compose down
+
+# Aico Launcher: local web UI that builds and starts Aico Link Docker images.
+# Pass LAUNCHER_ARGS="--port 4181 --no-open" to change its options.
+launcher:
+	cd benchmark && uv run python -m launcher $(LAUNCHER_ARGS)

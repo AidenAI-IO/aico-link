@@ -18,10 +18,6 @@ type hostRuntimeInfo struct {
 	Architecture    string
 }
 
-func currentDateContext(locale, timezone string) string {
-	return formatCurrentDate(configuredTime(promptNow(), timezone), locale, timezone)
-}
-
 func hostRuntimeInfoContext() string {
 	infoFn := promptHostRuntimeInfo
 	if infoFn == nil {
@@ -73,19 +69,6 @@ func hostInfoValue(value string) string {
 	return value
 }
 
-func formatCurrentDate(t time.Time, locale, timezone string) string {
-	timezone = strings.TrimSpace(timezone)
-	if timezone == "" {
-		timezone = defaultTimezone
-	}
-	if normalizeResponseLocale(locale) == localeEnglishUS {
-		weekdays := []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
-		return "Current date: " + t.Format("2006-01-02") + " (" + weekdays[t.Weekday()] + ", timezone: " + timezone + ")"
-	}
-	weekdays := []string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
-	return "Current date: " + t.Format("2006-01-02") + " (" + weekdays[t.Weekday()] + ", timezone: " + timezone + ")"
-}
-
 func normalizeResponseLocale(locale string) string {
 	switch strings.ToLower(strings.TrimSpace(locale)) {
 	case "en-us":
@@ -98,6 +81,13 @@ func normalizeResponseLocale(locale string) string {
 }
 
 func responseLanguageGuidance(locale string) string {
+	return languageGuidance(locale, "This includes progress messages, final answers, and all text inside <tts>...</tts>.")
+}
+
+// languageGuidance builds the response-language rule. coverage names what the
+// rule applies to, in the output format of the agent reading it: the backend
+// writes <tts> blocks, while the realtime model speaks directly.
+func languageGuidance(locale, coverage string) string {
 	locale = normalizeResponseLocale(locale)
 	language := "Simplified Chinese"
 	if locale == localeEnglishUS {
@@ -105,17 +95,18 @@ func responseLanguageGuidance(locale string) string {
 	}
 	return strings.Join([]string{
 		"The configured response locale is " + locale + ".",
-		"Write all conversational assistant content in " + language + " from the first generated token. This includes progress messages, final answers, and all text inside <tts>...</tts>.",
-		"Only use another language for content the user explicitly asks to translate, quote, draft, or generate. Keep any surrounding explanation in " + language + ".",
+		"Write all conversational assistant content in " + language + " from the first generated token. " + coverage,
+		"Preserve quoted source values, proper names, identifiers, amounts, and addresses in their original form when reporting them; the response language applies to explanatory prose. When the user asks for an exact copy, keep every source character and do not translate or normalize those values. Only use another language for other content the user explicitly asks to translate, quote, draft, or generate. Keep any surrounding explanation in " + language + ".",
 		"Do not infer the response language from STT language, phone locale, screenshot language, proper nouns, or an isolated foreign-language phrase.",
-		"IMPORTANT: Always respond in " + language + ", regardless of the language used by the user, except when the user explicitly asks to translate, quote, draft, or generate content in another language.",
+		"IMPORTANT: Keep explanatory prose in " + language + ", regardless of the language used by the user. Preserve source values as described above, and use another language when the user explicitly asks to translate, quote, draft, or generate content in it.",
 	}, "\n")
 }
 
-// ResponseLanguageGuidance returns the shared response-language rule for
-// agent entry points that do not build a full RoleProfile, such as realtime.
-func ResponseLanguageGuidance(locale string) string {
-	return responseLanguageGuidance(locale)
+// RealtimeResponseLanguageGuidance returns the response-language rule for the
+// realtime voice model. It speaks directly and never writes <tts> blocks, so
+// the rule names its spoken replies instead.
+func RealtimeResponseLanguageGuidance(locale string) string {
+	return languageGuidance(locale, "This includes spoken replies, progress updates while tools run, and final answers.")
 }
 
 func combinedAgentInstruction(cfg AgentConfig) string {
@@ -153,22 +144,32 @@ func deviceMemoryRecallGuidance() string {
 	}, "\n")
 }
 
+// screenInformationPersistenceGuidance keeps on-screen details in assistant
+// text, because screenshots are pruned from the context as a run progresses.
+func screenInformationPersistenceGuidance() string {
+	return strings.Join([]string{
+		"1. **Screenshots are ephemeral:** Every screenshot (from `screenshot` or any tool result) is temporary context and may be pruned at any time. **Any on-screen detail not written out in assistant text is permanently lost once the image is gone.**",
+		"2. **Transcribe before navigating:** Whenever a task requires collecting, summarizing, comparing, or reading information across screens, you **MUST** write out the extracted details in the visible text of your current response **before** calling any tool that changes or leaves the current screen (such as `touch_gesture` tap/swipe/back, `quick_action`, or `open_app`). Do not emit vague placeholders like \"Checked\" or \"Recorded,\" and do not make a silent tool call with no text.",
+		"3. **Incremental structured logging:** Append newly observed items as you go. If a list requires scrolling or paging, transcribe all unrecorded items visible on the current screen before scrolling or navigating away so nothing is missed or duplicated.",
+	}, "\n")
+}
+
 func defaultAgentBehavior() string {
 	rules := []string{
 		"- Keep final replies natural; avoid Markdown tables or long lists unless the user asks for them.",
 		"- Every assistant response must begin with exactly one <tts>...</tts> block before any whitespace or visible text. The literal <tts> start tag must be the first generated bytes. After the closing </tts> tag, write the ordinary user-facing text. Never emit a second <tts> block in the same response. Content outside <tts> is not spoken. The leading <tts> text may be a concise spoken form and does not need to match the visible text exactly.",
-		"- When invoking tools, begin the assistant content with the same single leading <tts>...</tts> block containing brief spoken progress, then add brief visible progress text before the tool call. Do not put speech or description arguments in tool inputs. Do not put the final answer in tool-call assistant content.",
-		"- Do not use JSON, final_answer fields, or \"Final Answer:\" wrappers for final responses.",
+		"- When invoking tools, begin the assistant content with the same single leading <tts>...</tts> block containing brief spoken progress.",
 		"- Most user input arrives as voice transcribed by STT and may contain homophone, near-sound, segmentation, or named-entity errors. Interpret commands by intent and context instead of matching transcript text literally. When searching the web, apps, contacts, settings, files, or page content, choose likely canonical keywords and try reasonable alternate terms rather than requiring exact transcript wording.",
-		"- The system prompt already includes the current date and weekday. Answer ordinary date or weekday questions from that context. When a precise clock time, timezone conversion, offset, timestamp, elapsed-time result, or verified calculation is required, use shell utilities on the Aico Link controller; do not treat controller-local results as target-device state unless that relationship is known.",
-		"- When an answer depends on saved long-term preferences, rules, procedures, facts, or screen content the user deliberately captured earlier, call recall_memory first; do not answer from general knowledge alone. Requests about something the user saw, saved, or noted down on screen — such as a tracking number, address, amount, or message — are screen memories: query recall_memory with types [\"screen_snapshot\"], adding topic keywords when the user gave any.",
+		"- The state message on each user turn includes controller_time, the current controller date, time, and weekday in the configured time zone. Answer ordinary date, time, or weekday questions from the latest controller_time. When a precise clock time, timezone conversion, offset, timestamp, elapsed-time result, or verified calculation is required, use shell utilities on the Aico Link controller; do not treat controller-local results as target-device state unless that relationship is known.",
+		"- When an answer depends on saved long-term preferences, rules, procedures, facts, or screen content the user deliberately captured earlier, call recall_memory first; do not answer from general knowledge alone. Requests about something the user saw, saved, or noted down on screen — such as a tracking number, address, amount, or message — are screen memories: query recall_memory with types [\"screen_snapshot\"], adding topic keywords when the user gave any. If no saved screen matches, say so rather than substituting another source.",
+		"- " + personalMemoryAdmissionGuidance,
 		"- Before saying you do not know, did not save, or cannot provide something the user asks you to recall about themselves, call recall_memory with topic tags from the question. Secrets the user asked you to keep, such as passwords, PINs, or card numbers, are saved as sensitive memories: they never appear in the user profile and are returned only by a recall_memory query about their topic, so their absence from your context is not evidence they were not saved. When recall returns the secret the user asked for, give it to them; never reveal the value of a different secret that merely matched the query, at most say that it exists.",
 		"- When the user corrects a saved preference, rule, or fact, recall the old memory before updating it. Pass its id and revision to save_memory as replaces_id and expected_revision; do not infer an update target from tags alone. If the target is ambiguous, ask which memory to change.",
 		"- Phone notifications may be available as temporary or long-term memories. When the user asks what a notification said, whether a delivery/calendar/payment update was received, or asks about a prior phone notification, call recall_memory first with notification-related tags/entities; it searches both temporary and long-term memory. If the user asks for the exact original notification, a raw record, a date range, or an audit/debug view, use shell to read the date-sharded JSONL files under `/userdata/agent/memory/notifications/events/` with normal read-only shell utilities. Each `YYYY-MM-DD.jsonl` file uses a UTC date and contains one original notification record per line. Do not modify these files or use bridge_notification query as a substitute for the durable local log when historical records are needed.",
 		"- Do not use tools unnecessarily for ordinary questions. For text-only arithmetic, comparison, summarization, translation, or simple Q&A tasks unrelated to saved long-term or device/UI memory, answer directly or use only the non-visual tool needed for the task; do not observe, wait on, or operate the connected display.",
 		"- When the user asks to install a skill from an HTTP(S) or GitHub URL, call skill_manage directly with action=install and source_url set to the original URL. Do not fetch the skill with web_scraper or shell/curl, and do not copy remote contents through create, edit, or patch; action=install downloads, validates, and commits the complete skill.",
 		"- When the user asks to inspect or operate a device, app, settings, contacts, messages, websites, TV UI, or other external state, ground the response in a current attached screenshot or tool observation. Call tools to gather missing evidence or make a needed change; do not claim state has changed without tool results or screenshot confirmation. An explicit request to remember information or a rule for future conversations also requires a state change: call save_memory successfully before confirming it is remembered. A conversational acknowledgement alone does not persist memory.",
-		fmt.Sprintf("- User files are shared through %s on the controller. Read uploaded files using their supplied absolute paths. Save user-requested downloadable outputs in this directory (or a subdirectory), verify they exist, and include Markdown download links in your reply, e.g. [report](/share/report.pdf). URL-encode each filename/path segment, including spaces, parentheses, and non-ASCII characters. /share/ links work in both the Web UI and phone app; do not invent a file or link before creating it. Files placed here are downloadable by clients on the board network.", sharedFilesDir()),
+		fmt.Sprintf("- User files are shared through %s on the controller, including images the user attaches to a message. The shared_files state lists its newest files with who shared them. Read uploaded files using their supplied absolute paths; to look at an image file there, call read_image with its path instead of decoding it with shell. Save user-requested downloadable outputs in this directory (or a subdirectory) and verify they exist. Whenever your reply mentions a shared file, whether the user uploaded it or you created it, write its name as a Markdown link whose target is /share/ followed by its path relative to that directory, e.g. [report.pdf](/share/report.pdf) or [photo.png](/share/photos/photo.png); never mention a shared file by bare name or path alone. URL-encode each filename/path segment in the link target, including spaces, parentheses, and non-ASCII characters, and keep the readable filename as the link text. /share/ links work in both the Web UI and phone app; do not invent a file or link before creating it. Files placed here are downloadable by clients on the board network.", sharedFilesDir()),
 		"- When a tool result says its full or partial output was saved to a result file, first use the inline preview and read the artifact only when needed information is missing. Use shell with a focused query or range and an explicit output bound; never use cat or print the entire artifact. For JSON, inspect the actual structure and query the relevant field with fq (for example, fq -r '.results[0].summary[0:2000]' FILE for recall_session_chunks); use yq when the artifact is YAML. Bound both record counts and string lengths; line limits alone do not bound bytes in a single-line JSON file. For raw text, use a byte range such as dd if=FILE bs=1 skip=0 count=4096. Read the next bounded range when more content is needed, but do not repeatedly expand the same prefix without new information. If a query fails, correct the field or command before retrying. If repeated reads return the same error or no new information, change strategy or report the blocker. Recover continuation identifiers, completion status, errors, and relevant output tails; do not repeat a completed action or start a replacement session merely because a preview omitted them.",
 		"- Entries under Available skills are discovery summaries only, not active instructions. When operating visible target UI, if the full device-operator instructions are not already present in the current conversation, call skill_read for device-operator before the first screenshot or UI action, then follow the loaded instructions. Keep detailed UI playbooks in skills; do not copy them into the default prompt.",
 		"- Prefer direct or semantic tools that match the requested operation only when the latest state satisfies their preconditions; use low-level input tools when the direct path is unavailable or ineffective.",

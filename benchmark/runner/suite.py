@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from runner.matching import RFC3339_BOUNDS, parse_rfc3339
 from runner.platform import (
     TargetPlatform,
     normalize_target_platform,
@@ -314,8 +315,8 @@ def load_suite(path: Path) -> Suite:
         ):
             raise SuiteValidationError(f"task {tid}: android_bridge_input_text must be non-empty text")
         android_bridge_fixture = raw.get("android_bridge_fixture")
-        if android_bridge_fixture not in (None, "calendar", "contacts"):
-            raise SuiteValidationError(f"task {tid}: android_bridge_fixture must be calendar or contacts")
+        if android_bridge_fixture not in (None, "calendar", "contacts", "sms_draft"):
+            raise SuiteValidationError(f"task {tid}: android_bridge_fixture must be calendar, contacts or sms_draft")
         platforms = _platform_list(raw.get("platforms", []), tid)
         environment_bridge_types = raw.get("environment_bridge_types", [])
         if not isinstance(environment_bridge_types, list) or any(
@@ -1031,19 +1032,29 @@ def _platform_list(raw: Any, task_id: str) -> list[str]:
 
 
 def _validate_matcher_bounds(value: Any, path: str) -> None:
-    """Reject {"$gte"/"$lte"} bounds that are not numbers or that cross."""
+    """Validate numeric and timestamp matcher ranges at suite load time."""
     if isinstance(value, list):
         for index, item in enumerate(value):
             _validate_matcher_bounds(item, f"{path}[{index}]")
         return
     if not isinstance(value, dict):
         return
-    if value and set(value) <= {"$gte", "$lte"}:
+    keys = set(value)
+    if keys and keys <= {"$gte", "$lte"}:
         for key, bound in value.items():
             if isinstance(bound, bool) or not isinstance(bound, (int, float)) or not math.isfinite(bound):
                 raise SuiteValidationError(f"{path}.{key} must be a finite number")
         if "$gte" in value and "$lte" in value and value["$gte"] > value["$lte"]:
             raise SuiteValidationError(f"{path}: $gte must not exceed $lte")
+        return
+    if keys & RFC3339_BOUNDS:
+        if not keys <= RFC3339_BOUNDS:
+            raise SuiteValidationError(f"{path}: RFC3339 bounds cannot be mixed with other matchers")
+        bounds = {key: parse_rfc3339(bound) for key, bound in value.items()}
+        if any(bound is None for bound in bounds.values()):
+            raise SuiteValidationError(f"{path}: RFC3339 bounds must be timestamps with a timezone")
+        if len(bounds) == 2 and bounds["$rfc3339_gte"] > bounds["$rfc3339_lte"]:
+            raise SuiteValidationError(f"{path}: $rfc3339_gte must not exceed $rfc3339_lte")
         return
     for key, item in value.items():
         _validate_matcher_bounds(item, f"{path}.{key}")

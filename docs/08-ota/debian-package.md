@@ -19,6 +19,8 @@ Package contents use standard Debian paths:
 /usr/share/aico/config-web/    # Config Web static assets
 /usr/share/aico/skills/        # bundled skills
 /usr/share/aico/audio/         # Business audio assets
+/usr/share/aico/ekho-data/     # Mandarin voice and mixed-language alphabet assets
+/usr/share/doc/aico-business/ekho/ # Ekho/voice licenses, provenance, upstream source, and patch
 /etc/aico/ and others         # In-scope runtime configuration, registered as conffiles
 ```
 
@@ -69,6 +71,7 @@ New platform paths and package ownership:
 | Contents | Path | Owner |
 | --- | --- | --- |
 | Business programs and self-check CLI | `/usr/lib/aico/` | aico-business |
+| Ekho executable, Mandarin data, and source/license records | `/usr/lib/aico/ekho`, `/usr/share/aico/ekho-data/`, `/usr/share/doc/aico-business/ekho/` | aico-business |
 | Business models and notification audio | `/usr/lib/aico/models/`, `/usr/share/aico/audio/voice-notifications/` | aico-business |
 | Runtime configuration and Aico Link service helpers | Namespaces defined by `config-package.json` (excluding platform items) | aico-business |
 | RGA and VQE shared libraries | `/usr/lib/aico/platform/lib/` | base rootfs |
@@ -166,6 +169,24 @@ sudo apt install ./aico-business_0.0.1-2_armhf.deb
 sudo /usr/lib/aico/ota --config /userdata/debian/ota/config.json self-check
 dpkg-query -W aico-business
 ```
+
+Ekho is built automatically with the applications. The package carries the
+Flite `slt` American English female-voice patch and Mandarin data; it declares
+Flite (`libflite1`, including its SLT voice), libsndfile, Sonic, mpg123, and C++ runtime
+dependencies. The rootfs package list installs these before `dpkg -i` during
+image creation; `apt install` resolves them when upgrading an existing device.
+The packager verifies the staged Ekho payload checksums before copying it.
+No manual `/userdata/ekho` installation or on-device compilation is needed.
+Check synthesis as the service user after installation:
+
+```bash
+sudo -u aico /usr/lib/aico/ekho -v Mandarin -s 20 --english-speed -10 -a 0 \
+  --samplerate 22050 -o /tmp/ekho-smoke.wav '你好。Hello from Aico.'
+```
+
+This produces a WAV without playing it. See
+[local Ekho speech](../04-agent/audio-features.md#local-ekho-default) for Agent
+settings and playback behavior. Remove the smoke WAV after checking it.
 
 Starting with revision 2, the `preinst/prerm/postinst/postrm` maintainer scripts
 automatically stop and start business services through apt/dpkg. Upgrades and reinstalls

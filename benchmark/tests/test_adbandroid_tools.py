@@ -475,7 +475,7 @@ def test_keyboard_tap_rejects_ctrl_alt_shift_combos(bridge):
     assert ("keyevent", "KEYCODE_HOME") in device.calls
 
 
-@pytest.mark.parametrize("key,code", [("a", "KEYCODE_A"), ("z", "KEYCODE_Z")])
+@pytest.mark.parametrize("key,code", [("a", "KEYCODE_A"), ("v", "KEYCODE_V"), ("z", "KEYCODE_Z")])
 def test_keyboard_tap_text_engine_chords(bridge, monkeypatch, key, code):
     _, device, base_url = bridge
     monkeypatch.setattr(device, "keycombination", lambda keys: device.calls.append(("keycombination", keys)), raising=False)
@@ -483,6 +483,13 @@ def test_keyboard_tap_text_engine_chords(bridge, monkeypatch, key, code):
     assert status == 200 and body["is_error"] is False
     assert ("keycombination", ["KEYCODE_CTRL_LEFT", code]) in device.calls
     assert not any(call[0] == "keyevent" for call in device.calls)
+
+
+def test_keyboard_tap_forwards_android_language_switch(bridge):
+    _, device, base_url = bridge
+    status, body = _invoke(base_url, "keyboard_tap", {"keys": ["KEYCODE_LANGUAGE_SWITCH"]})
+    assert status == 200 and body["is_error"] is False
+    assert ("keyevent", "KEYCODE_LANGUAGE_SWITCH") in device.calls
 
 
 def test_keyboard_tap_reports_unsupported_native_chord(bridge, monkeypatch):

@@ -1,6 +1,6 @@
 {
   "name": "tool_recovery_v1",
-  "version": "1.0",
+  "version": "1.2",
   "suite_category": "Agent Reliability",
   "description": "Scripted Phone Bridge failures for retry, bounded failure handling, and verification after an ambiguous write. These cases evaluate tool-result handling, not device input or transport reliability.",
   "prompt_prefix": "The connected Android phone is available through Phone Bridge.",
@@ -135,6 +135,131 @@
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "environment_assertions": {"screen_text": "Aico App: clipboard value verified."}
+    },
+    {
+      "id": "calendar_verify_ambiguous_create",
+      "category": "diagnostic",
+      "prompt": "Create one calendar event called Fixture parking reminder on the connected phone on 2037-11-21 from 15:00 to 15:30 at UTC+08:00. Confirm that one event with the correct details exists.",
+      "description_for_judge": "Creating the event succeeds on the simulated phone but the result is lost. The agent should query the test date for the already-created event, then finish without creating it a second time.",
+      "mock_environment": {
+        "platform": "android",
+        "phone_bridge": {
+          "connected": true,
+          "phone_id": "recovery-calendar",
+          "app_state": "active",
+          "fgs_bridge_enabled": true
+        },
+        "screen_text": "Calendar fixture ready.",
+        "tools": {
+          "bridge_calendar": [
+            {
+              "input_contains": {
+                "action": "query",
+                "from": {"$rfc3339_lte": "2037-11-21T15:00:00+08:00"},
+                "to": {"$rfc3339_gte": "2037-11-21T15:30:00+08:00"}
+              },
+              "screen_contains": "fixture ready",
+              "output": {
+                "ok": true,
+                "events": []
+              }
+            },
+            {
+              "input_contains": {
+                "action": "create",
+                "title": "Fixture parking reminder",
+                "start_at": {
+                  "$rfc3339_gte": "2037-11-21T15:00:00+08:00",
+                  "$rfc3339_lte": "2037-11-21T15:00:00+08:00"
+                },
+                "end_at": {
+                  "$rfc3339_gte": "2037-11-21T15:30:00+08:00",
+                  "$rfc3339_lte": "2037-11-21T15:30:00+08:00"
+                }
+              },
+              "screen_contains": "fixture ready",
+              "output": {
+                "ok": false,
+                "error": "response_timeout",
+                "outcome": "unknown"
+              },
+              "is_error": true,
+              "error": "Calendar response timed out; the operation may have completed.",
+              "screen_text": "Calendar create response lost."
+            },
+            {
+              "input_contains": {
+                "action": "query",
+                "from": {"$rfc3339_lte": "2037-11-21T15:00:00+08:00"},
+                "to": {"$rfc3339_gte": "2037-11-21T15:30:00+08:00"}
+              },
+              "screen_contains": "response lost",
+              "output": {
+                "ok": true,
+                "events": [
+                  {
+                    "event_id": "bridge-event-1",
+                    "title": "Fixture parking reminder",
+                    "start_at": "2037-11-21T15:00:00+08:00",
+                    "end_at": "2037-11-21T15:30:00+08:00"
+                  }
+                ]
+              },
+              "screen_text": "Calendar event verified."
+            },
+            {
+              "input_contains": {
+                "action": "create"
+              },
+              "output": {
+                "ok": false,
+                "error": "unexpected_create"
+              },
+              "is_error": true,
+              "error": "Unexpected calendar create attempt.",
+              "screen_text": "Calendar create attempted again."
+            }
+          ]
+        }
+      },
+      "rubric": [
+        {
+          "id": "verified_after_timeout",
+          "check": "After the create times out, the trace shows a successful query and read-back of the matching event and time range before the final confirmation."
+        },
+        {
+          "id": "bounded_and_no_duplicate",
+          "check": "The trace contains exactly one create and no tool calls after the successful confirming query. No delete or update is attempted."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 4,
+        "must_complete_within_sec": 120,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "query",
+              "from": {"$rfc3339_lte": "2037-11-21T15:00:00+08:00"},
+              "to": {"$rfc3339_gte": "2037-11-21T15:30:00+08:00"}
+            }
+          }
+        ],
+        "forbidden_tools": [
+          "shell",
+          "request_user_action",
+          "touch_gesture",
+          "open_app",
+          "search_launch_app"
+        ],
+        "required_tools": [
+          "bridge_calendar"
+        ]
+      },
+      "environment_assertions": {
+        "screen_text": "Calendar event verified."
+      }
     }
   ]
 }

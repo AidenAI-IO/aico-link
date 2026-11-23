@@ -9,10 +9,12 @@ conversationEl.addEventListener('scroll', loadOlderHistoryNearTop, {passive: tru
 conversationEl.addEventListener('scroll', hideThumbPreview, {passive: true});
 refreshCurrentLiveActivity();
 setInterval(refreshCurrentLiveActivity, 2000);
-loadToolCatalog();
 autoResizeInput();
 connectSSE();
 startResourcePolling();
+startCoreServicesPolling();
+startInspector();
+startSharedFileLinks();
 startRealtimeVoiceStatusPolling();
 
 inputEl.addEventListener('input', autoResizeInput);
@@ -23,7 +25,6 @@ stateModalCloseEl.addEventListener('click', closeStateDetails);
 stateModalEl.addEventListener('click', function(event) {
     if (event.target === stateModalEl) closeStateDetails();
 });
-toolSelectEl.addEventListener('change', syncSelectedTool);
 inputEl.addEventListener('keydown', function(event) {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
@@ -32,13 +33,13 @@ inputEl.addEventListener('keydown', function(event) {
 });
 
 document.addEventListener('click', function(event) {
-    const menu = document.getElementById('clearMenu');
-    if (menu && menu.open && !menu.contains(event.target)) closeClearMenu();
+    const menu = document.getElementById('topbarMenu');
+    if (menu && menu.open && !menu.contains(event.target)) closeTopbarMenu();
 });
 
 document.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') {
-        closeClearMenu();
+        closeTopbarMenu();
     }
     if (event.key === 'Escape' && activeStateMessageKey) {
         closeStateDetails();

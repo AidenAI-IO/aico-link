@@ -586,7 +586,12 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 			}), 120)
 		} else if hasError {
 			errText := liveActivityEventErrorText(event)
-			state.LastError = truncateLiveActivityText(errText, 160)
+			// Private tools (clipboard, contacts, ...) can echo their data in
+			// the error; the phone's lock screen must not show it.
+			state.LastError = ""
+			if !toolResultIsSensitive(event.ToolName) {
+				state.LastError = truncateLiveActivityText(errText, 160)
+			}
 			if liveActivityResultNeedsApp(event, errText) {
 				state.Status = LiveActivityStatusNeedsApp
 				state.Phase = LiveActivityPhaseWaitingApp
@@ -650,6 +655,12 @@ func (m *LiveActivityManager) CompleteTask(requestID, output string) *LiveActivi
 	if state := m.pauseForHumanHandoff(requestID, output); state != nil {
 		return state
 	}
+	return m.completeTask(requestID, output)
+}
+
+// completeTask settles the task as completed without checking for a pending
+// human handoff.
+func (m *LiveActivityManager) completeTask(requestID, output string) *LiveActivityState {
 	text := m.getLiveActivityText()
 	return m.finishTask(requestID, LiveActivityStatusCompleted, firstNonEmptyString([]string{
 		truncateLiveActivityText(output, 120),
@@ -780,19 +791,7 @@ func (m *LiveActivityManager) SnapshotActive() *LiveActivityState {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.activeRequestID != "" {
-		if state, ok := m.states[m.activeRequestID]; ok {
-			return &state
-		}
-	}
-	var latest *LiveActivityState
-	for _, state := range m.states {
-		candidate := state
-		if latest == nil || candidate.UpdatedAt.After(latest.UpdatedAt) {
-			latest = &candidate
-		}
-	}
-	return latest
+	return m.selectActiveLocked(func(LiveActivityState) bool { return true })
 }
 
 func (m *LiveActivityManager) SnapshotActiveForPhone(phoneID string) *LiveActivityState {
@@ -805,22 +804,39 @@ func (m *LiveActivityManager) SnapshotActiveForPhone(phoneID string) *LiveActivi
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.activeRequestID != "" {
-		if state, ok := m.states[m.activeRequestID]; ok && liveActivityStateMatchesPhoneID(state, phoneID) {
-			return &state
+	return m.selectActiveLocked(func(state LiveActivityState) bool {
+		return liveActivityStateMatchesPhoneID(state, phoneID)
+	})
+}
+
+// selectActiveLocked picks the state the phone shows. Work that is still
+// running wins over a finished one, so a task or chat that ends while another
+// runs never hides the running one's stop control. Among equals the most
+// recently selected request wins, then the most recently updated one.
+func (m *LiveActivityManager) selectActiveLocked(match func(LiveActivityState) bool) *LiveActivityState {
+	var best *LiveActivityState
+	better := func(candidate LiveActivityState) bool {
+		if best == nil {
+			return true
 		}
+		if (candidate.EndedAt == nil) != (best.EndedAt == nil) {
+			return candidate.EndedAt == nil
+		}
+		if candidate.RequestID == m.activeRequestID || best.RequestID == m.activeRequestID {
+			return candidate.RequestID == m.activeRequestID
+		}
+		return candidate.UpdatedAt.After(best.UpdatedAt)
 	}
-	var latest *LiveActivityState
 	for _, state := range m.states {
-		if !liveActivityStateMatchesPhoneID(state, phoneID) {
+		if !match(state) {
 			continue
 		}
-		candidate := state
-		if latest == nil || candidate.UpdatedAt.After(latest.UpdatedAt) {
-			latest = &candidate
+		if better(state) {
+			candidate := state
+			best = &candidate
 		}
 	}
-	return latest
+	return best
 }
 
 func (m *LiveActivityManager) publish(requestID string, final bool) {

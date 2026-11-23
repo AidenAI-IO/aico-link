@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strings"
 
 	"aico-agent/internal/agent/contextmanager"
@@ -228,19 +228,10 @@ func InitializeContextManager(
 			return nil, fmt.Errorf("failed to create context manager: %w", err)
 		}
 	} else if !contextManagerHasSystemPrompt(manager, systemPrompt) {
-		// A configuration change, such as the response locale or time zone,
+		// A configuration change, such as the response locale or custom prompt,
 		// rewrites the system message and keeps the conversation.
 		if err := replaceSessionSystemPrompt(manager, systemPrompt); err != nil {
 			return nil, fmt.Errorf("refresh session system prompt: %w", err)
-		}
-	} else if strings.TrimSpace(withUserProfileSection(manager.MessageListDump().Messages[0].Content, "")) != strings.TrimSpace(withUserProfileSection(systemPrompt, "")) {
-		// The generated date is runtime context, not a configuration change.
-		// Keep the append-only transcript and provider continuation intact while
-		// supplying the new date before the next task resumes this conversation.
-		// A changed user profile section is refreshed separately by the run.
-		dateContext := strings.SplitN(strings.TrimSpace(systemPrompt), "\n", 3)[1]
-		if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleState, Content: dateContext}); err != nil {
-			return nil, fmt.Errorf("refresh session date: %w", err)
 		}
 	}
 
@@ -269,10 +260,18 @@ func modelConversationIdentity(model ModelConfig) string {
 }
 
 // userConversationIdentity fingerprints the settings whose change must start a
-// new realtime user context: the backend model and the whole voice model
-// configuration, matching the live rotation in applyConfig. Only a hash is
-// stored, so credentials in the voice model configuration never reach disk.
+// new realtime user context, matching the live rotation in applyConfig. Only
+// the backend model counts. The voice model does not: the user context stores
+// plain messages and tool calls and is replayed as provider-neutral items, so
+// switching voice provider keeps the conversation.
 func userConversationIdentity(cfg Config) string {
+	return conversationIdentity(modelConversationIdentity(cfg.Model), "user")
+}
+
+// legacyUserConversationIdentity is the identity recorded before the voice
+// model stopped counting. A folder still carrying it for the current settings
+// runs the same conversation, so it must not start a new one on upgrade.
+func legacyUserConversationIdentity(cfg Config) string {
 	voiceModel, err := json.Marshal(cfg.VoiceModel)
 	if err != nil {
 		voiceModel = []byte(fmt.Sprintf("%#v", cfg.VoiceModel))
@@ -287,13 +286,18 @@ func conversationIdentity(parts ...string) string {
 
 // startConversationForIdentity starts a new conversation in sessionFolder when
 // its current conversation was recorded under a different identity, then
-// records identity. A folder without a record keeps its conversation.
-func startConversationForIdentity(sessionFolder, identity, systemPrompt string) error {
+// records identity. A folder without a record keeps its conversation, and so
+// does one recorded under any of the equivalent identities.
+func startConversationForIdentity(sessionFolder, identity, systemPrompt string, equivalent ...string) error {
 	stored, err := os.ReadFile(filepath.Join(sessionFolder, conversationIdentityFile))
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read conversation identity: %w", err)
 	}
-	if recorded := strings.TrimSpace(string(stored)); recorded != "" && recorded != identity && contextmanager.CurrentSessionID(sessionFolder) != "" {
+	recorded := strings.TrimSpace(string(stored))
+	if slices.Contains(equivalent, recorded) {
+		recorded = identity
+	}
+	if recorded != "" && recorded != identity && contextmanager.CurrentSessionID(sessionFolder) != "" {
 		if _, err := contextmanager.NewContextManager(sessionFolder, systemPrompt); err != nil {
 			return fmt.Errorf("start conversation for changed model: %w", err)
 		}
@@ -337,8 +341,7 @@ func sessionHasSystemMessage(manager *contextmanager.ContextManager) bool {
 }
 
 // syncSessionSystemPrompt brings an existing session up to the current system
-// prompt. Only the generated date and the user profile section may differ
-// without a rewrite: the date has its own state refresh and the profile has
+// prompt. Only the user profile section may differ without a rewrite: it has
 // refreshUserProfileSection.
 func syncSessionSystemPrompt(manager *contextmanager.ContextManager, systemPrompt string) error {
 	if !sessionHasSystemMessage(manager) || contextManagerHasSystemPrompt(manager, systemPrompt) {
@@ -384,13 +387,8 @@ func contextManagerHasSystemPrompt(manager *contextmanager.ContextManager, syste
 		systemPromptIdentity(messageList[0].Content) == systemPromptIdentity(systemPrompt)
 }
 
-// Only the date line emitted at the beginning of buildProfile and the trailing
-// user profile section are volatile. Preserve the timezone and every
-// instruction, including date-like user text, so actual configuration changes
-// still start a new conversation.
-var generatedPromptDate = regexp.MustCompile(`^(` + regexp.QuoteMeta(agentIdentityPrompt) + `\nCurrent date: )[0-9]{4}-[0-9]{2}-[0-9]{2} \((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|星期[一二三四五六日]), timezone: ([^)\n]+)\)\n`)
-
+// Only the trailing user profile section is volatile; it has its own
+// refresh. Every other difference is a configuration change.
 func systemPromptIdentity(prompt string) string {
-	prompt = strings.TrimSpace(withUserProfileSection(prompt, ""))
-	return generatedPromptDate.ReplaceAllString(prompt, "${1}(timezone: ${2})\n")
+	return strings.TrimSpace(withUserProfileSection(prompt, ""))
 }

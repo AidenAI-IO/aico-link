@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"io"
 	"math"
 	"os"
@@ -72,6 +73,7 @@ func TestBuiltinToolSetRegistersExpectedTools(t *testing.T) {
 		"mouse_move",
 		"mouse_scroll",
 		"quick_action",
+		"read_image",
 		"request_user_action",
 		"screenshot",
 		"shell",
@@ -2586,5 +2588,49 @@ func TestTouchGestureRejectsDragReleaseWithoutStart(t *testing.T) {
 	reports := readMouseReports(t, dev, path)
 	if len(reports) != 0 {
 		t.Fatalf("len(reports) = %d, want no HID writes", len(reports))
+	}
+}
+
+// A pointer action whose coordinates were chosen before the screen turned
+// between portrait and landscape is not sent, so it cannot land on whatever
+// moved under those coordinates.
+func TestPointerActionIsNotSentAfterTheScreenTurned(t *testing.T) {
+	cases := []struct {
+		name     string
+		seenW    int
+		seenH    int
+		input    string
+		wantSent bool
+	}{
+		{name: "same orientation", seenW: 1920, seenH: 884, wantSent: true},
+		{name: "portrait screenshot, landscape screen", seenW: 498, seenH: 1080, wantSent: false},
+		// Holding the release back would leave the contact pressed.
+		{name: "drag release still ends the held contact", seenW: 498, seenH: 1080, input: `{"type":"drag_release","point":{"x":145,"y":684}}`, wantSent: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := &screen.ScreenState{}
+			state.UpdateScreenshot([]byte("seen"), tc.seenW, tc.seenH)
+			now := base64.StdEncoding.EncodeToString(solidJPEG(t, 1920, 884, color.Gray{Y: 80}))
+			shot := &stubTool{name: "screenshot", output: fmt.Sprintf(`{"width":1920,"height":884,"format":"jpeg","size":1,"data":%q}`, now)}
+			action := &stubTool{name: "touch_gesture", output: "ok"}
+			tool := newPostActionScreenshotTool(action, shot, 0).(*postActionScreenshotTool).withTurnedScreenGuard(state)
+
+			input := tc.input
+			if input == "" {
+				input = `{"type":"tap","point":{"x":145,"y":684}}`
+			}
+			out, err := tool.Call(context.Background(), input)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			if sent := len(action.inputs) == 1; sent != tc.wantSent {
+				t.Fatalf("action sent = %v, want %v (output %s)", sent, tc.wantSent, out)
+			}
+			var result postActionScreenshotResult
+			if err := json.Unmarshal([]byte(out), &result); err != nil || result.Data == "" {
+				t.Fatalf("want a screenshot result either way, got %s (err %v)", out, err)
+			}
+		})
 	}
 }

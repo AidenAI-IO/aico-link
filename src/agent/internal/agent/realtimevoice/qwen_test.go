@@ -322,7 +322,14 @@ func TestTranslateQwenIgnoresIdempotentCancelError(t *testing.T) {
 		t.Fatalf("idempotent cancel error was surfaced: %+v", event)
 	}
 
+	// A refused response.create is not a session failure: the server's own
+	// response is running and the request can be repeated after it.
 	event, ok = translateQwenEvent([]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"invalid_value","message":"Cannot create response while another response is in progress.","param":"response.create"}}`))
+	if !ok || event.Kind != EventResponseRejected {
+		t.Fatalf("response-in-progress error = %+v, ok=%t; want a rejected response", event, ok)
+	}
+
+	event, ok = translateQwenEvent([]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"invalid_value","message":"Invalid session config.","param":"session.update"}}`))
 	if !ok || event.Kind != EventError || event.Error == nil {
 		t.Fatalf("unrelated protocol error was suppressed: %+v, ok=%t", event, ok)
 	}

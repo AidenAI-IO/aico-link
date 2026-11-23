@@ -10,8 +10,8 @@ import (
 // userProfileSectionHeader opens the section of the system message that lists
 // the user's saved profile, preference, and rule memories. The section is
 // always the last part of the system message so it can be replaced without
-// rebuilding the rest of the prompt, whose date and skills have their own
-// refresh paths.
+// rebuilding the rest of the prompt, whose skills have their own refresh
+// path.
 const userProfileSectionHeader = "\n\n## User profile\n" +
 	"The user saved these profile entries, preferences, and rules. Apply them whenever relevant without asking again. " +
 	"The user's words in this conversation take precedence. This list is partial: facts and sensitive memories are never listed here, so use recall_memory for anything else the user may have saved.\n"
@@ -26,6 +26,21 @@ func withUserProfileSection(systemMessage, profile string) string {
 		return systemMessage
 	}
 	return systemMessage + userProfileSectionHeader + profile
+}
+
+// WithUserProfileSection appends the user profile section to a prompt that
+// has none, such as the realtime voice instructions, using the same section the
+// backend system prompt carries.
+func WithUserProfileSection(prompt, profile string) string {
+	return withUserProfileSection(prompt, profile)
+}
+
+// SyncUserProfileSection makes the conversation's system message carry the
+// user profile section of prompt, the instructions a realtime session was
+// opened with. Prompts that differ only in that section compare equal, so
+// without this the stored record would keep an outdated profile.
+func SyncUserProfileSection(manager *contextmanager.ContextManager, prompt string) error {
+	return refreshUserProfileSection(manager, userProfileSection(prompt))
 }
 
 // userProfileSection returns the profile entries carried by systemMessage.

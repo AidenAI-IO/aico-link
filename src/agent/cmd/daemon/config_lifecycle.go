@@ -34,6 +34,11 @@ type inputLifecycle struct {
 	runVoice        func(agent.Config, *agent.AudioDialog, chan os.Signal, <-chan struct{})
 	newWatcher      wakeupWatcherFactory
 	newVoiceWatcher voiceWakeupWatcherFactory
+	// classicVoiceDisabled turns the stt input mode into text only: no
+	// AudioDialog (and so no VAD or Smart Turn helper) is built and no voice
+	// conversation can start from a wakeup or a browser. Typed chat does not
+	// use the dialog and keeps working. Realtime is not affected.
+	classicVoiceDisabled bool
 }
 
 func resolveMCUServiceSocket() string {
@@ -241,7 +246,16 @@ func activeVoiceConfig(cfg agent.Config) agent.Config {
 	return active
 }
 
+// classicVoiceGated reports whether cfg selects Classic (stt) input while
+// Classic voice is disabled.
+func (c *inputLifecycle) classicVoiceGated(cfg agent.Config) bool {
+	return c.classicVoiceDisabled && cfg.InputModeOrDefault() == "stt"
+}
+
 func (c *inputLifecycle) buildDialog(cfg agent.Config) (*agent.AudioDialog, error) {
+	if c.classicVoiceGated(cfg) {
+		return nil, nil
+	}
 	if c.newDialog != nil {
 		return c.newDialog(cfg)
 	}
@@ -270,8 +284,16 @@ func (c *inputLifecycle) startVoice(cfg agent.Config, dialog *agent.AudioDialog)
 	c.dialogMu.Lock()
 	c.dialog = dialog
 	c.dialogMu.Unlock()
+	gated := c.classicVoiceGated(cfg)
 	go func() {
 		defer close(done)
+		if gated {
+			select {
+			case <-stop:
+			case <-shutdown:
+			}
+			return
+		}
 		if c.runVoice != nil {
 			c.runVoice(cfg, dialog, shutdown, stop)
 			return
@@ -284,11 +306,19 @@ func (c *inputLifecycle) startVoice(cfg agent.Config, dialog *agent.AudioDialog)
 			}
 			runWakeupModeWithVoice(cfg, dialog, c.runtime, voice, shutdown, c.newVoiceWatcher, stop)
 		case "realtime":
-			tasks := newRealtimeAgentTaskManager(cfg, c.runtime)
+			var activity *agent.BackgroundTaskActivity
+			if c.server != nil {
+				activity = c.server.BackgroundTaskActivity()
+			}
+			tasks := newRealtimeAgentTaskManager(cfg, c.runtime, activity)
 			if tasks != nil {
 				defer tasks.Close()
 				if recorder := c.server.CollaborationRecorder(); recorder != nil {
 					tasks.SetEventSink(recorder)
+				}
+				if c.server != nil {
+					c.server.SetAgentTasks(tasks)
+					defer c.server.SetAgentTasks(nil)
 				}
 			}
 			runRealtimeWakeupModeWithServer(cfg, shutdown, c.server, c.runtime, tasks, c.newVoiceWatcher, stop)

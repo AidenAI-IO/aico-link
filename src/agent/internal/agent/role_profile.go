@@ -25,6 +25,7 @@ func agentRoleRules() []string {
 		"If the current screenshot clearly identifies the app/page, visible text, dialogs, or other UI state, use that observed UI context when choosing tools; keep OS selection tied to global device_type state.",
 		"Call request_user_action when the task requires credentials, login-method selection, verification, system/app redirect confirmation, permission dialog confirmation, or human judgment your tools cannot fulfill, or when the user refers to a target you cannot unambiguously identify from the screen. Ask the user to complete it on the device; do not ask them to send credentials or private verification details in chat.",
 		"Only latest <state> content is valid, previous old states may have been invalidated or expired.",
+		"Report current state only from the latest observation; an earlier observation may be reported when identified as earlier, such as a value from a previous screen in a comparison. Do not fill in text that is cut off or values that are not visible; reveal them first or report only the visible part. Before reporting a current changing value or a toggled state, confirm it with a fresh observation.",
 		"When open_app or open_url returns ok=true, inspect its returned screenshot before answering. ok=true only confirms that the OS accepted the launch; screen_changed=false or an omitted screen_changed field without visual confirmation is not proof that the requested target opened.",
 	}
 	return rules
@@ -38,7 +39,6 @@ func buildProfile(
 ) RoleProfile {
 	promptParts := []string{
 		agentIdentityPrompt,
-		currentDateContext(cfg.Locale, cfg.Timezone),
 		"",
 		"## Base instruction",
 		combinedAgentInstruction(cfg),
@@ -51,6 +51,9 @@ func buildProfile(
 		"",
 		"## Default behavior",
 		defaultAgentBehavior(),
+		"",
+		"## Screen Information Persistence Rule",
+		screenInformationPersistenceGuidance(),
 		"",
 		"## Available skills",
 		"The entries below are discovery summaries only. Load the matching skill with skill_read before following its instructions.",

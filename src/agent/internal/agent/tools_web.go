@@ -18,6 +18,7 @@ import (
 	"github.com/gocolly/colly"
 	"github.com/tmc/langchaingo/tools/duckduckgo"
 	"github.com/tmc/langchaingo/tools/wikipedia"
+	"golang.org/x/net/idna"
 )
 
 const defaultWebSearchMaxResults = 5
@@ -399,6 +400,14 @@ func (t *WebScraperTool) scrape(ctx context.Context, targetURL string) (string, 
 		colly.Async(false),
 	)
 	c.WithTransport(newScrapeTransport(t.proxy))
+	// Requests sent through a proxy never reach the dial-time guard with the
+	// target host, so validate every redirect target here as well.
+	c.RedirectHandler = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return http.ErrUseLastResponse
+		}
+		return validateScrapeURL(req.URL.String())
+	}
 
 	if err := c.Limit(&colly.LimitRule{
 		DomainGlob:  "*",
@@ -554,10 +563,69 @@ func newScrapeTransport(proxy ProxyConfig) http.RoundTripper {
 	if baseDialContext == nil {
 		baseDialContext = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	}
+
+	// The transport dials the proxy through DialContext too, and operator
+	// proxies normally live on loopback or the LAN. Record the proxy addresses
+	// the transport selects so those dials skip the destination guard; the
+	// target host is still validated before each request and redirect. The
+	// proxy resolves the target itself, so it is trusted to refuse private
+	// destinations (see docs/04-agent/configuration.md).
+	var proxyAddrs sync.Map
+	if baseProxy := httpTransport.Proxy; baseProxy != nil {
+		httpTransport.Proxy = func(req *http.Request) (*url.URL, error) {
+			u, err := baseProxy(req)
+			if err == nil && u != nil {
+				if addr := canonicalProxyAddr(u); addr != "" {
+					proxyAddrs.Store(addr, struct{}{})
+				}
+			}
+			return u, err
+		}
+	}
 	httpTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if _, ok := proxyAddrs.Load(address); ok {
+			return baseDialContext(ctx, network, address)
+		}
 		return dialAllowedScrapeAddress(ctx, baseDialContext, network, address)
 	}
 	return httpTransport
+}
+
+// canonicalProxyAddr returns the host:port net/http dials for proxy URL u,
+// mirroring net/http's canonicalAddr, including its IDNA conversion.
+func canonicalProxyAddr(u *url.URL) string {
+	host := u.Hostname()
+	if host == "" {
+		return ""
+	}
+	if !isASCII(host) {
+		if ascii, err := idna.Lookup.ToASCII(host); err == nil {
+			host = ascii
+		}
+	}
+	port := u.Port()
+	if port == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		case "socks5", "socks5h":
+			port = "1080"
+		default:
+			return ""
+		}
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 func dialAllowedScrapeAddress(ctx context.Context, dialContext func(context.Context, string, string) (net.Conn, error), network, address string) (net.Conn, error) {

@@ -256,14 +256,54 @@ type openAISession struct {
 
 func (s *openAISession) ReplayContext(ctx context.Context, items []ContextItem) error {
 	for _, item := range items {
+		images := item.Images
+		if item.Type == "message" && item.Role == "user" {
+			// A user message carries its images in its own content.
+			images = nil
+		}
 		if err := s.writeJSON(ctx, map[string]any{
 			"type": "conversation.item.create",
 			"item": openAIContextItemPayload(item, s.realtimeProtocol),
 		}); err != nil {
 			return err
 		}
+		if err := s.sendImages(ctx, images); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// SendToolResultWithImages returns a tool result followed by a user message
+// with its images: function_call_output carries only a string, so the images
+// follow it as input_image content, as the backend sends them in a state
+// message after the tool result.
+func (s *openAISession) SendToolResultWithImages(ctx context.Context, id, output string, images []Image) error {
+	if err := s.SendToolResult(ctx, id, output); err != nil {
+		return err
+	}
+	return s.sendImages(ctx, images)
+}
+
+func (s *openAISession) sendImages(ctx context.Context, images []Image) error {
+	if len(images) == 0 {
+		return nil
+	}
+	return s.writeJSON(ctx, map[string]any{
+		"type": "conversation.item.create",
+		"item": map[string]any{"type": "message", "role": "user", "content": openAIImageContent(images)},
+	})
+}
+
+func openAIImageContent(images []Image) []map[string]string {
+	content := make([]map[string]string, 0, 2*len(images))
+	for _, image := range images {
+		if caption := strings.TrimSpace(image.Caption); caption != "" {
+			content = append(content, map[string]string{"type": "input_text", "text": caption})
+		}
+		content = append(content, map[string]string{"type": "input_image", "image_url": image.dataURL()})
+	}
+	return content
 }
 
 func openAIContextItemPayload(item ContextItem, protocol string) map[string]any {
@@ -274,6 +314,13 @@ func openAIContextItemPayload(item ContextItem, protocol string) map[string]any 
 		// Legacy/Beta-compatible gateways such as MixRoute still reject
 		// output_text and require the original text content type.
 		payload["content"] = []map[string]string{{"type": "text", "text": item.Content}}
+	}
+	if item.Type == "message" && item.Role == "user" && len(item.Images) > 0 {
+		var content []map[string]string
+		if item.Content != "" {
+			content, _ = payload["content"].([]map[string]string)
+		}
+		payload["content"] = append(content, openAIImageContent(item.Images)...)
 	}
 	return payload
 }
@@ -555,16 +602,37 @@ func translateOpenAIEvent(body []byte) (Event, bool) {
 	case "error":
 		var event struct {
 			Error struct {
+				Type    string `json:"type"`
+				Code    string `json:"code"`
 				Message string `json:"message"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(body, &event); err != nil {
 			return Event{Kind: EventError, Error: err}, true
 		}
+		if isOpenAINoActiveResponseCancelError(event.Error.Type, event.Error.Code, event.Error.Message) {
+			return Event{}, false
+		}
 		return Event{Kind: EventError, Error: errors.New(event.Error.Message)}, true
 	default:
 		return Event{}, false
 	}
+}
+
+// isOpenAINoActiveResponseCancelError reports the error OpenAI returns when a
+// response.cancel arrives after the response already finished or was
+// cancelled by server VAD. Barge-in can race the server this way; the cancel
+// had nothing left to do, so the session must stay open. Relays may drop the
+// code, so the documented message is accepted as well.
+func isOpenAINoActiveResponseCancelError(errorType, code, message string) bool {
+	if errorType = strings.TrimSpace(errorType); errorType != "" && !strings.EqualFold(errorType, "invalid_request_error") {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(code), "response_cancel_not_active") {
+		return true
+	}
+	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(message)), ".")
+	return normalized == "cancellation failed: no active response found"
 }
 
 var _ Provider = OpenAIProvider{}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -450,5 +451,97 @@ func fillNonZeroValue(t *testing.T, typ reflect.Type) reflect.Value {
 	default:
 		t.Fatalf("cannot fill type %s", typ)
 		return reflect.Zero(typ)
+	}
+}
+
+// With Classic voice disabled, stt input builds no dialog (and so no VAD),
+// runs no voice loop and offers no voice to the Web UI, across reloads, while
+// realtime still runs its loop. Enabled, stt keeps its Classic loop.
+func TestInputLifecycleClassicVoiceDisabled(t *testing.T) {
+	for _, disabled := range []bool{true, false} {
+		name := "enabled"
+		if disabled {
+			name = "disabled"
+		}
+		t.Run(name, func(t *testing.T) {
+			cfg := agent.DefaultConfig()
+			cfg.ConfigDir = t.TempDir()
+			cfg.Model.Provider, cfg.Model.Model = "fake", "fake"
+			cfg.InputMode, cfg.STT.Provider, cfg.TTS.Provider = "stt", "", ""
+			cfg.QuickCapture.Enabled = new(bool)
+			runtime, err := agent.NewRuntime(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer runtime.Close()
+			server := agent.NewServer(runtime, ":0")
+			defer server.Close()
+			controller := newInputLifecycle(runtime, server)
+			controller.classicVoiceDisabled = disabled
+			var dialogs atomic.Int32 // Classic dialogs, which own the VAD
+			controller.newDialog = func(cfg agent.Config) (*agent.AudioDialog, error) {
+				if cfg.InputModeOrDefault() == "stt" {
+					dialogs.Add(1)
+				}
+				return nil, nil
+			}
+			started := make(chan string, 4)
+			controller.runVoice = func(cfg agent.Config, _ *agent.AudioDialog, shutdown chan os.Signal, stop <-chan struct{}) {
+				started <- cfg.InputModeOrDefault()
+				select {
+				case <-stop:
+				case <-shutdown:
+				}
+			}
+			expectLoop := func(want string) {
+				t.Helper()
+				if want == "" {
+					select {
+					case mode := <-started:
+						t.Fatalf("started the %s voice loop", mode)
+					case <-time.After(20 * time.Millisecond):
+					}
+					return
+				}
+				select {
+				case mode := <-started:
+					if mode != want {
+						t.Fatalf("started %s, want %s", mode, want)
+					}
+				case <-time.After(time.Second):
+					t.Fatalf("%s loop did not start", want)
+				}
+			}
+			if err := controller.Start(cfg); err != nil {
+				t.Fatal(err)
+			}
+			defer controller.Close()
+			runtime.SetConfigPreparer(controller.Prepare)
+			if !disabled {
+				expectLoop("stt")
+				if dialogs.Load() != 1 {
+					t.Fatal("Classic voice built no dialog")
+				}
+				return
+			}
+			expectLoop("")
+			if server.RealtimeVoiceStatus().Available {
+				t.Fatal("stt without Classic voice offers voice")
+			}
+
+			next := cfg
+			next.InputMode = "realtime"
+			if err := runtime.ApplyConfigSnapshot(next); err != nil {
+				t.Fatal(err)
+			}
+			expectLoop("realtime")
+			if err := runtime.ApplyConfigSnapshot(cfg); err != nil {
+				t.Fatal(err)
+			}
+			expectLoop("")
+			if n := dialogs.Load(); n != 0 || server.RealtimeVoiceStatus().Available {
+				t.Fatalf("stt without Classic voice built %d dialogs or offers voice", n)
+			}
+		})
 	}
 }

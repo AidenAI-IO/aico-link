@@ -89,7 +89,7 @@ them:
 | xAI | JSON WebSocket | xAI realtime event aliases are normalized to the shared event model |
 | Gemini | Gemini Live WebSocket | `setup`/`serverContent` protocol; input/output transcription and function responses; server VAD does not expose Aico speech boundary events |
 | Speko S2S | HTTP mint + delegated provider WebSocket | Mints a short-lived provider credential, then uses the selected Gemini or xAI adapter; OpenAI/WebRTC routing is intentionally rejected |
-| Moss | JSON + binary WebSocket | MOSS-LIVE (`moss-live-1.0`); 16 kHz PCM uplink / 48 kHz PCM downlink; immediate playback chunk acks; client tools via `delegation=client` + OpenAI-style `function_call_output` / deferred `session.continue` (`ResponseContinuer`, not text injection); reserved names such as `web_search` are exported under an `aico_` alias; client tools are capped at 32; voice-only (no `/api/chat` text inject, no configurable `voice`, no camera/screen frames yet). `use_backend_agent` is ignored at runtime (effective `false`, stored value unchanged; Config Web hides the toggle). |
+| Moss | JSON + binary WebSocket | MOSS-LIVE (`moss-live-1.0`); 16 kHz PCM uplink / 48 kHz PCM downlink; immediate playback chunk acks; client tools via `attach_session` `delegation: {"type": "client"}`; sync tool calls keep the run open, and the adapter continues it with `response.create` naming the call IDs once `conversation.item.created` acknowledges every `function_call_output` (`response.done` is a call summary, not a terminal event); reserved names such as `web_search` are exported under an `aico_` alias; client tools are capped at 32; voice-only (no `/api/chat` text inject, no configurable `voice`, no camera/screen frames yet). `use_backend_agent` is ignored at runtime (effective `false`, stored value unchanged; Config Web hides the toggle). |
 
 Speko is a control-plane adapter, not another PCM relay. Its lease wrapper
 emits `ErrSessionRotated` before expiry so the daemon can reconnect and replay
@@ -116,6 +116,29 @@ non-suppressed response. Tool calls are executed by the background-capable
 realtime tool executor; tool results are sent back through
 `ToolResultSender`, and providers that require explicit continuation receive a
 new `CreateResponse` after all results for that response have arrived.
+
+A tool that returns a visual observation, such as `screenshot` or a
+post-action screenshot, never sends its image to the model or the user context
+as base64 text. The realtime user context stores it the way the backend loop
+does: a tool result without the image, followed by a `state` message with the
+image as an attachment and its caption (screenshot size, screen-change notes,
+UI grounding). What the provider receives depends on the model:
+
+- Models that accept images in the conversation receive the backend tool
+  result with the captioned image. The list is kept in
+  `realtimevoice.SupportsImageInput`; it holds the `gpt-realtime` family
+  (OpenAI Realtime) and `gemini-3.8-live` models. OpenAI receives the image as
+  an `input_image` user message after the `function_call_output`; Gemini
+  receives it as `inlineData` parts of the function response, with the caption
+  in the response.
+- Other models, including the default Gemini 3.1 Flash Live, Qwen, xAI, and
+  MOSS Live, receive the caption wrapped in `<state>` in the tool result and an
+  `[Image omitted: ...]` placeholder in place of the image. Their protocols
+  take images only as streamed video frames or input buffers, or not at all.
+
+Context replay after a reconnect restores each `state` message into its tool
+result. A model that accepts images gets the latest image again; earlier
+images, and every image for other models, are replaced by the placeholder.
 
 Speech and tool or background-task execution can overlap in one response, so
 the realtime instructions require an outcome-claim gate: before a result showing

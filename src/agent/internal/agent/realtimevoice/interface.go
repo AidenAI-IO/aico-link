@@ -276,8 +276,11 @@ type ContextReplayer interface {
 }
 
 type ContextItem struct {
-	Role      string
-	Content   string
+	Role    string
+	Content string
+	// Images go with a user message, after Content, for a session whose
+	// model SupportsImageInput reports. Other adapters ignore them.
+	Images    []Image
 	Type      string
 	CallID    string
 	Name      string
@@ -305,7 +308,12 @@ const (
 	EventToolCallCancelled EventKind = "tool_call_cancelled"
 	EventUsage             EventKind = "usage"
 	EventError             EventKind = "error"
-	EventClosed            EventKind = "closed"
+	// EventResponseRejected reports that the provider refused a requested
+	// response because its own response (for example to speech it just
+	// detected) is already running. The session is still healthy; the
+	// request can be made again once that response ends.
+	EventResponseRejected EventKind = "response_rejected"
+	EventClosed           EventKind = "closed"
 )
 
 type Event struct {

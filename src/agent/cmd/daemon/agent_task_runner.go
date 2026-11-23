@@ -13,16 +13,29 @@ import (
 // orchestration boundary owned by internal/agenttask.
 type runtimeAgentTaskRunner struct {
 	runtime *agent.Runtime
+	// activity shows each task's steps on the phone's Live Activity; nil
+	// leaves it alone.
+	activity *agent.BackgroundTaskActivity
 }
 
-func newRealtimeAgentTaskManager(cfg agent.Config, runtime *agent.Runtime) *agenttask.Manager {
+func newRealtimeAgentTaskManager(cfg agent.Config, runtime *agent.Runtime, activity *agent.BackgroundTaskActivity) *agenttask.Manager {
 	if !cfg.UseBackendAgentEffective() {
 		return nil
 	}
-	return agenttask.NewManager(runtimeAgentTaskRunner{runtime: runtime})
+	manager := agenttask.NewManager(runtimeAgentTaskRunner{runtime: runtime, activity: activity})
+	if activity != nil {
+		manager.SetLifecycleObserver(activity.Observe)
+	}
+	return manager
 }
 
 func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string, error) {
+	// Run events advance the task's Live Activity step; the manager's
+	// lifecycle observer starts and settles it.
+	taskID := ""
+	if observation, ok := agenttask.TaskObservationFromContext(ctx); ok {
+		taskID = observation.Task.ID
+	}
 	var actionHandler agent.UserActionHandler
 	if handler := agenttask.UserActionHandlerFromContext(ctx); handler != nil {
 		actionHandler = func(_ context.Context, req agent.HumanHandoffRequest) error {
@@ -63,13 +76,26 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 		}
 	}
 	acknowledge := agenttask.SteerAcknowledgerFromContext(ctx)
+	recordStep := agenttask.StepRecorderFromContext(ctx)
 	request.EventHandler = func(event agent.RunEvent) {
+		r.activity.Event(taskID, event)
+		if recordStep != nil {
+			if step, ok := agent.TaskTimelineStep(event); ok {
+				recordStep(step)
+			}
+		}
 		switch event.Type {
 		case "tool_result":
 			if !event.IsError {
+				// The summary reports which steps already took effect. Private
+				// phone data is left out: it also reaches the task timeline.
+				output := event.Content
+				if agent.PrivateToolOutput(event.ToolName) {
+					output = ""
+				}
 				suppliedMu.Lock()
 				completed = append(completed, agenttask.CompletedStep{
-					Tool: event.ToolName, Input: event.ToolInput, Output: event.Content})
+					Tool: event.ToolName, Input: event.ToolInput, Output: output})
 				suppliedMu.Unlock()
 			}
 		case "steer":

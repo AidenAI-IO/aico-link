@@ -33,6 +33,7 @@ import (
 	"aico-agent/internal/agent/speech"
 	"aico-agent/internal/agent/tts"
 	_ "aico-agent/internal/agent/tts/adapters/alicloud"
+	_ "aico-agent/internal/agent/tts/adapters/ekho"
 	_ "aico-agent/internal/agent/tts/adapters/fishaudio"
 	_ "aico-agent/internal/agent/tts/adapters/google_cloud"
 	_ "aico-agent/internal/agent/tts/adapters/minimax"
@@ -41,6 +42,7 @@ import (
 	"aico-agent/internal/ble"
 	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/localtls"
+	"aico-agent/internal/logging"
 	"aico-agent/internal/mcu"
 	streamcontract "aico-agent/internal/stream"
 )
@@ -70,6 +72,7 @@ type Server struct {
 	usbListeners            []net.Listener
 	usbListenStops          []chan struct{}
 	lanAccess               *lanaccess.State
+	agentTasks              agentTaskRegistry
 	usbIngress              USBIngress
 	runtime                 *Runtime
 	addr                    string
@@ -106,6 +109,7 @@ type Server struct {
 	pendingResults          map[string]*chatPendingResult
 	pendingResultsMu        sync.Mutex
 	activeRuns              map[string]context.CancelFunc
+	activeRunStartedAt      map[string]time.Time
 	activeRunsMu            sync.Mutex
 	terminatedRequests      map[string]struct{}
 	terminatedRequestsMu    sync.RWMutex
@@ -114,14 +118,17 @@ type Server struct {
 	latestSpeech            latestTTSOutput
 	pendingSteers           map[string]pendingSteerMessage
 	steerSignals            map[string]chan struct{}
-	steersMu                sync.Mutex
-	eventBroadcaster        *EventBroadcaster
-	semanticEvents          *semanticEventBroadcaster
-	collaboration           *CollaborationRecorder
-	storageMonitor          *StorageMonitor
-	realtimeChatMu          sync.RWMutex
-	realtimeChatHandler     RealtimeChatHandler
-	realtimeVoice           realtimeVoiceController
+	// closedSteers holds runs past their last steer check. A steer sent then
+	// could no longer reach the model, so it is refused instead of dropped.
+	closedSteers        map[string]struct{}
+	steersMu            sync.Mutex
+	eventBroadcaster    *EventBroadcaster
+	semanticEvents      *semanticEventBroadcaster
+	collaboration       *CollaborationRecorder
+	storageMonitor      *StorageMonitor
+	realtimeChatMu      sync.RWMutex
+	realtimeChatHandler RealtimeChatHandler
+	realtimeVoice       realtimeVoiceController
 }
 
 // RealtimeEventSink returns the semantic v2 sink used by the HTTP observer
@@ -575,6 +582,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chat/steer", s.handleChatSteer)
 	mux.HandleFunc("/api/chat/steer/cancel", s.handleChatSteerCancel)
 	mux.HandleFunc("/api/chat/result", s.handleChatResult)
+	mux.HandleFunc("/api/chat/active", s.handleChatActive)
 	if s.httpsAuthority != nil {
 		mux.HandleFunc(localtls.AuthorityPath, s.httpsAuthority.ServeAuthority)
 	}
@@ -590,6 +598,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/context", s.handleContext)
 	mux.HandleFunc("/api/context/attachment", s.handleContextAttachment)
 	mux.HandleFunc("/api/episodes/", s.handleEpisodes)
+	mux.HandleFunc("/api/agent-tasks", s.handleAgentTasks)
+	mux.HandleFunc("/api/agent-tasks/", s.handleAgentTasks)
 	mux.HandleFunc("/api/setup", s.handleSetup)
 	if s.benchmarkToken() != "" {
 		mux.HandleFunc("/api/benchmark/seed_memory", s.handleBenchmarkSeedMemory)
@@ -638,6 +648,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/android-adb/pair", s.handleAndroidADBPair)
 	mux.HandleFunc("/api/storage/monitor/status", s.handleStorageMonitorStatus)
 	mux.HandleFunc("/api/resources", s.handleResources)
+	mux.HandleFunc("/api/diagnostics/services", s.handleServiceDiagnostics)
+	mux.HandleFunc("/api/diagnostics/incidents", s.handleServiceIncidents)
+	mux.HandleFunc("/api/diagnostics/incident-log", s.handleServiceIncidentLog)
 	mux.HandleFunc("/api/storage/cleanup", s.handleStorageCleanup)
 
 	// Coordinate debug tool. Live frames come from POST /api/providers/screenshot.
@@ -729,6 +742,15 @@ func newTerminalReverseProxyForTarget(target *url.URL) *httputil.ReverseProxy {
 			}
 		}
 		return nil
+	}
+	// ttyd is optional in the Docker image (AICO_ENABLE_TERMINAL), so explain
+	// an unreachable terminal instead of answering with an empty 502.
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		logging.Warnf("agent", "webtty", "terminal proxy %s %s failed: %v", r.Method, r.URL.Path, err)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, "The terminal is not running.\n\nIn the Docker image the terminal is off by default; start the container with AICO_ENABLE_TERMINAL=1 (or enable the terminal in Aico Launcher) to use it.\n")
 	}
 	return proxy
 }
@@ -1025,6 +1047,21 @@ func (s *Server) handleChatCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	source := chatCancelRequestSource(r)
 
+	// A Live Activity can show a background task, keyed by its task ID; its
+	// stop button then cancels the task itself. A chat run registered under the
+	// same ID takes precedence, so one cancel stops exactly one work item. A
+	// finished task is left alone: its result is still announced.
+	if tasks := s.agentTaskController(); tasks != nil && !s.hasActiveRun(requestID) {
+		if _, err := tasks.CancelUnfinished(requestID); err == nil {
+			if s.logger != nil {
+				s.logger.Info("Background task canceled from chat cancel: task_id=%s source=%s", requestID, source)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(ChatCancelResponse{RequestID: requestID, Status: "canceled"})
+			return
+		}
+	}
+
 	runCanceled := s.cancelActiveRun(requestID)
 	outputCanceled := s.interruptRequestOutputs(requestID)
 	if runCanceled || outputCanceled {
@@ -1121,7 +1158,7 @@ func (s *Server) handleChatSteer(w http.ResponseWriter, r *http.Request) {
 
 	steer, ok := s.setPendingSteer(requestID, message)
 	if !ok {
-		http.Error(w, "request_id is not running", http.StatusConflict)
+		http.Error(w, "request is not accepting steers", http.StatusConflict)
 		return
 	}
 	if s.logger != nil {
@@ -1164,6 +1201,17 @@ func (s *Server) handleChatSteerCancel(w http.ResponseWriter, r *http.Request) {
 // registerActiveRun atomically claims a request ID and clears any marker left
 // by its previous lifecycle. It rejects registration while the server closes.
 func (s *Server) registerActiveRun(requestID string, cancel context.CancelFunc) bool {
+	return s.registerRun(requestID, cancel, true)
+}
+
+// registerActiveRunWithoutSteers registers a run that has no steer input,
+// such as a realtime bridge run. It refuses steers from the moment the run is
+// visible, so no steer is accepted and then dropped.
+func (s *Server) registerActiveRunWithoutSteers(requestID string, cancel context.CancelFunc) bool {
+	return s.registerRun(requestID, cancel, false)
+}
+
+func (s *Server) registerRun(requestID string, cancel context.CancelFunc, acceptSteers bool) bool {
 	if s == nil || s.closing.Load() {
 		return false
 	}
@@ -1186,6 +1234,16 @@ func (s *Server) registerActiveRun(requestID string, cancel context.CancelFunc) 
 		return false
 	}
 	s.activeRuns[requestID] = cancel
+	if s.activeRunStartedAt == nil {
+		s.activeRunStartedAt = make(map[string]time.Time)
+	}
+	s.activeRunStartedAt[requestID] = time.Now()
+	if !acceptSteers {
+		// Same activeRunsMu-then-steersMu order as setPendingSteer.
+		s.steersMu.Lock()
+		s.closeSteerAcceptanceLocked(requestID)
+		s.steersMu.Unlock()
+	}
 	s.deleteRequestTerminationLocked(requestID)
 	return true
 }
@@ -1196,14 +1254,95 @@ func (s *Server) unregisterActiveRun(requestID string) {
 	if requestID == "" {
 		return
 	}
+	// Drop the run and its steer state in one critical section, in the
+	// activeRunsMu-then-steersMu order setPendingSteer uses, so a run that
+	// reuses this request ID never sees or loses the old run's steer state.
 	s.activeRunsMu.Lock()
 	delete(s.activeRuns, requestID)
+	delete(s.activeRunStartedAt, requestID)
+	s.steersMu.Lock()
+	delete(s.pendingSteers, requestID)
+	delete(s.steerSignals, requestID)
+	delete(s.closedSteers, requestID)
+	s.steersMu.Unlock()
 	s.activeRunsMu.Unlock()
 	s.clearRequestTerminationIfInactive(requestID)
 }
 
+// settleActiveRun marks a run's agent loop as finished while the run stays
+// registered, for example during its final speech, so Stop still reaches it.
+func (s *Server) settleActiveRun(requestID string) {
+	s.activeRunsMu.Lock()
+	delete(s.activeRunStartedAt, requestID)
+	s.activeRunsMu.Unlock()
+}
+
+// activeRunSnapshot reports the most recently started run whose agent loop
+// has not finished, with its steer state. Both locks are held together, in
+// the order unregisterActiveRun uses, so a run being removed is reported
+// either still running with its steer state or not at all.
+func (s *Server) activeRunSnapshot() ChatActiveResponse {
+	s.activeRunsMu.Lock()
+	defer s.activeRunsMu.Unlock()
+	var requestID string
+	var startedAt time.Time
+	for id, at := range s.activeRunStartedAt {
+		if requestID == "" || at.After(startedAt) {
+			requestID, startedAt = id, at
+		}
+	}
+	if requestID == "" {
+		return ChatActiveResponse{Status: "idle"}
+	}
+	resp := ChatActiveResponse{Status: "running", RequestID: requestID}
+	if !startedAt.IsZero() {
+		resp.ElapsedMS = time.Since(startedAt).Milliseconds()
+	}
+	// A steer queued before a reload stays visible on the reloaded page.
+	s.steersMu.Lock()
+	defer s.steersMu.Unlock()
+	_, closed := s.closedSteers[requestID]
+	resp.Steerable = !closed
+	if steer, ok := s.pendingSteers[requestID]; ok {
+		resp.Steer = &steer
+	}
+	return resp
+}
+
+type ChatActiveResponse struct {
+	Status    string               `json:"status"`
+	RequestID string               `json:"request_id,omitempty"`
+	ElapsedMS int64                `json:"elapsed_ms,omitempty"`
+	Steerable bool                 `json:"steerable,omitempty"`
+	Steer     *pendingSteerMessage `json:"steer,omitempty"`
+}
+
+// handleChatActive lets a page that did not start the current run, such as one
+// reloaded mid-run, find it, show its progress, and steer it. Elapsed time is relative so
+// a browser clock that differs from the board's does not skew the timer.
+func (s *Server) handleChatActive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp := s.activeRunSnapshot()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 // cancelActiveRun marks an active request before invoking its cancellation
 // callback, preventing new request-scoped output from registering meanwhile.
+// hasActiveRun reports whether a chat run is registered under requestID.
+func (s *Server) hasActiveRun(requestID string) bool {
+	if s == nil || requestID == "" {
+		return false
+	}
+	s.activeRunsMu.Lock()
+	defer s.activeRunsMu.Unlock()
+	_, active := s.activeRuns[requestID]
+	return active
+}
+
 func (s *Server) cancelActiveRun(requestID string) bool {
 	if s == nil || requestID == "" {
 		return false
@@ -1438,14 +1577,17 @@ func (s *Server) setPendingSteer(requestID, content string) (pendingSteerMessage
 	if requestID == "" || s.activeRuns[requestID] == nil {
 		return pendingSteerMessage{}, false
 	}
+	s.steersMu.Lock()
+	defer s.steersMu.Unlock()
+	if _, closed := s.closedSteers[requestID]; closed {
+		return pendingSteerMessage{}, false
+	}
 	steer := pendingSteerMessage{
 		ID:        createSteerID(),
 		RequestID: requestID,
 		Content:   strings.TrimSpace(content),
 		Timestamp: time.Now(),
 	}
-	s.steersMu.Lock()
-	defer s.steersMu.Unlock()
 	if s.pendingSteers == nil {
 		s.pendingSteers = make(map[string]pendingSteerMessage)
 	}
@@ -1470,14 +1612,39 @@ func (s *Server) cancelPendingSteer(requestID string) bool {
 	return true
 }
 
-func (s *Server) clearSteerState(requestID string) {
+// consumeFinalPendingSteer is the run's last steer check: it consumes a
+// queued steer, or else stops accepting steers for the request. Both happen
+// under one lock, so a steer is either delivered or refused, never accepted
+// after the check and dropped.
+func (s *Server) consumeFinalPendingSteer(requestID string) (RunSteerMessage, bool) {
+	if requestID == "" {
+		return RunSteerMessage{}, false
+	}
+	s.steersMu.Lock()
+	defer s.steersMu.Unlock()
+	if steer, ok := s.consumePendingSteerLocked(requestID); ok {
+		return steer, true
+	}
+	s.closeSteerAcceptanceLocked(requestID)
+	return RunSteerMessage{}, false
+}
+
+// closeSteerAcceptance refuses further steers for a run whose agent loop has
+// returned or is about to; one still pending can no longer reach the model.
+func (s *Server) closeSteerAcceptance(requestID string) {
 	if requestID == "" {
 		return
 	}
 	s.steersMu.Lock()
 	defer s.steersMu.Unlock()
-	delete(s.pendingSteers, requestID)
-	delete(s.steerSignals, requestID)
+	s.closeSteerAcceptanceLocked(requestID)
+}
+
+func (s *Server) closeSteerAcceptanceLocked(requestID string) {
+	if s.closedSteers == nil {
+		s.closedSteers = make(map[string]struct{})
+	}
+	s.closedSteers[requestID] = struct{}{}
 }
 
 // consumePendingSteer removes the pending message and rearms its interrupt
@@ -1488,6 +1655,10 @@ func (s *Server) consumePendingSteer(requestID string) (RunSteerMessage, bool) {
 	}
 	s.steersMu.Lock()
 	defer s.steersMu.Unlock()
+	return s.consumePendingSteerLocked(requestID)
+}
+
+func (s *Server) consumePendingSteerLocked(requestID string) (RunSteerMessage, bool) {
 	steer, ok := s.pendingSteers[requestID]
 	if !ok {
 		return RunSteerMessage{}, false
@@ -1562,16 +1733,20 @@ func (s *Server) steerSignalChannel(requestID string) <-chan struct{} {
 
 func (s *Server) prepareRunSteerCallbacks(requestID string) (
 	func(context.Context) (RunSteerMessage, bool),
+	func(context.Context) (RunSteerMessage, bool),
 	func() <-chan struct{},
 ) {
 	s.resetSteerSignal(requestID)
 	provider := func(context.Context) (RunSteerMessage, bool) {
 		return s.consumePendingSteer(requestID)
 	}
+	finalProvider := func(context.Context) (RunSteerMessage, bool) {
+		return s.consumeFinalPendingSteer(requestID)
+	}
 	interrupt := func() <-chan struct{} {
 		return s.steerSignalChannel(requestID)
 	}
-	return provider, interrupt
+	return provider, finalProvider, interrupt
 }
 
 func createSteerID() string {
@@ -1583,10 +1758,11 @@ func createRequestID() string {
 }
 
 type chatRunSession struct {
-	ctx            context.Context
-	cleanup        func()
-	steerProvider  func(context.Context) (RunSteerMessage, bool)
-	steerInterrupt func() <-chan struct{}
+	ctx                context.Context
+	cleanup            func()
+	steerProvider      func(context.Context) (RunSteerMessage, bool)
+	finalSteerProvider func(context.Context) (RunSteerMessage, bool)
+	steerInterrupt     func() <-chan struct{}
 }
 
 // beginChatRun claims a request before publishing its input. Its cleanup may
@@ -1597,12 +1773,11 @@ func (s *Server) beginChatRun(req ChatRequest, input TurnInput, userMessage Mess
 		cancel()
 		return nil, false
 	}
-	steerProvider, steerInterrupt := s.prepareRunSteerCallbacks(req.RequestID)
+	steerProvider, finalSteerProvider, steerInterrupt := s.prepareRunSteerCallbacks(req.RequestID)
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
 			s.unregisterActiveRun(req.RequestID)
-			s.clearSteerState(req.RequestID)
 			cancel()
 		})
 	}
@@ -1610,7 +1785,7 @@ func (s *Server) beginChatRun(req ChatRequest, input TurnInput, userMessage Mess
 	if s.liveActivity != nil {
 		s.liveActivity.StartTask(req.RequestID, input.InputText, s.liveActivityPhoneID(req))
 	}
-	return &chatRunSession{ctx: ctx, cleanup: cleanup, steerProvider: steerProvider, steerInterrupt: steerInterrupt}, true
+	return &chatRunSession{ctx: ctx, cleanup: cleanup, steerProvider: steerProvider, finalSteerProvider: finalSteerProvider, steerInterrupt: steerInterrupt}, true
 }
 
 func (s *Server) newChatRunRequest(run *chatRunSession, input TurnInput, episodeID, requestID string, handler func(RunEvent)) RunRequest {
@@ -1626,6 +1801,7 @@ func (s *Server) newChatRunRequest(run *chatRunSession, input TurnInput, episode
 		StreamScope:             streamcontract.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: requestID, RunID: requestID},
 		AsyncEpisodeMaintenance: true,
 		SteerProvider:           run.steerProvider,
+		FinalSteerProvider:      run.finalSteerProvider,
 		SteerInterrupt:          run.steerInterrupt,
 	}
 }
@@ -1787,6 +1963,8 @@ func (s *Server) handleChatAsync(
 		}
 
 		result, err := s.runtime.Run(run.ctx, runReq)
+		s.settleActiveRun(requestID)
+		s.closeSteerAcceptance(requestID)
 		if newStream != nil {
 			finalSpeechStreamed := speechWriter.FinalizeResponse()
 			closeErr := newStream.closeAndWait()
@@ -2164,6 +2342,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("Running runtime")
 	result, err := s.runtime.Run(ctx, runReq)
+	s.settleActiveRun(req.RequestID)
+	// Final speech can keep the run registered; no steer can reach it now.
+	s.closeSteerAcceptance(req.RequestID)
 	if newStream != nil {
 		finalSpeechStreamed := speechWriter.FinalizeResponse()
 		closeErr := newStream.closeAndWait()
@@ -2202,7 +2383,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			stream.Write(ChatStreamEvent{Type: "message", Message: &errorMessage})
 		}
 		if s.logger != nil {
-			s.logger.Error("Agent run failed: %v", err)
+			s.logger.Error("Agent run failed: request_id=%s error=%v", req.RequestID, err)
 		}
 		if !result.SpeechStreamed && s.chatAudioEnabled() && s.canSpeakFinalText() {
 			prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
@@ -4047,6 +4228,10 @@ func (s *Server) resolveRequestInput(req ChatRequest) (TurnInput, []MessageAttac
 	if err != nil {
 		return TurnInput{}, nil, err
 	}
+	// Realtime chat refuses attachments, so do not leave copies behind for it.
+	if s.realtimeChatHandlerSnapshot() == nil {
+		s.shareChatImages(decodedAttachments, historyAttachments)
+	}
 
 	audioAttachment, nonAudioAttachments, err := splitAudioAttachment(decodedAttachments)
 	if err != nil {
@@ -4076,6 +4261,32 @@ func (s *Server) resolveRequestInput(req ChatRequest) (TurnInput, []MessageAttac
 		return TurnInput{}, nil, fmt.Errorf("message or attachment is required")
 	}
 	return turnInput, historyAttachments, nil
+}
+
+// shareChatImages saves each image the user attached to a chat turn into the
+// shared directory, as if it had been uploaded through /api/files, so it shows
+// in the shared file list and the Agent can refer to it by path. The image
+// still reaches the model as visual input. A failed save only logs: the turn
+// goes ahead without the shared copy. decoded and history are parallel.
+func (s *Server) shareChatImages(decoded []InputAttachment, history []MessageAttachment) {
+	for i := range decoded {
+		if decoded[i].Kind != AttachmentKindImage || len(decoded[i].Data) == 0 || decoded[i].Path != "" {
+			continue
+		}
+		item, err := saveSharedUpload(sharedImageName(decoded[i].Name, decoded[i].MIMEType), decoded[i].Data)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Warn("Cannot save chat image to shared files: %v", err)
+			}
+			continue
+		}
+		decoded[i].Path = item.Path
+		decoded[i].Size = item.Size
+		if i < len(history) {
+			history[i].Path = item.Path
+			history[i].DownloadURL = item.DownloadURL
+		}
+	}
 }
 
 func (s *Server) webAudioInputMode() string {

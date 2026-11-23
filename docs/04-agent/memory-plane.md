@@ -11,7 +11,7 @@ This document describes the current filesystem-backed memory architecture used b
 The memory plane separates four kinds of persisted state:
 
 - session memory keeps the active conversation and compressed history;
-- long-term memory keeps information explicitly saved for the user;
+- long-term memory keeps explicitly saved information and lasting facts the user states about themselves;
 - device memory keeps reusable device, application, navigation, procedure, calibration, failure, and fact knowledge;
 - task episodes keep immutable execution evidence for audit and background consolidation.
 
@@ -32,7 +32,7 @@ depend on understanding the language the user spoke.
 | Information | Rule |
 | --- | --- |
 | An explicit request to remember, or a forward-looking preference, form of address, or rule | Save |
-| Stable personal facts such as home city, role, or employee ID | May be saved |
+| Lasting facts the user states about themselves, such as home city, occupation, role, main tools, or background | Saved without an explicit remember request; not inferred from quotations, third-person statements, or temporary assignments |
 | A request to act or remind at a later time | Handed to the `schedule` tool; see [Schedules and Routines](schedules-and-routines.md). Not saved as memory |
 | Near-term plans the user mentions without asking for a reminder | Not saved to Long-Term Memory. The conversation keeps them, and context compaction preserves them; see [Near-Term Plans](#near-term-plans) |
 | Time-bound facts from notifications, such as bills and deliveries | Temporary Memory with an expiry; Notification Memory only |
@@ -141,6 +141,13 @@ part of the configuration that decides whether a saved session is resumed, so a
 profile change never starts a new conversation. If the profile cannot be read
 or the session cannot be rewritten, the run logs a warning and continues with
 the section the session already carries.
+
+In realtime mode the foreground voice model's instructions end with the same
+section. It is read when each provider session opens, so a profile saved during
+a conversation applies from the next session. The saved realtime user context
+records the section that session was opened with. If the profile cannot be
+read, the session logs a warning and keeps the section the saved user context
+already carries.
 
 Sensitive memories, `fact` memories, and memories whose content was written by
 Notification Memory are not listed; notification content is written by third
@@ -390,6 +397,12 @@ Extraction, omission review, and retention audit share this policy through
 `episodeMemoryBuiltInGuidanceRule`. Omission review also receives the complete
 proposal schema and type rules, once. Procedure guidance and candidate evidence
 must describe the same supported path; a shorter path needs its own evidence.
+For a retained Failure candidate, the retention audit must state
+`incremental_knowledge` beyond the tool's own advice and cite
+`knowledge_evidence_refs` that are observation events in the Episode. Code
+discards a retained Failure review that lacks either, and keeps the cited
+references in the retained evidence. A suggested recovery is not proof that it
+works, but an observed device-specific constraint can still justify a guard.
 These semantic decisions remain model judgments, not guarantees supplied by the
 structural evidence validator.
 

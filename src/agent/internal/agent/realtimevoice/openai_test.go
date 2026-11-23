@@ -471,6 +471,32 @@ func TestOpenAIOutputEventAliasesNormalize(t *testing.T) {
 	}
 }
 
+func TestTranslateOpenAIIgnoresIdempotentCancelError(t *testing.T) {
+	for name, body := range map[string]string{
+		"code":            `{"type":"error","error":{"type":"invalid_request_error","code":"response_cancel_not_active","message":"Cancellation failed: no active response found","param":null}}`,
+		"message only":    `{"type":"error","error":{"message":"Cancellation failed: no active response found."}}`,
+		"relay sans type": `{"type":"error","error":{"code":"response_cancel_not_active","message":"Cancellation failed: no active response found"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if event, ok := translateOpenAIEvent([]byte(body)); ok {
+				t.Fatalf("idempotent cancel error was surfaced: %+v", event)
+			}
+		})
+	}
+
+	for name, body := range map[string]string{
+		"other request error": `{"type":"error","error":{"type":"invalid_request_error","code":"conversation_already_has_active_response","message":"Conversation already has an active response in progress."}}`,
+		"server error":        `{"type":"error","error":{"type":"server_error","code":"response_cancel_not_active","message":"Cancellation failed: no active response found"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			event, ok := translateOpenAIEvent([]byte(body))
+			if !ok || event.Kind != EventError || event.Error == nil {
+				t.Fatalf("unrelated error was suppressed: %+v, ok=%t", event, ok)
+			}
+		})
+	}
+}
+
 func TestOpenAIResponseDoneFailureIsError(t *testing.T) {
 	for _, status := range []string{"failed", "incomplete"} {
 		t.Run(status, func(t *testing.T) {
