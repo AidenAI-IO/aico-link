@@ -75,7 +75,7 @@ This workflow will:
 5. Audit the application and shared-library bundle under `output/debian-apps/`.
 
 The application stage also builds the pinned Ekho 9.0 source with the American
-English female-voice patch and stages Mandarin data for `aico-business`.
+English Flite SLT female-voice patch and stages Mandarin data for `aico-business`.
 To rebuild only Ekho, run `scripts/debian-apps/build-apps.sh builder` followed by
 `scripts/debian-apps/build-apps.sh ekho`; this action does not require Go or
 OpenCV. `DEBIAN_APPS_EKHO_CACHE` overrides the persistent source/voice archive

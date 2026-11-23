@@ -18,7 +18,7 @@ RUN dpkg --add-architecture armhf \
         g++-arm-linux-gnueabihf \
         gcc-arm-linux-gnueabihf \
         git \
-        libespeak-ng-dev:armhf \
+        flite1-dev:armhf \
         libmpg123-dev:armhf \
         libsndfile1-dev:armhf \
         libsonic-dev:armhf \
