@@ -45,6 +45,9 @@ type touchpadTurnCorrector struct {
 	provider mnk.TouchpadTurnProvider
 	capture  frameCapturer
 	screen   *screen.ScreenState
+	// orientation reports whether a fresh capture's phone picture is wider
+	// than tall.
+	orientation func() (bool, error)
 
 	mu sync.Mutex
 	// landscapeTurn is the landscape direction in use; upright while the
@@ -75,51 +78,27 @@ func (c *touchpadTurnCorrector) observeScreenshot(width, height int) {
 // reset drops the landscape turn after a portrait screenshot.
 func (c *touchpadTurnCorrector) reset() {
 	c.mu.Lock()
-	wasLandscape := c.landscapeTurn != mnk.TouchpadUpright
-	c.landscapeTurn = mnk.TouchpadUpright
-	c.confirmed = false
-	c.mu.Unlock()
-	if wasLandscape {
+	defer c.mu.Unlock()
+	// The provider is written under the lock, as in prepare, so a landscape
+	// prepare cannot slip between the state change and this write.
+	if c.landscapeTurn != mnk.TouchpadUpright {
 		c.provider.SetTouchpadTurn(mnk.TouchpadUpright)
 	}
+	c.landscapeTurn = mnk.TouchpadUpright
+	c.confirmed = false
 }
 
-// frameLandscape reads a current frame and reports whether the phone picture
-// in it, the frame without its black borders, is wider than tall. It uses no
-// stored screen state, which may predate a turn.
-func (c *touchpadTurnCorrector) frameLandscape(ctx context.Context) (bool, error) {
-	frame, err := c.capture(ctx)
-	if err != nil {
+// currentlyLandscape reads the phone picture's orientation from a fresh
+// capture, the same crop geometry a screenshot gets, without stored screen
+// state, which may predate a turn.
+func (c *touchpadTurnCorrector) currentlyLandscape(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	content := lumaContentBounds(frame)
-	if content.Empty() {
-		return false, fmt.Errorf("the captured frame is black")
+	if c.orientation == nil {
+		return false, fmt.Errorf("no screen capture for the orientation")
 	}
-	return content.Dx() > content.Dy(), nil
-}
-
-// lumaContentBounds returns the smallest rectangle holding every sampled row
-// and column brighter than black, the phone picture inside HDMI borders.
-func lumaContentBounds(frame lumaFrame) image.Rectangle {
-	const step, black = 4, 16
-	if !frame.valid() {
-		return image.Rectangle{}
-	}
-	minX, minY, maxX, maxY := frame.width, frame.height, -1, -1
-	for y := 0; y < frame.height; y += step {
-		row := frame.y[y*frame.stride : y*frame.stride+frame.width]
-		for x := 0; x < frame.width; x += step {
-			if row[x] > black {
-				minX, maxX = min(minX, x), max(maxX, x)
-				minY, maxY = min(minY, y), max(maxY, y)
-			}
-		}
-	}
-	if maxX < 0 {
-		return image.Rectangle{}
-	}
-	return image.Rect(minX, minY, maxX+1, maxY+1)
+	return c.orientation()
 }
 
 // landscape reports whether the latest screenshot is wider than tall.

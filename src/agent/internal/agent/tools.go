@@ -224,6 +224,11 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	var turn *touchpadTurnCorrector
 	if hidCfg.PointerModeOrDefault() == "touchpad" {
 		turn = newTouchpadTurnCorrector(mnkProvider, frameCapture, screen)
+		if turn != nil {
+			turn.orientation = func() (bool, error) {
+				return capturedPictureLandscape(provider, screen)
+			}
+		}
 	}
 	touchGesture := &TouchGestureTool{
 		mnkProvider:    mnkProvider,

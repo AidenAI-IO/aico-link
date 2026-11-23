@@ -85,17 +85,3 @@ func TestTouchpadTurnResetsOnAnyPortraitScreenshot(t *testing.T) {
 		t.Fatalf("turn after a portrait screenshot = %v, want unconfirmed default", provider.turn)
 	}
 }
-
-func TestLumaContentBoundsIgnoresBlackBorders(t *testing.T) {
-	const w, h = 64, 48
-	frame := lumaFrame{width: w, height: h, stride: w, y: make([]byte, w*h)}
-	for y := 8; y < 40; y++ {
-		for x := 24; x < 40; x++ {
-			frame.y[y*w+x] = 200
-		}
-	}
-	got := lumaContentBounds(frame)
-	if got.Dx() >= got.Dy() {
-		t.Fatalf("portrait picture inside landscape frame read as %v", got)
-	}
-}

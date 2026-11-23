@@ -451,9 +451,10 @@ func (t *TouchGestureTool) Call(ctx context.Context, input string) (string, erro
 	}
 	if turnPending {
 		// A check skips the pre-action screenshot, so the turn would rest on
-		// the last stored one. Read a current frame: a phone turned back to
-		// portrait would get the landscape turn at an unchecked point.
-		if landscape, err := t.turn.frameLandscape(ctx); err != nil {
+		// the last stored one. Read the current picture geometry: a phone
+		// turned back to portrait would get the landscape turn at an
+		// unchecked point.
+		if landscape, err := t.turn.currentlyLandscape(ctx); err != nil {
 			return toolErrorResultf(ctx, CodeToolExecutionFailed, "not sent: could not read the screen orientation before this landscape touch: %v", err), nil
 		} else if !landscape {
 			return toolErrorResultf(ctx, CodeInvalidArguments, "not sent: the screen is no longer in landscape. Take a screenshot and choose the target again."), nil
