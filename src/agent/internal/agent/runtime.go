@@ -25,6 +25,7 @@ import (
 	"aico-agent/internal/agent/statemanager"
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/mcpclient"
 	"aico-agent/internal/routines"
 	"aico-agent/internal/stream"
 	"aico-agent/internal/util"
@@ -74,6 +75,7 @@ type Runtime struct {
 	models                  model.Model
 	memories                *MemoryManager
 	tools                   *ToolSet
+	mcpClients              *mcpclient.Manager
 	skills                  *SkillManager
 	skillsReloadMu          sync.Mutex
 	skillsDirty             bool
@@ -629,6 +631,15 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 	}
 	rt.phoneBridge.SetConfiguredPlatform(cfg.DevicePlatformOrDefault())
 	rt.stateManager.RegisterUpdater(rt.phoneBridge)
+	if cfg.ConfigDir != "" {
+		manager, err := mcpclient.New(filepath.Join(cfg.ConfigDir, "mcp-servers.json"))
+		if err != nil {
+			_ = rt.Close()
+			return nil, err
+		}
+		rt.mcpClients = manager
+		go manager.Start()
+	}
 
 	return rt, nil
 }
@@ -2001,6 +2012,11 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		return nil
 	}
 	tools := NewToolSpecs(r.toolSnapshot().All()).AgentToolsForPlatform(r.devicePlatformFromState())
+	if r.mcpClients != nil {
+		for _, tool := range r.mcpClients.Tools() {
+			tools = append(tools, tool)
+		}
+	}
 	return benchmarkHeadlessTools(r.ConfigSnapshot(), benchmarkMockTools(r.ConfigSnapshot(), r.filterPhoneBridgeAgentTools(tools)))
 }
 
@@ -2019,7 +2035,17 @@ func (r *Runtime) Tool(name string) (langtools.Tool, bool) {
 	if r == nil || r.toolSnapshot() == nil {
 		return nil, false
 	}
-	return r.toolSnapshot().Get(name)
+	if tool, ok := r.toolSnapshot().Get(name); ok {
+		return tool, true
+	}
+	if r.mcpClients != nil {
+		for _, tool := range r.mcpClients.Tools() {
+			if tool.Name() == name {
+				return tool, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func (r *Runtime) filterPhoneBridgeAgentTools(tools []langtools.Tool) []langtools.Tool {
@@ -3040,6 +3066,9 @@ Memory entries:
 
 // Close releases resources held by the runtime
 func (r *Runtime) Close() error {
+	if r.mcpClients != nil {
+		r.mcpClients.Close()
+	}
 	if r.routines != nil {
 		r.routines.Close()
 	}

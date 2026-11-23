@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/providerretry"
 )
 
 type session struct {
@@ -200,7 +201,7 @@ func (s *session) synthesize(text string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return s.recordErr(fmt.Errorf("API error %d: %s", resp.StatusCode, string(body)))
+		return s.recordErr(providerretry.ResponseError(resp, body))
 	}
 
 	// Response is raw PCM s16le audio stream.

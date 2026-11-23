@@ -228,3 +228,45 @@ func (s *openRouterTestSink) isDrained() bool {
 }
 
 func (s *openRouterTestSink) Stop() error { return nil }
+
+// A failed attempt can call Drain during Close. It must not finalize playback
+// before a replacement session writes the first PCM bytes.
+func TestHolderRetriesHTTPFailureWithoutFinalizingSink(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(503)
+			return
+		}
+		_, _ = w.Write([]byte{0, 1, 2, 3})
+	}))
+	defer server.Close()
+	p, err := New(tts.ProviderConfig{APIKey: "k", Endpoint: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &finalizingTestSink{}
+	session, err := tts.NewProviderHolder(p).BeginStream(context.Background(), sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = session.WriteText("hello"); err != nil {
+		t.Fatal(err)
+	}
+	if err = session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || !sink.drained || len(sink.pcm) != 4 {
+		t.Fatalf("calls=%d drained=%v PCM=%v", calls, sink.drained, sink.pcm)
+	}
+}
+
+type finalizingTestSink struct{ openRouterTestSink }
+
+func (s *finalizingTestSink) WritePCM(data []byte) error {
+	if s.isDrained() {
+		return errors.New("write after playback finalized")
+	}
+	return s.openRouterTestSink.WritePCM(data)
+}

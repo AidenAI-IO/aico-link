@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"aico-agent/internal/providerretry"
 )
 
 const (
@@ -118,14 +120,17 @@ type Client struct {
 type StatusError struct {
 	StatusCode int
 	Body       string
+	After      time.Duration
 }
+
+func (e *StatusError) HTTPStatusCode() int       { return e.StatusCode }
+func (e *StatusError) RetryDelay() time.Duration { return e.After }
 
 func (e *StatusError) Error() string {
 	return fmt.Sprintf("decision API returned %d: %s", e.StatusCode, e.Body)
 }
 
-// Ask sends one request. 429 and 529 are retried with backoff, as the API
-// documentation asks; any other failure is returned as is.
+// Ask retries transient inference failures within the decision latency budget.
 func (c *Client) Ask(ctx context.Context, req Request) (Response, error) {
 	if c == nil || c.HTTP == nil {
 		return Response{}, errors.New("decision client is not configured")
@@ -174,23 +179,11 @@ func (c *Client) Ask(ctx context.Context, req Request) (Response, error) {
 		return Response{}, fmt.Errorf("encode decision request: %w", err)
 	}
 
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, DefaultTimeout)
-		defer cancel()
-	}
-	for attempt := 0; ; attempt++ {
-		resp, err := c.post(ctx, endpoint, body, headers, decode)
-		var status *StatusError
-		if err == nil || attempt >= maxRetries || !errors.As(err, &status) || !retryable(status.StatusCode) {
-			return resp, err
-		}
-		select {
-		case <-ctx.Done():
-			return Response{}, ctx.Err()
-		case <-time.After(retryBaseDelay << attempt):
-		}
-	}
+	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	defer cancel()
+	return providerretry.Do(ctx, providerretry.Policy{MaxRetries: maxRetries, BaseDelay: retryBaseDelay}, func(ctx context.Context) (Response, error) {
+		return c.post(ctx, endpoint, body, headers, decode)
+	})
 }
 
 func (c *Client) post(ctx context.Context, endpoint string, body []byte, headers map[string]string, decode func([]byte) (Response, error)) (Response, error) {
@@ -211,7 +204,7 @@ func (c *Client) post(ctx context.Context, endpoint string, body []byte, headers
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
-	if err != nil {
+	if err != nil && resp.StatusCode >= 200 && resp.StatusCode <= 299 {
 		return Response{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
@@ -219,7 +212,7 @@ func (c *Client) post(ctx context.Context, endpoint string, body []byte, headers
 		if len(snippet) > maxErrorBody {
 			snippet = snippet[:maxErrorBody]
 		}
-		return Response{}, &StatusError{StatusCode: resp.StatusCode, Body: snippet}
+		return Response{}, &StatusError{StatusCode: resp.StatusCode, Body: snippet, After: providerretry.RetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 	}
 	out, err := decode(data)
 	if err != nil {
@@ -232,10 +225,6 @@ func decodeTypeSafe(data []byte) (Response, error) {
 	var out Response
 	err := json.Unmarshal(data, &out)
 	return out, err
-}
-
-func retryable(status int) bool {
-	return status == http.StatusTooManyRequests || status == 529
 }
 
 // Answer returns the answer for id, checking its type.

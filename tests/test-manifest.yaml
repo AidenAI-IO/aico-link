@@ -62,6 +62,8 @@ suites:
     command: go test -count=1 -timeout=10m ./...
     quick: true
     quick_command: |
+      go test -race -count=1 -timeout=2m ./internal/mcpclient
+      go test -count=1 -timeout=2m -run '^TestMCPClient' ./internal/agent ./internal/configweb
       go test -race -count=1 -timeout=2m ./internal/agent/tts/adapters/ekho
       go test -count=1 -timeout=2m -run '^TestShared' ./internal/ota
       go test -count=1 -timeout=2m -run '^TestSourceLstat' ./internal/backup

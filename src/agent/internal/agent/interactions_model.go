@@ -235,8 +235,10 @@ func (u *interactionsUsage) generationInfo() map[string]any {
 }
 
 type interactionError struct {
-	Code    string `json:"code,omitempty"`
+	Code    any    `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Type    string `json:"type,omitempty"`
 }
 
 func (m *interactionsModel) generateContent(ctx context.Context, steps []interactionStep, systemInstruction, previousID string, options ...llms.CallOption) (*llms.ContentResponse, error) {
@@ -319,7 +321,7 @@ func (m *interactionsModel) generateContent(ctx context.Context, steps []interac
 		return nil, fmt.Errorf("decode interactions response: %w", err)
 	}
 	if interactionTerminalFailure(decoded.Status) {
-		return nil, newProviderHTTPError(http.StatusBadRequest, body)
+		return nil, interactionFailure(decoded)
 	}
 	return interactionsContentResponse(decoded, callStarted, generationInfo)
 }
@@ -526,7 +528,10 @@ func (m *interactionsModel) decodeInteractionsStream(ctx context.Context, body i
 			usageInfo = event.StepUsage.generationInfo()
 		}
 		if event.Error != nil {
-			return nil, newProviderHTTPError(statusCode, []byte(event.Error.Message))
+			body, _ := json.Marshal(struct {
+				Error *interactionError `json:"error"`
+			}{event.Error})
+			return nil, newProviderStreamError(body)
 		}
 		switch event.EventType {
 		case "step.start":
@@ -611,8 +616,7 @@ func (m *interactionsModel) decodeInteractionsStream(ctx context.Context, body i
 		case "interaction.completed":
 			terminalEventSeen = true
 			if event.Interaction != nil && interactionTerminalFailure(event.Interaction.Status) {
-				failure, _ := json.Marshal(event.Interaction)
-				return nil, newProviderHTTPError(http.StatusBadGateway, failure)
+				return nil, interactionFailure(interactionsResponse(*event.Interaction))
 			}
 			if event.Interaction != nil && len(event.Interaction.Steps) > 0 {
 				// The completed event carries the provider's own final steps,
@@ -679,6 +683,17 @@ func (m *interactionsModel) decodeInteractionsStream(ctx context.Context, body i
 		_ = m.logRawHTTP(ctx, requestModel, "response", statusCode, rawStream.String())
 	}
 	return &llms.ContentResponse{Choices: []*llms.ContentChoice{choice}}, nil
+}
+
+func interactionFailure(response interactionsResponse) error {
+	if len(response.Errors) > 0 {
+		body, _ := json.Marshal(struct {
+			Error interactionError `json:"error"`
+		}{response.Errors[0]})
+		return newProviderStreamError(body)
+	}
+	body, _ := json.Marshal(response)
+	return newProviderHTTPError(http.StatusBadRequest, body)
 }
 
 func interactionTerminalFailure(status string) bool {

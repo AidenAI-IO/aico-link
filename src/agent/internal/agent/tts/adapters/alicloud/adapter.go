@@ -19,17 +19,19 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
-
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -119,11 +121,19 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 		return nil, fmt.Errorf("dial: %w", err)
 	}
 
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	opened := false
+	defer func() {
+		if !opened {
+			stopCancel()
+		}
+	}()
 	s := &session{
-		ctx:      ctx,
-		conn:     conn,
-		sink:     sink,
-		readDone: make(chan error, 1),
+		stopCancel: stopCancel,
+		ctx:        ctx,
+		conn:       conn,
+		sink:       sink,
+		readDone:   make(chan struct{}),
 	}
 
 	// Wait for session.created from server.
@@ -138,7 +148,8 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 		return nil, fmt.Errorf("session.update: %w", err)
 	}
 
-	go s.readLoop()
+	opened = true
+	go s.readLoop(conn)
 	return s, nil
 }
 
@@ -164,7 +175,7 @@ func (a *Adapter) dial(ctx context.Context) (*websocket.Conn, error) {
 	connCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
 
-	conn, _, err := dialer.DialContext(connCtx, u.String(), header)
+	conn, _, err := providerretry.Dial(connCtx, &dialer, u.String(), header)
 	if err != nil {
 		return nil, err
 	}
@@ -174,12 +185,15 @@ func (a *Adapter) dial(ctx context.Context) (*websocket.Conn, error) {
 
 // session is one Qwen-TTS-Realtime streaming session.
 type session struct {
-	ctx  context.Context
-	conn *websocket.Conn
-	sink tts.AudioSink
+	stopCancel func() bool
+	ctx        context.Context
+	conn       *websocket.Conn
+	sink       tts.AudioSink
 
 	writeMu    sync.Mutex
-	readDone   chan error
+	readDone   chan struct{}
+	readEnded  bool
+	readErr    error
 	responseMu sync.Mutex
 	pending    *pendingResponse
 
@@ -196,6 +210,12 @@ type pendingResponse struct {
 
 // waitForSessionCreated reads the initial server event before sending anything.
 func (s *session) waitForSessionCreated() error {
+	if err := s.conn.SetReadDeadline(time.Now().Add(connectTimeout)); err != nil {
+		return err
+	}
+	stop := context.AfterFunc(s.ctx, func() { _ = s.conn.Close() })
+	defer stop()
+	defer s.conn.SetReadDeadline(time.Time{})
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
@@ -205,6 +225,9 @@ func (s *session) waitForSessionCreated() error {
 		return fmt.Errorf("unmarshal: %w", err)
 	}
 	if t, _ := ev["type"].(string); t != "session.created" {
+		if t == "error" {
+			return &providerretry.StatusError{Status: providerretry.JSONStatus(raw), Body: string(raw)}
+		}
 		return fmt.Errorf("unexpected first event: %v", ev)
 	}
 	return nil
@@ -253,6 +276,14 @@ func (s *session) Flush() error {
 	}
 	pending := &pendingResponse{done: make(chan struct{})}
 	s.responseMu.Lock()
+	if s.readEnded {
+		err := s.readErr
+		s.responseMu.Unlock()
+		if err == nil {
+			err = tts.ErrSessionClosed
+		}
+		return err
+	}
 	s.pending = pending
 	s.responseMu.Unlock()
 	err := s.writeEvent(map[string]any{
@@ -261,6 +292,9 @@ func (s *session) Flush() error {
 	})
 	if err != nil {
 		s.completePendingResponse(err)
+	}
+	if _, readErr := s.readerResult(); readErr != nil {
+		return readErr
 	}
 	return err
 }
@@ -278,9 +312,9 @@ func (s *session) writeEvent(ev map[string]any) error {
 	return s.conn.WriteMessage(websocket.TextMessage, data)
 }
 
-func (s *session) readLoop() {
+func (s *session) readLoop(conn *websocket.Conn) {
 	for {
-		_, raw, err := s.conn.ReadMessage()
+		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			s.finishRead(err)
 			return
@@ -314,12 +348,10 @@ func (s *session) readLoop() {
 		case "response.done":
 			s.completePendingResponse(nil)
 		case "session.finished":
-			s.completePendingResponse(nil)
-			s.readDone <- nil
+			s.finishRead(nil)
 			return
 		case "error":
-			msg, _ := ev["error"].(map[string]any)
-			s.finishRead(fmt.Errorf("server error: %v", msg))
+			s.finishRead(&providerretry.StatusError{Status: providerretry.JSONStatus(raw), Body: string(raw)})
 			return
 		case "session.updated", "input_text_buffer.committed",
 			"response.created", "response.audio_transcript.delta",
@@ -331,15 +363,20 @@ func (s *session) readLoop() {
 
 func (s *session) Close() error {
 	s.closeOnce.Do(func() {
+		if s.stopCancel != nil {
+			defer s.stopCancel()
+		}
 		if err := s.waitForPendingResponse(); err != nil {
 			s.recordErr(err)
 		}
 		// Tell server no more text is coming; it flushes and closes.
-		if err := s.writeEvent(map[string]any{
-			"event_id": newEventID(),
-			"type":     "session.finish",
-		}); err != nil {
-			s.recordErr(fmt.Errorf("session.finish: %w", err))
+		if ended, _ := s.readerResult(); !ended {
+			if err := s.writeEvent(map[string]any{
+				"event_id": newEventID(),
+				"type":     "session.finish",
+			}); err != nil {
+				s.recordErr(fmt.Errorf("session.finish: %w", err))
+			}
 		}
 
 		// Wait for reader to drain remaining audio.
@@ -364,6 +401,9 @@ func (s *session) Close() error {
 
 func (s *session) Abort() error {
 	s.closeOnce.Do(func() {
+		if s.stopCancel != nil {
+			defer s.stopCancel()
+		}
 		if err := s.sink.Stop(); err != nil {
 			s.recordErr(fmt.Errorf("abort stop: %w", err))
 		}
@@ -385,6 +425,11 @@ func (s *session) Abort() error {
 
 func (s *session) waitForPendingResponse() error {
 	s.responseMu.Lock()
+	if s.readEnded {
+		err := s.readErr
+		s.responseMu.Unlock()
+		return err
+	}
 	pending := s.pending
 	s.responseMu.Unlock()
 	if pending == nil {
@@ -397,8 +442,14 @@ func (s *session) waitForPendingResponse() error {
 			s.pending = nil
 		}
 		s.responseMu.Unlock()
+		if _, err := s.readerResult(); err != nil {
+			return err
+		}
 		return pending.err
 	case <-s.ctx.Done():
+		if _, err := s.readerResult(); err != nil {
+			return err
+		}
 		return s.ctx.Err()
 	}
 }
@@ -417,17 +468,36 @@ func (s *session) completePendingResponse(err error) {
 }
 
 func (s *session) finishRead(err error) {
-	s.completePendingResponse(err)
-	s.readDone <- err
+	s.responseMu.Lock()
+	defer s.responseMu.Unlock()
+	s.readEnded = true
+	s.readErr = err
+	if pending := s.pending; pending != nil {
+		pending.once.Do(func() {
+			pending.err = err
+			close(pending.done)
+		})
+	}
+	close(s.readDone)
+}
+
+func (s *session) readerResult() (bool, error) {
+	s.responseMu.Lock()
+	defer s.responseMu.Unlock()
+	return s.readEnded, s.readErr
 }
 
 func (s *session) waitReadDone() error {
 	waitCtx, cancel := context.WithTimeout(s.ctx, connectTimeout)
 	defer cancel()
 	select {
-	case err := <-s.readDone:
+	case <-s.readDone:
+		_, err := s.readerResult()
 		return err
 	case <-waitCtx.Done():
+		if ended, err := s.readerResult(); ended {
+			return err
+		}
 		return waitCtx.Err()
 	}
 }
@@ -439,9 +509,13 @@ func (s *session) Err() error {
 }
 
 func (s *session) recordErr(err error) {
+	if err == nil {
+		return
+	}
 	s.errMu.Lock()
 	defer s.errMu.Unlock()
-	if s.lastErr == nil {
+	var incoming, existing interface{ HTTPStatusCode() int }
+	if s.lastErr == nil || (errors.As(err, &incoming) && !errors.As(s.lastErr, &existing)) {
 		s.lastErr = err
 	}
 }

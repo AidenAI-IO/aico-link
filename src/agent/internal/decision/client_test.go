@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -15,6 +16,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"aico-agent/internal/providerretry"
 )
 
 func jpegBase64(t *testing.T, width, height int) string {
@@ -303,5 +307,88 @@ func TestAskGeminiTranslatesQuestionsAndAnswers(t *testing.T) {
 	}
 	if _, err := resp.Answer("where", TypeBox); err == nil {
 		t.Fatal("Gemini must not produce a box answer")
+	}
+}
+
+func TestAskRetriesServerFailureAndHonorsCancellation(t *testing.T) {
+	for _, provider := range []string{ProviderTypeSafe, ProviderOpenAI, ProviderGemini, ProviderOpenRouter} {
+		t.Run(provider, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					w.WriteHeader(503)
+					return
+				}
+				if provider == ProviderOpenAI {
+					_, _ = io.WriteString(w, `{"answers":[{"type":"predicate","name":"q","probability":0.8}]}`)
+				} else {
+					_, _ = io.WriteString(w, `{"answers":{"q":{"type":"noul","noul":0.8}}}`)
+				}
+			}))
+			defer server.Close()
+			c := &Client{Provider: provider, BaseURL: server.URL, APIKey: "k", Model: "m", HTTP: server.Client()}
+			_, err := c.Ask(context.Background(), Request{State: "s", Questions: map[string]Question{"q": {Type: TypeNoul, Instructions: "?"}}})
+			if err != nil || calls.Load() != 2 {
+				t.Fatalf("calls=%d err=%v", calls.Load(), err)
+			}
+		})
+	}
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(429)
+	}))
+	defer server.Close()
+	c := &Client{BaseURL: server.URL, APIKey: "k", Model: "m", HTTP: server.Client()}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := c.Ask(ctx, Request{State: "s", Questions: map[string]Question{"q": {Type: TypeNoul, Instructions: "?"}}})
+	if !errors.Is(err, context.DeadlineExceeded) || calls.Load() != 1 {
+		t.Fatalf("calls=%d err=%v", calls.Load(), err)
+	}
+}
+
+func TestAskAllowsResponseWithinOverallBudget(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		select {
+		case <-time.After(5200 * time.Millisecond):
+			_, _ = io.WriteString(w, `{"answers":{"q":{"type":"noul","noul":0.8}}}`)
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	c := &Client{BaseURL: server.URL, APIKey: "k", Model: "m", HTTP: server.Client()}
+	_, err := c.Ask(context.Background(), Request{State: "s", Questions: map[string]Question{"q": {Type: TypeNoul, Instructions: "?"}}})
+	if err != nil || calls.Load() != 1 {
+		t.Fatalf("calls=%d error=%v", calls.Load(), err)
+	}
+}
+
+func TestPostPreservesStatusAndDelayWhenRejectionIsTruncated(t *testing.T) {
+	for _, code := range []int{200, 401, 429, 529} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Length", "100")
+				w.Header().Set("Retry-After", "120")
+				w.WriteHeader(code)
+				_, _ = io.WriteString(w, "partial rejection")
+			}))
+			defer server.Close()
+			c := &Client{APIKey: "k", HTTP: server.Client()}
+			_, err := c.post(context.Background(), server.URL, nil, nil, decodeTypeSafe)
+			var status *StatusError
+			if code == 200 {
+				if errors.As(err, &status) || !errors.Is(err, io.ErrUnexpectedEOF) {
+					t.Fatalf("lost successful response read error: %v", err)
+				}
+				return
+			}
+			if !errors.As(err, &status) || status.StatusCode != code || status.After != 120*time.Second || status.Body != "partial rejection" || providerretry.Retryable(err) != (code != 401) {
+				t.Fatalf("status=%+v error=%v", status, err)
+			}
+		})
 	}
 }

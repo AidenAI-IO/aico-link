@@ -63,5 +63,5 @@ export const routes = [
 export const localRoutes = [
   {path: '/', name: 'local-home', page: localOverviewPage},
   ...routes.filter(route => route.path.startsWith('/model') || route.path.startsWith('/conversation') ||
-    route.path === '/basic/language' || route.path.startsWith('/advanced/logs')),
+    route.path === '/basic/language' || route.path === '/advanced/mcp' || route.path.startsWith('/advanced/logs')),
 ];

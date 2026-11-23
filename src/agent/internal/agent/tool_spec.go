@@ -368,6 +368,10 @@ func NewToolSpec(tool langtools.Tool) ToolSpec {
 	}
 	name := tool.Name()
 	meta := builtInToolSpecMetadata[name]
+	if typed, ok := tool.(interface{ PreserveJSONArguments() bool }); ok && typed.PreserveJSONArguments() {
+		meta.Category, meta.InputMode = "mcp", toolInputModeJSON
+		meta.HTTPExposed = toolSpecBoolPtr(false)
+	}
 	// Agent tools can be injected by runtime deps without exposure metadata.
 	agentExposed := true
 	if meta.AgentExposed != nil {
@@ -525,6 +529,9 @@ func (spec ToolSpec) LLMSchema() map[string]any {
 }
 
 func (spec ToolSpec) NormalizeInput(input string) string {
+	if typed, ok := spec.Tool.(interface{ PreserveJSONArguments() bool }); ok && typed.PreserveJSONArguments() {
+		return input
+	}
 	input = normalizeToolInput(input)
 	input = unwrapCompatibleToolInput(input)
 	input = normalizeToolInput(input)

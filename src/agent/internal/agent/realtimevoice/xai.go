@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"aico-agent/internal/providerretry"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -54,14 +56,14 @@ func (p XAIProvider) Open(ctx context.Context, cfg SessionConfig) (Session, erro
 			prefix = "xai-client-secret."
 		}
 		dialer.Subprotocols = append(append([]string(nil), dialer.Subprotocols...), prefix+cfg.APIKey)
-		conn, resp, err := dialer.DialContext(ctx, endpoint, nil)
+		conn, resp, err := providerretry.Dial(ctx, &dialer, endpoint, nil)
 		if err != nil {
 			return nil, dialError("xai realtime", resp, err)
 		}
 		return p.openSession(ctx, cfg, model, conn)
 	}
 	header["Authorization"] = []string{bearer(cfg.APIKey)}
-	conn, resp, err := d.DialContext(ctx, endpoint, header)
+	conn, resp, err := providerretry.Dial(ctx, d, endpoint, header)
 	if err != nil {
 		return nil, dialError("xai realtime", resp, err)
 	}
@@ -462,7 +464,7 @@ func translateXAIEventBase(body []byte) (Event, bool) {
 		if len(details) > 0 {
 			message += " (" + strings.Join(details, ", ") + ")"
 		}
-		return Event{Kind: EventError, Error: errors.New(message)}, true
+		return Event{Kind: EventError, Error: providerServerError(body, message)}, true
 	default:
 		return Event{}, false
 	}
