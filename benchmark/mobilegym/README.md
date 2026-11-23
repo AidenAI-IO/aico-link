@@ -225,13 +225,16 @@ clipboard and pastes it, as it does on a real phone. Without a connected app,
 non-ASCII text cannot be entered, so tasks that test a GUI fallback after a
 bridge failure should use ASCII text.
 
+MobileGym apps do not read intent data, so the simulated app reproduces what a
+phone shows: a `tel:` launch opens the dial pad and presses the number (the dial
+pad has no `+` key, so a leading `+` is dropped), and an http(s) launch points
+the browser's active tab at the URL. Keyboard paste (Ctrl/Cmd+V) inserts
+MobileGym's clipboard, which the Aico App writes, instead of the host clipboard.
+
 Limits: there is no Aico App screen to tap, so the Agent cannot bring the app to
-the foreground or grant a permission through the GUI. MobileGym apps do not read
-intent data, so a `tel:` launch opens the dial pad without the number and a web
-URL opens the browser without loading it. Paste from the clipboard works only
-in fields that MobileGym implements it for (for example the new-contact form,
-not the Contacts search box). iOS-only routes (PiP, BLE wake, Live Activity)
-are not simulated.
+the foreground or grant a permission through the GUI. Whether the browser can
+render the page depends on the simulator's network access. iOS-only routes
+(PiP, BLE wake, Live Activity) are not simulated.
 
 ## 🔧 Configuration
 

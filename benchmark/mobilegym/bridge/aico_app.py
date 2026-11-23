@@ -498,6 +498,14 @@ async (op) => {
     if (op.notes !== undefined) values.notes = op.notes;
     return values;
   };
+  // The dial pad keeps its number in component state, so press its keys. It
+  // has no "+" key; a leading "+" is dropped.
+  const enterDialpadNumber = async (number) => {
+    const keyButton = (key) => [...document.querySelectorAll('button[class*="dialpad-key-height"]')]
+      .find((b) => (b.firstElementChild?.textContent?.trim() || b.firstElementChild?.getAttribute('alt')) === key);
+    for (let i = 0; i < 30 && !keyButton('1'); i += 1) await new Promise((r) => setTimeout(r, 100));
+    for (const key of number.replace(/[^0-9*#]/g, '')) keyButton(key)?.click();
+  };
   const calendarEvents = () => {
     const calendar = sim.getState().apps.calendar;
     if (!calendar || !Array.isArray(calendar.events)) throw new Error('Calendar store is not loaded');
@@ -583,22 +591,28 @@ async (op) => {
         return { method: 'launch_package' };
       }
       const intent = { action: 'ACTION_VIEW', scheme: op.scheme, data: { url: op.url } };
-      if (op.scheme === 'tel') {
-        // MobileGym's dialer cannot receive a number; show its dial pad so the
-        // Agent sees a dialer, as ACTION_DIAL does on a phone.
-        const appId = (os.resolveActivity(intent) || [])[0];
-        if (!appId) return fail('app_not_installed', 'No app handles tel: URLs');
-        os.openApp(appId, appId === 'contacts' ? '/?dialpad=true' : undefined);
-        return { method: 'dial' };
+      const appId = (os.resolveActivity(intent) || [])[0];
+      if (!appId) return fail('app_not_installed', `No app handles ${op.scheme}: URLs`);
+      const method = op.scheme === 'tel' ? 'dial' : 'open_url';
+      // MobileGym's dialer and browser ignore intent data, so reproduce what
+      // the phone shows: a dial pad holding the number, or the page loaded.
+      if (appId === 'contacts' && op.scheme === 'tel') {
+        os.openApp(appId, '/?dialpad=true');
+        await enterDialpadNumber(decodeURIComponent(op.url.slice('tel:'.length)));
+        return { method };
       }
-      if (!os.startActivity(intent, { newTask: true })) {
-        // startActivity needs a calling task, which the home screen lacks. The
-        // real app launches from its own task, so open the first handler directly.
-        const appId = (os.resolveActivity(intent) || [])[0];
-        if (!appId) return fail('app_not_installed', `No app handles ${op.scheme}: URLs`);
-        os.openApp(appId);
+      const browser = sim.getState().apps.browser;
+      if (appId === 'browser' && Array.isArray(browser?.tabs) && browser.tabs.length) {
+        const title = op.url.split('/')[2] || op.url;
+        const tabs = browser.tabs.map((t) => (t.id === browser.activeTabId ? { ...t, url: op.url, title } : t));
+        sim.setState({ apps: { browser: { tabs } } });
+        os.openApp(appId, '/view');
+        return { method };
       }
-      return { method: op.scheme === 'tel' ? 'dial' : 'open_url' };
+      // startActivity needs a calling task, which the home screen lacks. The
+      // real app launches from its own task, so open the handler directly.
+      if (!os.startActivity(intent, { newTask: true })) os.openApp(appId);
+      return { method };
     }
     default:
       return fail('invalid_arguments', `Unsupported command type: ${op.type}`);

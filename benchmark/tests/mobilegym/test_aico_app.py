@@ -1,5 +1,7 @@
+import asyncio
 import base64
 import json
+from types import SimpleNamespace
 import os
 import socket
 import struct
@@ -14,6 +16,7 @@ from mobilegym.bridge.aico_app import (
     CommandError,
     parse_aico_app_config,
 )
+from mobilegym.bridge.input import SimulatorInput
 from mobilegym.bridge.relay_websocket import OP_CLOSE, OP_TEXT, accept_key
 from tests.mobilegym.test_bridge_server import RunningBridge, request_json
 
@@ -311,3 +314,32 @@ def test_setup_rejects_an_invalid_aico_app_config():
 
     assert status == 400
     assert "app_state" in body["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("keys", "clipboard", "inserted", "pressed"),
+    [
+        (["ctrl", "v"], "王小明", ["王小明"], []),
+        (["meta", "v"], "王小明", ["王小明"], []),
+        (["ctrl", "v"], "", [], []),
+        (["ctrl", "a"], "王小明", [], ["Control+a"]),
+    ],
+)
+def test_keyboard_paste_reads_the_simulator_clipboard(keys, clipboard, inserted, pressed):
+    # The Aico App writes MobileGym's clipboard; the browser's native paste
+    # would read the host clipboard instead.
+    calls = {"inserted": [], "pressed": []}
+
+    async def evaluate(_script):
+        return clipboard
+
+    async def insert_text(text):
+        calls["inserted"].append(text)
+
+    async def press(chord):
+        calls["pressed"].append(chord)
+
+    page = SimpleNamespace(evaluate=evaluate, keyboard=SimpleNamespace(insert_text=insert_text, press=press))
+    asyncio.run(SimulatorInput(SimpleNamespace(page=page)).keypress(keys))
+
+    assert calls == {"inserted": inserted, "pressed": pressed}

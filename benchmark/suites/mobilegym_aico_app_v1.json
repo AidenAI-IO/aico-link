@@ -588,11 +588,11 @@
       "id": "call_contact_via_bridge",
       "category": "multi_step",
       "prompt": "用手机给王五打个电话。不用再确认，直接拨。",
-      "description_for_judge": "The agent looks up 王五's number through the Phone Bridge contacts query and opens the dialer with a tel: link through the Phone Bridge. The MobileGym dialer opens on its dial pad without the number, so the agent enters 13912345678 and places the simulated call.",
+      "description_for_judge": "The agent looks up 王五's number through the Phone Bridge contacts query and starts the call with a tel: link through the Phone Bridge. The dialer opens with 8613912345678 on the dial pad (the simulator drops the leading +); pressing a call button places the simulated call.",
       "rubric": [
         {
           "id": "dialed",
-          "check": "The post-screenshot or final response shows the dial pad with 王五's number (13912345678) or a simulated call to it."
+          "check": "The post-screenshot or final response shows the dial pad holding 王五's number (8613912345678 or 13912345678) or a simulated call to it."
         }
       ],
       "hard_assertions": {
@@ -626,11 +626,11 @@
       "id": "open_url_via_bridge",
       "category": "single_step",
       "prompt": "用手机浏览器打开 https://example.com",
-      "description_for_judge": "The agent opens the URL through the Phone Bridge open_url route instead of typing it into the browser. The MobileGym browser does not load intent URLs, so only the launch is checked.",
+      "description_for_judge": "The agent opens the URL through the Phone Bridge open_url route instead of typing it into the browser. The browser shows https://example.com in its address bar; page rendering depends on the simulator's network, so only the launch is checked.",
       "rubric": [
         {
           "id": "browser_opened",
-          "check": "The post-screenshot shows the browser app."
+          "check": "The post-screenshot shows the browser with https://example.com in the address bar."
         }
       ],
       "hard_assertions": {
