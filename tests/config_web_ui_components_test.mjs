@@ -728,6 +728,53 @@ process.stdout.write('config web UI component tests passed\n');
 
 /* ------------------------------------- LAN access and device password pages --- */
 
+// MCP imports retain editable configuration after a server failure and only
+// clear credentials after successful installation. Local mode has this same
+// installation surface without board access-token controls.
+{
+  const {mcpPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/mcp.js')).href);
+  const realFetch = globalThis.fetch;
+  const {dismiss} = await load('toast');
+  const requests = [];
+  let rejectInstall = true;
+  let installed = false;
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({url, options});
+    const failed = options.method === 'POST' && rejectInstall;
+    if (options.method === 'POST' && !failed) installed = true;
+    const payload = failed ? {ok: false, error: 'Handshake failed'} : {ok: true,
+      servers: installed ? [{name: 'demo', state: 'connected', enabled: true, transport: 'http', tools: ['echo']}] : []};
+    return {ok: !failed, status: failed ? 400 : 200, text: async () => JSON.stringify(payload)};
+  };
+  let page;
+  try {
+    page = await mcpPage({snapshot: {profile: 'local', config: {}}, header() {}, navigate() {}});
+    body.appendChild(page);
+    assert.ok(!requests.some(request => request.url.includes('mcp-tokens')));
+    page.querySelector('[data-action="install-mcp-server"]').click();
+    const dialog = body.querySelectorAll('.ds-sheet').findLast(node => node.querySelector('textarea'));
+    const input = dialog.querySelector('textarea');
+    const submit = dialog.querySelector('[data-action="install-mcp-submit"]');
+    const config = {mcpServers: {demo: {url: 'https://example.com/mcp', headers: {Authorization: 'Bearer fixture-only'}}}};
+    input.value = 'invalid json';
+    await submit._listeners.get('click')[0]();
+    assert.equal(requests.filter(request => request.options.method === 'POST').length, 0);
+    input.value = JSON.stringify(config);
+    await submit._listeners.get('click')[0]();
+    assert.equal(input.value, JSON.stringify(config), 'failed installation preserves editable input');
+    assert.equal(dialog.querySelector('.ds-field__error').textContent, 'Handshake failed');
+    rejectInstall = false;
+    await submit._listeners.get('click')[0]();
+    assert.equal(input.value, '', 'successful installation clears credentials');
+    assert.ok(page.textContent.includes('demo'), 'installed server appears in the catalog');
+    assert.deepEqual(JSON.parse(requests.find(request => request.options.method === 'POST').options.body), config);
+  } finally {
+    if (page?.parentNode) page.parentNode.removeChild(page);
+    dismiss();
+    globalThis.fetch = realFetch;
+  }
+}
+
 {
   const {devicePasswordPage, lanAccessPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/lan-access.js')).href);
   const realFetch = globalThis.fetch;

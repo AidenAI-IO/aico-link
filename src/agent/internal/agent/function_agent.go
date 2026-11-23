@@ -61,7 +61,7 @@ func (a *FunctionAgent) ParseOutput(contentResp *llms.ContentResponse) ([]schema
 			}
 			functionName := toolCall.FunctionCall.Name
 			toolInputStr := toolCall.FunctionCall.Arguments
-			invocation := extractToolInvocation(toolInputStr)
+			invocation := a.extractToolInvocation(functionName, toolInputStr)
 			toolCallContent := strings.TrimSpace(choice.Content)
 
 			contentMsg := "\n"
@@ -83,7 +83,7 @@ func (a *FunctionAgent) ParseOutput(contentResp *llms.ContentResponse) ([]schema
 	if choice.FuncCall != nil {
 		functionName := choice.FuncCall.Name
 		toolInputStr := choice.FuncCall.Arguments
-		invocation := extractToolInvocation(toolInputStr)
+		invocation := a.extractToolInvocation(functionName, toolInputStr)
 		toolCallContent := strings.TrimSpace(choice.Content)
 
 		contentMsg := "\n"
@@ -376,6 +376,23 @@ func extractToolInvocation(raw string) toolInvocation {
 		}
 	}
 	return invocation
+}
+
+// External typed tools may legitimately use parameters named input or __arg1.
+// Those fields must reach the server as JSON, rather than as a legacy wrapper.
+func (a *FunctionAgent) extractToolInvocation(name, raw string) toolInvocation {
+	for _, tool := range a.Tools {
+		if tool == nil {
+			continue
+		}
+		if tool.Name() == name {
+			if typed, ok := tool.(interface{ PreserveJSONArguments() bool }); ok && typed.PreserveJSONArguments() {
+				return toolInvocation{Input: raw}
+			}
+			break
+		}
+	}
+	return extractToolInvocation(raw)
 }
 
 func isGenericStringInputWrapper(fields map[string]any) bool {
