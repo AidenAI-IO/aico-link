@@ -265,10 +265,13 @@ func TestModelsDevCatalogCachedAcrossManagers(t *testing.T) {
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		_, _ = io.WriteString(w, `{"anthropic":{"models":{"claude-a":{"limit":{"context":1000,"output":100}},"claude-b":{"limit":{"context":2000,"output":200}}}}}`)
+		_, _ = io.WriteString(w, `{"anthropic":{"models":{"claude-a":{"limit":{"context":1000,"output":100},"cost":{"input":1,"output":2}},"claude-b":{"limit":{"context":2000,"output":200}}}}}`)
 	}))
 	defer server.Close()
 
+	pricing := NewModelManager(ModelConfig{Provider: "anthropic", Model: "claude-a"}, ProxyConfig{},
+		WithModelsDevURL(server.URL), WithProviderMetadataHTTPClient(server.Client()))
+	pricing.prefetchModelsDevPricing()
 	for _, modelName := range []string{"claude-a", "claude-b"} {
 		mgr := NewModelManager(ModelConfig{Provider: "anthropic", Model: modelName}, ProxyConfig{},
 			WithModelsDevURL(server.URL), WithProviderMetadataHTTPClient(server.Client()))
@@ -276,8 +279,72 @@ func TestModelsDevCatalogCachedAcrossManagers(t *testing.T) {
 			t.Fatalf("fetchModelsDevModelSpec(%s): %v", modelName, err)
 		}
 	}
+	if _, ok := modelsDevPriceKeyForConfig(pricing.config).estimate(pricing.cachedModelsDevCatalog(), 10, 0, 0, 5, false); !ok {
+		t.Fatal("the catalog used for capability discovery did not supply a price")
+	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("models.dev requests = %d, want one catalog fetch shared across managers", got)
+	}
+}
+
+func TestModelsDevCatalogRetriesAfterFailure(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, `{"openai":{"models":{"test-model":{"cost":{"input":1,"output":2}}}}}`)
+	}))
+	defer server.Close()
+	t.Cleanup(func() { modelsDevCatalogCache.Delete(server.URL) })
+
+	manager := NewModelManager(ModelConfig{Provider: "openai", Model: "test-model"}, ProxyConfig{},
+		WithModelsDevURL(server.URL), WithProviderMetadataHTTPClient(server.Client()))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	manager.cachedModelsDevCatalog()
+	current, ok := modelsDevCatalogCache.Load(server.URL)
+	if !ok {
+		t.Fatal("pricing lookup did not start the initial load")
+	}
+	failed := current.(*modelsDevCatalogCacheEntry)
+	select {
+	case <-failed.ready:
+		if failed.err == nil {
+			t.Fatal("initial load should fail")
+		}
+	case <-ctx.Done():
+		t.Fatalf("waiting for failed load: %v", ctx.Err())
+	}
+	if !failed.retryAt.After(time.Now()) {
+		t.Fatal("failed load did not enter backoff")
+	}
+	for range 5 {
+		if manager.cachedModelsDevCatalog() != nil {
+			t.Fatal("pricing lookup returned a catalog after a failed load")
+		}
+	}
+	if current, _ := modelsDevCatalogCache.Load(server.URL); current != failed || requests.Load() != 1 {
+		t.Fatal("pricing lookup retried during backoff")
+	}
+
+	// Expire the backoff without waiting on a real-time timer.
+	expired := *failed
+	expired.retryAt = time.Now().Add(-time.Second)
+	modelsDevCatalogCache.Store(server.URL, &expired)
+	manager.cachedModelsDevCatalog()
+	if current, _ := modelsDevCatalogCache.Load(server.URL); current == &expired {
+		t.Fatal("pricing lookup did not retry after backoff")
+	}
+	if _, err := manager.loadModelsDevCatalog(ctx, server.URL); err != nil {
+		t.Fatalf("load after backoff: %v", err)
+	}
+	if _, ok := modelsDevPriceKeyForConfig(manager.config).estimate(manager.cachedModelsDevCatalog(), 10, 0, 0, 5, false); !ok {
+		t.Fatal("successful retry did not make prices available")
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("models.dev requests = %d, want one initial request and one shared retry", got)
 	}
 }
 

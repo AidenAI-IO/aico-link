@@ -258,6 +258,8 @@ async function refreshAgentTasks() {
         const result = await inspectorFetchJSON('/api/agent-tasks');
         inspectorTasksEnabled = result.enabled === true;
         inspectorTasks = Array.isArray(result.tasks) ? result.tasks : [];
+        const historyEmpty = document.getElementById('taskHistoryEmpty');
+        if (historyEmpty) historyEmpty.hidden = result.has_history !== false;
     } catch (_) {
         inspectorTasksEnabled = false;
         inspectorTasks = [];
@@ -358,12 +360,48 @@ function formatTaskTime(value) {
     return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
 }
 
+function renderTaskTimeline(timeline, heading, expandedSteps = new Set()) {
+    const steps = inspectorElement('section', 'task-modal-section');
+    steps.append(inspectorElement('div', 'message-role', heading));
+    const list = inspectorElement('ol', 'task-timeline');
+    if (timeline.omitted) list.append(inspectorElement('li', 'task-step omitted', timeline.omitted + ' earlier steps omitted'));
+    for (const step of timeline.steps || []) {
+        const item = inspectorElement('li', 'task-step');
+        item.dataset.kind = step.kind || '';
+        item.dataset.status = step.is_error ? 'failed' : step.status || '';
+        const head = inspectorElement('div', 'task-step-head');
+        head.append(inspectorElement('span', 'task-step-time', formatTaskTime(step.at)),
+            inspectorElement('span', 'task-step-title', step.title || step.kind));
+        if (step.kind === 'tool' && step.status) head.append(inspectorElement('span', 'task-step-status', step.is_error ? 'failed' : step.status));
+        item.append(head);
+        if (step.detail) {
+            const detail = inspectorElement('pre', 'task-step-detail', step.detail);
+            if (step.kind === 'tool' && (step.detail.length > 240 || step.detail.split('\n', 5).length > 4)) {
+                const disclosure = inspectorElement('details', 'task-step-disclosure');
+                disclosure.dataset.stepKey = step.id || JSON.stringify([step.at, step.title]);
+                disclosure.open = expandedSteps.has(disclosure.dataset.stepKey);
+                disclosure.append(inspectorElement('summary', '', step.status === 'running' ? 'Tool input' : 'Tool result'), detail);
+                item.append(disclosure);
+            } else {
+                item.append(detail);
+            }
+        }
+        list.append(item);
+    }
+    if (!list.children.length) list.append(inspectorElement('li', 'task-step omitted', 'No steps yet.'));
+    steps.append(list);
+    return steps;
+}
+
 function renderTaskModal(detail) {
     const task = detail.task;
-    const timeline = detail.timeline || {steps: []};
     document.getElementById('taskModalStatus').textContent = taskStatusLabel(task) + (task.started_at ? ' · started ' + formatTaskTime(task.started_at) : '');
     document.getElementById('taskModalTitle').textContent = taskTitle(task);
     const body = document.getElementById('taskModalBody');
+    const scrollTop = body.scrollTop;
+    const focusedStep = body.contains(document.activeElement) && document.activeElement.closest('.task-step-disclosure');
+    const expandedSteps = new Set(Array.from(body.querySelectorAll('.task-step-disclosure[open]'),
+        disclosure => disclosure.dataset.stepKey));
     body.replaceChildren();
 
     const goal = inspectorElement('section', 'task-modal-section');
@@ -378,31 +416,20 @@ function renderTaskModal(detail) {
         body.append(action);
     }
 
-    const steps = inspectorElement('section', 'task-modal-section');
-    steps.append(inspectorElement('div', 'message-role', 'Recent steps'));
-    const list = inspectorElement('ol', 'task-timeline');
-    if (timeline.omitted) list.append(inspectorElement('li', 'task-step omitted', timeline.omitted + ' earlier steps omitted'));
-    for (const step of timeline.steps || []) {
-        const item = inspectorElement('li', 'task-step');
-        item.dataset.kind = step.kind || '';
-        item.dataset.status = step.is_error ? 'failed' : step.status || '';
-        const head = inspectorElement('div', 'task-step-head');
-        head.append(inspectorElement('span', 'task-step-time', formatTaskTime(step.at)),
-            inspectorElement('span', 'task-step-title', step.title || step.kind));
-        if (step.kind === 'tool' && step.status) head.append(inspectorElement('span', 'task-step-status', step.is_error ? 'failed' : step.status));
-        item.append(head);
-        if (step.detail) item.append(inspectorElement('pre', 'task-step-detail', step.detail));
-        list.append(item);
-    }
-    if (!list.children.length) list.append(inspectorElement('li', 'task-step omitted', 'No steps yet.'));
-    steps.append(list);
-    body.append(steps);
+    const timeline = renderTaskTimeline(detail.timeline || {}, 'Recent steps', expandedSteps);
+    body.append(timeline);
 
     if (task.result || task.error) {
         const result = inspectorElement('section', 'task-modal-section');
         result.append(inspectorElement('div', 'message-role', task.error ? 'Error' : 'Result'),
             inspectorElement('p', 'state-detail-copy', task.error || task.result));
         body.append(result);
+    }
+    body.scrollTop = scrollTop;
+    if (focusedStep) {
+        const refreshedStep = Array.from(timeline.querySelectorAll('.task-step-disclosure'))
+            .find(disclosure => disclosure.dataset.stepKey === focusedStep.dataset.stepKey);
+        refreshedStep?.querySelector('summary').focus({preventScroll: true});
     }
 }
 
@@ -799,7 +826,7 @@ function trapDialogFocus(event) {
     const dialog = [taskModalEl(), fileModalEl()].find(el => !el.classList.contains('hidden'));
     if (!dialog) return;
     const focusable = Array.from(dialog.querySelectorAll(
-        'button:not([disabled]), a[href], audio[controls], video[controls], iframe, [tabindex]:not([tabindex="-1"])'))
+        'button:not([disabled]), a[href], audio[controls], video[controls], iframe, summary, [tabindex]:not([tabindex="-1"])'))
         .filter(node => node.offsetParent !== null || node === document.activeElement);
     if (focusable.length === 0) {
         event.preventDefault();
