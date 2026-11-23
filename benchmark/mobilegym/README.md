@@ -152,6 +152,87 @@ stopwatch task starts from the home screen because opening Clock directly at
 `/` through the foreground setup leaves it on the redirect route, where tab
 transitions are rejected.
 
+## Simulated Aico App
+
+Phone Bridge tools (`bridge_clipboard`, `bridge_calendar`, `bridge_contacts`,
+`bridge_notification`, `open_url`, and the bridge path of `open_app`) normally
+talk to the Aico App on a real phone. In environment-bridge mode the Agent
+proxies that protocol to this bridge. A task that sets `aico_app` gets a
+simulated Aico App that answers it; tasks without `aico_app` report a
+disconnected phone, so their tool set is unchanged.
+
+The simulated app has no launcher icon or UI. It runs commands through
+MobileGym's own services, so results appear on screen and in `/state`:
+
+| Command | Simulator effect |
+| --- | --- |
+| `clipboard_read` / `clipboard_write` | `os.clipboard` |
+| `calendar_create` / `calendar_query` / `calendar_delete` | `apps.calendar.events` (new events first) |
+| `contacts_query` / `contacts_create` / `contacts_update` | `os.providers.contacts.contacts` (new contacts first) |
+| `notification_send` | `os.notifications`; a future `schedule_at` is recorded in `aico_app.scheduled_notifications` instead |
+| `open_app` | Launches an installed app by name, or the first app whose intent filter handles the URL |
+
+Configure it per task in the suite:
+
+```json
+"environment_bridge_types": ["mobilegym"],
+"aico_app": {
+  "connected": true,
+  "app_state": "background",
+  "fgs_bridge_enabled": true,
+  "permissions": {"contacts": "denied"},
+  "faults": [{"command": "calendar_create", "error": "disconnect", "count": 1}]
+}
+```
+
+- `connected` (default `true`): whether the phone counts as connected.
+- `app_state` (`active` or `background`, default `active`): fixed for the task,
+  not derived from the foreground app. In the background, `open_app` is
+  rejected with `app_backgrounded`; data commands still run.
+- `fgs_bridge_enabled`: reports the Android foreground service, which makes the
+  Agent use the queued background route.
+- `permissions`: `calendar`, `contacts`, or `notifications` set to `denied`
+  return `permission_denied`.
+- `faults`: each entry fails the next `count` matching commands (`command` is a
+  command type or `*`) with `bridge_timeout`, `bridge_connection_closed`,
+  `app_launch_failed`, or `native_module_failed`. `disconnect` also marks the
+  phone disconnected for the rest of the task.
+
+`/state` adds an `aico_app` object for assertions: `connected`,
+`command_counts` and `failed_command_counts` (every command type, `0` when
+unused), `commands` (type, payload, error code, method), and
+`scheduled_notifications`. See `benchmark/suites/mobilegym_aico_app_v1.json`
+for examples.
+
+Tasks that query, delete, or update existing data can seed the simulator with
+`initial_state`, a `window.__SIM__.setState` patch applied after the reset and
+before `foreground_app_id` opens:
+
+```json
+"initial_state": {"apps": {"calendar": {"events": [
+  {"id": "evt_seed", "type": "event", "title": "站会", "allDay": false,
+   "startTs": 1780363800000, "endTs": 1780365600000}
+]}}}
+```
+
+Arrays replace the current value. `initial_state` also requires
+`environment_bridge_types: ["mobilegym"]`.
+
+Text entry: the bridge types only US-keyboard ASCII and does not advertise
+native `insert_text`. While the simulated Aico App is connected, the Agent's
+`enter_text` writes Chinese and other non-ASCII text through the Phone Bridge
+clipboard and pastes it, as it does on a real phone. Without a connected app,
+non-ASCII text cannot be entered, so tasks that test a GUI fallback after a
+bridge failure should use ASCII text.
+
+Limits: there is no Aico App screen to tap, so the Agent cannot bring the app to
+the foreground or grant a permission through the GUI. MobileGym apps do not read
+intent data, so a `tel:` launch opens the dial pad without the number and a web
+URL opens the browser without loading it. Paste from the clipboard works only
+in fields that MobileGym implements it for (for example the new-contact form,
+not the Contacts search box). iOS-only routes (PiP, BLE wake, Live Activity)
+are not simulated.
+
 ## 🔧 Configuration
 
 ### Environment Bridge mode

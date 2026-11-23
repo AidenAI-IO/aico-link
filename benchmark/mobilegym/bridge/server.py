@@ -16,6 +16,13 @@ from mnk_provider import execute_mnk_request
 from setup_token_registry import SetupTokenRegistry, setup_token_from_payload
 
 from .actions import action_to_dict, build_action
+from .aico_app import (
+    AicoAppSession,
+    command_timeout_sec,
+    error_response,
+    evaluate_operation,
+    parse_aico_app_config,
+)
 from .episode import (
     BridgeEpisodeState,
     BridgeTaskRouter,
@@ -30,7 +37,9 @@ from .protocol import (
     encode_image_as_format,
     encode_provider_frame,
     encode_screenshot,
+    parse_initial_state,
 )
+from .relay_websocket import ServerWebSocket, WebSocketClosed, WebSocketProtocolError, accept_key
 from .tools_api import ToolsAPIHandler, future_result
 
 
@@ -50,6 +59,10 @@ ACTION_ENDPOINTS = {"tap", "swipe", "drag", "type_text", "key", "back", "home", 
 DEFAULT_BRIDGE_REQUEST_TIMEOUT_SEC = 180
 SCREENSHOT_PROVIDER_TIMEOUT_SEC = 30
 RELEASE_EPISODE_TIMEOUT_SEC = 5
+# The Agent closes each relay connection after one response; this only bounds
+# a client that stops sending without closing.
+PHONE_BRIDGE_RELAY_IDLE_TIMEOUT_SEC = 120
+PHONE_BRIDGE_PATH = "/api/phone-bridge"
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +101,19 @@ async def _foreground_app(env: Any, app_id: str) -> None:
         app_id,
     )
     await asyncio.sleep(0.8)
+
+
+async def _apply_initial_state(env: Any, patch: dict[str, Any]) -> None:
+    page = getattr(env, "page", None)
+    if page is None:
+        raise RuntimeError("environment does not expose a browser page")
+    await page.evaluate(
+        """(patch) => {
+            if (!window.__SIM__?.setState) throw new Error('window.__SIM__.setState is unavailable');
+            window.__SIM__.setState(patch);
+        }""",
+        patch,
+    )
 
 
 class BridgeServer:
@@ -154,11 +180,39 @@ class BridgeServer:
             self.request_timeout_sec if timeout is None else timeout,
         )
 
+    def aico_app_state(self, task_id: str) -> BridgeEpisodeState | None:
+        """Return the task's env state when its setup configured the Aico App."""
+        try:
+            state = self.router.existing_state_for_task_id(task_id)
+        except MissingBenchmarkTaskIDError:
+            return None
+        if state is None or state.aico_app is None:
+            return None
+        return state
+
+    def run_aico_app_command(self, task_id: str, command: Any) -> dict[str, Any]:
+        state = self.aico_app_state(task_id)
+        if state is None or state.aico_app is None:
+            command_id = str(command.get("id") or "") if isinstance(command, dict) else ""
+            return error_response(command_id, "bridge_not_connected", "Aico App is not configured for this task")
+        # Answer before the Agent's own read deadline so it sees this result.
+        timeout = max(1.0, command_timeout_sec(command) - 0.5) if isinstance(command, dict) else 1.0
+
+        def run(operation: dict[str, Any]) -> dict[str, Any]:
+            return self.submit_to_state(
+                state,
+                state.run_env(lambda env: evaluate_operation(env, operation)),
+                timeout=timeout,
+            )
+
+        return state.aico_app.execute(command, run)
+
 
 def _handler_for(bridge: BridgeServer):
     class BridgeRequestHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            path = urllib.parse.urlparse(self.path).path
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
             # Handle /api/tools catalog
             if path == "/api/tools":
                 bridge.tools_api.handle_request(self, path)
@@ -166,10 +220,35 @@ def _handler_for(bridge: BridgeServer):
             if path == "/api/concurrent":
                 self._send_json(200, bridge_ok(_concurrent_payload(bridge)))
                 return
+            # Phone Bridge endpoints answer with the Agent's native objects, not
+            # the bridge envelope, because the Agent proxy decodes them directly.
+            if path == f"{PHONE_BRIDGE_PATH}/status":
+                session = self._aico_app_session()
+                self._send_json(200, session.status() if session else {"connected": False})
+                return
+            if path == PHONE_BRIDGE_PATH:
+                self._handle_phone_bridge_relay(parsed.query)
+                return
+            if path.startswith(f"{PHONE_BRIDGE_PATH}/results/"):
+                self._handle_phone_bridge_result(urllib.parse.unquote(path.rsplit("/", 1)[1]))
+                return
             if path != "/health":
                 self._send_error(404, "not_found", "unknown endpoint")
                 return
             self._send_json(200, bridge_ok(_health_payload(bridge)))
+
+        def do_DELETE(self) -> None:
+            path = urllib.parse.urlparse(self.path).path
+            prefix = f"{PHONE_BRIDGE_PATH}/commands/"
+            if not path.startswith(prefix):
+                self._send_error(404, "not_found", "unknown endpoint")
+                return
+            command_id = urllib.parse.unquote(path[len(prefix):])
+            session = self._aico_app_session()
+            if session is None or not session.discard(command_id):
+                self._send_json(404, {"error": "command not found"})
+                return
+            self._send_json(200, {"command_id": command_id, "status": "canceled"})
 
         def do_POST(self) -> None:
             parsed = urllib.parse.urlparse(self.path)
@@ -202,6 +281,8 @@ def _handler_for(bridge: BridgeServer):
                     self._handle_provider_screenshot(payload)
                 elif path == "api/providers/mnk":
                     self._handle_provider_mnk(payload)
+                elif path == "api/phone-bridge/commands":
+                    self._handle_phone_bridge_enqueue(payload)
                 elif path in ACTION_ENDPOINTS:
                     self._handle_action(path, payload)
                 else:
@@ -240,23 +321,41 @@ def _handler_for(bridge: BridgeServer):
             setup_token = setup_token_from_payload(payload)
             app_ids = _setup_app_ids(payload)
             foreground_app_id = _foreground_app_id(payload)
+            aico_app = parse_aico_app_config(payload.get("aico_app"))
+            initial_state = parse_initial_state(payload.get("initial_state"))
 
             def setup() -> dict[str, Any]:
                 state = bridge.router.state_for_task_id(task_id)
+                state.aico_app = None
                 result = bridge.submit_to_state(
                     state,
                     state.reset_episode(episode_id, app_ids=app_ids),
                 )
+                if initial_state is not None:
+                    # Seed before the foreground app opens so it renders the data.
+                    bridge.submit_to_state(
+                        state,
+                        state.run_env(lambda env: _apply_initial_state(env, initial_state)),
+                    )
                 if foreground_app_id:
                     bridge.submit_to_state(
                         state,
                         state.run_env(lambda env: _foreground_app(env, foreground_app_id)),
                     )
+                if aico_app is not None:
+                    state.aico_app = AicoAppSession(aico_app)
                 return result
 
             if setup_token:
                 result = bridge.setup_tokens.run(
-                    (task_id, setup_token, tuple(app_ids), foreground_app_id),
+                    (
+                        task_id,
+                        setup_token,
+                        tuple(app_ids),
+                        foreground_app_id,
+                        json.dumps(payload.get("aico_app"), sort_keys=True),
+                        json.dumps(initial_state, sort_keys=True),
+                    ),
                     setup,
                 )
             else:
@@ -266,6 +365,8 @@ def _handler_for(bridge: BridgeServer):
         def _handle_release(self) -> None:
             task_id = benchmark_task_id_from_headers(self.headers)
             state = bridge.router.existing_state_for_task_id(task_id)
+            if state is not None:
+                state.aico_app = None
             if state is not None and state.active_episode_id:
                 try:
                     bridge.submit_to_state(
@@ -282,6 +383,9 @@ def _handler_for(bridge: BridgeServer):
         def _handle_state(self, payload: dict[str, Any]) -> None:
             state = self._request_state()
             result = bridge.submit_to_state(state, state.run_env(lambda env: env.get_state(**payload)))
+            session = state.aico_app
+            if session is not None and isinstance(result, dict):
+                result = {**result, "aico_app": session.snapshot()}
             self._send_json(200, bridge_ok(result))
 
         def _handle_route(self) -> None:
@@ -390,6 +494,72 @@ def _handler_for(bridge: BridgeServer):
             result = bridge.submit_to_state(state, state.run_env(step_env))
             self._send_json(200, result)
 
+        def _aico_app_session(self) -> AicoAppSession | None:
+            state = bridge.aico_app_state(benchmark_task_id_from_headers(self.headers))
+            return state.aico_app if state is not None else None
+
+        def _handle_phone_bridge_relay(self, query: str) -> None:
+            params = urllib.parse.parse_qs(query)
+            if params.get("benchmark_relay") != ["1"]:
+                # Only the Agent's benchmark relay connects here; there is no
+                # real companion app behind this bridge.
+                self._send_error(404, "not_found", "only benchmark relay connections are supported")
+                return
+            key = self.headers.get("Sec-WebSocket-Key", "")
+            if self.headers.get("Upgrade", "").lower() != "websocket" or not key:
+                self._send_error(400, "bad_request", "WebSocket upgrade required")
+                return
+            task_id = benchmark_task_id_from_headers(self.headers)
+            # RFC 6455 requires an HTTP/1.1 status line for the upgrade.
+            self.protocol_version = "HTTP/1.1"
+            self.send_response(101, "Switching Protocols")
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept_key(key))
+            self.end_headers()
+            self.wfile.flush()
+            self.close_connection = True
+            self.connection.settimeout(PHONE_BRIDGE_RELAY_IDLE_TIMEOUT_SEC)
+            socket_ = ServerWebSocket(self.rfile, self.wfile)
+            try:
+                while (message := socket_.receive()) is not None:
+                    opcode, data = message
+                    try:
+                        command = json.loads(data.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        response = error_response("", "invalid_arguments", f"decode relayed command: {exc}")
+                    else:
+                        response = bridge.run_aico_app_command(task_id, command)
+                    socket_.send(opcode, json.dumps(response, ensure_ascii=False).encode("utf-8"))
+            except (WebSocketClosed, WebSocketProtocolError, OSError) as exc:
+                logger.debug("Phone Bridge relay connection ended for task %s: %s", task_id, exc)
+
+        def _handle_phone_bridge_enqueue(self, payload: dict[str, Any]) -> None:
+            command = payload.get("command")
+            if not isinstance(command, dict) or not str(command.get("id") or "").strip():
+                raise ValueError("command with a non-empty id is required")
+            command_id = str(command["id"]).strip()
+            session = self._aico_app_session()
+            if session is None:
+                self._send_json(409, {"error": "Aico App is not configured for this task"})
+                return
+            if session.has_result(command_id):
+                self._send_json(409, {"error": "command already exists"})
+                return
+            queued_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            # The simulated app runs the command immediately; the Agent then
+            # finds the completed result on its first poll.
+            bridge.run_aico_app_command(benchmark_task_id_from_headers(self.headers), command)
+            self._send_json(202, {"command_id": command_id, "status": "queued", "queued_at": queued_at})
+
+        def _handle_phone_bridge_result(self, command_id: str) -> None:
+            session = self._aico_app_session()
+            result = session.result(command_id) if session is not None else None
+            if result is None:
+                self._send_json(404, {"error": "command not found"})
+                return
+            self._send_json(200, {"command_id": command_id, "status": "completed", "result": result})
+
         def _request_state(self) -> BridgeEpisodeState:
             return bridge.router.state_for_headers(self.headers)
 
@@ -456,6 +626,7 @@ def _health_payload(bridge: BridgeServer) -> dict[str, Any]:
             "/route",
             "/api/release",
             "/api/concurrent",
+            "/api/phone-bridge/status",
         ],
     }
 
