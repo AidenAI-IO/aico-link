@@ -815,7 +815,7 @@ def _cmd_run_auto_agent_setup_inner(
                 device_type=unit.target_platform,
                 environment_bridge_mode=bool(args.environment_url),
                 benchmark_mock_tools=task_mock_environment is not None,
-                benchmark_local_phone_bridge=bool(bridge_serial),
+                benchmark_local_phone_bridge=bool(bridge_serial) or (environment_health or {}).get("bridge_type") == "adb_android",
                 benchmark_realtime_text=getattr(args, "execution_mode", "backend-text") == "realtime-text",
                 log_path=runner_log,
             )

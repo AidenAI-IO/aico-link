@@ -94,6 +94,11 @@ The device type passed to the Agent (`AICO_DEVICE_TYPE`) comes from the bridge:
 `android` maps to `Android`, `ios` to `iOS`, `mac` or `macos` to `macOS`,
 `windows` to `windows`, and `linux` to `linux`.
 
+Android (ADB) instances keep Phone Bridge on the Agent. The ADB bridge receives
+only screen and input requests; companion App status, WebSocket connections,
+and HTTP command queues are handled locally. Companion App features require a
+phone-to-Agent network path; see [Phone Bridge](../../docs/04-agent/phone-bridge.md#desktop-agent-with-adb-reverse).
+
 Each instance claims its own bridge route with the task and episode id
 `launcher-<id>`; bridges that claim a route at startup (iPhone Mirroring, iOS
 device, virtual iPhone) get the same id. Stopping an instance stops the Agent

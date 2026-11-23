@@ -96,6 +96,7 @@ cd ../src/agent
 go run ./cmd/daemon \
   -dir <your agent data directory> \
   --environment-bridge-mode \
+  --local-phone-bridge \
   --environment-bridge-endpoint http://127.0.0.1:8899 \
   --benchmark-task-id cli-task
 

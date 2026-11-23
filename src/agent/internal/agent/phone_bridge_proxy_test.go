@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +17,99 @@ import (
 
 	"nhooyr.io/websocket"
 )
+
+func TestPhoneBridgeProxyStatusBackoffAndRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		statusCode  int
+		body        string
+		err         error
+		unsupported bool
+	}{
+		{name: "missing endpoint", statusCode: http.StatusNotFound, unsupported: true},
+		{name: "unsupported method", statusCode: http.StatusMethodNotAllowed, unsupported: true},
+		{name: "not implemented", statusCode: http.StatusNotImplemented, unsupported: true},
+		{name: "server failure", statusCode: http.StatusServiceUnavailable},
+		{name: "invalid response", statusCode: http.StatusOK, body: "invalid JSON"},
+		{name: "timeout", err: context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			bridge := NewPhoneBridgeProxy("http://environment.test", "test-task", &Logger{logger: log.New(&logs, "", 0)})
+			defer bridge.queue.Stop()
+			var calls atomic.Int32
+			var failing atomic.Bool
+			failing.Store(true)
+			var connected atomic.Bool
+			connected.Store(true)
+			bridge.proxyClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				if r.Method != http.MethodGet || r.URL.Path != "/api/phone-bridge/status" || r.Header.Get("benchmark-task-id") != "test-task" {
+					t.Errorf("unexpected status request: %s %s, task=%q", r.Method, r.URL, r.Header.Get("benchmark-task-id"))
+				}
+				code, body := http.StatusOK, fmt.Sprintf(`{"connected":%t,"platform":"android","phone_id":"device-phone"}`, connected.Load())
+				if failing.Load() {
+					if tc.err != nil {
+						return nil, tc.err
+					}
+					code, body = tc.statusCode, tc.body
+				}
+				return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			})
+
+			var wg sync.WaitGroup
+			for range 20 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if got := bridge.getStatus(); got.Connected {
+						t.Errorf("failed status = %+v, want disconnected", got)
+					}
+				}()
+			}
+			wg.Wait()
+			if got := calls.Load(); got != 1 {
+				t.Fatalf("concurrent failed status probes = %d, want 1", got)
+			}
+			wantDelay := phoneBridgeProxyStatusRetryDelay
+			if tc.unsupported {
+				wantDelay = phoneBridgeProxyStatusUnsupportedDelay
+				if strings.Contains(logs.String(), "[ERROR]") {
+					t.Fatalf("unsupported endpoint logged as an error: %s", logs.String())
+				}
+			}
+			bridge.proxyStatusMu.Lock()
+			remaining := time.Until(bridge.proxyStatusRetryAt)
+			bridge.proxyStatusMu.Unlock()
+			if remaining <= wantDelay-2*time.Second || remaining > wantDelay {
+				t.Fatalf("retry delay = %s, want approximately %s", remaining, wantDelay)
+			}
+
+			failing.Store(false)
+			if got := bridge.getStatus(); got.Connected || calls.Load() != 1 {
+				t.Fatalf("status probe ignored backoff: status=%+v calls=%d", got, calls.Load())
+			}
+			bridge.proxyStatusMu.Lock()
+			bridge.proxyStatusRetryAt = time.Now().Add(-time.Second)
+			bridge.proxyStatusMu.Unlock()
+			if got := bridge.getStatus(); !got.Connected || got.PhoneID != "device-phone" || got.Platform != "android" {
+				t.Fatalf("status did not recover after backoff: %+v", got)
+			}
+			connected.Store(false)
+			if got := bridge.getStatus(); got.Connected || calls.Load() != 3 {
+				t.Fatalf("successful status reads must stay live: status=%+v calls=%d", got, calls.Load())
+			}
+			failing.Store(true)
+			if got := bridge.getStatus(); got.Connected || got.PhoneID != "" {
+				t.Fatalf("failed status reused stale phone state: %+v", got)
+			}
+			bridge.getStatus()
+			if got := calls.Load(); got != 4 {
+				t.Fatalf("failure after recovery did not resume backoff: calls=%d", got)
+			}
+		})
+	}
+}
 
 func TestPhoneBridgeProxyMode(t *testing.T) {
 	// Create a mock remote agent
