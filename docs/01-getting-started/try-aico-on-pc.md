@@ -129,6 +129,7 @@ the image reads:
 | --- | --- | --- |
 | `AICO_ENABLE_TERMINAL` | `0` | `1` starts `ttyd` behind `/webtty/` on the Agent Web UI. The Compose sandbox sets it to `1`. |
 | `AICO_CLASSIC_VOICE` | `0` | Classic (speech-to-text) voice needs on-device RKNN models that the image lacks, so Classic mode is text-only in Docker. Realtime mode keeps text and browser voice: `localhost` is a secure context, so the browser microphone works without TLS. |
+| `AICO_LOCAL_PHONE_BRIDGE` | `0` | `1` keeps companion App connections, status, and command queues on this Agent while an environment bridge handles screen and input. Set this for the ADB Android bridge, which has no Phone Bridge API. The Aico Launcher sets it automatically for Android (ADB) instances. |
 | `AICO_QUICK_ACTIONS_PRESET` | empty | `ios_device` or `iphone_mirroring` installs that bundled iOS quick-actions preset as `/userdata/agent/quick_actions.json` before the Agent starts. The Aico Launcher sets it for the matching bridge types. An unmodified preset copy is replaced when the preset changes and removed when it is cleared; a `quick_actions.json` you edited is never overwritten. |
 
 Build arguments let you build through mirrors and stamp the build:
@@ -314,12 +315,15 @@ Then start the sandbox from the repository root:
 
 ```bash
 AICO_DEVICE_TYPE=Android \
+AICO_LOCAL_PHONE_BRIDGE=1 \
 AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:8899 \
   docker compose up --build
 ```
 
 See [ADB Android Environment Bridge](../../benchmark/adbandroid/README.md) for
 supported tools, serial selection, and device-specific limitations.
+See [Phone Bridge](../04-agent/phone-bridge.md#desktop-agent-with-adb-reverse)
+for the companion App's separate network requirements.
 
 ### Other Virtual Machines or Targets
 
