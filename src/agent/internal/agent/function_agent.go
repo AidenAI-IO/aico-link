@@ -385,7 +385,7 @@ func (a *FunctionAgent) extractToolInvocation(name, raw string) toolInvocation {
 		if tool == nil {
 			continue
 		}
-		if tool.Name() == name {
+		if toolSpecKey(tool.Name()) == toolSpecKey(name) {
 			if typed, ok := tool.(interface{ PreserveJSONArguments() bool }); ok && typed.PreserveJSONArguments() {
 				return toolInvocation{Input: raw}
 			}

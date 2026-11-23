@@ -726,8 +726,6 @@ process.stdout.write('config web UI component tests passed\n');
   }
 }
 
-/* ------------------------------------- LAN access and device password pages --- */
-
 // MCP imports retain editable configuration after a server failure and only
 // clear credentials after successful installation. Local mode has this same
 // installation surface without board access-token controls.
@@ -774,6 +772,35 @@ process.stdout.write('config web UI component tests passed\n');
     globalThis.fetch = realFetch;
   }
 }
+
+// A refresh started before a catalog change must not overwrite a newer result,
+// whether the old request succeeds or fails after the current one.
+{
+  const {mcpServersCard} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/mcp-servers.js')).href);
+  const realFetch = globalThis.fetch;
+  const respond = servers => ({ok: true, status: 200, text: async () => JSON.stringify({servers})});
+  try {
+    for (const staleFailure of [false, true]) {
+      const pending = [];
+      globalThis.fetch = () => new Promise((resolve, reject) => pending.push({resolve, reject}));
+      const card = mcpServersCard();
+      const stale = card.refresh();
+      const current = card.refresh();
+      pending[1].resolve(respond([{name: 'current-server', enabled: true, state: 'connected', transport: 'http'}]));
+      await current;
+      const currentText = card.element.textContent;
+      assert.ok(currentText.includes('current-server'));
+      if (staleFailure) pending[0].reject(new Error('stale refresh failure'));
+      else pending[0].resolve(respond([{name: 'removed-server', enabled: true, state: 'connected', transport: 'http'}]));
+      await stale;
+      assert.equal(card.element.textContent, currentText, 'superseded refresh leaves the current catalog intact');
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+/* ------------------------------------- LAN access and device password pages --- */
 
 {
   const {devicePasswordPage, lanAccessPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/lan-access.js')).href);

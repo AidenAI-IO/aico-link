@@ -76,6 +76,9 @@ func TestMCPTransportsAndLifecycle(t *testing.T) {
 			if len(tools) != 1 {
 				t.Fatalf("tools: %v", tools)
 			}
+			// Installation may finish before the background startup reconnect.
+			// The original handle must remain usable after Start.
+			m.Start()
 			if got := tools[0].ArgsSchema()["properties"].(map[string]any)["input"].(map[string]any)["type"]; got != "string" {
 				t.Fatalf("schema lost: %v", got)
 			}

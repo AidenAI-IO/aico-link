@@ -96,7 +96,7 @@ func (m *Manager) Start() {
 		if m.ctx.Err() != nil {
 			return
 		}
-		if e.config.Disabled {
+		if e.config.Disabled || e.session != nil {
 			continue
 		}
 		connected, err := m.connect(m.ctx, e.status.Name, e.config)
@@ -395,7 +395,7 @@ type Tool struct {
 }
 
 func (t *Tool) Name() string {
-	hash := sha256.Sum256([]byte(t.remote))
+	hash := sha256.Sum256([]byte(t.server + "\x00" + t.remote))
 	label := serverNameLabel(t.remote)
 	if len(label) > 10 {
 		label = label[:10]

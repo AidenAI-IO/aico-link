@@ -15,13 +15,17 @@ export function mcpServersCard() {
   let servers = [];
   let error = '';
   let busy = false;
+  let refreshGeneration = 0;
 
   async function refresh() {
+    const generation = ++refreshGeneration;
     try {
       const result = await request(API, {cache: 'no-store'});
+      if (generation !== refreshGeneration) return;
       servers = result.servers || [];
       error = '';
     } catch (failure) {
+      if (generation !== refreshGeneration) return;
       error = failure.message;
     }
     render();
