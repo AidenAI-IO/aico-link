@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"sync"
-	"time"
 
 	"aico-agent/internal/agent/tts"
 )
@@ -227,73 +226,46 @@ func speakWithTTSManagerObserved(ctx context.Context, manager *tts.ProviderManag
 		return false, nil
 	}
 
-	// Retry transient network errors
-	maxRetries := 2
-	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			// Short backoff between retries
-			select {
-			case <-ctx.Done():
-				return false, ctx.Err()
-			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
-			}
+	stream, err := beginManagedTTSStream(ctx, manager, playback, cfg)
+	if err != nil {
+		return false, err
+	}
+	unobserve := func() {}
+	if observe != nil {
+		if cleanup := observe(stream); cleanup != nil {
+			unobserve = cleanup
 		}
+	}
 
-		stream, err := beginManagedTTSStream(ctx, manager, playback, cfg)
-		if err != nil {
-			lastErr = err
-			if isTransientTTSError(err) && attempt < maxRetries {
-				continue
-			}
-			return false, err
+	if _, err := stream.Write([]byte(text)); err != nil {
+		speechStarted := stream.startedPlayback()
+		var stopErr error
+		if ctx.Err() != nil {
+			stream.interrupt()
 		}
-		unobserve := func() {}
-		if observe != nil {
-			if cleanup := observe(stream); cleanup != nil {
-				unobserve = cleanup
-			}
-		}
-
-		if _, err := stream.Write([]byte(text)); err != nil {
-			speechStarted := stream.startedPlayback()
-			var stopErr error
-			if ctx.Err() != nil {
-				stream.interrupt()
-			}
-			_ = stream.closeAndWait()
-			speechStarted = speechStarted || stream.startedPlayback()
-			if ctx.Err() == nil {
-				stopErr = stream.stopPlayback()
-			}
-			unobserve()
-			lastErr = errors.Join(err, stopErr)
-			if stopErr == nil && isTransientTTSError(err) && attempt < maxRetries && !speechStarted {
-				continue
-			}
-			return speechStarted, lastErr
-		}
-
-		if err := stream.closeAndWait(); err != nil {
-			speechStarted := stream.startedPlayback()
-			var stopErr error
-			if ctx.Err() != nil {
-				stream.interrupt()
-			} else {
-				stopErr = stream.stopPlayback()
-			}
-			unobserve()
-			lastErr = errors.Join(err, stopErr)
-			if stopErr == nil && isTransientTTSError(err) && attempt < maxRetries && !speechStarted {
-				continue
-			}
-			return speechStarted, lastErr
+		_ = stream.closeAndWait()
+		speechStarted = speechStarted || stream.startedPlayback()
+		if ctx.Err() == nil {
+			stopErr = stream.stopPlayback()
 		}
 		unobserve()
-
-		return stream.spokeSuccessfully(), nil
+		return speechStarted, errors.Join(err, stopErr)
 	}
-	return false, lastErr
+
+	if err := stream.closeAndWait(); err != nil {
+		speechStarted := stream.startedPlayback()
+		var stopErr error
+		if ctx.Err() != nil {
+			stream.interrupt()
+		} else {
+			stopErr = stream.stopPlayback()
+		}
+		unobserve()
+		return speechStarted, errors.Join(err, stopErr)
+	}
+	unobserve()
+
+	return stream.spokeSuccessfully(), nil
 }
 
 // isTransientTTSError checks if an error is transient and should be retried.

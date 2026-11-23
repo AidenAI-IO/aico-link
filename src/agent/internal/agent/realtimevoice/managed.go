@@ -2,12 +2,14 @@ package realtimevoice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
 
 	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/providerretry"
 
 	"github.com/gorilla/websocket"
 )
@@ -42,6 +44,27 @@ func isSessionIdleCloseMessage(reason string) bool {
 		return false
 	}
 	return strings.Contains(normalized, "no response was generated")
+}
+
+type providerFrameError struct {
+	error
+	status int
+}
+
+func (e *providerFrameError) HTTPStatusCode() int { return e.status }
+func (e *providerFrameError) Unwrap() error       { return e.error }
+
+func providerServerError(body []byte, message string) error {
+	if isSessionIdleCloseMessage(message) {
+		return classifyServerErrorMessage(message)
+	}
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &envelope) == nil && len(envelope.Data) > 0 {
+		body = envelope.Data
+	}
+	return &providerFrameError{error: errors.New(message), status: providerretry.JSONStatus(body)}
 }
 
 // classifyServerErrorMessage wraps a provider's JSON error-frame message with
@@ -105,7 +128,24 @@ func (r *ProviderRegistry) Open(
 	if err != nil {
 		return nil, err
 	}
-	raw, err := provider.Open(ctx, sessionConfig)
+	// A replayed Speko mint must retain its idempotency key, including when
+	// the mint succeeds but the delegated provider's handshake fails.
+	if speko, ok := provider.(SpekoProvider); ok && speko.IdempotencyKey == "" {
+		speko.IdempotencyKey, err = spekoIdempotencyKey()
+		if err != nil {
+			return nil, err
+		}
+		provider = speko
+	}
+	policy := providerretry.VoicePolicy()
+	policy.Timeout = 0 // Open's caller owns the connection deadline and live context.
+	raw, err := providerretry.Do(ctx, policy, func(attemptCtx context.Context) (Session, error) {
+		session, err := provider.Open(attemptCtx, sessionConfig)
+		if err != nil && session != nil {
+			_ = session.Close()
+		}
+		return session, err
+	})
 	if err != nil {
 		return nil, err
 	}

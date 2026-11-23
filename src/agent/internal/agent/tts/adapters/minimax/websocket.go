@@ -7,10 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
-
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
+
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -170,7 +171,7 @@ func (s *wsSession) synthesizeChunk(text string) error {
 		return fmt.Errorf("read task_started: %w", err)
 	}
 	if event, _ := startResp["event"].(string); event != "task_started" {
-		return fmt.Errorf("unexpected: %v", startResp)
+		return minimaxError(startResp)
 	}
 
 	// task_continue
@@ -203,7 +204,7 @@ func (s *wsSession) synthesizeChunk(text string) error {
 				logging.Infof("agent", "tts", "%s: synthesized %d chars", s.cfg.provider, len(text))
 				return nil
 			case "task_failed":
-				return fmt.Errorf("task failed: %s", minimaxResponseMessage(resp))
+				return minimaxError(resp)
 			}
 		}
 		if data, ok := resp["data"].(map[string]any); ok {
@@ -234,7 +235,7 @@ func (s *wsSession) dial() (*websocket.Conn, error) {
 	connCtx, cancel := context.WithTimeout(s.ctx, wsConnTimeout)
 	defer cancel()
 
-	conn, _, err := dialer.DialContext(connCtx, s.cfg.endpoint, header)
+	conn, _, err := providerretry.Dial(connCtx, &dialer, s.cfg.endpoint, header)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +247,7 @@ func (s *wsSession) dial() (*websocket.Conn, error) {
 	}
 	if event, _ := connResp["event"].(string); event != "connected_success" {
 		conn.Close()
-		return nil, fmt.Errorf("unexpected connect response: %v", connResp)
+		return nil, minimaxError(connResp)
 	}
 	return conn, nil
 }
@@ -284,4 +285,21 @@ func readJSONWithContext(ctx context.Context, conn *websocket.Conn, v any) error
 		return ctx.Err()
 	}
 	return err
+}
+
+// MiniMax reports service errors inside base_resp after a successful upgrade.
+func minimaxError(resp map[string]any) error {
+	status := 400
+	if base, ok := resp["base_resp"].(map[string]any); ok {
+		code, _ := base["status_code"].(float64)
+		switch int(code) {
+		case 1001:
+			status = 504 // request timeout
+		case 1002, 1039:
+			status = 429 // rate and token limits
+		default:
+			status = providerretry.ProviderStatus(fmt.Sprint(base["status_code"]))
+		}
+	}
+	return &providerretry.StatusError{Status: status, Body: fmt.Sprintf("task failed: %s", minimaxResponseMessage(resp))}
 }

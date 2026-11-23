@@ -1,7 +1,6 @@
 package realtimevoice
 
 import (
-	"aico-agent/internal/logging"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -10,6 +9,9 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
 
 	"github.com/gorilla/websocket"
 )
@@ -47,7 +49,7 @@ func (p OpenAIProvider) Open(ctx context.Context, cfg SessionConfig) (Session, e
 	}
 	header := make(map[string][]string, 1)
 	header["Authorization"] = []string{bearer(cfg.APIKey)}
-	conn, resp, err := d.DialContext(ctx, endpoint, header)
+	conn, resp, err := providerretry.Dial(ctx, d, endpoint, header)
 	if err != nil {
 		return nil, dialError("openai realtime", resp, err)
 	}
@@ -496,7 +498,7 @@ func translateOpenAIEvent(body []byte) (Event, bool) {
 		if err := json.Unmarshal(body, &event); err != nil {
 			return Event{Kind: EventError, Error: err}, true
 		}
-		err := errors.New(event.Error.Message)
+		err := providerServerError(body, event.Error.Message)
 		if event.Error.Code != "" {
 			err = fmt.Errorf("%s: %w", event.Error.Code, err)
 		}
@@ -613,7 +615,7 @@ func translateOpenAIEvent(body []byte) (Event, bool) {
 		if isOpenAINoActiveResponseCancelError(event.Error.Type, event.Error.Code, event.Error.Message) {
 			return Event{}, false
 		}
-		return Event{Kind: EventError, Error: errors.New(event.Error.Message)}, true
+		return Event{Kind: EventError, Error: providerServerError(body, event.Error.Message)}, true
 	default:
 		return Event{}, false
 	}

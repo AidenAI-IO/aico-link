@@ -1,9 +1,6 @@
 package agent
 
 import (
-	"aico-agent/internal/agent/messages"
-	"aico-agent/internal/agent/model"
-	"aico-agent/internal/logging"
 	"bytes"
 	"context"
 	"errors"
@@ -16,6 +13,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
 
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
@@ -451,7 +453,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if state, ok := req.Context().Value(providerRetryContextKey{}).(*providerRetryAttempt); ok {
 		// ModelManager retries the complete attempt, including response reads.
 		// Retrying here as well would multiply the request budget.
-		resp, err := t.wrapped.RoundTrip(req)
+		resp, err := providerretry.RoundTrip(t.wrapped, req, state.streamIdleTimeout)
 		if resp != nil {
 			state.statusCode = resp.StatusCode
 			state.retryAfter = providerRetryAfter(resp.Header.Get("Retry-After"), time.Now())

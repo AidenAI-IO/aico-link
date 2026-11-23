@@ -12,11 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
-
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -98,12 +99,20 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	opened := false
+	defer func() {
+		if !opened {
+			stopCancel()
+		}
+	}()
 	s := &session{
-		ctx:       ctx,
-		conn:      conn,
-		sink:      sink,
-		sessionID: uuid.NewString(),
-		readDone:  make(chan error, 1),
+		stopCancel: stopCancel,
+		ctx:        ctx,
+		conn:       conn,
+		sink:       sink,
+		sessionID:  uuid.NewString(),
+		readDone:   make(chan error, 1),
 	}
 	if err := s.sendEvent(eventStartConnection, "", []byte("{}")); err != nil {
 		conn.Close()
@@ -121,6 +130,7 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 		conn.Close()
 		return nil, fmt.Errorf("session started: %w", err)
 	}
+	opened = true
 	go s.readLoop()
 	return s, nil
 }
@@ -136,7 +146,7 @@ func (a *Adapter) dial(ctx context.Context) (*websocket.Conn, error) {
 	header.Set("X-Api-Connect-Id", uuid.NewString())
 	connCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
-	conn, resp, err := dialer.DialContext(connCtx, a.endpoint, header)
+	conn, resp, err := providerretry.Dial(connCtx, &dialer, a.endpoint, header)
 	if err != nil {
 		return nil, err
 	}
@@ -176,10 +186,11 @@ func (a *Adapter) startSessionPayload(format tts.AudioFormat) []byte {
 }
 
 type session struct {
-	ctx       context.Context
-	conn      *websocket.Conn
-	sink      tts.AudioSink
-	sessionID string
+	stopCancel func() bool
+	ctx        context.Context
+	conn       *websocket.Conn
+	sink       tts.AudioSink
+	sessionID  string
 
 	writeMu  sync.Mutex
 	readDone chan error
@@ -331,6 +342,9 @@ func (s *session) waitReadDone(ctx context.Context) error {
 }
 
 func (s *session) closeConn() {
+	if s.stopCancel != nil {
+		s.stopCancel()
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if s.conn != nil {

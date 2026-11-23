@@ -10,10 +10,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
 
 	"github.com/gorilla/websocket"
 )
@@ -52,7 +54,7 @@ func (p MossProvider) Open(ctx context.Context, cfg SessionConfig) (Session, err
 	}
 	header := http.Header{}
 	header.Set("Authorization", bearer(cfg.APIKey))
-	conn, resp, err := d.DialContext(ctx, endpoint, header)
+	conn, resp, err := providerretry.Dial(ctx, d, endpoint, header)
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
@@ -119,6 +121,7 @@ func (p MossProvider) Open(ctx context.Context, cfg SessionConfig) (Session, err
 		_ = s.Close()
 		return nil, err
 	}
+	s.setupComplete.Store(true)
 	if err := s.writeJSON(ctx, map[string]any{"action": "mic_state", "enabled": true}); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -314,11 +317,13 @@ type mossSession struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	ready       chan struct{}
-	readyOnce   sync.Once
-	updated     chan struct{}
-	updatedOnce sync.Once
-	updateErr   string
+	ready         chan struct{}
+	readyOnce     sync.Once
+	updated       chan struct{}
+	updatedOnce   sync.Once
+	updateErr     string
+	updateFailure error
+	setupComplete atomic.Bool
 
 	ctxMu                 sync.Mutex
 	audioContexts         []mossChunkRef
@@ -487,7 +492,7 @@ func (s *mossSession) waitReady(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
-		return fmt.Errorf("%s: timed out waiting for session_attached", s.label)
+		return fmt.Errorf("%s: timed out waiting for session_attached: %w", s.label, context.DeadlineExceeded)
 	case err := <-s.errs:
 		if err != nil {
 			return err
@@ -508,7 +513,7 @@ func (s *mossSession) waitUpdated(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
-		return fmt.Errorf("%s: timed out waiting for session.updated", s.label)
+		return fmt.Errorf("%s: timed out waiting for session.updated: %w", s.label, context.DeadlineExceeded)
 	case err := <-s.errs:
 		if err != nil {
 			return err
@@ -516,6 +521,9 @@ func (s *mossSession) waitUpdated(ctx context.Context) error {
 		return fmt.Errorf("%s: event stream closed while waiting for session.updated", s.label)
 	case <-s.updated:
 		if strings.TrimSpace(s.updateErr) != "" {
+			if s.updateFailure != nil {
+				return s.updateFailure
+			}
 			return fmt.Errorf("%s: session.updated error: %s", s.label, s.updateErr)
 		}
 		return nil
@@ -598,6 +606,14 @@ func (s *mossSession) readLoop() {
 			continue
 		}
 		for _, event := range events {
+			if event.Kind == EventError && !s.setupComplete.Load() {
+				select {
+				case s.errs <- event.Error:
+				case <-s.done:
+					return
+				}
+				continue
+			}
 			select {
 			case s.events <- event:
 			case <-s.done:
@@ -733,6 +749,7 @@ func (s *mossSession) onJSON(body []byte) []Event {
 	case "session.updated":
 		if errVal, ok := data["error"]; ok {
 			s.updateErr = fmt.Sprint(errVal)
+			s.updateFailure = providerServerError(body, s.updateErr)
 			if s.updateErr == "<nil>" {
 				s.updateErr = ""
 			}
@@ -916,7 +933,7 @@ func (s *mossSession) onJSON(body []byte) []Event {
 		if code != "" {
 			message = code + ": " + message
 		}
-		return []Event{{Kind: EventError, Error: errors.New(message)}}
+		return []Event{{Kind: EventError, Error: providerServerError(body, message)}}
 	default:
 		logging.Debugf("agent", "realtime", "Moss Live ignored action=%s", action)
 		return nil

@@ -13,11 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
-	"github.com/vmihailenco/msgpack/v5"
-
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
+
+	"github.com/gorilla/websocket"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 const (
@@ -106,11 +107,19 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 		return nil, fmt.Errorf("dial: %w", err)
 	}
 
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	opened := false
+	defer func() {
+		if !opened {
+			stopCancel()
+		}
+	}()
 	s := &session{
-		ctx:      ctx,
-		conn:     conn,
-		sink:     sink,
-		readDone: make(chan error, 1),
+		stopCancel: stopCancel,
+		ctx:        ctx,
+		conn:       conn,
+		sink:       sink,
+		readDone:   make(chan error, 1),
 	}
 
 	if err := s.sendStart(a.referenceID, sink.Format(), a.speed); err != nil {
@@ -118,6 +127,7 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 		return nil, fmt.Errorf("send start: %w", err)
 	}
 
+	opened = true
 	go s.readLoop()
 	return s, nil
 }
@@ -135,7 +145,7 @@ func (a *Adapter) dial(ctx context.Context) (*websocket.Conn, error) {
 	connCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
 
-	conn, _, err := dialer.DialContext(connCtx, a.endpoint, header)
+	conn, _, err := providerretry.Dial(connCtx, &dialer, a.endpoint, header)
 	if err != nil {
 		return nil, err
 	}
@@ -156,9 +166,10 @@ func (a *Adapter) websocketDialer() (websocket.Dialer, error) {
 
 // session is one Fish Audio streaming session.
 type session struct {
-	ctx  context.Context
-	conn *websocket.Conn
-	sink tts.AudioSink
+	stopCancel func() bool
+	ctx        context.Context
+	conn       *websocket.Conn
+	sink       tts.AudioSink
 
 	writeMu sync.Mutex
 
@@ -259,7 +270,7 @@ func (s *session) readLoop() {
 			return
 		case "error":
 			msg, _ := resp["message"].(string)
-			s.readDone <- fmt.Errorf("server: %s", msg)
+			s.readDone <- &providerretry.StatusError{Status: providerretry.ProviderStatus(fmt.Sprint(resp["code"]), fmt.Sprint(resp["status"])), Body: "server: " + msg}
 			return
 		case "log":
 			// server-side log, ignore
@@ -304,6 +315,9 @@ func (s *session) waitReadDone(ctx context.Context) error {
 }
 
 func (s *session) closeConn() {
+	if s.stopCancel != nil {
+		s.stopCancel()
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if s.conn != nil {

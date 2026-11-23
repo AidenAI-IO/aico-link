@@ -439,7 +439,8 @@ type compatibleChatResponse struct {
 }
 
 type compatibleChatStreamResponse struct {
-	ID      string `json:"id,omitempty"`
+	Error   json.RawMessage `json:"error,omitempty"`
+	ID      string          `json:"id,omitempty"`
 	Choices []struct {
 		Delta struct {
 			Content          any `json:"content,omitempty"`
@@ -901,6 +902,10 @@ func (m *openAICompatibleModel) decodeStreamingResponse(ctx context.Context, bod
 			scanErr = fmt.Errorf("decode stream event: %w", err)
 			return nil, scanErr
 		}
+		if len(event.Error) > 0 && string(event.Error) != "null" {
+			scanErr = newProviderStreamError([]byte(data))
+			return nil, scanErr
+		}
 		if info := event.Usage.generationInfo(); info != nil {
 			usageInfo = info
 		}
@@ -1001,6 +1006,11 @@ func (m *openAICompatibleModel) decodeStreamingResponse(ctx context.Context, bod
 	if err := scanner.Err(); err != nil {
 		scanErr = err
 		return nil, fmt.Errorf("read stream response: %w", err)
+	}
+
+	if !streamDone && stopReason == "" {
+		scanErr = io.ErrUnexpectedEOF
+		return nil, fmt.Errorf("incomplete stream response: %w", scanErr)
 	}
 
 	orderedToolCalls := orderedCompatibleToolCalls(toolCalls)

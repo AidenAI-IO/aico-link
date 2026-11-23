@@ -3,24 +3,20 @@ package agent
 import (
 	"context"
 	"errors"
-	"io"
-	"net"
-	"net/http"
-	"strconv"
-	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
 	"github.com/tmc/langchaingo/llms"
 )
 
 type providerRetryContextKey struct{}
 
 type providerRetryAttempt struct {
-	statusCode int
-	retryAfter time.Duration
+	statusCode        int
+	retryAfter        time.Duration
+	streamIdleTimeout time.Duration
 }
 
 func providerRetryManaged(ctx context.Context) bool {
@@ -79,6 +75,9 @@ func withProviderRetry[T any](ctx context.Context, policy providerRetryPolicy, o
 			return zero, err
 		}
 		state := &providerRetryAttempt{}
+		if streaming {
+			state.streamIdleTimeout = policy.requestTimeout
+		}
 		attemptCtx := context.WithValue(ctx, providerRetryContextKey{}, state)
 		cancel := func() {}
 		if !streaming && policy.requestTimeout > 0 {
@@ -134,28 +133,9 @@ func isRetryableProviderError(err error, httpStatus int) bool {
 	if httpStatus >= 400 {
 		return shouldRetryHTTPStatus(httpStatus)
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	for _, transient := range []error{syscall.ECONNRESET, syscall.ECONNREFUSED, syscall.EPIPE, syscall.ENETUNREACH, syscall.EHOSTUNREACH} {
-		if errors.Is(err, transient) {
-			return true
-		}
-	}
-	var netErr net.Error
-	return errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary())
+	return errors.Is(err, errInteractionsStreamIncomplete) || providerretry.Retryable(err)
 }
 
 func providerRetryAfter(header string, now time.Time) time.Duration {
-	header = strings.TrimSpace(header)
-	if seconds, err := strconv.ParseInt(header, 10, 64); err == nil {
-		if seconds > 0 && seconds <= int64((1<<63-1)/time.Second) {
-			return time.Duration(seconds) * time.Second
-		}
-		return 0
-	}
-	if date, err := http.ParseTime(header); err == nil && date.After(now) {
-		return date.Sub(now)
-	}
-	return 0
+	return providerretry.RetryAfter(header, now)
 }

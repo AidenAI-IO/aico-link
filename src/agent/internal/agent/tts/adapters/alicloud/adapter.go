@@ -25,11 +25,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
-
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -119,11 +120,19 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 		return nil, fmt.Errorf("dial: %w", err)
 	}
 
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	opened := false
+	defer func() {
+		if !opened {
+			stopCancel()
+		}
+	}()
 	s := &session{
-		ctx:      ctx,
-		conn:     conn,
-		sink:     sink,
-		readDone: make(chan error, 1),
+		stopCancel: stopCancel,
+		ctx:        ctx,
+		conn:       conn,
+		sink:       sink,
+		readDone:   make(chan error, 1),
 	}
 
 	// Wait for session.created from server.
@@ -138,6 +147,7 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 		return nil, fmt.Errorf("session.update: %w", err)
 	}
 
+	opened = true
 	go s.readLoop()
 	return s, nil
 }
@@ -164,7 +174,7 @@ func (a *Adapter) dial(ctx context.Context) (*websocket.Conn, error) {
 	connCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
 
-	conn, _, err := dialer.DialContext(connCtx, u.String(), header)
+	conn, _, err := providerretry.Dial(connCtx, &dialer, u.String(), header)
 	if err != nil {
 		return nil, err
 	}
@@ -174,9 +184,10 @@ func (a *Adapter) dial(ctx context.Context) (*websocket.Conn, error) {
 
 // session is one Qwen-TTS-Realtime streaming session.
 type session struct {
-	ctx  context.Context
-	conn *websocket.Conn
-	sink tts.AudioSink
+	stopCancel func() bool
+	ctx        context.Context
+	conn       *websocket.Conn
+	sink       tts.AudioSink
 
 	writeMu    sync.Mutex
 	readDone   chan error
@@ -196,6 +207,12 @@ type pendingResponse struct {
 
 // waitForSessionCreated reads the initial server event before sending anything.
 func (s *session) waitForSessionCreated() error {
+	if err := s.conn.SetReadDeadline(time.Now().Add(connectTimeout)); err != nil {
+		return err
+	}
+	stop := context.AfterFunc(s.ctx, func() { _ = s.conn.Close() })
+	defer stop()
+	defer s.conn.SetReadDeadline(time.Time{})
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
@@ -205,6 +222,9 @@ func (s *session) waitForSessionCreated() error {
 		return fmt.Errorf("unmarshal: %w", err)
 	}
 	if t, _ := ev["type"].(string); t != "session.created" {
+		if t == "error" {
+			return &providerretry.StatusError{Status: providerretry.JSONStatus(raw), Body: string(raw)}
+		}
 		return fmt.Errorf("unexpected first event: %v", ev)
 	}
 	return nil
@@ -318,8 +338,7 @@ func (s *session) readLoop() {
 			s.readDone <- nil
 			return
 		case "error":
-			msg, _ := ev["error"].(map[string]any)
-			s.finishRead(fmt.Errorf("server error: %v", msg))
+			s.finishRead(&providerretry.StatusError{Status: providerretry.JSONStatus(raw), Body: string(raw)})
 			return
 		case "session.updated", "input_text_buffer.committed",
 			"response.created", "response.audio_transcript.delta",
@@ -331,6 +350,9 @@ func (s *session) readLoop() {
 
 func (s *session) Close() error {
 	s.closeOnce.Do(func() {
+		if s.stopCancel != nil {
+			defer s.stopCancel()
+		}
 		if err := s.waitForPendingResponse(); err != nil {
 			s.recordErr(err)
 		}
@@ -364,6 +386,9 @@ func (s *session) Close() error {
 
 func (s *session) Abort() error {
 	s.closeOnce.Do(func() {
+		if s.stopCancel != nil {
+			defer s.stopCancel()
+		}
 		if err := s.sink.Stop(); err != nil {
 			s.recordErr(fmt.Errorf("abort stop: %w", err))
 		}
