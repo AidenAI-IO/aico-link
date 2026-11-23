@@ -65,7 +65,7 @@ class FakeADBAndroidDevice:
         text = self.window_text_override
         if text is None:
             text = self.last_input_text
-        text = html.escape(text, quote=True)
+        text = html.escape(text, quote=True).replace("\n", "&#10;").replace("\t", "&#9;")
         return (
             '<?xml version="1.0" encoding="UTF-8"?>'
             '<hierarchy>'

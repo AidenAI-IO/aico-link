@@ -1178,7 +1178,9 @@ def _verify_adb_text_entry(
             steps,
         )
 
-    editable_texts, visible_texts, parse_error = _uiautomator_texts(xml_text)
+    editable_texts, visible_texts, parse_error = _uiautomator_texts(
+        xml_text, preserve_editable_whitespace=True,
+    )
     if parse_error:
         steps.append(f"uiautomator parse failed: {parse_error}")
         return (
@@ -1218,7 +1220,9 @@ def _verify_adb_text_entry(
     return False, field_text, wrong_ime, reason, steps
 
 
-def _uiautomator_texts(xml_text: str) -> tuple[list[str], list[str], str]:
+def _uiautomator_texts(
+    xml_text: str, *, preserve_editable_whitespace: bool = False,
+) -> tuple[list[str], list[str], str]:
     xml_text = _extract_uiautomator_xml(xml_text)
     if not xml_text:
         return [], [], "uiautomator output did not contain hierarchy XML"
@@ -1231,7 +1235,8 @@ def _uiautomator_texts(xml_text: str) -> tuple[list[str], list[str], str]:
     other_editable: list[str] = []
     visible: list[str] = []
     for node in root.iter("node"):
-        text = str(node.attrib.get("text", "") or "").strip()
+        raw_text = str(node.attrib.get("text", "") or "")
+        text = raw_text.strip()
         content_desc = str(node.attrib.get("content-desc", "") or "").strip()
         for value in (text, content_desc):
             if value:
@@ -1239,12 +1244,17 @@ def _uiautomator_texts(xml_text: str) -> tuple[list[str], list[str], str]:
         class_name = str(node.attrib.get("class", "") or "")
         focused = str(node.attrib.get("focused", "") or "").lower() == "true"
         is_editable = "EditText" in class_name or "AutoCompleteTextView" in class_name
-        if is_editable and text:
+        editable_text = raw_text if preserve_editable_whitespace else text
+        if is_editable and editable_text:
             if focused:
-                focused_editable.append(text)
+                focused_editable.append(editable_text)
             else:
-                other_editable.append(text)
-    return _unique_texts(focused_editable + other_editable), _unique_texts(visible), ""
+                other_editable.append(editable_text)
+    return (
+        _unique_texts(focused_editable + other_editable, preserve_whitespace=preserve_editable_whitespace),
+        _unique_texts(visible),
+        "",
+    )
 
 
 def _extract_uiautomator_xml(raw: str) -> str:
@@ -1260,11 +1270,12 @@ def _extract_uiautomator_xml(raw: str) -> str:
     return raw[start:]
 
 
-def _unique_texts(values: list[str]) -> list[str]:
+def _unique_texts(values: list[str], *, preserve_whitespace: bool = False) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for value in values:
-        value = value.strip()
+        if not preserve_whitespace:
+            value = value.strip()
         if not value or value in seen:
             continue
         seen.add(value)
@@ -1273,8 +1284,6 @@ def _unique_texts(values: list[str]) -> list[str]:
 
 
 def _field_text_matches(field_text: str, target_text: str) -> bool:
-    field_text = field_text.strip()
-    target_text = target_text.strip()
     return field_text.lower().endswith(target_text.lower())
 
 
