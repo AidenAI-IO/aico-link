@@ -11,7 +11,10 @@ import (
 // decision. Each mirrors the main model's prompt for the same decision, but as
 // typed questions: Jev answers choices and probabilities, never free text.
 
-func focusHint(focus focusPointArgs) string {
+func focusHint(focus *focusPointArgs) string {
+	if focus == nil {
+		return "the already-focused editable field (identify it by the caret or selection)"
+	}
 	return fmt.Sprintf("the focused text field near (%.0f, %.0f) on a 0-1000 grid over `screen`", focus.X, focus.Y)
 }
 
@@ -25,7 +28,7 @@ func noulAnswer(resp decision.Response, id string, minConfidence float64) (yes b
 	return yes, decisive, *answer.Noul, nil
 }
 
-func (v *llmTextInputVision) probeDecision(screenshot screenshotResult, platform string, focus focusPointArgs) decisionPoint[textInputProbeAnalysis] {
+func (v *llmTextInputVision) probeDecision(screenshot screenshotResult, platform string, focus *focusPointArgs) decisionPoint[textInputProbeAnalysis] {
 	return decisionPoint[textInputProbeAnalysis]{
 		op: DecisionOpIMEProbe,
 		llm: func(ctx context.Context) (textInputProbeAnalysis, error) {
@@ -65,7 +68,7 @@ func (v *llmTextInputVision) probeDecision(screenshot screenshotResult, platform
 	}
 }
 
-func (v *llmTextInputVision) probeCleanupDecision(before, after screenshotResult, platform string, focus focusPointArgs) decisionPoint[bool] {
+func (v *llmTextInputVision) probeCleanupDecision(before, after screenshotResult, platform string, focus *focusPointArgs) decisionPoint[bool] {
 	return decisionPoint[bool]{
 		op: DecisionOpProbeCleanup,
 		llm: func(ctx context.Context) (bool, error) {
@@ -80,7 +83,7 @@ func (v *llmTextInputVision) probeCleanupDecision(before, after screenshotResult
 			if err != nil {
 				return decisionOutcome[bool]{}, err
 			}
-			field := fmt.Sprintf("the focused text field near (%.0f, %.0f) on a 0-1000 grid", focus.X, focus.Y)
+			field := focusHint(focus)
 			resp, err := client.Ask(ctx, decision.Request{
 				State: map[string]any{"before": beforeImg.Ref, "after": afterImg.Ref, "platform": platform},
 				Assets: map[string]decision.Asset{

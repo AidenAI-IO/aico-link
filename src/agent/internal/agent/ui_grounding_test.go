@@ -32,12 +32,14 @@ type fakeUIGrounder struct {
 	err    error
 	width  int
 	height int
+	calls  int
 }
 
 func (g *fakeUIGrounder) Detect(_ context.Context, rgb []byte, width, height int) ([]uiElementBox, error) {
 	if len(rgb) != width*height*3 {
 		return nil, fmt.Errorf("rgb has %d bytes for %dx%d", len(rgb), width, height)
 	}
+	g.calls++
 	g.width, g.height = width, height
 	return g.boxes, g.err
 }
@@ -509,6 +511,74 @@ func TestStateHookGroundsUserTurnScreenshotWhenEnabled(t *testing.T) {
 			}
 			if !strings.Contains(state.Content, "UI grounding:") || !strings.Contains(state.Content, tc.wantCenter) {
 				t.Fatalf("state content %q, want grounding with %s", state.Content, tc.wantCenter)
+			}
+		})
+	}
+}
+
+func TestDeviceCLIFinalScreenshotGrounding(t *testing.T) {
+	const width, height = 60, 120
+	jpegData, err := encodeJPEG(bytes.Repeat([]byte{240, 240, 240}, width*height), width, height, screenshotJPEGQuality)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		reuse   bool
+		enabled bool
+		failure error
+	}{
+		{name: "final capture", enabled: true},
+		{name: "reuse wait frame", enabled: true, reuse: true},
+		{name: "disabled", reuse: true},
+		{name: "detector failure", enabled: true, failure: errors.New("detector unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeScreenshotFrameClient{
+				meta: frameMetadata{Width: width, Height: height, PixelFormat: "jpeg", Bytes: uint64(len(jpegData))},
+				data: jpegData,
+			}
+			grounder := &fakeUIGrounder{boxes: []uiElementBox{{X1: 10, Y1: 20, X2: 50, Y2: 40, Score: 0.9}}, err: tc.failure}
+			shot := &ScreenshotTool{client: client, grounder: grounder, deviceTypeFn: func() string { return "macos" }}
+			tools := &ToolSet{tools: map[string]langtools.Tool{"screenshot": shot}}
+			tools.SetUIGroundingFunc(func() bool { return tc.enabled })
+			rt := &Runtime{tools: tools}
+			capture := deviceCLICapture{needsScreenshot: true}
+			wantCaptures := 1
+			if tc.reuse {
+				wantCaptures = 0
+				capture.frame = visualScreenshotObservation{ImageBytes: jpegData, MIMEType: "image/jpeg", Result: postActionScreenshotResult{
+					screenshotResult: screenshotResult{Width: width, Height: height, Format: "jpeg", Data: base64.StdEncoding.EncodeToString(jpegData)},
+				}}
+			}
+			if err := capture.finishShell(context.Background(), rt, true); err != nil {
+				t.Fatal(err)
+			}
+			wantDetections := 0
+			if tc.enabled {
+				wantDetections = 1
+			}
+			if client.calls != wantCaptures || grounder.calls != wantDetections {
+				t.Fatalf("captures=%d, detections=%d; want %d, %d", client.calls, grounder.calls, wantCaptures, wantDetections)
+			}
+			state := deviceCLIStateMessages(capture.frame)
+			if len(state) != 1 || len(state[0].Parts) != 2 {
+				t.Fatal("expected one final image and its caption")
+			}
+			caption := followupText(state[0])
+			_, data, ok := telemetryDataURL(state[0].Parts[1].(llms.ImageURLContent).URL)
+			wantMarked := tc.enabled && tc.failure == nil
+			if !ok || bytes.Equal(data, jpegData) == wantMarked {
+				t.Fatalf("attached image marked=%v; want %v", !bytes.Equal(data, jpegData), wantMarked)
+			}
+			if wantMarked && (!strings.Contains(caption, `"center":[508.5,252.1]`) || !strings.Contains(caption, "normalized device-cli coordinates")) {
+				t.Fatalf("caption missing normalized grounding: %s", caption)
+			}
+			if !tc.enabled && strings.Contains(caption, "UI grounding") {
+				t.Fatalf("disabled grounding appeared in caption: %s", caption)
+			}
+			if tc.failure != nil && !strings.Contains(caption, tc.failure.Error()) {
+				t.Fatalf("caption missing detector failure: %s", caption)
 			}
 		})
 	}

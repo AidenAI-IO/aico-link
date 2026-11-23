@@ -100,7 +100,7 @@ func TestDecisionDisabledKeepsMainModel(t *testing.T) {
 	model := &textInputVisionRecordingModel{content: `{"mode":"ascii"}`}
 	vision := &llmTextInputVision{models: model, decider: advisor}
 
-	got, err := vision.ProbeInputMode(context.Background(), decisionTestScreenshot(t), "iOS", focusPointArgs{X: 500, Y: 300})
+	got, err := vision.ProbeInputMode(context.Background(), decisionTestScreenshot(t), "iOS", &focusPointArgs{X: 500, Y: 300})
 	if err != nil || got.Mode != textInputModeASCII || model.calls != 1 {
 		t.Fatalf("mode = %v, err = %v, llm calls = %d", got.Mode, err, model.calls)
 	}
@@ -115,7 +115,7 @@ func TestDecisionActiveUsesConfidentAnswer(t *testing.T) {
 	vision := &llmTextInputVision{models: model, decider: testDecisionAdvisor(server)}
 
 	started := time.Now()
-	got, err := vision.ProbeInputMode(context.Background(), decisionTestScreenshot(t), "iOS", focusPointArgs{X: 500, Y: 300})
+	got, err := vision.ProbeInputMode(context.Background(), decisionTestScreenshot(t), "iOS", &focusPointArgs{X: 500, Y: 300})
 	if err != nil || got.Mode != textInputModeComposition {
 		t.Fatalf("mode = %v, err = %v", got.Mode, err)
 	}
@@ -132,7 +132,7 @@ func TestDecisionActiveFallsBackOnLowConfidenceAndErrors(t *testing.T) {
 	server := newDecisionServer(t, `{"answers":{"mode":{"type":"choice","choice":"composition","confidence":0.4}}}`)
 	model := &textInputVisionRecordingModel{content: `{"mode":"ascii"}`}
 	vision := &llmTextInputVision{models: model, decider: testDecisionAdvisor(server)}
-	got, err := vision.ProbeInputMode(context.Background(), decisionTestScreenshot(t), "iOS", focusPointArgs{})
+	got, err := vision.ProbeInputMode(context.Background(), decisionTestScreenshot(t), "iOS", &focusPointArgs{})
 	if err != nil || got.Mode != textInputModeASCII || model.calls != 1 {
 		t.Fatalf("low confidence: mode = %v, err = %v, llm calls = %d", got.Mode, err, model.calls)
 	}

@@ -41,6 +41,13 @@ func TestEpisodeRecorderRecordsStructuredToolError(t *testing.T) {
 }
 
 func TestEpisodeRecorderDoesNotPersistSensitiveToolResultContent(t *testing.T) {
+	for _, toolName := range []string{toolBridgeClipboard, "shell"} {
+		t.Run(toolName, func(t *testing.T) { testEpisodeRedactsSensitiveToolResult(t, toolName) })
+	}
+}
+
+func testEpisodeRedactsSensitiveToolResult(t *testing.T, toolName string) {
+	t.Helper()
 	root := t.TempDir()
 	recorder := NewPersistentEpisodeRecorder(
 		MemoryRetrieveRequest{Input: "read clipboard"},
@@ -48,16 +55,22 @@ func TestEpisodeRecorderDoesNotPersistSensitiveToolResultContent(t *testing.T) {
 		NewTaskEpisodeStore(root),
 	)
 	secret := "SENSITIVE_EPISODE_MARKER_8f2d"
-	action := schema.AgentAction{Tool: toolBridgeClipboard, ToolInput: `{"action":"get"}`}
+	action := schema.AgentAction{Tool: toolName, ToolInput: `{"action":"read"}`}
+	var deviceCalls []deviceCLIToolEvidence
+	if toolName == "shell" {
+		action.ToolInput = `{"command":"device-cli app clipboard read"}`
+		deviceCalls = []deviceCLIToolEvidence{{Tool: toolBridgeClipboard, Input: map[string]any{"action": "read"}}}
+	}
 	recorder.RecordExecution(ToolCallExecutionResult{
 		Call: ToolCall{
-			Spec:   ToolSpec{Name: toolBridgeClipboard},
+			Spec:   ToolSpec{Name: toolName},
 			Action: action,
 		},
 		Step: schema.AgentStep{Action: action, Observation: secret},
 		Result: ToolResult{
-			Output:  secret,
-			Summary: secret,
+			Output:      secret,
+			deviceCalls: deviceCalls,
+			Summary:     secret,
 			Error: NewToolErrorWithDetails(
 				CodeToolExecutionFailed,
 				secret,

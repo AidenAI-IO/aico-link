@@ -3,10 +3,10 @@ import dataclasses as dc
 import json
 import re
 from typing import Any
-from runner.models import HardAssertionFailure, HardAssertionResults, Trace
+from runner.models import HardAssertionFailure, HardAssertionResults, ToolCall, Trace
 from runner.matching import dict_contains
 from runner.suite import HardAssertions, TraceObservationSpec, is_range_assertion
-from runner.trace import trace_has_skill_read
+from runner.trace import effective_tool_calls, trace_has_skill_read
 
 
 PROHIBITED_ACTION_PATTERNS = {
@@ -143,7 +143,7 @@ def _trace_has_tool_call(trace: Trace, tool_name: str, input_contains: dict[str,
     target = tool_name.strip()
     if not target:
         return False
-    for tc in trace.tool_calls:
+    for tc in effective_tool_calls(trace):
         if tc.tool != target:
             continue
         if dict_contains(tc.input if isinstance(tc.input, dict) else {}, input_contains):
@@ -151,8 +151,30 @@ def _trace_has_tool_call(trace: Trace, tool_name: str, input_contains: dict[str,
     return False
 
 
+# Only literal device-cli commands joined by && qualify. Do not parse arbitrary
+# shell programs or exempt a mixed command just because it used the device CLI.
+_CLI_LITERAL = r"(?:[a-zA-Z0-9_./,:+@%=-]+|'[^']*'|\"[^\"$`\\]*\")"
+_CLI_COMMAND = rf"device-cli(?:[ \t]+{_CLI_LITERAL})+"
+_CLI_CHAIN = re.compile(rf"{_CLI_COMMAND}(?:[ \t]+&&[ \t]+{_CLI_COMMAND})*")
+
+
+def _is_device_cli_shell(tc: ToolCall) -> bool:
+    command = tc.input.get("command")
+    return (tc.tool == "shell" and bool(tc.device_cli_calls) and isinstance(command, str)
+            and not tc.input.get("background") and "action" not in tc.input
+            and _CLI_CHAIN.fullmatch(command.strip()) is not None)
+
+
 def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool) -> AssertionOutcome:
-    tools_used = [tc.tool for tc in trace.tool_calls]
+    calls = effective_tool_calls(trace)
+    tools_used = [tc.tool for tc in calls]
+    forbidden = [tc for tc in calls if tc.tool in spec.forbidden_tools
+                 and not (spec.allow_device_cli and _is_device_cli_shell(tc))]
+    # Preserve legacy presence checks; a failed nested request isn't evidence
+    # that a device command was performed. Forbidden checks still see attempts.
+    required_tools_used = {tc.tool for tc in trace.tool_calls}
+    required_tools_used.update(call.tool for tc in trace.tool_calls for call in tc.device_cli_calls
+                               if not call.is_error)
     unique_tools = _unique_preserve_order(tools_used)
     prohibited_action_offenders = _prohibited_action_offenders(trace, spec.prohibited_actions)
     missing_tool_calls: list[Any] = []
@@ -162,8 +184,8 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
     # calls.
     for req_index, requirement in enumerate(spec.required_tool_calls):
         matched_index = None
-        for trace_index in range(search_start, len(trace.tool_calls)):
-            tc = trace.tool_calls[trace_index]
+        for trace_index in range(search_start, len(calls)):
+            tc = calls[trace_index]
             if tc.tool != requirement.tool:
                 continue
             # A failed or unfinished call is an attempt, not the required action.
@@ -180,8 +202,8 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
     results = HardAssertionResults(
         min_tool_calls=trace.total_tool_calls >= spec.min_tool_calls,
         max_tool_calls=trace.total_tool_calls <= spec.max_tool_calls,
-        required_tools=all(tool in tools_used for tool in spec.required_tools),
-        forbidden_tools=not any(tool in tools_used for tool in spec.forbidden_tools),
+        required_tools=all(tool in required_tools_used for tool in spec.required_tools),
+        forbidden_tools=not forbidden,
         prohibited_actions=not prohibited_action_offenders if spec.prohibited_actions else None,
         required_tool_calls=not missing_tool_calls if spec.required_tool_calls else None,
         timeout=not timed_out,
@@ -225,7 +247,7 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
             )
         )
     if results.required_tools is False:
-        missing = [tool for tool in spec.required_tools if tool not in tools_used]
+        missing = [tool for tool in spec.required_tools if tool not in required_tools_used]
         failures.append(
             HardAssertionFailure(
                 id="required_tools",
@@ -240,8 +262,7 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
     if results.forbidden_tools is False:
         offenders = [
             f"{tc.tool} at step {tc.step}"
-            for tc in trace.tool_calls
-            if tc.tool in spec.forbidden_tools
+            for tc in forbidden
         ]
         failures.append(
             HardAssertionFailure(
@@ -556,7 +577,7 @@ def _prohibited_action_offenders(trace: Trace, prohibited_actions: list[str]) ->
         for action in prohibited_actions
     ]
     offenders: list[str] = []
-    for tc in trace.tool_calls:
+    for tc in effective_tool_calls(trace):
         for label, value in _semantic_trace_values(tc.tool, tc.input):
             text = str(value)
             for _, pattern in patterns:

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,7 +12,6 @@ const (
 	textViaBridgePostWriteDelay = 2 * time.Second
 	textViaBridgePostPasteDelay = 350 * time.Millisecond
 	textViaBridgeMenuDelay      = 450 * time.Millisecond
-	textViaBridgePasteAttempts  = 2
 	preparedClipboardMaxAge     = 5 * time.Minute
 	textViaBridgeLongPressMS    = 900
 )
@@ -34,10 +34,11 @@ type pasteMenuResult struct {
 }
 
 type textViaBridgeResult struct {
-	Attempted bool
-	Committed bool
-	FieldText string
-	Err       error
+	TextMayBeInserted bool
+	Attempted         bool
+	Committed         bool
+	FieldText         string
+	Err               error
 }
 
 type textInputBridge struct {
@@ -104,7 +105,7 @@ func (t *textInputBridge) runClipboardFirstFlow(ctx context.Context, platform st
 		if phoneBridgeCanUsePiPBackground(status, "clipboard_write") {
 			return t.runClipboardWritePasteFlow(ctx, platform, args)
 		}
-		if phoneBridgeCanRestoreFromReturnEntry(status) || phoneBridgeReadyForCommand(status) {
+		if args.Focus != nil && (phoneBridgeCanRestoreFromReturnEntry(status) || phoneBridgeReadyForCommand(status)) {
 			return t.runLegacyBridgeFlow(ctx, platform, args)
 		}
 		return textViaBridgeResult{}
@@ -119,7 +120,7 @@ func (t *textInputBridge) runClipboardFirstFlow(ctx context.Context, platform st
 }
 
 func textViaBridgeResultToTextInputResult(bridgeResult textViaBridgeResult) textInputResult {
-	result := textInputResult{}
+	result := textInputResult{TextMayBeInserted: bridgeResult.TextMayBeInserted}
 	result.Committed = bridgeResult.Committed
 	result.FieldText = bridgeResult.FieldText
 	result.OK = bridgeResult.Committed
@@ -204,60 +205,51 @@ func (t *textInputBridge) canUseClipboardFirst(platform string, text string) boo
 }
 
 func (t *textInputBridge) focusPasteVerify(ctx context.Context, engine *textInputEngine, platform string, args textInputArgs) textViaBridgeResult {
-	var result textViaBridgeResult
-	// settled waits for the paste to land, then records what the field holds.
-	// It reports true once the result is final: an error, a verified commit,
-	// or any text in the field.
-	settled := func() bool {
+	if err := engine.applyFocus(ctx, args.Focus); err != nil {
+		return textViaBridgeResult{Err: err}
+	}
+	if !args.ReplaceField {
+		before, err := engine.captureScreenshot(ctx)
+		if err != nil {
+			return textViaBridgeResult{Err: fmt.Errorf("capture field before paste: %w", err)}
+		}
+		args.InsertionBefore = &before
+	}
+	mayHavePasted, pasteErr := t.pasteClipboard(ctx, platform)
+	result := textViaBridgeResult{TextMayBeInserted: mayHavePasted, Err: pasteErr}
+	if !mayHavePasted {
+		return result
+	}
+	// A dispatch error, blank OCR result, or failed verification does not prove
+	// the paste had no effect. Observe it, but do not send a second paste.
+	observe := func() bool {
 		if err := t.sleepAfterPaste(ctx); err != nil {
 			result.Err = err
-			return true
+			return false
 		}
 		analysis, _, err := engine.analyzeScreen(ctx, platform, args, nil)
 		if err != nil {
 			result.Err = err
-			return true
+			return false
 		}
-		if committed, committedFieldText := evaluateFieldCommit(analysis); committed {
-			result.Committed = true
-			result.FieldText = committedFieldText
-			return true
+		result.Committed, result.FieldText = evaluateFieldCommit(analysis)
+		if result.Committed {
+			result.Err = nil
 		}
-		result.FieldText = analysis.FieldText
-		return strings.TrimSpace(analysis.FieldText) != ""
+		return true
 	}
-	for attempt := 1; attempt <= textViaBridgePasteAttempts; attempt++ {
-		if err := engine.applyFocus(ctx, args.Focus); err != nil {
-			result.Err = err
-			return result
-		}
-		if attempt == 1 {
-			_, _, _ = t.pasteClipboard(ctx, platform)
-		} else {
-			if err := t.pasteViaContextMenu(ctx, engine, platform, args.Focus); err != nil {
-				result.Err = err
-				return result
-			}
-		}
-		if settled() {
-			return result
-		}
-		// Nothing landed in the field. A dialog can hold the paste back, most
-		// often iOS "Allow Paste" when the user skipped the onboarding
-		// setting. Safe dialogs are handled here; any other dialog is reported
-		// instead of being pasted over again.
-		popup, err := t.handleBlockingPopup(ctx, engine, platform)
-		if err != nil {
-			result.Err = err
-			return result
-		}
-		if popup.blocking() {
-			result.Err = fmt.Errorf("%s dialog is blocking input: %s", popup.Kind, popup.Summary)
-			return result
-		}
-		if popup.Handled && settled() {
-			return result
-		}
+	if !observe() || result.Committed || result.FieldText != "" {
+		return result
+	}
+	// Allowing the existing paste permission prompt can complete the original
+	// paste. Verify again after dismissing it, without replaying input.
+	popup, err := t.handleBlockingPopup(ctx, engine, platform)
+	if err != nil {
+		result.Err = err
+	} else if popup.blocking() {
+		result.Err = fmt.Errorf("%s dialog is blocking input: %s", popup.Kind, popup.Summary)
+	} else if popup.Handled {
+		observe()
 	}
 	return result
 }
@@ -359,25 +351,37 @@ Rules:
 	return result, nil
 }
 
-func (t *textInputBridge) keyboardPaste(ctx context.Context, platform string) error {
-	return t.keyboardTap(ctx, keyboardPasteKeys(platform))
+// pasteClipboard reports whether a paste might have reached the field, even
+// when the tool returned an error. Only a definite pre-dispatch rejection can
+// fall back to another shortcut.
+func (t *textInputBridge) pasteClipboard(ctx context.Context, platform string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if t == nil || t.hw == nil {
+		return false, fmt.Errorf("paste input tools are not configured")
+	}
+	if t.hw.quickAction != nil {
+		if _, err := t.callQuickAction(ctx, "paste"); err == nil || !pasteNotDispatched(err) {
+			return true, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if t.hw.keyboardTap == nil {
+		return false, fmt.Errorf("keyboard_tap is not configured")
+	}
+	err := t.keyboardTap(ctx, keyboardPasteKeys(platform))
+	return !pasteNotDispatched(err), err
 }
 
-func (t *textInputBridge) pasteClipboard(ctx context.Context, platform string) (method string, fallbackReason string, err error) {
-	if t != nil && t.hw != nil && t.hw.quickAction != nil {
-		if _, err := t.callQuickAction(ctx, "paste"); err == nil {
-			return "quick_action", "", nil
-		} else {
-			fallbackReason = err.Error()
-		}
+func pasteNotDispatched(err error) bool {
+	var te *ToolError
+	if !errors.As(err, &te) {
+		return false
 	}
-	if err := t.keyboardPaste(ctx, platform); err != nil {
-		if fallbackReason != "" {
-			return "", fallbackReason, fmt.Errorf("quick_action paste failed: %s; keyboard paste failed: %w", fallbackReason, err)
-		}
-		return "", "", err
-	}
-	return "keyboard", fallbackReason, nil
+	return actionNotDispatched(te) || te.Code == CodeQuickActionReserved || te.Code == CodeQuickActionUnsupportedPlatform
 }
 
 func (t *textInputBridge) keyboardTap(ctx context.Context, keys []string) error {

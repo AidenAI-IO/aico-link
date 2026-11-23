@@ -281,7 +281,7 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 	output := result.Result.EventOutput()
 	rawObservation := result.Step.Observation
 	toolError := cloneToolError(result.Result.Error)
-	if toolResultIsSensitive(toolName) {
+	if toolResultIsSensitive(toolName) || result.Result.containsPrivateDeviceData() {
 		output = sensitiveToolResultRedaction
 		rawObservation = ""
 		if toolError != nil {
@@ -299,6 +299,10 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 		IsError:        result.Result.IsError(),
 		ToolError:      toolError,
 	}
+	if len(result.Result.deviceCalls) > 0 {
+		resultEvent.Metadata = map[string]any{"device_cli_calls": result.Result.deviceCalls}
+	}
+
 	if result.Result.Duration > 0 {
 		durationMs := result.Result.Duration.Milliseconds()
 		resultEvent.DurationMs = &durationMs

@@ -6,14 +6,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 
+	"aico-agent/internal/agent/mnk"
 	"aico-agent/internal/agent/screen"
 
 	"github.com/tmc/langchaingo/llms"
@@ -39,94 +42,54 @@ func TestDeviceCLIShellCapturesRealRequestsNotText(t *testing.T) {
 		raw, _ := json.Marshal(map[string]string{"command": command})
 		return executeToolCall(ctx, ToolCallExecution{Specs: NewToolSpecs([]langtools.Tool{shell}), Action: schema.AgentAction{Tool: "shell", ToolInput: string(raw)}})
 	}
-	if got := call(`printf 'device-cli look'`); len(got.Result.deviceFrames) != 0 {
+	if got := call(`printf 'device-cli look'`); len(got.Result.deviceFrame.ImageBytes) != 0 {
 		t.Fatal("stdout triggered screenshot")
 	}
 	look := call(`curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["look","--region","0","0","500","500"]' "$AICO_DEVICE_CLI_URL/command"`)
-	if look.Result.IsError() || len(look.Result.deviceFrames) != 0 || len(look.Result.deviceActions) != 0 || !strings.Contains(look.Result.Output, base64.StdEncoding.EncodeToString(frame.Bytes())) {
+	if look.Result.IsError() || len(look.Result.deviceFrame.ImageBytes) != 0 || !strings.Contains(look.Result.Output, base64.StdEncoding.EncodeToString(frame.Bytes())) {
 		t.Fatal("look must return the image to the CLI without adding a shell screenshot")
 	}
 	got := call(`curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["wait","0"]' "$AICO_DEVICE_CLI_URL/command" && exit 7`)
-	if !got.Result.IsError() || len(got.Result.deviceFrames) != 1 || len(deviceCLIStateMessages(got.Result.deviceFrames, got.Result.deviceActions)) != 1 {
+	if !got.Result.IsError() || len(got.Result.deviceFrame.ImageBytes) == 0 || len(deviceCLIStateMessages(got.Result.deviceFrame)) != 1 {
 		t.Fatalf("failed shell discarded accepted observation: %+v", got.Result)
 	}
-	if got := call(`curl -fsS -d '["look"]' "$AICO_DEVICE_CLI_URL/command"`); !got.Result.IsError() || len(got.Result.deviceFrames) != 0 {
+	if got := call(`curl -fsS -d '["look"]' "$AICO_DEVICE_CLI_URL/command"`); !got.Result.IsError() || len(got.Result.deviceFrame.ImageBytes) != 0 {
 		t.Fatal("unauthenticated request accepted")
 	}
 }
 
-func TestDeviceCLIChainAnnotatesOnlyDispatchedOperations(t *testing.T) {
+func TestDeviceCLIChainCapturesOnlyFinalState(t *testing.T) {
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Skip("curl required")
 	}
-	var rawFrame bytes.Buffer
-	if err := jpeg.Encode(&rawFrame, image.NewRGBA(image.Rect(0, 0, 400, 600)), nil); err != nil {
-		t.Fatal(err)
+	shot := &stubTool{name: "screenshot"}
+	gesture := &stubTool{name: "touch_gesture", output: "ok"}
+	text := &stubTool{name: "enter_text", output: "ok"}
+	shot.callFn = func(context.Context, string) (string, error) {
+		if len(gesture.inputs) != 2 || len(text.inputs) != 1 {
+			t.Error("screenshot taken before the chain ended")
+		}
+		return terminationPolicyScreenshotObservation(t, 400, 600, image.Rectangle{}), nil
 	}
-	raw := rawFrame.Bytes()
-	changed := false
-	output, _ := json.Marshal(postActionScreenshotResult{
-		screenshotResult: screenshotResult{Width: 400, Height: 600, Data: base64.StdEncoding.EncodeToString(raw)}, ScreenChanged: &changed,
-	})
-	shell := &ShellTool{}
 	rt := &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{
-		"screenshot":    deviceCLITestTool{name: "screenshot", output: string(output)},
-		"touch_gesture": deviceCLITestTool{name: "touch_gesture", output: string(output)},
-		"enter_text":    deviceCLITestTool{name: "enter_text", output: string(output)},
+		"screenshot":    shot,
+		"touch_gesture": newPostActionScreenshotTool(gesture, shot, 0),
+		"enter_text":    newPostActionScreenshotTool(text, shot, 0),
 	}}}
 	ctx := context.WithValue(context.Background(), deviceCLIRuntimeKey{}, rt)
 	input, _ := json.Marshal(map[string]string{"command": `cli() { curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d "$1" "$AICO_DEVICE_CLI_URL/command"; }
- cli '["tap","200","400"]' && cli '["swipe","500","800","500","300"]' && cli '["look"]' >/dev/null && cli '["type","private-text"]' && cli '["back"]' && false && cli '["look"]'`})
-	got := executeToolCall(ctx, ToolCallExecution{Specs: NewToolSpecs([]langtools.Tool{shell}), Action: schema.AgentAction{Tool: "shell", ToolInput: string(input)}}).Result
-	if !got.IsError() {
-		t.Fatal("failed shell reported success")
+ cli '["tap","200","400"]' && cli '["swipe","500","800","500","300"]' && cli '["type","hello"]' && false && cli '["tap","0","0"]'`})
+	got := executeToolCall(ctx, ToolCallExecution{Specs: NewToolSpecs([]langtools.Tool{&ShellTool{}}), Action: schema.AgentAction{Tool: "shell", ToolInput: string(input)}}).Result
+	if !got.IsError() || len(got.deviceCalls) != 3 || got.deviceCalls[2].Input["text"] != "hello" {
+		t.Fatalf("expected only the operations before the error: %+v", got.deviceCalls)
 	}
-	if len(got.deviceActions) != 4 {
-		t.Fatalf("recorded actions: %+v", got.deviceActions)
+	states := deviceCLIStateMessages(got.deviceFrame)
+	if len(shot.inputs) != 1 || len(states) != 1 || len(states[0].Parts) != 2 {
+		t.Fatalf("expected one final capture and attachment: captures=%d, states=%d", len(shot.inputs), len(states))
 	}
-	for i, want := range []string{"tap", "swipe", "type", "back"} {
-		if action := got.deviceActions[i]; action.name != want || action.failed != (i == 3) {
-			t.Errorf("unexpected operation %d: %+v", i, action)
-		}
-	}
-	states := deviceCLIStateMessages(got.deviceFrames, got.deviceActions)
-	if len(states) != 1 || len(states[0].Parts) != 2 {
-		t.Fatalf("expected one screenshot attachment, got %d states", len(states))
-	}
-	caption := states[0].Parts[0].(llms.TextContent).Text
 	_, data, ok := telemetryDataURL(states[0].Parts[1].(llms.ImageURLContent).URL)
-	if !ok {
-		t.Fatal("invalid screenshot attachment")
-	}
-	decoded, err := jpeg.Decode(bytes.NewReader(data))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decoded.Bounds().Size() != image.Pt(1612, 600) || !strings.Contains(caption, "1212,0; size 400×600") {
-		t.Fatalf("wrong sheet geometry or last panel caption: %v %s", decoded.Bounds(), caption)
-	}
-	for _, check := range []struct {
-		point  image.Point
-		marked bool
-	}{
-		{image.Pt(84, 239), true},    // tap ring in panel 1
-		{image.Pt(488, 239), false},  // tap not repeated in panel 2
-		{image.Pt(604, 340), true},   // swipe shaft in panel 2
-		{image.Pt(200, 340), false},  // swipe not drawn in panel 1
-		{image.Pt(1008, 340), false}, // swipe not drawn on the text-entry panel
-		{image.Pt(411, 4), false},    // swipe only has an endpoint label, not a corner badge
-		{image.Pt(814, 4), true},     // text entry has a number badge inside its own panel
-	} {
-		r, _, _, _ := decoded.At(check.point.X, check.point.Y).RGBA()
-		if (r > 0x9000) != check.marked {
-			t.Errorf("incorrect marker at %v: bright=%v", check.point, r > 0x9000)
-		}
-	}
-
-	for _, frame := range got.deviceFrames {
-		if !bytes.Equal(frame.visual.ImageBytes, raw) {
-			t.Fatal("rendering changed a captured frame")
-		}
+	if !ok || !bytes.Equal(data, got.deviceFrame.ImageBytes) || got.deviceFrame.Result.Width != 400 || got.deviceFrame.Result.Height != 600 {
+		t.Fatal("expected one unmodified screen, not an annotated sheet")
 	}
 }
 
@@ -207,18 +170,32 @@ func TestDeviceCLIDragReleasesOnCaptureFailure(t *testing.T) {
 	}
 }
 
-func TestDeviceCLIVerifiedDragStartCanBeReleasedFromAnotherShell(t *testing.T) {
+func TestDeviceCLIDragStartCanBeReleasedFromAnotherShell(t *testing.T) {
 	provider := &dragRecoveryProvider{}
 	shot := &stubTool{name: "screenshot", output: terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})}
 	tool := newPostActionStableScreenshotTool(&TouchGestureTool{mnkProvider: provider}, &fakeInternalWaitTool{result: waitStableScreenResult{OK: true, Stable: true}}, shot, 0, ScreenStableDefaults{})
 	s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "screenshot": shot}}}}
-	res, err := executeDeviceCLI(context.Background(), s, []string{"drag-start", "100", "250"}, &deviceCLICapture{})
-	if err != nil || res.IsError || !provider.dragActive {
-		t.Fatalf("verified start must leave contact held: result error=%s err=%v", res.Error, err)
+	ctx := context.Background()
+	start := deviceCLICapture{deferObservation: true}
+	res, err := executeDeviceCLI(ctx, s, []string{"drag-start", "100", "250"}, &start)
+	if err != nil || res.IsError || !provider.dragActive || len(shot.inputs) != 0 {
+		t.Fatalf("start should leave contact held without a post-action capture: result error=%s err=%v", res.Error, err)
 	}
-	res, err = executeDeviceCLI(context.Background(), s, []string{"drag-release", "800", "900"}, &deviceCLICapture{})
+	if err := start.finishShell(ctx, s.runtime, true); err != nil || !provider.dragActive || len(shot.inputs) != 1 {
+		t.Fatalf("successful shell must leave its contact held: %v", err)
+	}
+	res, err = executeDeviceCLI(ctx, s, []string{"drag-release", "800", "900"}, &deviceCLICapture{deferObservation: true})
 	if err != nil || res.IsError || provider.dragActive || provider.releaseX != 800 || provider.releaseY != 900 {
-		t.Fatalf("release failed: result error=%s err=%v provider=%+v", res.Error, err, provider)
+		t.Fatalf("release fail: result error=%s err=%v provider=%+v", res.Error, err, provider)
+	}
+	failed := deviceCLICapture{deferObservation: true}
+	res, err = executeDeviceCLI(ctx, s, []string{"drag-start", "100", "250"}, &failed)
+	if err != nil || res.IsError || !provider.dragActive {
+		t.Fatalf("start failed: %s %v", res.Error, err)
+	}
+	shot.callFn = func(context.Context, string) (string, error) { return "", errors.New("capture unavailable") }
+	if err := failed.finishShell(ctx, s.runtime, true); err == nil || provider.dragActive || provider.releaseX != 100 || provider.releaseY != 250 {
+		t.Fatalf("failed final capture must release the contact at its origin: %v %+v", err, provider)
 	}
 }
 
@@ -229,12 +206,146 @@ func TestDeviceCLIRotationRejectionReturnsErrorAndScreenshot(t *testing.T) {
 	inner := &stubTool{name: "touch_gesture", output: "ok"}
 	tool := newPostActionScreenshotTool(inner, shot, 0).(*postActionScreenshotTool).withTurnedScreenGuard(state)
 	s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "screenshot": shot}}}}
-	capture := &deviceCLICapture{}
+	capture := &deviceCLICapture{deferObservation: true}
 	res, err := executeDeviceCLI(context.Background(), s, []string{"tap", "100", "250"}, capture)
 	if err != nil || !res.IsError || !actionNotDispatched(res.ToolError) || !strings.Contains(res.Error, "not sent") || len(inner.inputs) != 0 {
 		t.Fatalf("expected a skipped action error: error=%q tool error=%+v err=%v calls=%v", res.Error, res.ToolError, err, inner.inputs)
 	}
-	if len(capture.frames) != 1 || len(capture.actions) != 1 || !capture.actions[0].failed || capture.actions[0].pointCount != 0 {
-		t.Fatalf("expected fresh screenshot with a failed step but no touch marker: frames=%d actions=%+v", len(capture.frames), capture.actions)
+	if len(capture.calls) != 1 || !capture.calls[0].NotDispatched || !capture.calls[0].IsError {
+		t.Fatalf("skipped gesture was not recorded correctly: %+v", capture.calls)
+	}
+	if err := capture.finishShell(context.Background(), s.runtime, false); err != nil || len(capture.frame.ImageBytes) == 0 {
+		t.Fatalf("expected final screenshot after rejection: %v", err)
+	}
+
+}
+
+func TestDeviceCLIShellRecordsBenchmarkFixtureResultInEpisode(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl required")
+	}
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if r.URL.Path != "/api/tools/touch_gesture" || r.Header.Get("benchmark-task-id") != "fixture-task" ||
+			body["input"] != `{"point":{"x":180,"y":310},"type":"tap"}` {
+			t.Errorf("unexpected fixture request %s: %+v", r.URL, body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"output": `{"ok":true}`})
+	}))
+	defer fixture.Close()
+	shot := terminationPolicyScreenshotObservation(t, 100, 150, image.Rectangle{})
+	rt := &Runtime{
+		config: Config{Benchmark: BenchmarkConfig{MockTools: true}, EnvironmentBridge: EnvironmentBridgeConfig{
+			Enabled: true, Endpoint: fixture.URL, BenchmarkTaskID: "fixture-task",
+		}},
+		tools: &ToolSet{tools: map[string]langtools.Tool{
+			"touch_gesture": mockPolicyTestTool{"touch_gesture"}, // panics if real execution leaks through
+			"screenshot":    deviceCLITestTool{name: "screenshot", output: shot},
+		}},
+	}
+	ctx := context.WithValue(context.Background(), deviceCLIRuntimeKey{}, rt)
+	input, _ := json.Marshal(map[string]string{"command": `curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["tap","180","310"]' "$AICO_DEVICE_CLI_URL/command"`})
+	got := executeToolCall(ctx, ToolCallExecution{Specs: NewToolSpecs([]langtools.Tool{&ShellTool{}}), Action: schema.AgentAction{Tool: "shell", ToolInput: string(input)}})
+	if got.Result.IsError() || len(got.Result.deviceCalls) != 1 || got.Result.deviceCalls[0].IsError || len(got.Result.deviceFrame.ImageBytes) == 0 {
+		t.Fatalf("expected one successful fixture tap and a fallback screenshot: %+v", got.Result)
+	}
+	recorder := NewEpisodeRecorder(MemoryRetrieveRequest{Input: "tap"}, MemoryContext{})
+	recorder.RecordExecution(got)
+	for _, event := range recorder.Finish("", nil, nil, nil, nil).Events {
+		if event.Type != "tool_result" || event.ToolName != "shell" {
+			continue
+		}
+		raw, err := json.Marshal(event.Metadata["device_cli_calls"])
+		if err != nil || !strings.Contains(string(raw), `"tool":"touch_gesture","input":{"point":{"x":180,"y":310},"type":"tap"},"is_error":false`) {
+			t.Fatalf("unexpected exported metadata: %s, %v", raw, err)
+		}
+		return
+	}
+	t.Fatal("episode did not record shell result")
+}
+
+func TestDeviceCLIKeyChordAndMaskedFailure(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl required")
+	}
+	keyboard := &cliTestKeyboard{}
+	keys := &KeyboardTapTool{mnkProvider: mnk.NewHIDProvider(nil, keyboard, nil, nil, false, "qwerty", nil)}
+	shot := &stubTool{name: "screenshot", output: terminationPolicyScreenshotObservation(t, 60, 120, image.Rectangle{})}
+	rt := &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"keyboard_tap": keys, "screenshot": shot}}}
+	ctx := context.WithValue(context.Background(), deviceCLIRuntimeKey{}, rt)
+	call := func(command string) ToolResult {
+		t.Helper()
+		command = `cli() { curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d "$1" "$AICO_DEVICE_CLI_URL/command"; }; ` + command
+		input, _ := json.Marshal(map[string]string{"command": command})
+		return executeToolCall(ctx, ToolCallExecution{Specs: NewToolSpecs([]langtools.Tool{&ShellTool{}}), Action: schema.AgentAction{Tool: "shell", ToolInput: string(input)}}).Result
+	}
+	if got := call(`cli '["key","meta+a"]' && cli '["key","ctrl+a"]'`); got.IsError() {
+		t.Fatalf("valid key chords failed: %s", got.Output)
+	}
+	want := [][]byte{{8, 0, 4, 0, 0, 0, 0, 0}, make([]byte, 8), {1, 0, 4, 0, 0, 0, 0, 0}, make([]byte, 8)}
+	if !reflect.DeepEqual(keyboard.reports, want) {
+		t.Fatalf("HID reports=%v; want two simultaneous press-and-release chords", keyboard.reports)
+	}
+	got := call(`cli '["key","ctrl+not-a-key"]' 2>&1 | cat >/dev/null; printf done`)
+	if !got.IsError() || got.Error.Code != CodeInvalidArguments || !strings.Contains(got.Output, `unknown key: "not-a-key"`) || !strings.Contains(got.Output, "done") {
+		t.Fatalf("masked keyboard error was lost: %+v", got)
+	}
+	if len(keyboard.reports) != len(want) || len(got.deviceCalls) != 1 || !got.deviceCalls[0].IsError {
+		t.Fatalf("invalid chord was dispatched or not recorded: reports=%v calls=%+v", keyboard.reports, got.deviceCalls)
+	}
+}
+
+type cliTestKeyboard struct{ reports [][]byte }
+
+func (d *cliTestKeyboard) Write(data []byte) error {
+	d.reports = append(d.reports, bytes.Clone(data))
+	return nil
+}
+func (*cliTestKeyboard) Close() {}
+
+func TestDeviceCLIAppDataRequiresConnectionWithoutCapturingScreen(t *testing.T) {
+	for _, connected := range []bool{false, true} {
+		t.Run(fmt.Sprint(connected), func(t *testing.T) {
+			bridge := newTestPhoneBridge(t)
+			bridge.connected = connected
+			contacts := &stubTool{name: toolBridgeContacts, output: `{"ok":true,"contacts":[{"name":"Alice"}]}`}
+			shot := &stubTool{name: "screenshot"}
+			s := &Server{runtime: &Runtime{tools: &ToolSet{phoneBridge: bridge, tools: map[string]langtools.Tool{
+				toolBridgeContacts: contacts, "screenshot": shot,
+			}}}}
+			args := []string{"app", "contacts", "query", `{"query":"Alice","limit":5}`}
+			assertResult := func(result ToolInvokeResponse) {
+				t.Helper()
+				if connected {
+					if result.IsError || result.Output != contacts.output {
+						t.Fatalf("unexpected result: %+v", result)
+					}
+				} else if !result.IsError || !actionNotDispatched(result.ToolError) || result.ToolError.Code != CodeBridgeNotConnected {
+					t.Fatalf("expected bridge connection error before dispatch: %+v", result)
+				}
+			}
+			capture := &deviceCLICapture{deferObservation: true}
+			result, err := executeDeviceCLI(context.Background(), s, args, capture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertResult(result)
+			if len(capture.calls) != 1 || capture.calls[0].IsError == connected || capture.calls[0].NotDispatched == connected || capture.needsScreenshot {
+				t.Fatalf("unexpected shell evidence or capture request: %+v", capture)
+			}
+			body, _ := json.Marshal(args)
+			w := httptest.NewRecorder()
+			s.handleDeviceCLIApp(w, httptest.NewRequest(http.MethodPost, "/api/device-cli/app", bytes.NewReader(body)))
+			if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &result) != nil {
+				t.Fatalf("HTTP response: %d %s", w.Code, w.Body)
+			}
+			assertResult(result)
+			if len(shot.inputs) != 0 || (!connected && len(contacts.inputs) != 0) || (connected && len(contacts.inputs) != 2) {
+				t.Fatalf("unexpected dispatch: captures=%d, contacts=%v", len(shot.inputs), contacts.inputs)
+			}
+		})
 	}
 }

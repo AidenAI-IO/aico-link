@@ -27,8 +27,8 @@ type ToolResult struct {
 	Error            *ToolError
 	Terminate        bool
 	Duration         time.Duration
-	deviceFrames     []deviceCLIFrame
-	deviceActions    []deviceCLIAction
+	deviceFrame      visualScreenshotObservation
+	deviceCalls      []deviceCLIToolEvidence
 }
 
 func (r ToolResult) IsError() bool { return r.Error != nil }
@@ -129,7 +129,9 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 	}
 
 	ctx2, _ := WithToolError(ctx)
-	ctx2 = context.WithValue(ctx2, benchmarkToolCallContextKey{}, action.ToolID)
+	if action.ToolID != "" {
+		ctx2 = context.WithValue(ctx2, benchmarkToolCallContextKey{}, action.ToolID)
+	}
 	if progressHandler, ok := execution.Callback.(toolProgressCallbackHandler); ok {
 		ctx2 = withToolProgressReporter(ctx2, func(progress ToolProgress) {
 			progressHandler.HandleToolProgress(ctx, call, progress)
@@ -172,11 +174,11 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 		}
 	}
 	result := ToolResult{
-		Output:        output,
-		deviceFrames:  capture.frames,
-		deviceActions: capture.actions,
-		Error:         toolErr,
-		Duration:      time.Since(call.StartedAt),
+		Output:      output,
+		deviceFrame: capture.frame,
+		deviceCalls: capture.calls,
+		Error:       toolErr,
+		Duration:    time.Since(call.StartedAt),
 	}
 	if err == nil && toolErr != nil && strings.TrimSpace(result.Output) == "" {
 		result.Output = toolErr.Message

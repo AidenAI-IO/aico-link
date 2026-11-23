@@ -33,6 +33,7 @@
         "required_tools": [
           "screenshot"
         ],
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -62,6 +63,7 @@
         "must_complete_within_sec": 90,
         "min_tool_calls": 1,
         "required_tools": [],
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -95,6 +97,7 @@
         "must_complete_within_sec": 180,
         "min_tool_calls": 1,
         "required_tools": [],
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -129,6 +132,7 @@
         "must_complete_within_sec": 120,
         "min_tool_calls": 1,
         "required_tools": [],
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -158,6 +162,7 @@
         }
       ],
       "hard_assertions": {
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -189,6 +194,7 @@
         }
       ],
       "hard_assertions": {
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -233,6 +239,7 @@
         }
       ],
       "hard_assertions": {
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -256,7 +263,7 @@
         "clear_history_after": true,
         "device_prepare": {"recipe": "settings_page", "params": {"page": "main"}}
       },
-      "prompt": "Use quick_action with action=home to return from Settings to Home. Leave Home visible.",
+      "prompt": "Use the home quick action to return from Settings to Home. Leave Home visible.",
       "rubric": [
         {
           "id": "settings_before",
@@ -272,6 +279,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -300,7 +308,7 @@
         "clear_history_after": true,
         "device_prepare": {"recipe": "settings_page", "params": {"page": "main"}}
       },
-      "prompt": "Use quick_action with action=app_switch to open recent apps. Leave recent apps open with the Settings card visible. Do not dismiss any app cards.",
+      "prompt": "Use the app_switch quick action to open recent apps. Leave recent apps open with the Settings card visible. Do not dismiss any app cards.",
       "rubric": [
         {
           "id": "settings_before",
@@ -316,6 +324,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 15,
         "must_complete_within_sec": 120,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -344,7 +353,7 @@
         "clear_history_after": true,
         "device_prepare": {"recipe": "home", "params": {"wait_for_text": ["Phone", "Chrome", "Messages", "Gmail"]}}
       },
-      "prompt": "Use quick_action with action=notification_center to open notifications. Describe the visible notifications, or explicitly report that there are none. Leave the notification panel open and do not clear notifications.",
+      "prompt": "Use the notification_center quick action to open notifications. Describe the visible notifications, or explicitly report that there are none. Leave the notification panel open and do not clear notifications.",
       "rubric": [
         {
           "id": "home_before",
@@ -364,6 +373,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 12,
         "must_complete_within_sec": 120,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -408,6 +418,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -449,6 +460,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -490,6 +502,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -530,6 +543,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -564,6 +578,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -604,6 +619,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"

@@ -67,7 +67,7 @@ func (v *probePlanningConcurrentVision) PlanComposition(ctx context.Context, _ s
 	}
 }
 
-func (v *probePlanningConcurrentVision) ProbeInputMode(ctx context.Context, _ screenshotResult, _ string, _ focusPointArgs) (textInputProbeAnalysis, error) {
+func (v *probePlanningConcurrentVision) ProbeInputMode(ctx context.Context, _ screenshotResult, _ string, _ *focusPointArgs) (textInputProbeAnalysis, error) {
 	close(v.probeStarted)
 	select {
 	case <-v.planStarted:
@@ -246,7 +246,7 @@ func TestRunSegmentedTypesSpaceWithoutVisionVerification(t *testing.T) {
 	}, vision, testNoWaitSleep)
 
 	result, err := engine.RunSegmented(context.Background(), textInputArgs{
-		Text: "hello test", Focus: focusPointArgs{X: 10, Y: 10},
+		Text: "hello test", Focus: &focusPointArgs{X: 10, Y: 10},
 	})
 	if err != nil || !result.Committed {
 		t.Fatalf("RunSegmented()=%+v err=%v", result, err)
@@ -267,7 +267,7 @@ func TestTextInputProbeWaitsForConfiguredSettleDelayBeforeCapture(t *testing.T) 
 		return nil
 	})
 
-	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, false)
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", &focusPointArgs{}, false)
 	if err != nil || mode != textInputModeASCII {
 		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
 	}
@@ -284,7 +284,7 @@ func TestTextInputProbeClearsReplacedFieldWithoutUndo(t *testing.T) {
 		screenshot:   textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
 	}, &stubTextInputVision{analyses: []textInputScreenAnalysis{{ObservedMode: textInputModeComposition}}}, testNoWaitSleep)
 
-	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, true)
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", &focusPointArgs{}, true)
 	if err != nil || mode != textInputModeComposition {
 		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
 	}
@@ -306,7 +306,7 @@ func TestTextInputProbeSupportsWindowsAndLinuxPlatforms(t *testing.T) {
 				return nil
 			})
 
-			mode, _, err := engine.probeTextInputMode(context.Background(), platform, focusPointArgs{}, false)
+			mode, _, err := engine.probeTextInputMode(context.Background(), platform, &focusPointArgs{}, false)
 			if err != nil || mode != textInputModeASCII {
 				t.Fatalf("probeTextInputMode(%q) mode=%s err=%v", platform, mode, err)
 			}
@@ -319,7 +319,7 @@ type probeVerifyingVision struct {
 	probeStillVisible bool
 }
 
-func (v *probeVerifyingVision) ProbeInputMode(_ context.Context, _ screenshotResult, _ string, _ focusPointArgs) (textInputProbeAnalysis, error) {
+func (v *probeVerifyingVision) ProbeInputMode(_ context.Context, _ screenshotResult, _ string, _ *focusPointArgs) (textInputProbeAnalysis, error) {
 	if len(v.analyses) == 0 {
 		return textInputProbeAnalysis{Mode: textInputModeASCII, Evidence: "stub default"}, nil
 	}
@@ -328,7 +328,7 @@ func (v *probeVerifyingVision) ProbeInputMode(_ context.Context, _ screenshotRes
 	return textInputProbeAnalysis{Mode: out.ObservedMode, Evidence: "stub analysis"}, nil
 }
 
-func (v *probeVerifyingVision) VerifyProbeCleanup(_ context.Context, _, _ screenshotResult, _ string, _ focusPointArgs) (bool, error) {
+func (v *probeVerifyingVision) VerifyProbeCleanup(_ context.Context, _, _ screenshotResult, _ string, _ *focusPointArgs) (bool, error) {
 	return v.probeStillVisible, nil
 }
 
@@ -360,7 +360,7 @@ func TestTextInputProbeVerificationSendsBackspaceWhenCharacterStillVisible(t *te
 		return nil
 	})
 
-	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, false)
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", &focusPointArgs{}, false)
 	if err != nil || mode != textInputModeASCII {
 		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
 	}
@@ -402,7 +402,7 @@ func TestTextInputProbeVerificationSkipsBackspaceWhenCharacterRemoved(t *testing
 		return nil
 	})
 
-	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, false)
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", &focusPointArgs{}, false)
 	if err != nil || mode != textInputModeASCII {
 		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
 	}
@@ -517,7 +517,7 @@ func TestTextInputEngineRunSegmentedUsesKeyboardAndIMEInOrder(t *testing.T) {
 	}, vision, testNoWaitSleep)
 
 	result, err := engine.RunSegmented(context.Background(), textInputArgs{
-		Text: "A你好B", Focus: focusPointArgs{X: 10, Y: 10},
+		Text: "A你好B", Focus: &focusPointArgs{X: 10, Y: 10},
 	})
 	if err != nil {
 		t.Fatalf("RunSegmented() error = %v", err)
@@ -549,7 +549,7 @@ func TestTextInputEngineRunSegmentedPlansIMESegmentsInternally(t *testing.T) {
 	}, vision, testNoWaitSleep)
 
 	result, err := engine.RunSegmented(context.Background(), textInputArgs{
-		Text: "A你好B", Focus: focusPointArgs{X: 10, Y: 10},
+		Text: "A你好B", Focus: &focusPointArgs{X: 10, Y: 10},
 	})
 	if err != nil || !result.Committed {
 		t.Fatalf("RunSegmented() = %+v, %v; want internally planned committed result", result, err)
@@ -609,7 +609,7 @@ func TestTextInputEngineDoesNotVerifyDirectPartsOrUsePointer(t *testing.T) {
 	}, vision, testNoWaitSleep)
 
 	result, err := engine.RunSegmented(context.Background(), textInputArgs{
-		Text: "你A", Focus: focusPointArgs{X: 10, Y: 10},
+		Text: "你A", Focus: &focusPointArgs{X: 10, Y: 10},
 	})
 	if err != nil || !result.Committed {
 		t.Fatalf("RunSegmented() = %+v, %v; want committed result", result, err)
@@ -638,11 +638,9 @@ func TestEnterTextToolSchemaKeepsIMESegmentsInternal(t *testing.T) {
 	}
 }
 
-func TestEnterTextToolRejectsMissingNullAndIncompleteFocus(t *testing.T) {
+func TestEnterTextToolRejectsIncompleteLegacyFocus(t *testing.T) {
 	tool := &EnterTextTool{engine: &textInputEngine{}}
 	for _, input := range []string{
-		`{"text":"hello"}`,
-		`{"text":"hello","focus":null}`,
 		`{"text":"hello","focus":{"x":500}}`,
 		`{"text":"hello","focus":{"y":500}}`,
 	} {
@@ -650,7 +648,7 @@ func TestEnterTextToolRejectsMissingNullAndIncompleteFocus(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Call(%s) error = %v", input, err)
 		}
-		if !strings.Contains(out, `"ok": false`) || !strings.Contains(out, "valid JSON containing text and focus") {
+		if !strings.Contains(out, `"ok": false`) || !strings.Contains(out, "valid JSON containing text") {
 			t.Fatalf("Call(%s) output = %q, want invalid focus failure", input, out)
 		}
 	}
@@ -748,7 +746,7 @@ func TestTextInputEngineRunSegmentedUsesProbeStateInsteadOfASCIIVerification(t *
 	}, vision, testNoWaitSleep)
 
 	result, err := engine.RunSegmented(context.Background(), textInputArgs{
-		Text: "A你", Focus: focusPointArgs{X: 10, Y: 10},
+		Text: "A你", Focus: &focusPointArgs{X: 10, Y: 10},
 	})
 	if err != nil || !result.Committed {
 		t.Fatalf("RunSegmented() = %+v, %v; want committed result", result, err)
@@ -778,7 +776,7 @@ func TestTextInputEngineRunSegmentedDoesNotVerifyFinalASCIIPart(t *testing.T) {
 	}, vision, testNoWaitSleep)
 
 	result, err := engine.RunSegmented(context.Background(), textInputArgs{
-		Text: "你A", Focus: focusPointArgs{X: 10, Y: 10},
+		Text: "你A", Focus: &focusPointArgs{X: 10, Y: 10},
 	})
 	if err != nil || !result.Committed {
 		t.Fatalf("RunSegmented() = %+v, %v; want committed result", result, err)
@@ -1026,7 +1024,7 @@ func TestTextInputEngineMarksOnlyKeyboardExecutionFailures(t *testing.T) {
 				screenshot:   textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
 			}, &stubTextInputVision{}, testNoWaitSleep)
 			result, err := engine.RunSegmented(context.Background(), textInputArgs{
-				Text: "x", Focus: focusPointArgs{X: 10, Y: 10},
+				Text: "x", Focus: &focusPointArgs{X: 10, Y: 10},
 			})
 			if err != nil || result.BackendFailure != tc.want {
 				t.Fatalf("RunSegmented() = %+v, %v; want backend failure %t", result, err, tc.want)

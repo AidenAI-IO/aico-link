@@ -713,7 +713,7 @@ func pasteSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term str
 	if err := bridgeTool.sleepAfterClipboardWrite(ctx); err != nil {
 		return route, err
 	}
-	_, _, err = bridgeTool.pasteClipboard(ctx, platform)
+	_, err = bridgeTool.pasteClipboard(ctx, platform)
 	return route, err
 }
 

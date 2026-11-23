@@ -68,6 +68,7 @@ class HardAssertions:
     response_required: bool = True
     required_tools: list[str] = dc.field(default_factory=list)
     forbidden_tools: list[str] = dc.field(default_factory=list)
+    allow_device_cli: bool = False
     prohibited_actions: list[str] = dc.field(default_factory=list)
     required_tool_calls: list[RequiredToolCallSpec] = dc.field(default_factory=list)
 
@@ -241,6 +242,9 @@ def load_suite(path: Path) -> Suite:
             raise SuiteValidationError(
                 f"task {tid}: hard_assertions has overlapping required/forbidden tools: {overlap}"
             )
+        allow_device_cli = ha.get("allow_device_cli", False)
+        if not isinstance(allow_device_cli, bool):
+            raise SuiteValidationError(f"task {tid}: allow_device_cli must be boolean")
         hard = HardAssertions(
             min_tool_calls=min_tc,
             max_tool_calls=max_tc,
@@ -248,6 +252,7 @@ def load_suite(path: Path) -> Suite:
             response_required=rr,
             required_tools=required_tools,
             forbidden_tools=forbidden_tools,
+            allow_device_cli=allow_device_cli,
             prohibited_actions=prohibited_actions,
             required_tool_calls=required_tool_calls,
         )

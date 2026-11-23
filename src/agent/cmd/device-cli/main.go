@@ -46,6 +46,9 @@ func run(base string, args []string) error {
 	if err != nil {
 		return err
 	}
+	if calls[0].AppData {
+		return runCall(client, base+"/api/device-cli/app", args, "", nil)
+	}
 	if len(calls) > 1 || args[0] == "drag-start" {
 		return runCall(client, base+"/api/device-cli/drag", args, "", nil)
 	}

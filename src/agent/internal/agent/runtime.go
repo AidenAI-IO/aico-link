@@ -1566,7 +1566,7 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 			}
 			fmt.Fprintf(&formated, "%s: %s\n", entry.Key, entry.Value)
 		}
-		if caption := screenshotGroundingCaption(grounding); caption != "" {
+		if caption := screenshotGroundingCaption(grounding, "touch_gesture coordinates"); caption != "" {
 			formated.WriteString(caption + "\n")
 		}
 		formated.WriteString(recalled)
@@ -2689,6 +2689,15 @@ func (h *runtimeCallbackHandler) AfterToolCall(ctx context.Context, call ToolCal
 func (h *runtimeCallbackHandler) HandleToolCallResult(ctx context.Context, call ToolCall, result ToolResult) {
 	output := publicToolResultContent(result)
 	logOutput := result.EventOutput()
+	toolError := cloneToolError(result.Error)
+	// A shell can carry the same private data as the underlying Bridge tool.
+	if result.containsPrivateDeviceData() {
+		output, logOutput = sensitiveToolResultRedaction, sensitiveToolResultRedaction
+		if toolError != nil {
+			toolError.Message = sensitiveToolResultRedaction
+			toolError.Details = nil
+		}
+	}
 	if h.logger != nil {
 		if result.IsError() {
 			h.logger.Error("Tool result: name=%s output=%s", call.Spec.Name, truncateForLog(logOutput, 240))
@@ -2705,7 +2714,7 @@ func (h *runtimeCallbackHandler) HandleToolCallResult(ctx context.Context, call 
 		Content:    output,
 		Timestamp:  time.Now(),
 		IsError:    result.IsError(),
-		ToolError:  cloneToolError(result.Error),
+		ToolError:  toolError,
 	})
 }
 

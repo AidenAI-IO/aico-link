@@ -46,7 +46,10 @@ ORIGINAL TASK (including answer options):
 Below are:
 - Pre-screenshot: state before the agent acted (when applicable)
 - Post-screenshot: state after the agent finished (when applicable)
-- Tool trace: every action the agent took
+- Tool trace: model-facing calls, with ordered `device_cli_calls` under each
+  shell call when available. Use those recorded inputs and `is_error` flags for
+  device execution, not the shell command text. A failed shell may have completed
+  some device actions before it stopped.
 - Agent's final reply: what the agent said it did
 
 For each rubric item, answer ONLY "yes" or "no" with a one-sentence reason

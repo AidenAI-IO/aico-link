@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+from collections.abc import Mapping
 from typing import Any
 from runner.models import ToolCall, Trace
 
@@ -61,7 +62,9 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
             # after the result. Initial/unrelated state images are not tool shots.
             caption = f"screenshot observation returned by the {last_result.tool} tool."
             attachments = msg.get("attachments") or []
-            if caption in str(msg.get("content", "")) and any(
+            text = str(msg.get("content", ""))
+            cli_caption = last_result.tool == "shell" and text.startswith(("Device CLI screenshot sheet.", "Device CLI screenshot."))
+            if (caption in text or cli_caption) and any(
                 isinstance(item, dict) and item.get("kind") == "image"
                 for item in attachments
             ):
@@ -76,6 +79,33 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
         total_tool_calls=len(tool_calls),
         total_duration_ms=0,
     )
+
+
+def episode_device_cli_calls(event: Mapping[str, Any], step: int = 0) -> list[ToolCall]:
+    metadata = event.get("metadata")
+    if event.get("type") != "tool_result" or event.get("tool_name") != "shell" or not isinstance(metadata, dict):
+        return []
+    calls = metadata.get("device_cli_calls")
+    if not isinstance(calls, list):
+        return []
+    parsed = []
+    for item in calls:
+        if not (isinstance(item, dict) and isinstance(item.get("tool"), str)
+                and isinstance(item.get("input"), dict) and isinstance(item.get("is_error"), bool)):
+            continue
+        duration = item.get("duration_ms")
+        parsed.append(ToolCall(
+            step=step, tool=item["tool"], input=item["input"],
+            is_error=item["is_error"] or item.get("not_dispatched") is True,
+            not_dispatched=item.get("not_dispatched") is True,
+            duration_ms=duration if type(duration) is int and duration >= 0 else None,
+        ))
+    return parsed
+
+
+def effective_tool_calls(trace: Trace) -> list[ToolCall]:
+    """Keep outer calls for shell policy and expand recorded actions in order."""
+    return [call for outer in trace.tool_calls for call in (outer, *outer.device_cli_calls)]
 
 
 def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) -> bool:
@@ -121,6 +151,7 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
     if any(str(r.get("tool_name") or "") != tc.tool for (r, _), tc in zip(results, completed)):
         return False
     for (result, normalized), tool_call in zip(results, completed):
+        tool_call.device_cli_calls = episode_device_cli_calls(result, tool_call.step)
         if isinstance(result.get("screenshot_ref"), str) and result["screenshot_ref"].strip():
             tool_call.has_screenshot = True
         tool_error = result.get("tool_error")

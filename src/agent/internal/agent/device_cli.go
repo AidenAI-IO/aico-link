@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -26,14 +27,24 @@ import (
 type deviceCLIRuntimeKey struct{}
 type deviceCLICaptureKey struct{}
 
-type deviceCLIFrame struct {
-	action int // zero-based index into this shell call’s action log
-	visual visualScreenshotObservation
+type deviceCLIToolEvidence struct {
+	Tool          string         `json:"tool"`
+	Input         map[string]any `json:"input"`
+	IsError       bool           `json:"is_error"`
+	DurationMs    *int64         `json:"duration_ms,omitempty"`
+	NotDispatched bool           `json:"not_dispatched,omitempty"`
 }
 
+const maxDeviceCLIActions = 64
+
 type deviceCLICapture struct {
-	frames  []deviceCLIFrame
-	actions []deviceCLIAction
+	calls            []deviceCLIToolEvidence
+	deferObservation bool // foreground shell, not standalone HTTP
+	needsScreenshot  bool
+	keyError         *ToolError // first failed key request, even if shell masks its exit status
+	guardChecked     bool
+	frame            visualScreenshotObservation
+	drag             compositeDrag
 }
 
 func (r *Runtime) deviceCLIEnabled() bool {
@@ -94,6 +105,12 @@ func openDeviceCLIScope(ctx context.Context, r *Runtime, capture *deviceCLICaptu
 		if err != nil {
 			response = ToolInvokeResponse{IsError: true, Error: err.Error()}
 		}
+		if len(args) > 0 && args[0] == "key" && response.IsError && capture.keyError == nil {
+			capture.keyError = response.ToolError
+			if capture.keyError == nil {
+				capture.keyError = NewToolError(CodeToolExecutionFailed, response.Error)
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
 	})
@@ -105,6 +122,18 @@ func openDeviceCLIScope(ctx context.Context, r *Runtime, capture *deviceCLICaptu
 // handleDeviceCLIDrag keeps both phases and their cleanup on the controller,
 // even when the standalone CLI disconnects between starting and releasing.
 func (s *Server) handleDeviceCLIDrag(w http.ResponseWriter, req *http.Request) {
+	s.handleStandaloneDeviceCLI(w, req, func(args []string) bool {
+		return len(args) == 5 && args[0] == "drag" || len(args) == 3 && args[0] == "drag-start"
+	}, "Expected drag X1 Y1 X2 Y2 or drag-start X Y")
+}
+
+func (s *Server) handleDeviceCLIApp(w http.ResponseWriter, req *http.Request) {
+	s.handleStandaloneDeviceCLI(w, req, func(args []string) bool {
+		return len(args) >= 2 && args[0] == "app"
+	}, "Expected an app command")
+}
+
+func (s *Server) handleStandaloneDeviceCLI(w http.ResponseWriter, req *http.Request, accepts func([]string) bool, usage string) {
 	if req.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -116,8 +145,8 @@ func (s *Server) handleDeviceCLIDrag(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	var args []string
-	if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&args); err != nil || !(len(args) == 5 && args[0] == "drag" || len(args) == 3 && args[0] == "drag-start") {
-		http.Error(w, "Expected drag X1 Y1 X2 Y2 or drag-start X Y", http.StatusBadRequest)
+	if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 128<<10)).Decode(&args); err != nil || !accepts(args) {
+		http.Error(w, usage, http.StatusBadRequest)
 		return
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), httpToolExecutionTimeout)
@@ -147,79 +176,145 @@ func (d *compositeDrag) cleanup(ctx context.Context) {
 func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *deviceCLICapture) (ToolInvokeResponse, error) {
 	calls, err := devicecli.Calls(args)
 	if err != nil {
-		return ToolInvokeResponse{}, err
+		return ToolInvokeResponse{IsError: true, Error: err.Error(), ToolError: NewToolError(CodeInvalidArguments, err.Error())}, nil
 	}
 	scoped := context.WithValue(ctx, deviceCLICaptureKey{}, capture)
 	if args[0] == "look" {
 		// Return the raw screenshot only to the CLI process, which saves the file.
-		return invokeDeviceHTTP(scoped, s, calls[0])
+		return capture.invoke(scoped, s, calls[0])
 	}
-	if len(capture.actions)+len(calls) > maxDeviceCLIActions {
+	if len(capture.calls)+len(calls) > maxDeviceCLIActions {
 		return ToolInvokeResponse{}, fmt.Errorf("device-cli action limit per shell reached; continue in a new shell call")
 	}
-	var result ToolInvokeResponse
-	var last visualScreenshotObservation
-	defer func() {
-		if len(last.ImageBytes) == 0 && ctx.Err() == nil {
-			fallback, _ := invokeDeviceHTTP(scoped, s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
-			last, _ = parseScreenshotObservation(fallback.Output)
-		}
-		last = compressCLIFrame(last)
-		capture.add(len(capture.actions)-1, last)
-	}()
-	var drag *compositeDrag
-	if len(calls) > 1 || args[0] == "drag-start" {
-		drag = &compositeDrag{}
-		scoped = context.WithValue(scoped, compositeDragKey{}, drag)
-		defer drag.cleanup(scoped)
+	if calls[0].AppData {
+		// Data-only operations do not invalidate an earlier wait frame or trigger a capture.
+		return capture.invoke(scoped, s, calls[0])
 	}
-	for i, call := range calls {
+	if capture.deferObservation {
+		return capture.executeInShell(scoped, s, calls)
+	}
+	// Standalone HTTP drag retains its existing per-phase verification.
+	drag := &compositeDrag{}
+	scoped = context.WithValue(scoped, compositeDragKey{}, drag)
+	defer drag.cleanup(scoped)
+	var result ToolInvokeResponse
+	for _, call := range calls {
 		if err := scoped.Err(); err != nil {
 			return result, err
 		}
-		action := newDeviceCLIAction(args[0], call)
-		result, err = invokeDeviceHTTP(scoped, s, call)
-		action.failed = err != nil || result.IsError
-		if actionNotDispatched(result.ToolError) {
-			action.pointCount = 0
-		}
-		capture.actions = append(capture.actions, action)
-		if err != nil {
+		result, err = capture.invoke(scoped, s, call)
+		if err != nil || result.IsError {
 			return result, err
 		}
-		visual, ok := parseScreenshotObservation(result.Output)
-		last = visual
-		if ok {
+		if visual, ok := parseScreenshotObservation(result.Output); ok {
 			result.Output = visual.Result.ActionOutput
-			if visual.Result.ScreenChanged != nil && !*visual.Result.ScreenChanged {
-				result.Output += "\nNo meaningful screen change; verify visually."
-			}
-		}
-		if result.IsError {
-			return result, nil
-		}
-		if action.name == "drag-start" {
-			if !ok || visual.Result.ScreenStable == nil || !*visual.Result.ScreenStable {
-				capture.actions[len(capture.actions)-1].failed = true
-				return result, fmt.Errorf("drag did not reach a stable screen; inspect the screenshot before retrying")
-			}
-			if err := scoped.Err(); err != nil {
-				capture.actions[len(capture.actions)-1].failed = true
-				return result, err
-			}
-			if i+1 < len(calls) {
-				capture.add(len(capture.actions)-1, compressCLIFrame(visual))
-			} else {
-				// A verified standalone start hands the contact to a later
-				// drag-release, which may run in a different shell call.
-				drag.release = nil
-			}
 		}
 	}
+	if err := scoped.Err(); err != nil {
+		return result, err
+	}
+	drag.release = nil
 	return result, nil
 }
 
+func (c *deviceCLICapture) executeInShell(ctx context.Context, s *Server, calls []devicecli.Call) (ToolInvokeResponse, error) {
+	ctx = context.WithValue(ctx, compositeDragKey{}, &c.drag)
+	var result ToolInvokeResponse
+	for _, call := range calls {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		c.needsScreenshot = true
+		c.frame = visualScreenshotObservation{}
+		var err error
+		result, err = c.invoke(ctx, s, call)
+		if err != nil || result.IsError {
+			return result, err
+		}
+		if call.Tool == "wait_for_stable_screen" || call.Tool == "screenshot" {
+			if visual, ok := parseScreenshotObservation(result.Output); ok {
+				c.frame = visual
+				result.Output = screenshotObservationStatusSummary(call.Tool, visual.Result)
+			}
+		}
+	}
+	return result, ctx.Err()
+}
+
+// Finalize only after the shell and all in-flight CLI requests have stopped.
+// Use the parent tool context so a shell deadline can still show partial effects.
+func (c *deviceCLICapture) finishShell(ctx context.Context, r *Runtime, succeeded bool) error {
+	defer c.drag.cleanup(ctx)
+	if !c.needsScreenshot || ctx.Err() != nil {
+		return nil
+	}
+	if !succeeded && c.drag.release != nil {
+		c.drag.cleanup(ctx)
+		c.drag.release = nil
+		c.frame = visualScreenshotObservation{}
+	}
+	if len(c.frame.ImageBytes) == 0 {
+		shotCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		s := &Server{runtime: r, logger: r.logger}
+		result, err := invokeDeviceHTTP(shotCtx, s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
+		if err == nil && !result.IsError {
+			c.frame, _ = parseScreenshotObservation(result.Output)
+		}
+	}
+	if len(c.frame.ImageBytes) == 0 {
+		return fmt.Errorf("final screenshot unavailable; inspect the screen before retrying any action")
+	}
+	// Ground the final model-facing frame only, including a reused explicit wait.
+	// Keep the original capture if the detector is absent or fails.
+	tools := r.toolSnapshot()
+	if tools.UIGroundingEnabled() && c.frame.Result.Grounding == nil {
+		tool, _ := tools.Get("screenshot")
+		if grounder, ok := tool.(screenshotResultGrounder); ok {
+			result := &c.frame.Result.screenshotResult
+			grounder.groundResult(ctx, result)
+			if result.Grounding != nil && result.Grounding.Error == "" {
+				if marked, err := base64.StdEncoding.DecodeString(result.Data); err == nil && len(marked) > 0 {
+					c.frame.ImageBytes = marked
+				}
+			}
+		}
+	}
+	c.frame = compressCLIFrame(c.frame)
+	c.frame.Result.Data = ""
+	c.drag.release = nil // a successful split start hands off to a later shell
+	return nil
+}
+
+// Record the controller outcome, not what the shell text requested. Internal
+// fallback screenshots and cleanup calls do not count as user-facing actions.
+func (c *deviceCLICapture) invoke(ctx context.Context, s *Server, call devicecli.Call) (ToolInvokeResponse, error) {
+	result, err := invokeDeviceHTTP(ctx, s, call)
+	completed := result.ToolError != nil && result.ToolError.Details[postActionCompletedDetail] == true
+	skipped := actionNotDispatched(result.ToolError)
+	evidence := deviceCLIToolEvidence{
+		Tool: call.Tool, Input: call.Input, NotDispatched: skipped,
+		IsError: err != nil || skipped || (result.IsError && !completed),
+	}
+	if err == nil {
+		evidence.DurationMs = &result.DurationMs
+	}
+	c.calls = append(c.calls, evidence)
+	return result, err
+}
+
+func phoneBridgeConnected(bridge *PhoneBridge) bool {
+	return bridge != nil && bridge.getStatus().Connected
+}
+
 func invokeDeviceHTTP(ctx context.Context, s *Server, call devicecli.Call) (ToolInvokeResponse, error) {
+	if call.AppData {
+		tools := s.runtime.toolSnapshot()
+		if tools == nil || !phoneBridgeConnected(tools.phoneBridge) {
+			te := NewToolErrorWithDetails(CodeBridgeNotConnected, "App commands require app_connected: true.", map[string]any{actionDispatchedDetail: false})
+			return ToolInvokeResponse{IsError: true, Error: te.Message, ToolError: te}, nil
+		}
+	}
 	body, err := json.Marshal(map[string]any{"input": call.Input})
 	if err != nil {
 		return ToolInvokeResponse{}, err
@@ -271,38 +366,16 @@ func compressCLIFrame(v visualScreenshotObservation) visualScreenshotObservation
 	return v
 }
 
-func (c *deviceCLICapture) add(action int, v visualScreenshotObservation) {
-	if len(v.ImageBytes) == 0 {
-		return
-	}
-	// Keep the last five captured frames, even if a step did not change the
-	// screen: its panel is the only place to see that step's marker.
-	if len(c.frames) == 5 {
-		c.frames = c.frames[1:]
-	}
-	c.frames = append(c.frames, deviceCLIFrame{action: action, visual: v})
-}
-
-func deviceCLIStateMessages(frames []deviceCLIFrame, actions []deviceCLIAction) []llms.MessageContent {
-	if len(frames) == 0 {
+func deviceCLIStateMessages(frame visualScreenshotObservation) []llms.MessageContent {
+	if len(frame.ImageBytes) == 0 {
 		return nil
 	}
-	last := frames[len(frames)-1].visual
-	imageBytes, latestPanel := renderDeviceCLISheet(frames, actions)
-	mimeType := "image/jpeg"
-	caption := "Device CLI screenshot sheet. Panels are ordered left to right, then top to bottom. Markers show past actions, not UI targets."
-	if len(imageBytes) == 0 {
-		imageBytes, mimeType = last.ImageBytes, last.MIMEType
-		caption = "Device CLI screenshot. Use this image for the latest available device state."
-	} else {
-		caption += fmt.Sprintf(" Normalize new coordinates to 0–1000 within the last panel only (top-left pixel %d,%d; size %d×%d px), not across the sheet.", latestPanel.Min.X, latestPanel.Min.Y, latestPanel.Dx(), latestPanel.Dy())
-	}
-	status := last.Result
-	status.Width, status.Height = 0, 0
-	if notes := screenshotObservationStatusSummary("shell", status); notes != "" {
-		caption += " " + notes
+	caption := "Device CLI screenshot. Normalize coordinates within this image."
+	if grounding := screenshotGroundingCaption(frame.Result.Grounding, "normalized device-cli coordinates (0–1000)"); grounding != "" {
+		caption += "\n" + grounding
 	}
 	return []llms.MessageContent{{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{
-		llms.TextPart(caption), buildImagePart(mimeType, imageBytes),
+		llms.TextPart(caption),
+		buildImagePart(frame.MIMEType, frame.ImageBytes),
 	}}}
 }

@@ -106,22 +106,49 @@ func (t *ShellTool) Call(ctx context.Context, input string) (string, error) {
 	defer cancel()
 
 	execution := t.execution
+	var finishDeviceCLI func(bool) error
+	var cliKeyError *ToolError
 	if rt, ok := ctx.Value(deviceCLIRuntimeKey{}).(*Runtime); ok {
 		if capture, ok := ctx.Value(deviceCLICaptureKey{}).(*deviceCLICapture); ok {
+			capture.deferObservation = true
 			u, token, closeScope, err := openDeviceCLIScope(execCtx, rt, capture)
 			if err != nil {
 				return toolErrorResultf(ctx, CodeToolExecutionFailed, "device CLI setup: %v", err), nil
 			}
-			defer closeScope()
+			finishDeviceCLI = func(succeeded bool) error {
+				closeScope()
+				cliKeyError = capture.keyError
+				return capture.finishShell(ctx, rt, succeeded && cliKeyError == nil)
+			}
 			execution.deviceCLIURL, execution.deviceCLIToken = u, token
 		}
 	}
 	result, runErr := shellRunForeground(execCtx, command, workdir, usePTY, execution)
-	if contextErr := contextError(execCtx, runErr); errors.Is(contextErr, context.Canceled) {
-		return "", contextErr
+	commandContextErr := contextError(execCtx, runErr)
+	if finishDeviceCLI != nil {
+		if err := finishDeviceCLI(runErr == nil && commandContextErr == nil); err != nil && commandContextErr == nil {
+			if runErr == nil && cliKeyError == nil {
+				return toolErrorResultf(ctx, CodeToolExecutionFailed, "%s\n%s", result, err), nil
+			}
+			result += "\n" + err.Error()
+		}
 	}
-	if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if errors.Is(commandContextErr, context.Canceled) {
+		return "", commandContextErr
+	}
+	if errors.Is(commandContextErr, context.DeadlineExceeded) {
 		return toolErrorResultf(ctx, CodeDeadlineExceeded, "Error: command timed out after %.0f seconds", timeoutSecs), nil
+	}
+	// A pipe or a later successful command can hide the CLI's nonzero exit.
+	// Report controller-side key failures independently of the shell status.
+	if cliKeyError != nil {
+		if !strings.Contains(result, cliKeyError.Message) {
+			result += "\nDevice CLI key failed: " + cliKeyError.Message
+		}
+		return toolErrorResultString(ctx, cliKeyError.Code, result), nil
 	}
 	if runErr != nil {
 		return toolErrorResultString(ctx, CodeToolExecutionFailed, result), nil

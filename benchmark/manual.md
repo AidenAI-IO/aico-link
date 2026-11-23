@@ -284,24 +284,39 @@ recorded, so 0-1000 bounds apply to every model. Set
 `"first_attempt": true` on a `required_tool_calls` entry when only the next call
 to that tool counts, so a later retry cannot satisfy a missed first attempt.
 
+For Agent runs using `device-cli`, the shell's episode result records ordered
+`metadata.device_cli_calls`. Scoring matches those controller calls using the
+same tool names and inputs as direct-tool runs. It does not infer execution from
+command text: actions omitted after a failed `&&` step do not appear, and
+rejected actions do not satisfy successful-call requirements. Mock suites route
+CLI actions to the same fixture responses as direct tools. Shell calls remain
+one model-facing tool invocation each; device-action metrics count underlying
+attempts but exclude observations, internal fallback captures, cleanup, and
+CLI requests explicitly marked not dispatched. Archived CLI attempts without
+controller evidence need a fresh run for deterministic action scoring;
+`rejudge` preserves the recorded execution gates.
+
 A task may leave `rubric` empty when `hard_assertions.required_tool_calls`
 fully decides it. Such a task is scored without the judge. The perception suite
 uses this to check the first tap's normalized coordinates against the target's
 bounds; later calls on the static frame do not affect the score.
 
-`enter_text` has its own internal decision chain in the real Go tool:
+`device-cli type` uses device input only. `device-cli app type` requires a
+connected companion app and uses only its clipboard route. Legacy `enter_text`
+without an explicit route still selects automatically. The clipboard route in
+the real Go tool works as follows:
 
 1. Prepare or reuse the clipboard through the connected/background Phone Bridge
    route.
-2. Focus the visible field.
-3. Try `quick_action` paste (`Meta+V` on iOS, `Ctrl+V` on Android).
-4. If that action reports an error, call `keyboard_tap` with the paste shortcut.
-5. Observe and verify the field.
-6. If the shortcut had no visible effect and the field is still empty, long-press
-   the field and tap the visible Paste/粘贴 menu action.
+2. Use the currently focused field (or apply the optional legacy focus hint).
+3. Try `quick_action` paste (`Meta+V` on iOS, `Ctrl+V` on Android). Try a direct
+   keyboard paste only if the first shortcut was rejected before dispatch.
+4. Verify the insertion. If a paste may have reached the field but cannot be
+   verified, report uncertainty without pasting again or typing via HID/IME.
+   With legacy automatic selection, local HID/IME fallback remains available
+   if Bridge failed before dispatch.
 
-The clipboard/paste sub-path does not fall back to typing the target text itself.
-The top-level `enter_text` tool owns the HID/IME typing fallback. Because mock suites route
+Because mock suites route
 `enter_text` through the scripted environment, they validate the Agent's
 tool selection but not this internal fallback implementation. The Go unit tests
 cover those branches; a real-phone smoke test is still needed for platform paste
@@ -402,6 +417,7 @@ Common fields:
 | `rubric` | The judge model's scoring items. An optional `scope: "precondition"` evaluates a starting-state check against the pre-screenshot separately from Agent outcomes. The default scope is `outcome`; at least one outcome check is required. |
 | `hard_assertions` | Deterministic checks, e.g. tool-call counts, timeout, required/forbidden tools |
 | `hard_assertions.required_tool_calls` | Requires a tool call whose input contains a specified nested subset |
+| `hard_assertions.allow_device_cli` | Opt in to a `forbidden_tools: ["shell"]` exception for foreground literal `device-cli` commands (optionally joined by `&&`) with recorded controller evidence. Arbitrary shell commands and forbidden device tools remain forbidden. |
 | `repeats` | Number of times a single task is repeated |
 | `input_screenshot` | Static image input, suitable for perception tasks |
 | `expected_answer` | Direct answer for multiple-choice/fixed-answer tasks |

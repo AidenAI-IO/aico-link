@@ -2,8 +2,10 @@
 package devicecli
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 const Usage = `device-cli [--url URL] COMMAND
@@ -12,13 +14,26 @@ const Usage = `device-cli [--url URL] COMMAND
   tap X Y | double-tap X Y | long-press X Y
   swipe X1 Y1 X2 Y2 [milliseconds] | drag X1 Y1 X2 Y2
   drag-start X Y | drag-release X Y | type TEXT | key KEY [KEY ...]
+  app type TEXT | app clipboard read | app clipboard write TEXT
+  app calendar query|create|delete JSON
+  app contacts query|create|update JSON
+  app notification send JSON
   open APP | url URL | quick ACTION | scroll DY | move X Y
+App commands require app_connected: true. Quote JSON as a single object argument.
+For chords, use key meta+a or key meta a. Use key '+' for a literal plus.
 Coordinates are integers from 0 to 1000. Quote text as one shell argument.
 look saves a JPEG (default: /tmp). wait 0 captures without waiting for stability.`
 
+// Text routes for the enter_text tool. Omitting route preserves legacy behavior.
+const (
+	TextRouteDevice = "device"
+	TextRouteApp    = "app"
+)
+
 type Call struct {
-	Tool  string
-	Input map[string]any
+	Tool    string
+	Input   map[string]any
+	AppData bool // companion app required; no visual observation
 }
 
 func Calls(args []string) ([]Call, error) {
@@ -26,7 +41,9 @@ func Calls(args []string) ([]Call, error) {
 		return nil, fmt.Errorf("missing command")
 	}
 	cmd, a := args[0], args[1:]
-	one := func(tool string, fields map[string]any) ([]Call, error) { return []Call{{tool, fields}}, nil }
+	one := func(tool string, fields map[string]any) ([]Call, error) {
+		return []Call{{Tool: tool, Input: fields}}, nil
+	}
 	point := func(i int) (map[string]int, error) {
 		if len(a) < i+2 {
 			return nil, fmt.Errorf("%s expects coordinate pairs", cmd)
@@ -69,7 +86,7 @@ func Calls(args []string) ([]Call, error) {
 			return nil, e
 		}
 		if cmd == "drag" {
-			return []Call{{"touch_gesture", map[string]any{"type": "drag_start", "point": p}}, {"touch_gesture", map[string]any{"type": "drag_release", "point": q}}}, nil
+			return []Call{{Tool: "touch_gesture", Input: map[string]any{"type": "drag_start", "point": p}}, {Tool: "touch_gesture", Input: map[string]any{"type": "drag_release", "point": q}}}, nil
 		}
 		v := map[string]any{"type": "swipe", "start": p, "end": q}
 		if len(a) == 5 {
@@ -95,12 +112,31 @@ func Calls(args []string) ([]Call, error) {
 		}
 	case "key":
 		if len(a) > 0 {
-			return one("keyboard_tap", map[string]any{"keys": a})
+			keys := make([]string, 0, len(a))
+			for _, arg := range a {
+				parts := []string{arg}
+				if arg != "+" {
+					parts = strings.Split(arg, "+")
+				}
+				for _, key := range parts {
+					key = strings.TrimSpace(key)
+					if key == "" {
+						return nil, fmt.Errorf("invalid key chord %q: empty key", arg)
+					}
+					keys = append(keys, key)
+				}
+			}
+			return one("keyboard_tap", map[string]any{"keys": keys})
 		}
 	case "type":
 		if len(a) == 1 {
-			return one("enter_text", map[string]any{"text": a[0]})
+			return one("enter_text", map[string]any{"text": a[0], "route": TextRouteDevice})
 		}
+	case "app":
+		if len(a) == 2 && a[0] == "type" {
+			return one("enter_text", map[string]any{"text": a[1], "route": TextRouteApp})
+		}
+		return appDataCalls(a)
 	case "open":
 		if len(a) == 1 {
 			return one("open_app", map[string]any{"app": a[0]})
@@ -138,4 +174,43 @@ func Calls(args []string) ([]Call, error) {
 		}
 	}
 	return nil, fmt.Errorf("invalid arguments or unknown command: %s", cmd)
+}
+
+// App data commands reuse the existing Bridge schemas. The verb is selected
+// by the CLI, never by a field in the JSON object.
+func appDataCalls(args []string) ([]Call, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("expected app type, clipboard, calendar, contacts, or notification command")
+	}
+	domain, action := args[0], args[1]
+	fields := map[string]any{}
+	switch domain {
+	case "clipboard":
+		switch {
+		case action == "read" && len(args) == 2:
+		case action == "write" && len(args) == 3:
+			fields["text"] = args[2]
+		default:
+			return nil, fmt.Errorf("usage: device-cli app clipboard read|write [TEXT]")
+		}
+	case "calendar", "contacts", "notification":
+		valid := domain == "calendar" && (action == "query" || action == "create" || action == "delete") ||
+			domain == "contacts" && (action == "query" || action == "create" || action == "update") ||
+			domain == "notification" && action == "send"
+		if !valid || len(args) != 3 {
+			return nil, fmt.Errorf("unsupported app command or missing JSON object: %s %s", domain, action)
+		}
+		if err := json.Unmarshal([]byte(args[2]), &fields); err != nil || fields == nil {
+			return nil, fmt.Errorf("app %s %s expects a JSON object", domain, action)
+		}
+		for key := range fields {
+			if strings.EqualFold(key, "action") {
+				return nil, fmt.Errorf("omit action from JSON; use the command verb")
+			}
+		}
+	default:
+		return nil, fmt.Errorf("unknown app command: %s", domain)
+	}
+	fields["action"] = action
+	return []Call{{Tool: "bridge_" + domain, Input: fields, AppData: true}}, nil
 }

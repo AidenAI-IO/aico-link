@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	langtools "github.com/tmc/langchaingo/tools"
 )
 
 func callEnterTextBridgeForTest(ctx context.Context, tool *textInputBridge, input string) (string, error) {
@@ -260,7 +262,9 @@ func TestTextInputBridgeFallsBackToKeyboardPasteWhenQuickActionFails(t *testing.
 	pb.appState = "background"
 	pb.appStateAt = time.Now()
 	keyboardTap := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
-	quick := &recordingTextInputTool{name: "quick_action", out: `{"ok":false,"status":"reserved","message":"paste unavailable"}`}
+	quick := &stubTool{name: "quick_action", callFn: func(ctx context.Context, _ string) (string, error) {
+		return toolErrorResultString(ctx, CodeQuickActionReserved, "paste unavailable"), nil
+	}}
 	tool := &textInputBridge{
 		hw: &textInputHardwareDeps{
 			touchGesture: &recordingTextInputTool{name: "touch_gesture", out: "ok"},
@@ -280,66 +284,11 @@ func TestTextInputBridgeFallsBackToKeyboardPasteWhenQuickActionFails(t *testing.
 	if !strings.Contains(out, `"committed": true`) {
 		t.Fatalf("unexpected output: %s", out)
 	}
-	if len(quick.calls) != 1 || !strings.Contains(quick.calls[0], `"action": "paste"`) {
-		t.Fatalf("quick_action calls=%v", quick.calls)
+	if len(quick.inputs) != 1 || !strings.Contains(quick.inputs[0], `"action": "paste"`) {
+		t.Fatalf("quick_action calls=%v", quick.inputs)
 	}
 	if len(keyboardTap.calls) != 1 || !strings.Contains(keyboardTap.calls[0], `"meta"`) || !strings.Contains(keyboardTap.calls[0], `"v"`) {
 		t.Fatalf("keyboard_tap calls=%v", keyboardTap.calls)
-	}
-}
-
-func TestTextInputBridgeFallsBackToLongPressPasteMenuWhenShortcutHasNoEffect(t *testing.T) {
-	message := "桥接粘贴测试"
-	vision := &stubTextInputVision{analyses: []textInputScreenAnalysis{{
-		ObservedMode: textInputModeComposition,
-		FieldText:    "",
-	}, {
-		ObservedMode: textInputModeComposition,
-		FieldText:    message,
-	}}}
-	pb := newTestPhoneBridge(t)
-	pb.NoteClipboardWrite(message)
-	pb.platform = "ios"
-	pb.appState = "background"
-	pb.appStateAt = time.Now()
-	keyboardTap := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
-	quick := &recordingTextInputTool{name: "quick_action", out: `{"ok":true}`}
-	touch := &recordingTextInputTool{name: "touch_gesture", out: "ok"}
-	tool := &textInputBridge{
-		hw: &textInputHardwareDeps{
-			touchGesture: touch,
-			keyboardTap:  keyboardTap,
-			keyboardText: &recordingTextInputTool{name: "keyboard_text", out: "ok"},
-			quickAction:  quick,
-			screenshot:   textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
-		},
-		vision:   vision,
-		bridgeFn: func() *PhoneBridge { return pb },
-		sleep:    testNoWaitSleep,
-		findPasteMenuFn: func(context.Context, screenshotResult, string) (pasteMenuResult, error) {
-			return pasteMenuResult{
-				Found:    true,
-				TapPoint: &focusPointArgs{X: 430, Y: 720},
-				Label:    "粘贴",
-			}, nil
-		},
-	}
-
-	out, err := callEnterTextBridgeForTest(context.Background(), tool, `{"text":"`+message+`","focus":{"x":300,"y":940}}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, `"committed": true`) {
-		t.Fatalf("unexpected output: %s", out)
-	}
-	if len(quick.calls) != 1 {
-		t.Fatalf("quick_action calls=%v, want one shortcut attempt", quick.calls)
-	}
-	if len(keyboardTap.calls) != 0 {
-		t.Fatalf("keyboard_tap calls=%v, want no keyboard fallback after quick_action returned ok", keyboardTap.calls)
-	}
-	if len(touch.calls) != 4 || !strings.Contains(touch.calls[0], `"type": "tap"`) || !strings.Contains(touch.calls[1], `"type": "tap"`) || !strings.Contains(touch.calls[2], `"type": "long_press"`) || !strings.Contains(touch.calls[3], `"type": "tap"`) {
-		t.Fatalf("touch_gesture calls=%v, want two focus taps, long_press, then paste-menu tap", touch.calls)
 	}
 }
 
@@ -511,5 +460,113 @@ func TestTextInputBridgeAllowsPastePermissionDialogBeforeMenuFallback(t *testing
 	last := touch.calls[len(touch.calls)-1]
 	if !strings.Contains(last, `"type": "tap"`) || !strings.Contains(last, `"x": 700`) {
 		t.Fatalf("touch_gesture calls=%v, want the allow-paste tap last", touch.calls)
+	}
+}
+
+// The legacy automatic route must not replay an uncertain paste into the focused field.
+// A missing match is not evidence that a paste did not reach that field.
+func TestEnterTextDoesNotReplayPossibleBridgePaste(t *testing.T) {
+	const text = "上海今日天气 11月23日"
+	for _, tc := range []struct {
+		name      string
+		analysis  textInputScreenAnalysis
+		visionErr error
+		pasteErr  error
+	}{
+		{name: "verified", analysis: textInputScreenAnalysis{TargetMatched: true}},
+		{name: "empty observation"},
+		{name: "unmatched field", analysis: textInputScreenAnalysis{FieldText: "上海今日天气"}},
+		{name: "verification timed out", visionErr: context.DeadlineExceeded},
+		{name: "ambiguous shortcut error", pasteErr: fmt.Errorf("could not verify shortcut")},
+		{name: "observed commit despite shortcut error", pasteErr: fmt.Errorf("could not verify shortcut"), analysis: textInputScreenAnalysis{TargetMatched: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pb := newTestPhoneBridge(t)
+			pb.NoteClipboardWrite(text)
+			keyboard := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
+			typing := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
+			touch := &recordingTextInputTool{name: "touch_gesture", out: "ok"}
+			quick := &stubTool{name: "quick_action", callFn: func(context.Context, string) (string, error) { return `{"ok":true}`, tc.pasteErr }}
+			vision := &nativeVerificationStub{analysis: tc.analysis, err: tc.visionErr}
+			hw := &textInputHardwareDeps{
+				deviceTypeFn: func() string { return "ios" }, keyboardTap: keyboard, keyboardText: typing,
+				touchGesture: touch, quickAction: quick, screenshot: textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
+			}
+			tool := &EnterTextTool{engine: newFastTextInputEngine(*hw, &stubTextInputVision{}), allowIOSKeyboardIsolationBypass: true,
+				bridgeTool: &textInputBridge{hw: hw, vision: vision, bridgeFn: func() *PhoneBridge { return pb }, sleep: testNoWaitSleep,
+					findPopupFn: func(context.Context, screenshotResult, string) (popupCheck, error) { return popupCheck{}, nil },
+				},
+			}
+			ctx, _ := WithToolError(context.Background())
+			out, err := tool.Call(ctx, jsonString(map[string]any{"text": text}))
+			wantOK := tc.analysis.TargetMatched
+			if err != nil || enterTextOutputOK(out, nil) != wantOK || (ToolErrorFromContext(ctx) == nil) != wantOK {
+				t.Fatalf("output=%s, error=%v, tool error=%v; want success=%t", out, err, ToolErrorFromContext(ctx), wantOK)
+			}
+			if !wantOK && !strings.Contains(out, "Text may already be present") {
+				t.Fatalf("unverified paste should warn against replay: %s", out)
+			}
+			if len(quick.inputs) != 1 || len(keyboard.calls)+len(typing.calls)+len(touch.calls) != 0 {
+				t.Fatalf("expected one paste and no replay, quick=%v keyboard=%v typing=%v touch=%v", quick.inputs, keyboard.calls, typing.calls, touch.calls)
+			}
+			if vision.request.InsertionBefore == nil || vision.request.Focus != nil {
+				t.Fatal("verification must compare before and after at the existing focus")
+			}
+		})
+	}
+}
+
+func TestDeviceCLITextRoutesDoNotSwitchBackends(t *testing.T) {
+	for _, tc := range []struct {
+		name, route, platform, code string
+		connected, writeFails       bool
+		wantWrites, wantPastes      int
+		wantDevice                  bool
+	}{
+		{name: "type bypasses connected app", route: "type", platform: "android", connected: true, wantDevice: true},
+		{name: "app requires connection even with cached clipboard", route: "app", platform: "android", code: CodeBridgeNotConnected},
+		{name: "app only pastes", route: "app", platform: "android", connected: true, wantWrites: 1, wantPastes: 1},
+		{name: "app write failure does not fall back", route: "app", platform: "android", connected: true, writeFails: true, wantWrites: 1, code: CodeToolExecutionFailed},
+		{name: "connected but no usable paste route", route: "app", platform: "ios", connected: true, code: CodeModuleUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const text = "hello"
+			pb := newTestPhoneBridge(t)
+			pb.platform, pb.connected, pb.appState = tc.platform, tc.connected, "foreground"
+			if !tc.connected {
+				pb.NoteClipboardWrite(text)
+			}
+			typing := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
+			keyboard := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
+			quick := &recordingTextInputTool{name: "quick_action", out: `{"ok":true}`}
+			hw := &textInputHardwareDeps{deviceTypeFn: func() string { return tc.platform }, keyboardText: typing, keyboardTap: keyboard,
+				quickAction: quick, screenshot: textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`}}
+			writes := 0
+			tool := &EnterTextTool{
+				engine: newFastTextInputEngine(*hw, &stubTextInputVision{analyses: []textInputScreenAnalysis{{ObservedMode: textInputModeASCII}}}),
+				bridgeTool: &textInputBridge{hw: hw, vision: &nativeVerificationStub{analysis: textInputScreenAnalysis{TargetMatched: true}},
+					bridgeFn: func() *PhoneBridge { return pb }, sleep: testNoWaitSleep,
+					clipboardWriteFn: func(context.Context, *PhoneBridge, string) error {
+						writes++
+						if tc.writeFails {
+							return fmt.Errorf("fixture clipboard write failed")
+						}
+						return nil
+					},
+				},
+			}
+			args := []string{"type", text}
+			if tc.route == "app" {
+				args = append([]string{"app"}, args...)
+			}
+			s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"enter_text": tool}}}}
+			result, err := executeDeviceCLI(context.Background(), s, args, &deviceCLICapture{deferObservation: true})
+			if err != nil || result.IsError != (tc.code != "") || (tc.code != "" && (result.ToolError == nil || result.ToolError.Code != tc.code)) {
+				t.Fatalf("unexpected result %+v, err=%v", result, err)
+			}
+			if writes != tc.wantWrites || len(quick.calls) != tc.wantPastes || (len(typing.calls) > 0) != tc.wantDevice || (!tc.wantDevice && len(keyboard.calls) > 0) {
+				t.Fatalf("writes=%d, pastes=%v, typing=%v, keypresses=%v", writes, quick.calls, typing.calls, keyboard.calls)
+			}
+		})
 	}
 }

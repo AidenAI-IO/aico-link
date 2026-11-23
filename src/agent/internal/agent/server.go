@@ -617,6 +617,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/tools", s.handleTools)
 	mux.HandleFunc("/api/tools/", s.handleTools)
 	mux.HandleFunc("/api/device-cli/drag", s.handleDeviceCLIDrag)
+	mux.HandleFunc("/api/device-cli/app", s.handleDeviceCLIApp)
 	mux.HandleFunc("/mcp", s.handleMCP)
 	mux.HandleFunc("/api/providers/screenshot", s.handleProviderScreenshot)
 	mux.HandleFunc("/api/providers/mnk", s.handleProviderMNK)
@@ -674,7 +675,7 @@ func (s *Server) Handler() http.Handler {
 		// /mcp is intentionally omitted: long support_bundle/device_status calls must
 		// not hold configOperations for the whole request. Runtime tool paths take
 		// the lock inside mcpServerBackend.CallRuntimeTool / DescribeRuntimeTool.
-		if s.runtime != nil && (strings.HasPrefix(r.URL.Path, "/api/tools/") || r.URL.Path == "/api/device-cli/drag" || r.URL.Path == "/api/providers/mnk" || r.URL.Path == "/api/providers/screenshot" || r.URL.Path == "/api/coordinate-debug/tap") {
+		if s.runtime != nil && (strings.HasPrefix(r.URL.Path, "/api/tools/") || strings.HasPrefix(r.URL.Path, "/api/device-cli/") || r.URL.Path == "/api/providers/mnk" || r.URL.Path == "/api/providers/screenshot" || r.URL.Path == "/api/coordinate-debug/tap") {
 			s.runtime.configOperations.RLock()
 			defer s.runtime.configOperations.RUnlock()
 		}
@@ -3897,6 +3898,11 @@ func (s *Server) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		http.Error(w, fmt.Sprintf("Unknown tool: %s", toolName), http.StatusNotFound)
 		return
+	}
+
+	if r.Context().Value(deviceCLICaptureKey{}) != nil {
+		// Scripted benchmark fixtures must see CLI actions as well as direct tools.
+		spec.Tool = benchmarkMockTools(s.runtime.ConfigSnapshot(), []langtools.Tool{spec.Tool})[0]
 	}
 
 	rawInput, err := decodeToolInvokeInput(r.Body)

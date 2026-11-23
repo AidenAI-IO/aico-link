@@ -13,6 +13,7 @@ from runner.runtask import run_one_task
 from runner.suite import (
     HardAssertions,
     MockEnvironmentSpec,
+    RequiredToolCallSpec,
     RubricItem,
     Suite,
     TaskSpec,
@@ -1849,3 +1850,66 @@ def test_required_calls_use_episode_evidence_when_it_aligns(tmp_path: Path):
     )
     assert result.status == "passed"
     assert result.metrics["episode_tool_evidence"] == "applied"
+
+
+@pytest.mark.parametrize("mode", ["legacy", "cli", "shell_error", "skipped", "unrecorded", "mixed_shell", "forbidden_action"])
+def test_device_action_evidence_reaches_hard_assertions_and_judge(tmp_path, monkeypatch, mode):
+    command = 'device-cli tap 100 200 && device-cli type "café\ntext"'
+    tap = {"type": "tap", "point": {"x": 100, "y": 200}}
+    text = {"text": "café\ntext"}
+    calls = [("touch_gesture", tap), ("enter_text", text)] if mode == "legacy" else [
+        ("shell", {"command": command + ("; pwd" if mode == "mixed_shell" else "")})
+    ]
+    history, events = [], []
+    for tool, args in calls:
+        call = {"type": "tool_call", "tool_name": tool, "tool_input": json.dumps(args)}
+        result = {"type": "tool_result", "tool_name": tool, "content": "ok"}
+        history.extend([call, result])
+        events.extend([call, {**result, "duration_ms": 20}])
+    if mode not in {"legacy", "unrecorded"}:
+        nested = [{"tool": "touch_gesture", "input": tap, "is_error": mode == "skipped", "duration_ms": 3}]
+        if mode != "skipped":
+            nested.append({"tool": "enter_text", "input": text, "is_error": False, "duration_ms": 7})
+        else:
+            nested[0]["not_dispatched"] = True
+        if mode in {"skipped", "shell_error"}:
+            events[-1]["is_error"] = True
+        events[-1]["metadata"] = {"device_cli_calls": nested}
+        history.append({"type": "state", "content": "Device CLI screenshot sheet.",
+                        "attachments": [{"kind": "image"}]})
+    history.append({"type": "assistant", "content": "Done"})
+    task = TaskSpec(
+        id="task", category="device", prompt="Tap, then enter text", description_for_judge="Tap then type",
+        hard_assertions=HardAssertions(
+            max_tool_calls=2 if mode == "legacy" else 1,
+            forbidden_tools=["shell", "enter_text"] if mode == "forbidden_action" else ["shell"],
+            allow_device_cli=True,
+            required_tools=["touch_gesture"],
+            required_tool_calls=[RequiredToolCallSpec("touch_gesture", tap, first_attempt=True),
+                                 RequiredToolCallSpec("enter_text", text)],
+        ),
+        rubric=[RubricItem("text", "Text was entered")],
+    )
+    suite = Suite(name="test", tasks=[task], global_reset={}, sha256="sha", source_path=tmp_path / "suite.json")
+    judged = []
+
+    def judge(**kwargs):
+        judged.append(kwargs["trace"])
+        return JudgeOutput([RubricVerdict("text", "yes", "Entered")], "", "key", "")
+
+    monkeypatch.setattr(runtask_mod, "judge_task", judge)
+    result = runtask_mod.evaluate_task_history(
+        suite=suite, task=task, history=history, episode={"events": events}, attempt=1,
+        artifact_dir=tmp_path, judge_cfg=JudgeConfig(), judge_cache_dir=None, run_id="test", timed_out=False,
+    )
+    assert result.metrics["tool_calls"] == len(calls)
+    assert result.metrics["device_actions"] == (0 if mode in {"skipped", "unrecorded"} else 2)
+    assert result.hard_assertions.forbidden_tools == (mode not in {"unrecorded", "mixed_shell", "forbidden_action"})
+    assert result.hard_assertions.required_tool_calls == (mode not in {"skipped", "unrecorded"})
+    assert result.status == ("passed" if mode in {"legacy", "cli", "shell_error"} else "failed")
+    if mode in {"cli", "shell_error"}:
+        assert judged[0]["tool_calls"][0]["device_cli_calls"][1]["input"] == text
+        assert result.metrics["device_execution_ms"] == 10  # not the whole shell
+        assert result.metrics["screenshots_taken"] == 1
+    if mode == "skipped":
+        assert result.metrics["first_failure_stage"] == "device_execution"

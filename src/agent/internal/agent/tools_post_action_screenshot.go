@@ -187,13 +187,22 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	touchscreenRCALogf("post_action start inner=%q input_len=%d", t.inner.Name(), len(input))
 	timing := postActionTiming{tool: t.inner.Name(), started: time.Now()}
 	defer timing.log()
+	cli, _ := ctx.Value(deviceCLICaptureKey{}).(*deviceCLICapture)
+	deferObservation := cli != nil && cli.deferObservation
 	seenWidth, seenHeight, seenOK := t.screen.ScreenshotDimensions()
-	baselineOutput, baselineImage := t.captureBaseline(ctx)
-	timing.mark(&timing.baselineMs)
-	if seenOK && baselineImage != nil && !releasesHeldContact(t.inner.Name(), input) {
-		bounds := baselineImage.Bounds()
-		if (seenWidth > seenHeight) != (bounds.Dx() > bounds.Dy()) {
-			return t.turnedScreenResult(ctx, seenWidth, seenHeight, bounds, baselineOutput), nil
+	var baselineImage image.Image
+	checkOrientation := seenOK && !releasesHeldContact(t.inner.Name(), input)
+	if !deferObservation || (checkOrientation && !cli.guardChecked) {
+		var baselineOutput string
+		baselineOutput, baselineImage = t.captureBaseline(ctx)
+		if deferObservation && baselineImage != nil {
+			cli.guardChecked = true
+		}
+		if checkOrientation && baselineImage != nil {
+			bounds := baselineImage.Bounds()
+			if (seenWidth > seenHeight) != (bounds.Dx() > bounds.Dy()) {
+				return t.turnedScreenResult(ctx, seenWidth, seenHeight, bounds, baselineOutput), nil
+			}
 		}
 	}
 	pointerBefore := t.pointer.current()
@@ -242,6 +251,9 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 
 	pointerAfter := pointerFinalPoint(t.inner.Name(), input, actionOutput)
 	t.pointer.set(pointerAfter)
+	if deferObservation {
+		return actionOutput, nil
+	}
 
 	reportToolProgress(ctx, ToolProgress{
 		Status:  "verifying",
