@@ -167,7 +167,7 @@ MobileGym's own services, so results appear on screen and in `/state`:
 | Command | Simulator effect |
 | --- | --- |
 | `clipboard_read` / `clipboard_write` | `os.clipboard` |
-| `calendar_create` / `calendar_query` / `calendar_delete` | `apps.calendar.events` (new events first) |
+| `calendar_create` / `calendar_query` / `calendar_delete` | `apps.calendar.events` (new events first); `alarm_minutes_before` is ignored, as in the Aico App |
 | `contacts_query` / `contacts_create` / `contacts_update` | `os.providers.contacts.contacts` (new contacts first) |
 | `notification_send` | `os.notifications`; a future `schedule_at` is recorded in `aico_app.scheduled_notifications` instead |
 | `open_app` | Launches an installed app by name, or the first app whose intent filter handles the URL |

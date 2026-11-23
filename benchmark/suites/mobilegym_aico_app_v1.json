@@ -792,6 +792,197 @@
           "min": 1
         }
       }
+    },
+    {
+      "id": "contacts_create_via_bridge",
+      "category": "single_step",
+      "prompt": "帮我在手机通讯录里新建联系人：Morgan Lee，电话 13600003333，邮箱 morgan@example.com，公司 Aiden Robotics，备注“产品顾问”。信息都确认过了，直接保存。",
+      "description_for_judge": "The agent creates the contact with phone, email, organization and notes through the Phone Bridge contacts tool.",
+      "rubric": [
+        {
+          "id": "created",
+          "check": "The final response confirms that Morgan Lee was saved with the given phone, email, company and notes."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_contacts",
+            "input_contains": {
+              "action": "create"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "os.providers.contacts.contacts.0.displayName": "Morgan Lee",
+        "os.providers.contacts.contacts.0.phones.0.number": "13600003333",
+        "os.providers.contacts.contacts.0.emails.0.email": "morgan@example.com",
+        "os.providers.contacts.contacts.0.company": "Aiden Robotics",
+        "os.providers.contacts.contacts.0.notes": "产品顾问",
+        "aico_app.failed_command_counts.contacts_create": 0
+      }
+    },
+    {
+      "id": "calendar_all_day_with_notes",
+      "category": "single_step",
+      "prompt": "帮我在手机日历里加一个全天日程：2026年6月12日，公司团建，备注“带运动鞋”。信息都确认过了，直接创建。",
+      "description_for_judge": "The agent creates an all-day event with notes through the Phone Bridge calendar tool.",
+      "rubric": [
+        {
+          "id": "created",
+          "check": "The final response confirms the all-day 公司团建 event on 2026-06-12 with the note 带运动鞋."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "create",
+              "all_day": true
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "apps.calendar.events.0.title": "公司团建",
+        "apps.calendar.events.0.allDay": true,
+        "apps.calendar.events.0.description": "带运动鞋"
+      }
+    },
+    {
+      "id": "calendar_permission_denied",
+      "category": "single_step",
+      "prompt": "帮我在手机日历里加一个日程：2026年6月9日 北京时间下午2点到3点，复盘会。信息都确认过了，直接创建。",
+      "description_for_judge": "Calendar permission is denied for the simulated Aico App. The agent must not claim the event was created; it either reports that calendar permission is needed or requests the user's action. Creating the event on screen also counts.",
+      "rubric": [
+        {
+          "id": "handled_denial",
+          "check": "The final response or user-action request says calendar permission must be granted, or the post-screenshot shows the 复盘会 event created on screen."
+        },
+        {
+          "id": "no_false_success",
+          "check": "The agent does not claim the event was created through the bridge."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 180,
+        "required_tools": [
+          "bridge_calendar"
+        ],
+        "response_required": false
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "aico_app": {
+        "permissions": {
+          "calendar": "denied"
+        }
+      },
+      "environment_assertions": {
+        "aico_app.failed_command_counts.calendar_create": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "open_app_launch_failure_fallback",
+      "category": "single_step",
+      "prompt": "打开手机上的天气。",
+      "description_for_judge": "The Phone Bridge launch fails once with app_launch_failed. The open_app tool falls back to the visible system search, so Weather still opens.",
+      "rubric": [
+        {
+          "id": "weather_opened",
+          "check": "The post-screenshot shows the Weather app."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 10,
+        "must_complete_within_sec": 180,
+        "required_tools": [
+          "open_app"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {
+        "faults": [
+          {
+            "command": "open_app",
+            "error": "app_launch_failed"
+          }
+        ]
+      },
+      "environment_assertions": {
+        "route.app": "weather",
+        "aico_app.failed_command_counts.open_app": 1
+      }
+    },
+    {
+      "id": "background_without_fgs",
+      "category": "single_step",
+      "prompt": "帮我在手机日历里加一个日程：2026年6月15日 北京时间上午11点到12点，供应商电话。信息都确认过了，直接创建。",
+      "description_for_judge": "The simulated Aico App is in the background without its foreground service. On Android, background-safe data commands still run over the WebSocket, so the agent creates the event through the Phone Bridge.",
+      "rubric": [
+        {
+          "id": "created",
+          "check": "The final response confirms the 供应商电话 event on 2026-06-15 11:00-12:00."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "create"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "aico_app": {
+        "app_state": "background"
+      },
+      "environment_assertions": {
+        "apps.calendar.events.0.title": "供应商电话",
+        "apps.calendar.events.0.startTs": 1781492400000,
+        "apps.calendar.events.0.endTs": 1781496000000,
+        "aico_app.failed_command_counts.calendar_create": 0
+      }
     }
   ]
 }
