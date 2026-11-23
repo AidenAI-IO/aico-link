@@ -7,6 +7,14 @@ from __future__ import annotations
 
 from typing import Any
 
+# Like Android's `cmd statusbar collapse`: close an open shade, otherwise hide the
+# soft keyboard. A swipe would start on keyboard keys and type a character.
+_DISMISS_PANEL = r"""() => {
+    const os = window.__OS__;
+    if (os?.shade?.isOpen?.()) { os.shade.close(); return; }
+    if (os?.keyboard?.isVisible?.()) os.keyboard.hide();
+}"""
+
 # Match MobileGym's simInput touch/pointer events, but keep the original target
 # and contact across requests. Coordinates are normalized against the viewport,
 # not divided by a guessed device-pixel ratio.
@@ -105,6 +113,9 @@ class SimulatorInput:
             else:
                 raise ValueError(f"unsupported simulator keyboard key: {key!r}")
         await self.page.keyboard.press("+".join(chord))
+
+    async def dismiss_panel(self) -> None:
+        await self.page.evaluate(_DISMISS_PANEL)
 
     async def contact(self, operation: str, point: dict[str, float]) -> None:
         if operation == "drag_start" and self.contact_active:

@@ -521,6 +521,30 @@ def test_invoke_quick_action_handles_mobilegym_common_actions(bridge_server):
         assert state.env.step_count == no_action_count
 
 
+def test_dismiss_panel_does_not_swipe_over_the_soft_keyboard(bridge_server):
+    _server, base_url, state = bridge_server
+    state.active_episode_id = "test-episode-dismiss-panel"
+    evaluated = []
+
+    async def evaluate(script, *args):
+        evaluated.append(script)
+
+    state.env.page.evaluate = evaluate
+    req = Request(
+        f"{base_url}/api/tools/quick_action",
+        data=json.dumps({"input": {"action": "dismiss_panel"}}).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+
+    with urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+
+    assert data["is_error"] is False
+    assert len(evaluated) == 1
+    assert state.env.step_count == 0
+
+
 def test_invoke_quick_action_rejects_legacy_platform_argument(bridge_server):
     _server, base_url, state = bridge_server
     state.active_episode_id = "test-episode-legacy-platform"

@@ -614,13 +614,8 @@ class ToolsAPIHandler:
             )
             return self._execute_action(state, action, episode_id, tool_name="quick_action", tool_input=tool_input)
         if action == "dismiss_panel":
-            return self._call_touch_gesture(
-                state,
-                {"type": "swipe", "start": {"x": 500, "y": 750}, "end": {"x": 500, "y": 250}, "duration_ms": 300},
-                episode_id,
-                log_tool_name="quick_action",
-                log_tool_input=tool_input,
-            )
+            return self._execute_input(state, episode_id, "quick_action", tool_input,
+                state.input.dismiss_panel)
         if action == "send":
             action = build_action("key", {"key": "enter"})
             return self._execute_action(state, action, episode_id, tool_name="quick_action", tool_input=tool_input)
@@ -1113,7 +1108,7 @@ def _mobilegym_quick_action_catalog() -> list[dict[str, str]]:
         {"id": "search_launch_app", "status": "active", "tool": "touch_gesture"},
         {"id": "notification_center", "status": "active", "tool": "touch_gesture"},
         {"id": "control_center", "status": "active", "tool": "touch_gesture"},
-        {"id": "dismiss_panel", "status": "active", "tool": "touch_gesture"},
+        {"id": "dismiss_panel", "status": "active", "tool": "quick_action"},
         {"id": "send", "status": "active", "tool": "keyboard_tap"},
         {"id": "quit_app", "status": "active", "tool": "touch_gesture"},
         {"id": "browser_refresh", "status": "reserved", "tool": "keyboard_tap"},
