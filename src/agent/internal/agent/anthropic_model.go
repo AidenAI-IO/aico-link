@@ -322,7 +322,11 @@ func (m *anthropicModel) generateContent(ctx context.Context, messages []llms.Me
 		if streamFallbackCause == nil || isAnthropicContextError(err) {
 			return err
 		}
-		logging.Warnf("agent", "anthropic", "non-streaming fallback failed: %v", err)
+		logging.Warnf("agent", "anthropic", "non-streaming fallback after %v failed: %v", streamFallbackCause, err)
+		var status interface{ HTTPStatusCode() int }
+		if errors.As(err, &status) || isRetryableProviderError(err, 0) {
+			return err
+		}
 		return streamFallbackCause
 	}
 	for {

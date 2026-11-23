@@ -32,11 +32,13 @@ func HTTP(ctx context.Context, client *http.Client, req *http.Request) (*http.Re
 		}
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			failure := ResponseError(resp, body).(*StatusError)
+			failure.Cause = err
+			return nil, failure
+		}
 		if err != nil {
 			return nil, err
-		}
-		if resp.StatusCode >= 400 {
-			return nil, ResponseError(resp, body)
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		return resp, nil

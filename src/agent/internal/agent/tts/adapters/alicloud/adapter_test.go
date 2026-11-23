@@ -120,3 +120,36 @@ func (s *recordingSink) String() string {
 	defer s.mu.Unlock()
 	return string(s.data)
 }
+
+func TestAbortWhileReaderReceivesAudio(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.WriteJSON(map[string]any{"type": "session.created"})
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		for {
+			if err := conn.WriteJSON(map[string]any{"type": "response.audio.delta", "delta": "AQI="}); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	provider, err := New(tts.ProviderConfig{APIKey: "k", Endpoint: "ws" + strings.TrimPrefix(server.URL, "http")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	for i := 0; i < 20; i++ {
+		sink := &recordingSink{format: tts.AudioFormat{SampleRate: defaultSampleRate, Channels: 1, BitWidth: 16}}
+		stream, err := provider.BeginStream(context.Background(), sink)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = stream.(*session).Abort()
+	}
+}

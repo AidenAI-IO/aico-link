@@ -128,7 +128,7 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 	}
 
 	opened = true
-	go s.readLoop()
+	go s.readLoop(conn)
 	return s, nil
 }
 
@@ -236,13 +236,8 @@ func (s *session) writeMsg(msg map[string]any) error {
 	return s.conn.WriteMessage(websocket.BinaryMessage, data)
 }
 
-func (s *session) readLoop() {
+func (s *session) readLoop(conn *websocket.Conn) {
 	for {
-		conn := s.conn
-		if conn == nil {
-			s.readDone <- tts.ErrSessionClosed
-			return
-		}
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			if s.ctx.Err() != nil {
@@ -266,7 +261,12 @@ func (s *session) readLoop() {
 				}
 			}
 		case "finish":
-			s.readDone <- nil
+			reason, _ := resp["reason"].(string)
+			if reason == "" || reason == "stop" {
+				s.readDone <- nil
+			} else {
+				s.readDone <- &providerretry.StatusError{Status: providerretry.ProviderStatus(fmt.Sprint(resp["code"]), fmt.Sprint(resp["status"])), Body: fmt.Sprintf("finish: %s: %v", reason, resp["message"])}
+			}
 			return
 		case "error":
 			msg, _ := resp["message"].(string)

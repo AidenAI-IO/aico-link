@@ -195,6 +195,9 @@ func (s *TencentASRSTT) transcribeWAVAttempt(ctx context.Context, wavData []byte
 		if strings.HasPrefix(code, "InternalError") {
 			status = 500
 		}
+		if strings.HasPrefix(code, "ServiceUnavailable") {
+			status = 503
+		}
 		return "", &providerretry.StatusError{Status: status, Body: "tencent ASR API error: " + msg}
 	}
 	text := strings.TrimSpace(parsed.Response.Result)
@@ -514,7 +517,11 @@ func (u *tencentASRStreamingUploader) readServerMessage() (tencentASRRealtimeSer
 
 func (u *tencentASRStreamingUploader) handleMessage(msg tencentASRRealtimeServerMessage) error {
 	if msg.Code != 0 {
-		return fmt.Errorf("tencent realtime ASR error %d: %s", msg.Code, strings.TrimSpace(msg.Message))
+		status := 400
+		if msg.Code >= 5000 && msg.Code <= 5002 {
+			status = 503
+		}
+		return &providerretry.StatusError{Status: status, Body: fmt.Sprintf("tencent realtime ASR error %d: %s", msg.Code, strings.TrimSpace(msg.Message))}
 	}
 
 	if msg.Result != nil {

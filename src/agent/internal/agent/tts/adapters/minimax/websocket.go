@@ -295,6 +295,8 @@ func minimaxError(resp map[string]any) error {
 		switch int(code) {
 		case 1001:
 			status = 504 // request timeout
+		case 1024:
+			status = 500 // internal service error
 		case 1002, 1039:
 			status = 429 // rate and token limits
 		default:

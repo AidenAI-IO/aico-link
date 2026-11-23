@@ -757,7 +757,11 @@ func (s *mossSession) onJSON(body []byte) []Event {
 		s.ensureChannels()
 		s.updatedOnce.Do(func() { close(s.updated) })
 		if strings.TrimSpace(s.updateErr) != "" {
-			return []Event{{Kind: EventError, Error: fmt.Errorf("moss live: session.updated: %s", s.updateErr)}}
+			failure := s.updateFailure
+			if failure == nil {
+				failure = fmt.Errorf("moss live: session.updated: %s", s.updateErr)
+			}
+			return []Event{{Kind: EventError, Error: failure}}
 		}
 		return nil
 	case "input.speech.started":

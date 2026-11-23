@@ -148,34 +148,42 @@ func TestSpekoSetupRetriesShareMintKeyAndBudget(t *testing.T) {
 }
 
 func TestMossSetupFrameErrorHonorsRetryClassification(t *testing.T) {
-	for _, code := range []string{"rate_limit_exceeded", "invalid_api_key"} {
-		t.Run(code, func(t *testing.T) {
-			var attempts atomic.Int32
-			upgrader := websocket.Upgrader{}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				attempts.Add(1)
-				conn, err := upgrader.Upgrade(w, r, nil)
-				if err != nil {
-					return
+	for _, frame := range []string{"error", "session.updated"} {
+		for _, code := range []string{"rate_limit_exceeded", "invalid_api_key"} {
+			t.Run(frame+"/"+code, func(t *testing.T) {
+				var attempts atomic.Int32
+				upgrader := websocket.Upgrader{}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					attempts.Add(1)
+					conn, err := upgrader.Upgrade(w, r, nil)
+					if err != nil {
+						return
+					}
+					defer conn.Close()
+					if _, _, err := conn.ReadMessage(); err != nil {
+						return
+					}
+					if frame == "session.updated" {
+						_ = conn.WriteJSON(map[string]any{"action": "session_attached", "data": map[string]any{"session_id": "s"}})
+						if _, _, err := conn.ReadMessage(); err != nil {
+							return
+						}
+					}
+					_ = conn.WriteJSON(map[string]any{"action": frame, "data": map[string]any{"error": map[string]any{"code": code, "message": "setup rejected"}}})
+					_, _, _ = conn.ReadMessage() // Keep the socket alive until the client classifies the frame.
+				}))
+				defer server.Close()
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				_, err := DefaultProviderRegistry().Open(ctx, ProviderMoss, ProviderConfig{Endpoint: server.URL}, SessionConfig{APIKey: "k"}, DeviceMediaConfig{})
+				want := int32(1)
+				if code == "rate_limit_exceeded" {
+					want = 3
 				}
-				defer conn.Close()
-				if _, _, err := conn.ReadMessage(); err != nil {
-					return
+				if err == nil || errors.Is(err, context.DeadlineExceeded) || attempts.Load() != want {
+					t.Fatalf("err=%v attempts=%d", err, attempts.Load())
 				}
-				_ = conn.WriteJSON(map[string]any{"action": "error", "data": map[string]any{"error": map[string]any{"code": code, "message": "setup rejected"}}})
-				_, _, _ = conn.ReadMessage() // Keep the socket alive until the client classifies the frame.
-			}))
-			defer server.Close()
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			_, err := DefaultProviderRegistry().Open(ctx, ProviderMoss, ProviderConfig{Endpoint: server.URL}, SessionConfig{APIKey: "k"}, DeviceMediaConfig{})
-			want := int32(1)
-			if code == "rate_limit_exceeded" {
-				want = 3
-			}
-			if err == nil || errors.Is(err, context.DeadlineExceeded) || attempts.Load() != want {
-				t.Fatalf("err=%v attempts=%d", err, attempts.Load())
-			}
-		})
+			})
+		}
 	}
 }

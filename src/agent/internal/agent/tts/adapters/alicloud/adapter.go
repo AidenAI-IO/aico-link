@@ -148,7 +148,7 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 	}
 
 	opened = true
-	go s.readLoop()
+	go s.readLoop(conn)
 	return s, nil
 }
 
@@ -298,9 +298,9 @@ func (s *session) writeEvent(ev map[string]any) error {
 	return s.conn.WriteMessage(websocket.TextMessage, data)
 }
 
-func (s *session) readLoop() {
+func (s *session) readLoop(conn *websocket.Conn) {
 	for {
-		_, raw, err := s.conn.ReadMessage()
+		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			s.finishRead(err)
 			return

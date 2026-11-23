@@ -708,7 +708,7 @@ configuration:
   playback, failures are returned without replaying speech. Provider-specific
   synthesis/playback timeouts still apply after audio starts.
 - **Decision models:** TypeSafe, OpenAI, Gemini, and OpenRouter share two retries
-  with 400 ms and 800 ms delays, a 5-second attempt timeout, and a 15-second
+  with 400 ms and 800 ms delays and a 15-second
   overall budget (or a shorter caller deadline).
 - **Realtime:** OpenAI, Qwen, Gemini Live, xAI, Moss, and Speko retry failed
   connection/session setup twice, with 500 ms and 1 s delays. WebSocket upgrade

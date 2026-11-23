@@ -311,7 +311,9 @@ func (s *session) readMessage(ctx context.Context) (int, []byte, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}
+	s.writeMu.Lock()
 	conn := s.conn
+	s.writeMu.Unlock()
 	if conn == nil {
 		return 0, nil, tts.ErrSessionClosed
 	}

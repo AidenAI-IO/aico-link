@@ -346,3 +346,21 @@ func TestAskRetriesServerFailureAndHonorsCancellation(t *testing.T) {
 		t.Fatalf("calls=%d err=%v", calls.Load(), err)
 	}
 }
+
+func TestAskAllowsResponseWithinOverallBudget(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		select {
+		case <-time.After(5200 * time.Millisecond):
+			_, _ = io.WriteString(w, `{"answers":{"q":{"type":"noul","noul":0.8}}}`)
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	c := &Client{BaseURL: server.URL, APIKey: "k", Model: "m", HTTP: server.Client()}
+	_, err := c.Ask(context.Background(), Request{State: "s", Questions: map[string]Question{"q": {Type: TypeNoul, Instructions: "?"}}})
+	if err != nil || calls.Load() != 1 {
+		t.Fatalf("calls=%d error=%v", calls.Load(), err)
+	}
+}

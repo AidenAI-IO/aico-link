@@ -16,6 +16,8 @@ type retryTestProvider struct {
 	permanent bool
 	audio     bool
 	sessions  []*retryTestSession
+	onBegin   func(*retryTestSession) error
+	onOp      func(*retryTestSession, string) error
 }
 
 func (p *retryTestProvider) Name() string               { return "retry-test" }
@@ -25,6 +27,11 @@ func (p *retryTestProvider) BeginStream(ctx context.Context, sink AudioSink) (St
 	p.opens++
 	s := &retryTestSession{provider: p, sink: sink, ctx: ctx, attempt: p.opens}
 	p.sessions = append(p.sessions, s)
+	if p.onBegin != nil {
+		if err := p.onBegin(s); err != nil {
+			return nil, err
+		}
+	}
 	if p.fail == "begin" && s.attempt == 1 {
 		return nil, p.failure()
 	}
@@ -49,6 +56,11 @@ type retryTestSession struct {
 
 func (s *retryTestSession) op(kind string) error {
 	s.ops = append(s.ops, kind)
+	if s.provider.onOp != nil {
+		if err := s.provider.onOp(s, kind); err != nil {
+			return err
+		}
+	}
 	if s.attempt == 1 && (s.provider.fail == kind || s.provider.fail == "always") {
 		if s.provider.audio {
 			_ = s.sink.WritePCM([]byte{1, 2})
@@ -196,4 +208,146 @@ func TestFinishInputContextDeadlineBoundsRetries(t *testing.T) {
 		t.Fatalf("err=%v opens=%d", err, p.opens)
 	}
 	_ = CancelAndClose(session)
+}
+
+func TestPreAudioTimeoutAndPCMSerialize(t *testing.T) {
+	for _, audioFirst := range []bool{true, false} {
+		t.Run(map[bool]string{true: "audio-first", false: "timeout-first"}[audioFirst], func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			playback := &retryPlaybackSink{}
+			sink := &retryAudioSink{AudioSink: playback}
+			attempt := &attemptAudioSink{retryAudioSink: sink}
+			session := &retrySession{ctx: context.Background(), sink: sink, attemptCancel: cancel}
+			err := session.bounded(context.Background(), 10*time.Millisecond, func() error {
+				if audioFirst {
+					if err := attempt.WritePCM([]byte{1}); err != nil {
+						return err
+					}
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(30 * time.Millisecond):
+						return nil
+					}
+				}
+				<-ctx.Done()
+				if err := attempt.WritePCM([]byte{1}); !errors.Is(err, context.Canceled) {
+					t.Errorf("late PCM accepted: %v", err)
+				}
+				return ctx.Err()
+			})
+			if audioFirst {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if sink.retirePreAudio() {
+					t.Fatal("retired audible attempt")
+				}
+				_ = attempt.Stop()
+				if playback.stops != 1 {
+					t.Fatal("audible attempt lost playback cleanup")
+				}
+			} else if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
+func TestPreAudioTimeoutPreservesProviderRejection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	session := &retrySession{ctx: context.Background(), sink: &retryAudioSink{AudioSink: noopSink{}}, attemptCancel: cancel}
+	rejection := &providerretry.StatusError{Status: 401}
+	err := session.bounded(context.Background(), 10*time.Millisecond, func() error { <-ctx.Done(); return rejection })
+	if err != rejection || providerretry.Retryable(err) {
+		t.Fatalf("lost provider rejection: %v", err)
+	}
+}
+
+func TestBeginStreamFailureStopsAlreadyDeliveredPlayback(t *testing.T) {
+	p := &retryTestProvider{onBegin: func(s *retryTestSession) error {
+		_ = s.sink.WritePCM([]byte{1})
+		return &providerretry.StatusError{Status: 503}
+	}}
+	sink := &retryPlaybackSink{}
+	_, err := NewProviderHolder(p).BeginStream(context.Background(), sink)
+	if err == nil || p.opens != 1 || sink.stops != 1 {
+		t.Fatalf("error=%v opens=%d stops=%d", err, p.opens, sink.stops)
+	}
+}
+
+func TestFinishDeadlineBoundsReopenAndReplay(t *testing.T) {
+	for _, phase := range []string{"reopen", "replay", "finish", "detach"} {
+		t.Run(phase, func(t *testing.T) {
+			p := &retryTestProvider{fail: "flush"}
+			p.onBegin = func(s *retryTestSession) error {
+				if phase == "reopen" && s.attempt == 2 {
+					<-s.ctx.Done()
+					return s.ctx.Err()
+				}
+				return nil
+			}
+			p.onOp = func(s *retryTestSession, op string) error {
+				if s.attempt == 2 && ((phase == "replay" && op == "write:hello") || (phase == "finish" && op == "flush")) {
+					<-s.ctx.Done()
+					return s.ctx.Err()
+				}
+				return nil
+			}
+			session, err := NewProviderHolder(p).BeginStream(context.Background(), noopSink{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := session.WriteText("hello"); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+			defer cancel()
+			started := time.Now()
+			_, err = FinishInputContext(ctx, session)
+			if p.opens != 2 {
+				t.Fatalf("opens=%d error=%v", p.opens, err)
+			}
+			if phase == "detach" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				cancel()
+				if err := p.sessions[1].ctx.Err(); err != nil {
+					t.Fatalf("healthy replacement canceled: %v", err)
+				}
+			} else if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 2*time.Second {
+				t.Fatalf("elapsed=%s error=%v", time.Since(started), err)
+			}
+			_ = CancelAndClose(session)
+		})
+	}
+}
+
+func TestCloseReleasesReplacementWhenReplayFails(t *testing.T) {
+	p := &retryTestProvider{fail: "close", onOp: func(s *retryTestSession, op string) error {
+		if s.attempt == 2 && op == "write:hello" {
+			return &providerretry.StatusError{Status: 401}
+		}
+		return nil
+	}}
+	session, err := NewProviderHolder(p).BeginStream(context.Background(), noopSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.WriteText("hello"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Close(); err == nil {
+		t.Fatal("lost replay failure")
+	}
+	if p.opens != 2 || p.sessions[1].aborts != 1 || p.sessions[1].ctx.Err() == nil {
+		t.Fatal("replacement leaked after failed replay")
+	}
+	_ = CancelAndClose(session)
+	if p.sessions[1].aborts != 1 {
+		t.Fatal("replacement cleaned up twice")
+	}
 }

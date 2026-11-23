@@ -181,7 +181,7 @@ func (c *Client) Ask(ctx context.Context, req Request) (Response, error) {
 
 	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
 	defer cancel()
-	return providerretry.Do(ctx, providerretry.Policy{MaxRetries: maxRetries, BaseDelay: retryBaseDelay, Timeout: 5 * time.Second}, func(ctx context.Context) (Response, error) {
+	return providerretry.Do(ctx, providerretry.Policy{MaxRetries: maxRetries, BaseDelay: retryBaseDelay}, func(ctx context.Context) (Response, error) {
 		return c.post(ctx, endpoint, body, headers, decode)
 	})
 }

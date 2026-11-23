@@ -55,10 +55,16 @@ func (s *attemptAudioSink) activeOutput() bool {
 	return s.epoch == s.retryAudioSink.epoch && s.delivered.Load()
 }
 
-func (s *retryAudioSink) invalidate() {
+// Retiring pre-audio output and the first PCM write share one transition.
+// Once PCM wins, the attempt retains its playback cleanup rights.
+func (s *retryAudioSink) retirePreAudio() bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.delivered.Load() {
+		return false
+	}
 	s.epoch++
-	s.mu.Unlock()
+	return true
 }
 
 type synthesisOp struct {
@@ -84,6 +90,7 @@ type retrySession struct {
 	closed        bool
 	canceled      bool
 	cancelErr     error
+	rawClosed     bool
 }
 
 func beginRetryStream(ctx context.Context, p TTSProvider, sink AudioSink) (StreamSession, error) {
@@ -97,7 +104,7 @@ func beginRetryStream(ctx context.Context, p TTSProvider, sink AudioSink) (Strea
 	}
 	s := &retrySession{provider: p, sink: &retryAudioSink{AudioSink: sink}, ctx: providerretry.Managed(ctx), cancel: cancel}
 	for {
-		err := s.open()
+		err := s.open(s.ctx)
 		if err == nil {
 			return s, nil
 		}
@@ -108,13 +115,17 @@ func beginRetryStream(ctx context.Context, p TTSProvider, sink AudioSink) (Strea
 	}
 }
 
-func (s *retrySession) open() error {
+func (s *retrySession) open(operationCtx context.Context) error {
 	ctx, cancel := context.WithCancel(s.ctx)
 	s.attemptCancel = cancel
+	s.rawClosed = false
+	s.sink.mu.Lock()
+	attemptSink := &attemptAudioSink{retryAudioSink: s.sink, epoch: s.sink.epoch}
+	s.sink.mu.Unlock()
 	var err error
-	err = s.bounded(func() error {
+	err = s.bounded(operationCtx, 30*time.Second, func() error {
 		var openErr error
-		s.raw, openErr = s.provider.BeginStream(ctx, &attemptAudioSink{retryAudioSink: s.sink, epoch: s.sink.epoch})
+		s.raw, openErr = s.provider.BeginStream(ctx, attemptSink)
 		return openErr
 	})
 	if err != nil {
@@ -122,6 +133,9 @@ func (s *retrySession) open() error {
 		if s.raw != nil {
 			_ = CancelAndClose(s.raw)
 			s.raw = nil
+		}
+		if s.sink.delivered.Load() {
+			_ = s.sink.AudioSink.Stop()
 		}
 	}
 	return err
@@ -134,19 +148,15 @@ func (s *retrySession) prepareRetry(operationCtx context.Context, err error) err
 	if operationCtx.Err() != nil {
 		return operationCtx.Err()
 	}
-	if s.sink.delivered.Load() || s.retries >= 2 || s.retained > 256*1024 || !providerretry.Retryable(err) {
+	if s.retries >= 2 || s.retained > 256*1024 || !providerretry.Retryable(err) || !s.sink.retirePreAudio() {
 		return err
 	}
 	if s.attemptCancel != nil {
 		s.attemptCancel()
 	}
-	s.sink.invalidate()
 	if s.raw != nil {
 		_ = CancelAndClose(s.raw)
 		s.raw = nil
-	}
-	if s.sink.delivered.Load() {
-		return err
 	}
 	s.retries++
 	waitCtx, cancel := context.WithCancel(operationCtx)
@@ -160,22 +170,28 @@ func (s *retrySession) prepareRetry(operationCtx context.Context, err error) err
 	return waitErr
 }
 
-func (s *retrySession) apply(op synthesisOp) error {
-	return s.bounded(func() error { return s.applyRaw(op) })
+func (s *retrySession) apply(op synthesisOp, operationCtx context.Context) error {
+	return s.bounded(operationCtx, 30*time.Second, func() error { return s.applyRaw(op) })
 }
 
-// Bound blocking setup/synthesis before audio, without imposing a total limit
-// on a healthy session that incrementally accepts text and produces PCM.
-func (s *retrySession) bounded(call func() error) error {
-	if s.sink.delivered.Load() {
-		return call()
+// Bound blocking setup/synthesis before audio. The operation deadline also
+// bounds reopening and replay, then detaches from a healthy session.
+func (s *retrySession) bounded(operationCtx context.Context, timeout time.Duration, call func() error) error {
+	if err := operationCtx.Err(); err != nil {
+		return err
 	}
+	cancelAttempt := s.attemptCancel
+	operationDone := make(chan struct{})
+	stopOperation := context.AfterFunc(operationCtx, func() {
+		cancelAttempt()
+		close(operationDone)
+	})
 	var expired atomic.Bool
 	done := make(chan struct{})
-	timer := time.AfterFunc(30*time.Second, func() {
-		if !s.sink.delivered.Load() {
+	timer := time.AfterFunc(timeout, func() {
+		if s.sink.retirePreAudio() {
 			expired.Store(true)
-			s.attemptCancel()
+			cancelAttempt()
 		}
 		close(done)
 	})
@@ -183,7 +199,14 @@ func (s *retrySession) bounded(call func() error) error {
 	if !timer.Stop() {
 		<-done
 	}
-	if expired.Load() && s.ctx.Err() == nil {
+	if !stopOperation() {
+		<-operationDone
+	}
+	if operationCtx.Err() != nil {
+		return operationCtx.Err()
+	}
+	var status interface{ HTTPStatusCode() int }
+	if expired.Load() && s.ctx.Err() == nil && !errors.As(err, &status) {
 		return context.DeadlineExceeded
 	}
 	return err
@@ -201,6 +224,7 @@ func (s *retrySession) applyRaw(op synthesisOp) error {
 		}
 		return FinishInput(s.raw)
 	case "close":
+		s.rawClosed = true
 		return s.raw.Close()
 	}
 	return nil
@@ -249,27 +273,31 @@ func (s *retrySession) run(op synthesisOp) error {
 			s.ops = append(s.ops, op)
 		}
 	}
-	err := s.apply(op)
 	operationCtx := s.ctx
 	if op.ctx != nil {
 		operationCtx = op.ctx
 	}
+	err := s.apply(op, operationCtx)
 	for err != nil {
 		if next := s.prepareRetry(operationCtx, err); next != nil {
 			err = next
 			break
 		}
-		err = s.open()
+		err = s.open(operationCtx)
 		if err != nil {
 			continue
 		}
 		for _, previous := range s.ops {
-			if err = s.apply(previous); err != nil {
+			if err = s.apply(previous, operationCtx); err != nil {
 				break
 			}
 		}
 	}
 	if op.kind == "close" {
+		if s.raw != nil && !s.rawClosed {
+			s.attemptCancel()
+			_ = CancelAndClose(s.raw)
+		}
 		if err == nil && !s.sink.delivered.Load() {
 			err = s.sink.AudioSink.Drain(s.ctx)
 		}

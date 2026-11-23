@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/gorilla/websocket"
 	"io"
 	"net/http"
@@ -120,7 +121,7 @@ func TestSTTCancelStopsRetryAfter(t *testing.T) {
 func TestDashScopeSTTRetriesCompleteBufferedWAV(t *testing.T) {
 	var calls atomic.Int32
 	upgrader := websocket.Upgrader{}
-	var received []string
+	received := make(chan string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -144,7 +145,7 @@ func TestDashScopeSTTRetriesCompleteBufferedWAV(t *testing.T) {
 				break
 			}
 		}
-		received = append(received, audio)
+		received <- audio
 		if n == 1 {
 			_ = conn.WriteJSON(map[string]any{"type": "error", "error": map[string]any{"code": "rate_limit_exceeded", "message": "busy"}})
 			return
@@ -157,7 +158,62 @@ func TestDashScopeSTTRetriesCompleteBufferedWAV(t *testing.T) {
 	if err != nil || text != "hello" || calls.Load() != 2 {
 		t.Fatalf("text=%q err=%v calls=%d", text, err, calls.Load())
 	}
-	if len(received) != 2 || received[0] == "" || received[0] != received[1] {
-		t.Fatalf("audio replay=%v", received)
+	first, second := <-received, <-received
+	if first == "" || first != second {
+		t.Fatalf("audio replay=%q, %q", first, second)
+	}
+}
+
+func TestTencentASRRetriesServiceUnavailable(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			_, _ = io.WriteString(w, `{"Response":{"Error":{"Code":"ServiceUnavailable","Message":"busy"}}}`)
+		} else {
+			_, _ = io.WriteString(w, `{"Response":{"Result":"hello"}}`)
+		}
+	}))
+	defer server.Close()
+	client := NewTencentASRSTT("id", "key", "", "", "", "", server.Client())
+	client.apiURL = server.URL
+	text, err := client.TranscribeWAV([]byte("wav"))
+	if err != nil || text != "hello" || calls.Load() != 2 {
+		t.Fatalf("text=%q calls=%d error=%v", text, calls.Load(), err)
+	}
+}
+
+func TestTencentASRRetriesOnlyTransientInitialServerErrors(t *testing.T) {
+	for _, code := range []int{5000, 5001, 5002, 4001, 4008} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				n := calls.Add(1)
+				conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				reply := code
+				if n > 1 {
+					reply = 0
+				}
+				_ = conn.WriteJSON(map[string]any{"code": reply, "message": "setup"})
+				_, _, _ = conn.ReadMessage()
+			}))
+			defer server.Close()
+			client := NewTencentASRSTT("id", "key", "app", "", "", "")
+			client.realtimeURL = "ws" + strings.TrimPrefix(server.URL, "http")
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			uploader, err := client.NewStreamingUploader(ctx, STTStreamConfig{SampleRate: 16000, Channels: 1, BitWidth: 16})
+			if code >= 5000 {
+				if err != nil || calls.Load() != 2 {
+					t.Fatalf("calls=%d error=%v", calls.Load(), err)
+				}
+				_ = uploader.Close()
+			} else if err == nil || calls.Load() != 1 {
+				t.Fatalf("calls=%d error=%v", calls.Load(), err)
+			}
+		})
 	}
 }

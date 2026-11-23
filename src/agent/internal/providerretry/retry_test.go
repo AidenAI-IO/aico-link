@@ -150,3 +150,27 @@ func TestNestedOperationKeepsTimeoutWithoutExtraAttempts(t *testing.T) {
 		t.Fatalf("err=%v calls=%d", err, calls)
 	}
 }
+
+func TestHTTPPreservesRejectionWhenBodyIsTruncated(t *testing.T) {
+	for _, status := range []int{401, 429, 503} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Length", "100")
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, "partial")
+			}))
+			defer server.Close()
+			req, _ := http.NewRequest("GET", server.URL, nil)
+			// The enclosing operation owns the retry budget. Inspect the first error.
+			_, err := HTTP(Managed(context.Background()), server.Client(), req)
+			var failure *StatusError
+			if !errors.As(err, &failure) || failure.Status != status || failure.After != time.Second || failure.Body != "partial" || !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("failure=%+v error=%v", failure, err)
+			}
+			if Retryable(err) != (status != 401) {
+				t.Fatalf("wrong retry classification: %v", err)
+			}
+		})
+	}
+}
