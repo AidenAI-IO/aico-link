@@ -319,3 +319,10 @@ daemon \
 
 The agent still exposes its normal `/api/chat` endpoint. The agent also exposes
 `POST /api/providers/screenshot` when it is itself used as a bridge.
+
+For an ADB Android bridge, add `--local-phone-bridge`: that bridge handles only
+screen and input, so the Agent must own the companion App's WebSocket, status,
+and HTTP command queue. This option does not require a benchmark token. The
+native Android launcher, Aico Launcher, and benchmark ADB startup paths set it
+or the equivalent benchmark option automatically. Bridges that provide a
+remote Phone Bridge keep the default proxy routing.

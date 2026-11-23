@@ -88,6 +88,7 @@ func main() {
 		deviceType                = registerDeviceTypeFlag(flag.CommandLine)
 		environmentBridgeMode     = flag.Bool("environment-bridge-mode", false, "Enable environment bridge screen and input providers")
 		environmentBridgeEndpoint = flag.String("environment-bridge-endpoint", "", "Environment bridge endpoint (e.g., http://192.168.50.123:8080)")
+		localPhoneBridge          = flag.Bool("local-phone-bridge", false, "Keep companion App connections and status on this Agent while an environment bridge handles screen and input")
 		benchmarkTaskID           = flag.String("benchmark-task-id", "", "Benchmark task id to include on environment bridge requests for task routing")
 		benchmarkHeadless         = flag.Bool("benchmark-headless", false, "Hide unavailable device tools in a benchmark container without an environment bridge")
 		benchmarkMockTools        = flag.Bool("benchmark-mock-tools", false, "Use scripted device tools for benchmark policy fixtures (requires benchmark token and environment bridge)")
@@ -148,6 +149,7 @@ func main() {
 		}
 		cfg.EnvironmentBridge.BenchmarkTaskID = strings.TrimSpace(*benchmarkTaskID)
 	}
+	cfg.EnvironmentBridge.LocalPhoneBridge = *localPhoneBridge
 	if strings.TrimSpace(*benchmarkTokenFile) != "" {
 		data, err := os.ReadFile(strings.TrimSpace(*benchmarkTokenFile))
 		if err != nil {

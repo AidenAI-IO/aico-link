@@ -1235,7 +1235,7 @@ def test_android_bridge_serial_requires_auto_setup_and_environment(monkeypatch, 
 
 
 def _run_auto_bridge_suite(monkeypatch, tmp_path, *, bridge_mode, skip_mode, board_network=None, extra_args=(),
-                           extra_task_ids=(), prepare_failures=0):
+                           extra_task_ids=(), prepare_failures=0, bridge_type="mobilegym"):
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(
         json.dumps(
@@ -1308,7 +1308,7 @@ def _run_auto_bridge_suite(monkeypatch, tmp_path, *, bridge_mode, skip_mode, boa
     monkeypatch.setattr(main, "AgentClient", FakeClient)
     monkeypatch.setattr(main, "wait_for_agent_ready", lambda *args, **kwargs: True)
     monkeypatch.setattr(main, "wait_for_agent_clock", lambda *args, **kwargs: True)
-    monkeypatch.setattr(main, "_read_environment_health", lambda url: {"bridge_type": "mobilegym"})
+    monkeypatch.setattr(main, "_read_environment_health", lambda url: {"bridge_type": bridge_type})
     monkeypatch.setattr(main, "generate_report_html", lambda run_dir: "<html></html>")
     monkeypatch.setattr(preflight_module, "call_environment_setup", lambda *args, **kwargs: None)
     monkeypatch.setattr(preflight_module, "_verify_mobilegym_scroll", lambda *args, **kwargs: None)
@@ -1380,11 +1380,12 @@ def _run_auto_bridge_suite(monkeypatch, tmp_path, *, bridge_mode, skip_mode, boa
 
 @pytest.mark.parametrize("bridge_mode", ["none", "background", "foreground"])
 @pytest.mark.parametrize("skip_mode", ["none", "background_only", "all"])
+@pytest.mark.parametrize("bridge_type", ["mobilegym", "adb_android"])
 def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
-    monkeypatch, tmp_path, bridge_mode, skip_mode,
+    monkeypatch, tmp_path, bridge_mode, skip_mode, bridge_type,
 ):
     rc, captured, stale_clears, bridge_actions = _run_auto_bridge_suite(
-        monkeypatch, tmp_path, bridge_mode=bridge_mode, skip_mode=skip_mode,
+        monkeypatch, tmp_path, bridge_mode=bridge_mode, skip_mode=skip_mode, bridge_type=bridge_type,
     )
 
     assert rc == 0
@@ -1407,7 +1408,7 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
     assert "device_type" not in captured["prepare_config_kwargs"]
     assert captured["kwargs"]["device_type"] == "android"
     assert stale_clears == ["http://127.0.0.1:19090"]
-    assert captured["kwargs"]["benchmark_local_phone_bridge"] == (bridge_mode != "none")
+    assert captured["kwargs"]["benchmark_local_phone_bridge"] == (bridge_mode != "none" or bridge_type == "adb_android")
     assert bridge_actions == {
         "none": [],
         "background": ["board_network", ("wait", {"require_background_bridge": True})],

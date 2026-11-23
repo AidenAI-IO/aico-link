@@ -2183,7 +2183,8 @@ def test_ensure_daemon_image_uses_compose_build(tmp_path: Path, monkeypatch):
         assert captured["start_new_session"] is True
 
 
-def test_run_job_uses_saved_webui_agent_config(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("bridge_type", ["", "adb_android"])
+def test_run_job_uses_saved_webui_agent_config(tmp_path: Path, monkeypatch, bridge_type):
     base = tmp_path / "base"
     base.mkdir()
     app = webui.BenchmarkWebApp(webui.WebUIConfig(runs_dir=tmp_path / "runs", base_config_dir=base, build_daemon_image=False))
@@ -2210,7 +2211,7 @@ def test_run_job_uses_saved_webui_agent_config(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         webui,
         "read_environment_health",
-        lambda endpoint: {"platform": "android"},
+        lambda endpoint: {"platform": "android", "bridge_type": bridge_type},
     )
     captured = {}
 
@@ -2238,6 +2239,7 @@ def test_run_job_uses_saved_webui_agent_config(tmp_path: Path, monkeypatch):
     assert 'provider = "fake"' in saved_content
     assert 'device_type = "iOS"' in saved_content
     assert captured["device_type"] == "android"
+    assert captured["benchmark_local_phone_bridge"] == (bridge_type == "adb_android")
     assert job.status == "passed"
 
 

@@ -26,6 +26,10 @@ const (
 	// phoneBridgeBLECacheTTL avoids repeated UDS status requests while keeping
 	// runtime tool availability responsive to BLE connection changes.
 	phoneBridgeBLECacheTTL = 1500 * time.Millisecond
+	// A screen/input environment bridge may not implement Phone Bridge. Back
+	// off failed probes so frequent state reads do not overload that bridge.
+	phoneBridgeProxyStatusRetryDelay       = 30 * time.Second
+	phoneBridgeProxyStatusUnsupportedDelay = 5 * time.Minute
 	// phoneBridgeBenchmarkRelayQuery distinguishes a benchmark daemon from the
 	// companion app on the shared WebSocket endpoint. The daemon dials the
 	// device-side environment bridge; that bridge executes each command over its
@@ -170,10 +174,12 @@ type PhoneBridge struct {
 	bleCapabilityAt    time.Time
 
 	// Proxy mode fields
-	proxyMode     bool
-	proxyEndpoint string
-	proxyTaskID   string
-	proxyClient   *http.Client
+	proxyMode          bool
+	proxyEndpoint      string
+	proxyTaskID        string
+	proxyClient        *http.Client
+	proxyStatusMu      sync.Mutex
+	proxyStatusRetryAt time.Time
 }
 
 func NewPhoneBridge(logger *Logger) *PhoneBridge {
@@ -1530,6 +1536,22 @@ func (pb *PhoneBridge) forwardWebSocketMessages(
 
 // getProxyStatus fetches status from remote agent in proxy mode.
 func (pb *PhoneBridge) getProxyStatus() PhoneBridgeStatus {
+	// Serialize probes so concurrent state readers also share a failure's
+	// backoff. Successful status reads remain live rather than being cached.
+	pb.proxyStatusMu.Lock()
+	defer pb.proxyStatusMu.Unlock()
+	if time.Now().Before(pb.proxyStatusRetryAt) {
+		return PhoneBridgeStatus{Connected: false}
+	}
+	retryDelay := phoneBridgeProxyStatusRetryDelay
+	defer func() {
+		if retryDelay > 0 {
+			pb.proxyStatusRetryAt = time.Now().Add(retryDelay)
+		} else {
+			pb.proxyStatusRetryAt = time.Time{}
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -1554,6 +1576,14 @@ func (pb *PhoneBridge) getProxyStatus() PhoneBridgeStatus {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented {
+		retryDelay = phoneBridgeProxyStatusUnsupportedDelay
+		if pb.logger != nil {
+			pb.logger.Debug("phone-bridge-proxy: status endpoint unavailable (HTTP %d); retrying in %s", resp.StatusCode, retryDelay)
+		}
+		return PhoneBridgeStatus{Connected: false}
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if pb.logger != nil {
 			pb.logger.Error("phone-bridge-proxy: status request returned %d", resp.StatusCode)
@@ -1569,5 +1599,6 @@ func (pb *PhoneBridge) getProxyStatus() PhoneBridgeStatus {
 		return PhoneBridgeStatus{Connected: false}
 	}
 
+	retryDelay = 0
 	return status
 }
