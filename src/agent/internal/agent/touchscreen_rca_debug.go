@@ -67,6 +67,9 @@ func touchscreenRCAPointerMode(pc *pointerController) string {
 	if pc == nil {
 		return "pointer=nil"
 	}
+	if pc.touchpad {
+		return "touchpad"
+	}
 	if pc.touchscreen {
 		return "touchscreen"
 	}

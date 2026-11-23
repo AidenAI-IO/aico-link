@@ -317,7 +317,7 @@ func TestTouchGestureToolTapSequenceStopsWhenATargetIsCovered(t *testing.T) {
 	for _, touchscreen := range []bool{false, true} {
 		provider := mnk.NewMockProvider()
 		menu := image.Rect(270, 460, 330, 500)
-		tool := &TouchGestureTool{mnkProvider: provider, touchscreen: touchscreen, captureFrame: tapSequenceFrames(
+		tool := &TouchGestureTool{mnkProvider: provider, touchscreen: touchscreen, directTouch: touchscreen, captureFrame: tapSequenceFrames(
 			tapSequenceKeypadFrame(0, 0),
 			tapSequenceKeypadFrame(0, 0),
 			tapSequenceKeypadFrame(0, 0, menu),

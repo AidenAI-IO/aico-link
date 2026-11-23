@@ -3,14 +3,12 @@ package agent
 import (
 	"context"
 	"errors"
-	"os"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 )
 
-var errIOSKeyboardRestoreUsedCanceledContext = errors.New("iOS HID restore used canceled context")
+var errIOSKeyboardDetachUsedCanceledContext = errors.New("iOS keyboard detach used canceled context")
 
 func newTestIOSKeyboardIsolationController(events *[]string) *iosKeyboardIsolationController {
 	return &iosKeyboardIsolationController{
@@ -26,480 +24,190 @@ func newCancellationSensitiveIOSKeyboardIsolationController(events *[]string) *i
 	controller := newTestIOSKeyboardIsolationController(events)
 	controller.run = func(ctx context.Context, _ string, args ...string) ([]byte, error) {
 		*events = append(*events, args[0])
-		if args[0] == "restore" && ctx.Err() != nil {
-			return nil, errIOSKeyboardRestoreUsedCanceledContext
+		if args[0] == "detach" && ctx.Err() != nil {
+			return nil, errIOSKeyboardDetachUsedCanceledContext
 		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		return nil, nil
+		return nil, ctx.Err()
 	}
 	return controller
 }
 
-func TestIOSKeyboardIsolationWrapsModifierShortcut(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-
-	err := controller.withKeyboard(context.Background(), true, func() error {
-		events = append(events, "shortcut")
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("withKeyboard() error = %v", err)
-	}
-	if want := []string{"isolate", "shortcut", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestIOSKeyboardIsolationAnnouncesEachPlannedUSBReenumeration(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-	controller.notifyReenumeration = func(context.Context) error {
-		events = append(events, "usb-reenumeration")
+func keyboardAction(events *[]string, name string) func() error {
+	return func() error {
+		*events = append(*events, name)
 		return nil
 	}
-
-	err := controller.withKeyboard(context.Background(), true, func() error {
-		events = append(events, "shortcut")
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("withKeyboard() error = %v", err)
-	}
-	if want := []string{
-		"usb-reenumeration", "isolate", "shortcut", "usb-reenumeration", "restore",
-	}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
 }
 
-func TestIOSKeyboardIsolationBatchCoalescesModifierActions(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-
-	err := controller.withBatch(context.Background(), func(batchCtx context.Context) error {
-		if err := controller.withKeyboard(batchCtx, true, func() error {
-			events = append(events, "first-shortcut")
-			return nil
-		}); err != nil {
-			return err
-		}
-		if err := controller.withKeyboard(batchCtx, false, func() error {
-			events = append(events, "plain-key")
-			return nil
-		}); err != nil {
-			return err
-		}
-		return controller.withKeyboard(batchCtx, true, func() error {
-			events = append(events, "second-shortcut")
-			return nil
-		})
-	})
-	if err != nil {
-		t.Fatalf("withBatch() error = %v", err)
-	}
-	if want := []string{"isolate", "first-shortcut", "plain-key", "second-shortcut", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestIOSKeyboardIsolationNestedBatchReusesOuterProfile(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-
-	err := controller.withBatch(context.Background(), func(batchCtx context.Context) error {
-		return controller.withBatch(batchCtx, func(nestedCtx context.Context) error {
-			return controller.withKeyboard(nestedCtx, true, func() error {
-				events = append(events, "shortcut")
-				return nil
-			})
-		})
-	})
-	if err != nil {
-		t.Fatalf("withBatch() error = %v", err)
-	}
-	if want := []string{"isolate", "shortcut", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestIOSKeyboardIsolationBatchWaitCanBeCanceled(t *testing.T) {
-	controller := newTestIOSKeyboardIsolationController(&[]string{})
-	firstStarted := make(chan struct{})
-	releaseFirst := make(chan struct{})
-	firstDone := make(chan error, 1)
-	go func() {
-		firstDone <- controller.withBatch(context.Background(), func(context.Context) error {
-			close(firstStarted)
-			<-releaseFirst
-			return nil
-		})
-	}()
-
-	select {
-	case <-firstStarted:
-	case <-time.After(time.Second):
-		t.Fatal("first batch did not acquire isolation controller")
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	secondActionErr := errors.New("second batch action unexpectedly ran")
-	secondDone := make(chan error, 1)
-	go func() {
-		secondDone <- controller.withBatch(ctx, func(context.Context) error {
-			return secondActionErr
-		})
-	}()
-
-	select {
-	case err := <-secondDone:
-		close(releaseFirst)
-		<-firstDone
-		t.Fatalf("second batch returned before cancellation: %v", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	cancel()
-	select {
-	case err := <-secondDone:
-		if !errors.Is(err, context.Canceled) {
-			close(releaseFirst)
-			<-firstDone
-			t.Fatalf("second batch error = %v, want context canceled", err)
-		}
-		if errors.Is(err, secondActionErr) {
-			close(releaseFirst)
-			<-firstDone
-			t.Fatalf("second batch action ran after cancellation: %v", err)
-		}
-	case <-time.After(time.Second):
-		close(releaseFirst)
-		<-firstDone
-		t.Fatal("canceled batch remained blocked waiting for isolation controller")
-	}
-
-	close(releaseFirst)
-	if err := <-firstDone; err != nil {
-		t.Fatalf("first batch error = %v", err)
-	}
-}
-
-func TestIOSKeyboardIsolationBatchRestoresBeforePointerAndCanReisolate(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-
-	err := controller.withBatch(context.Background(), func(batchCtx context.Context) error {
-		if err := controller.withKeyboard(batchCtx, true, func() error {
-			events = append(events, "first-shortcut")
-			return nil
-		}); err != nil {
-			return err
-		}
-		if _, err := controller.withPointerCall(batchCtx, func(context.Context) (string, error) {
-			events = append(events, "pointer")
-			return "ok", nil
-		}); err != nil {
-			return err
-		}
-		return controller.withKeyboard(batchCtx, true, func() error {
-			events = append(events, "second-shortcut")
-			return nil
-		})
-	})
-	if err != nil {
-		t.Fatalf("withBatch() error = %v", err)
-	}
-	if want := []string{"isolate", "first-shortcut", "restore", "pointer", "isolate", "second-shortcut", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestIOSKeyboardIsolationBatchKeepsExtraKeysInIsolatedProfile(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-
-	err := controller.withBatch(context.Background(), func(batchCtx context.Context) error {
-		if err := controller.withKeyboard(batchCtx, true, func() error {
-			events = append(events, "first-shortcut")
-			return nil
-		}); err != nil {
-			return err
-		}
-		if err := controller.withExtraKeys(batchCtx, func() error {
-			events = append(events, "extra-key")
-			return nil
-		}); err != nil {
-			return err
-		}
-		return controller.withKeyboard(batchCtx, true, func() error {
-			events = append(events, "second-shortcut")
-			return nil
-		})
-	})
-	if err != nil {
-		t.Fatalf("withBatch() error = %v", err)
-	}
-	if want := []string{"isolate", "first-shortcut", "extra-key", "second-shortcut", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestIOSKeyboardIsolationLeavesPlainKeyboardInputOnNormalProfile(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-
-	err := controller.withKeyboard(context.Background(), false, func() error {
-		events = append(events, "plain-input")
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("withKeyboard() error = %v", err)
-	}
-	if want := []string{"plain-input"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestIOSKeyboardIsolationRestoresNormalProfileAfterActionFailure(t *testing.T) {
-	events := []string{}
-	actionErr := errors.New("write failed")
-	controller := newTestIOSKeyboardIsolationController(&events)
-
-	err := controller.withKeyboard(context.Background(), true, func() error {
-		events = append(events, "shortcut")
-		return actionErr
-	})
-	if !errors.Is(err, actionErr) {
-		t.Fatalf("withKeyboard() error = %v, want %v", err, actionErr)
-	}
-	if want := []string{"isolate", "shortcut", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestIOSKeyboardIsolationAttemptsRestoreWhenIsolationFails(t *testing.T) {
-	events := []string{}
-	isolateErr := errors.New("enumeration failed")
-	actionCalled := false
-	controller := &iosKeyboardIsolationController{
-		controlPath: "/test/control",
-		run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
-			events = append(events, args[0])
-			if args[0] == "isolate" {
-				return []byte("UDC timeout"), isolateErr
-			}
-			return nil, nil
+// The keyboard is attached on the first keyboard action of a run, reused by
+// later ones (with or without modifiers), kept across pointer and media-key
+// input, and detached once when the run ends. A run without keyboard input
+// never re-enumerates.
+func TestIOSKeyboardAttachScope(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(c *iosKeyboardIsolationController, ctx context.Context, events *[]string) error
+		want []string
+	}{
+		{
+			name: "no keyboard input",
+			run: func(c *iosKeyboardIsolationController, ctx context.Context, events *[]string) error {
+				return c.withPointerAction(ctx, func(context.Context) error { *events = append(*events, "tap"); return nil })
+			},
+			want: []string{"tap"},
 		},
-	}
-
-	err := controller.withKeyboard(context.Background(), true, func() error {
-		actionCalled = true
-		return nil
-	})
-	if !errors.Is(err, isolateErr) || !strings.Contains(err.Error(), "UDC timeout") {
-		t.Fatalf("withKeyboard() error = %v, want wrapped isolation error", err)
-	}
-	if actionCalled {
-		t.Fatal("shortcut ran after isolation failed")
-	}
-	if want := []string{"isolate", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestIOSKeyboardIsolationCooldownsFailedRestoreBeforePointerInput(t *testing.T) {
-	events := []string{}
-	restoreCalls := 0
-	pointerCalled := false
-	controller := &iosKeyboardIsolationController{
-		controlPath: "/test/control",
-		run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
-			events = append(events, args[0])
-			if args[0] == "restore" {
-				restoreCalls++
-				if restoreCalls == 1 {
-					return nil, errors.New("restore failed")
+		{
+			name: "keyboard reused across pointer and extra keys",
+			run: func(c *iosKeyboardIsolationController, ctx context.Context, events *[]string) error {
+				if err := c.withKeyboard(ctx, false, keyboardAction(events, "type")); err != nil {
+					return err
 				}
-			}
-			return nil, nil
+				if err := c.withPointerAction(ctx, func(context.Context) error { *events = append(*events, "tap"); return nil }); err != nil {
+					return err
+				}
+				if err := c.withExtraKeys(ctx, keyboardAction(events, "volume")); err != nil {
+					return err
+				}
+				return c.withKeyboard(ctx, true, keyboardAction(events, "cmd+a"))
+			},
+			want: []string{"attach", "type", "tap", "volume", "cmd+a", "detach"},
 		},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			events := []string{}
+			c := newTestIOSKeyboardIsolationController(&events)
+			err := c.withBatch(context.Background(), func(ctx context.Context) error {
+				return tc.run(c, ctx, &events)
+			})
+			if err != nil {
+				t.Fatalf("withBatch() error = %v", err)
+			}
+			if !reflect.DeepEqual(events, tc.want) {
+				t.Fatalf("events = %v, want %v", events, tc.want)
+			}
+		})
+	}
+}
 
-	if err := controller.withKeyboard(context.Background(), true, func() error { return nil }); err == nil {
-		t.Fatal("withKeyboard() error = nil, want restore failure")
+// A keyboard action outside any run gets its own attach/detach scope.
+func TestIOSKeyboardAttachesForSingleCallOutsideRun(t *testing.T) {
+	events := []string{}
+	c := newTestIOSKeyboardIsolationController(&events)
+	if err := c.withKeyboard(context.Background(), false, keyboardAction(&events, "type")); err != nil {
+		t.Fatalf("withKeyboard() error = %v", err)
 	}
-	if _, err := controller.withPointerCall(context.Background(), func(context.Context) (string, error) {
-		pointerCalled = true
-		return "ok", nil
-	}); err == nil || !strings.Contains(err.Error(), "restore failed") {
-		t.Fatalf("withPointerCall() error = %v, want cached restore failure", err)
-	}
-	if pointerCalled {
-		t.Fatal("pointer action ran during restore retry cooldown")
-	}
-	if want := []string{"isolate", "restore"}; !reflect.DeepEqual(events, want) {
+	if want := []string{"attach", "type", "detach"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("events = %v, want %v", events, want)
 	}
+}
 
-	controller.lastRestoreFailure = time.Now().Add(-iosKeyboardRestoreRetryCooldown)
-	if _, err := controller.withPointerCall(context.Background(), func(context.Context) (string, error) {
-		pointerCalled = true
-		return "ok", nil
-	}); err != nil {
-		t.Fatalf("withPointerCall() after cooldown error = %v", err)
+// A run that ends by error or cancellation still detaches the keyboard, and
+// the detach does not use the canceled context.
+func TestIOSKeyboardDetachesWhenRunEndsEarly(t *testing.T) {
+	failure := errors.New("action failed")
+	cases := []struct {
+		name    string
+		cancel  bool
+		wantErr error
+	}{
+		{name: "action error", wantErr: failure},
+		{name: "canceled", cancel: true, wantErr: context.Canceled},
 	}
-	if !pointerCalled {
-		t.Fatal("pointer action did not run after successful restore retry")
-	}
-	if want := []string{"isolate", "restore", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("events after cooldown = %v, want %v", events, want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			events := []string{}
+			c := newCancellationSensitiveIOSKeyboardIsolationController(&events)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			err := c.withBatch(ctx, func(runCtx context.Context) error {
+				if err := c.withKeyboard(runCtx, false, keyboardAction(&events, "type")); err != nil {
+					return err
+				}
+				if tc.cancel {
+					cancel()
+					return runCtx.Err()
+				}
+				return failure
+			})
+			if !errors.Is(err, tc.wantErr) || errors.Is(err, errIOSKeyboardDetachUsedCanceledContext) {
+				t.Fatalf("withBatch() error = %v, want %v", err, tc.wantErr)
+			}
+			if want := []string{"attach", "type", "detach"}; !reflect.DeepEqual(events, want) {
+				t.Fatalf("events = %v, want %v", events, want)
+			}
+		})
 	}
 }
 
-func TestKeyboardTapIsolatesOnlyModifierChords(t *testing.T) {
-	dev, path := newTestHIDDevice(t)
+// A failed attach detaches right away, so a half-done switch never leaves the
+// software keyboard hidden.
+func TestIOSKeyboardDetachesWhenAttachFails(t *testing.T) {
 	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-	controller.keyboardDev = dev
-	tool := testKeyboardTapTool(t, testMNKOpts{keyboard: dev, gate: newIOSKeyboardIsolationProfileGate(controller)})
-
-	if out, err := tool.Call(context.Background(), `{"keys":["a"]}`); err != nil || out != "ok" {
-		t.Fatalf("plain Call() = %q, %v", out, err)
-	}
-	if len(events) != 0 {
-		t.Fatalf("plain key profile events = %v, want none", events)
-	}
-
-	if out, err := tool.Call(context.Background(), `{"keys":["meta","v"]}`); err != nil || out != "ok" {
-		t.Fatalf("modifier Call() = %q, %v", out, err)
-	}
-	if want := []string{"isolate", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("modifier profile events = %v, want %v", events, want)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	if len(data) != 16 {
-		t.Fatalf("final report bytes = %d, want 16", len(data))
-	}
-}
-
-func TestKeyboardTextLeavesUnmodifiedTextOnNormalProfile(t *testing.T) {
-	dev, _ := newTestHIDDevice(t)
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-	controller.keyboardDev = dev
-	tool := &KeyboardTextTool{dev: dev, iosKeyboardIsolation: controller}
-
-	out, err := tool.Call(context.Background(), `{"text":"abc123-"}`)
-	if err != nil || out != "ok" {
-		t.Fatalf("Call() = %q, %v", out, err)
-	}
-	if len(events) != 0 {
-		t.Fatalf("keyboard_text profile events = %v, want none", events)
-	}
-}
-
-func TestKeyboardTextIsolatesTextContainingShiftedCharacters(t *testing.T) {
-	dev, path := newTestHIDDevice(t)
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-	controller.keyboardDev = dev
-	tool := &KeyboardTextTool{dev: dev, iosKeyboardIsolation: controller}
-
-	const text = "A~!@#$%^&*()_+{}|:\"<>?"
-	out, err := tool.Call(context.Background(), `{"text":"A~!@#$%^&*()_+{}|:\"<>?"}`)
-	if err != nil || out != "ok" {
-		t.Fatalf("Call() = %q, %v", out, err)
-	}
-	if want := []string{"isolate", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("keyboard_text profile events = %v, want %v", events, want)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	if want := len(text) * 16; len(data) != want {
-		t.Fatalf("keyboard_text report bytes = %d, want %d", len(data), want)
-	}
-	for offset := 0; offset < len(data); offset += 16 {
-		if data[offset] != 0x02 {
-			t.Fatalf("keyboard_text press report at offset %d has modifier 0x%02x, want Shift", offset, data[offset])
+	c := newTestIOSKeyboardIsolationController(&events)
+	c.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		events = append(events, args[0])
+		if args[0] == "attach" {
+			return []byte("busy"), errors.New("exit 1")
 		}
+		return nil, nil
 	}
-}
-
-func TestKeyboardTapExtraKeysRemainOnNormalProfile(t *testing.T) {
-	keyboardDev, keyboardPath := newTestHIDDevice(t)
-	extraKeysDev, extraKeysPath := newTestHIDDevice(t)
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-	controller.keyboardDev = keyboardDev
-	controller.extraKeysDev = extraKeysDev
-	tool := testKeyboardTapTool(t, testMNKOpts{keyboard: keyboardDev, android: extraKeysDev, gate: newIOSKeyboardIsolationProfileGate(controller)})
-
-	out, err := tool.Call(context.Background(), `{"keys":["volume_up"]}`)
-	if err != nil || out != "ok" {
-		t.Fatalf("Call() = %q, %v", out, err)
-	}
-	if len(events) != 0 {
-		t.Fatalf("extra-key profile events = %v, want none", events)
-	}
-	if data, err := os.ReadFile(keyboardPath); err != nil {
-		t.Fatalf("ReadFile(keyboard) error = %v", err)
-	} else if len(data) != 0 {
-		t.Fatalf("standard keyboard report bytes = %d, want 0", len(data))
-	}
-	if data, err := os.ReadFile(extraKeysPath); err != nil {
-		t.Fatalf("ReadFile(extra keys) error = %v", err)
-	} else if len(data) != 4 {
-		t.Fatalf("extra-key report bytes = %d, want 4", len(data))
-	}
-}
-
-func TestIOSKeyboardIsolationRestoresAfterCancellation(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-	ctx, cancel := context.WithCancel(context.Background())
-
-	err := controller.withKeyboard(ctx, true, func() error {
-		events = append(events, "shortcut")
-		cancel()
-		return ctx.Err()
+	err := c.withBatch(context.Background(), func(ctx context.Context) error {
+		return c.withKeyboard(ctx, false, keyboardAction(&events, "type"))
 	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("withKeyboard() error = %v, want context canceled", err)
+	if err == nil {
+		t.Fatal("withBatch() error = nil, want attach failure")
 	}
-	if want := []string{"isolate", "shortcut", "restore"}; !reflect.DeepEqual(events, want) {
+	if want := []string{"attach", "detach"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("events = %v, want %v", events, want)
 	}
 }
 
-func TestIOSKeyboardIsolationBatchRestoresAfterCancellation(t *testing.T) {
+// A detach that failed at the end of a run is retried before the next input
+// once the cooldown has passed, and not before.
+func TestIOSKeyboardRetriesFailedDetachAfterCooldown(t *testing.T) {
 	events := []string{}
-	controller := newCancellationSensitiveIOSKeyboardIsolationController(&events)
-	ctx, cancel := context.WithCancel(context.Background())
-
-	err := controller.withBatch(ctx, func(batchCtx context.Context) error {
-		if err := controller.withKeyboard(batchCtx, true, func() error {
-			events = append(events, "shortcut")
-			cancel()
-			return nil
-		}); err != nil {
-			return err
+	c := newTestIOSKeyboardIsolationController(&events)
+	failDetach := true
+	c.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		events = append(events, args[0])
+		if args[0] == "detach" && failDetach {
+			return nil, errors.New("exit 1")
 		}
-		return batchCtx.Err()
-	})
-	if errors.Is(err, errIOSKeyboardRestoreUsedCanceledContext) {
-		t.Fatalf("withBatch() restore used canceled context: %v", err)
+		return nil, nil
 	}
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("withBatch() error = %v, want context canceled", err)
+	_ = c.withKeyboard(context.Background(), false, keyboardAction(&events, "type"))
+	failDetach = false
+
+	tap := func(context.Context) error { events = append(events, "tap"); return nil }
+	if err := c.withPointerAction(context.Background(), tap); err == nil {
+		t.Fatal("pointer input inside the cooldown should report the failed detach")
 	}
-	if want := []string{"isolate", "shortcut", "restore"}; !reflect.DeepEqual(events, want) {
+	c.lastDetachFailure = time.Now().Add(-iosKeyboardDetachRetryCooldown - time.Second)
+	if err := c.withPointerAction(context.Background(), tap); err != nil {
+		t.Fatalf("withPointerAction() error = %v", err)
+	}
+	if want := []string{"attach", "type", "detach", "detach", "tap"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("events = %v, want %v", events, want)
 	}
 }
+
+// Every profile switch closes the shared HID descriptors, because the
+// /dev/hidgN nodes are recreated by the re-enumeration.
+func TestIOSKeyboardSwitchClosesHIDDevices(t *testing.T) {
+	events := []string{}
+	c := newTestIOSKeyboardIsolationController(&events)
+	closes := 0
+	dev := closerFunc(func() { closes++ })
+	c.keyboardDev, c.pointerDev, c.extraKeysDev = dev, dev, dev
+	if err := c.withKeyboard(context.Background(), false, keyboardAction(&events, "type")); err != nil {
+		t.Fatalf("withKeyboard() error = %v", err)
+	}
+	if closes != 6 {
+		t.Fatalf("Close() calls = %d, want 6 (three devices, attach and detach)", closes)
+	}
+}
+
+type closerFunc func()
+
+func (f closerFunc) Close() { f() }

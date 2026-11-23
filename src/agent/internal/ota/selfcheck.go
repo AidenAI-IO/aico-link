@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"aico-agent/internal/ble"
+	"aico-agent/internal/usbgadget"
 )
 
 type SelfCheckConfig struct {
@@ -25,6 +26,8 @@ type SelfCheckConfig struct {
 	ConfigWebURL        string
 	BLESocketPath       string
 	PhoneBridgeURL      string
+	// PointerDescriptor is the bound hid.usb1 report descriptor.
+	PointerDescriptor string
 }
 
 type SelfCheckItem struct {
@@ -42,7 +45,7 @@ type SelfCheckReport struct {
 
 func (r SelfCheckReport) Fatal() bool { return r.Failures > 0 }
 func DefaultSelfCheckConfig() SelfCheckConfig {
-	return SelfCheckConfig{CommandTimeout: 4 * time.Second}
+	return SelfCheckConfig{CommandTimeout: 4 * time.Second, PointerDescriptor: usbgadget.PointerDescriptorPath}
 }
 
 // RunSelfCheck only performs read-only probes. External conditions such as a
@@ -74,7 +77,9 @@ func RunSelfCheck(ctx context.Context, cfg SelfCheckConfig) SelfCheckReport {
 	}
 	pathCheck("ota_storage", "/userdata/ota", true)
 	pathCheck("agent_config", "/userdata/agent/agent.toml", true)
-	pathCheck("hid_keyboard", "/dev/hidg0", true)
+	// The iOS touchpad gadget boots without the keyboard and links it only
+	// while the Agent types, so /dev/hidg0 is then absent by design.
+	pathCheck("hid_keyboard", "/dev/hidg0", !usbgadget.KeyboardOnDemand(cfg.PointerDescriptor))
 	pathCheck("hid_pointer", "/dev/hidg1", true)
 	pathCheck("hid_consumer", "/dev/hidg2", false)
 	command := func(name string, required bool, bin string, args ...string) {
