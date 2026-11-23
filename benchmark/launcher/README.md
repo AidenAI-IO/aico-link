@@ -72,8 +72,13 @@ firmware, device audio, and Classic voice controls are excluded from both the
 navigation and the API. Select and reconnect ADB devices in the launcher. The
 overview links to the instance's published Agent Web port.
 
-Rebuild the image and stop/start an existing instance to use this profile. A
-plain Compose sandbox retains its existing full configuration profile.
+Existing instances keep their saved image reference. Rebuild that same tag,
+then stop and start the instance to use this profile. If the rebuild produces a
+new tag, stop the instance, update its image reference under **Edit**, save, and
+start it again. Editing the existing instance preserves its data volume;
+creating a new instance from the new tag uses a separate data volume.
+
+A plain Compose sandbox retains its existing full configuration profile.
 
 Default ports are 8000 (Config Web) and 8080 (Agent Web UI). When they are in
 use, or used by another instance, the launcher picks free ports; you can set
