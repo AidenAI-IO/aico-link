@@ -84,6 +84,9 @@ type Server struct {
 }
 
 func NewServer(options Options) (*Server, error) {
+	if options.ContainerAgent {
+		options.LocalAgent = true
+	}
 	if options.LocalAgent {
 		if err := options.Validate(); err != nil {
 			return nil, err
@@ -360,10 +363,13 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if s.options.LocalAgent && entry && relative == "index.html" {
-		if !isLocalSettingsRoute(r.URL.Path) {
+		if !isLocalSettingsRoute(r.URL.Path) && !(s.options.ContainerAgent && isContainerVoiceRoute(r.URL.Path)) {
 			return false
 		}
 		relative = "local.html"
+		if s.options.ContainerAgent {
+			relative = "container.html"
+		}
 	}
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)

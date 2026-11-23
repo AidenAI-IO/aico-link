@@ -47,8 +47,10 @@ Open the URL the launcher prints. It needs Docker and
 prerequisites, state, security, and troubleshooting. Keep the launcher running
 while a Host desktop, iPhone Mirroring, or iOS device instance runs: it renews
 their bridge routes, which those bridges otherwise release after 30 idle
-minutes. The rest of this page describes the Compose sandbox and manual bridge
-setup.
+minutes. Launcher instances use a PC settings profile, including models, search,
+language, logs, and browser Realtime voice; board-only controls are unavailable.
+ADB device selection and connections remain in the launcher. The rest of this
+page describes the Compose sandbox and manual bridge setup.
 
 ## Prerequisites
 
@@ -127,6 +129,7 @@ the image reads:
 
 | Variable | Image default | Effect |
 | --- | --- | --- |
+| `AICO_CONFIG_WEB_PROFILE` | `board` | `container` serves the PC settings profile, with model providers, conversation, search, MCP servers, language, logs, and browser Realtime voice. The Launcher sets it automatically. Board APIs and pages are unavailable in this profile. |
 | `AICO_ENABLE_TERMINAL` | `0` | `1` starts `ttyd` behind `/webtty/` on the Agent Web UI. The Compose sandbox sets it to `1`. |
 | `AICO_CLASSIC_VOICE` | `0` | Classic (speech-to-text) voice needs on-device RKNN models that the image lacks, so Classic mode is text-only in Docker. Realtime mode keeps text and browser voice: `localhost` is a secure context, so the browser microphone works without TLS. |
 | `AICO_LOCAL_PHONE_BRIDGE` | `0` | `1` keeps companion App connections, status, and command queues on this Agent while an environment bridge handles screen and input. Set this for the ADB Android bridge, which has no Phone Bridge API. The Aico Launcher sets it automatically for Android (ADB) instances. |

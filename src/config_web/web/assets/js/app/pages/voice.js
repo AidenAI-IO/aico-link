@@ -105,7 +105,7 @@ export const effectiveMode = voiceMode;
 
 function kindFromQuery(context) {
   const kind = context.query && context.query.kind;
-  return KINDS[kind] ? kind : null;
+  return KINDS[kind] && (!context.containerAgent || kind === 'realtime') ? kind : null;
 }
 
 function typeLabel(schema, kind, type) {
@@ -172,11 +172,12 @@ export async function voicePage(context) {
   const saver = createSaver(context, {title: msg('ui.nav_voice', '语音'), back: '/', root: body, onSaved: adoptSaved(snapshot)});
   const saved = effectiveMode(snapshot);
   const requested = context.query && context.query.mode;
-  const shown = MODES.some(entry => entry.value === requested) ? requested : saved || 'realtime';
+  const modes = context.containerAgent ? MODES.filter(entry => entry.value === 'realtime') : MODES;
+  const shown = modes.some(entry => entry.value === requested) ? requested
+    : modes.some(entry => entry.value === saved) ? saved : 'realtime';
   const pending = shown !== saved ? shown : '';
 
   async function switchMode(mode) {
-    if (mode === shown) return;
     if (mode === saved) {
       context.navigate('/voice', {replace: true});
       return;
@@ -188,7 +189,7 @@ export async function voicePage(context) {
   // Every item carries its check, faded out unless active, so the switch can
   // cross-fade instead of inserting and removing the glyph.
   const thumb = el('span', {class: 'ds-segmented__thumb', attrs: {'aria-hidden': 'true'}});
-  const items = MODES.map(entry => el('button', {
+  const items = modes.map(entry => el('button', {
     class: 'ds-segmented__item',
     attrs: {type: 'button', role: 'tab'},
     data: {action: `voice-mode-${entry.value}`},
@@ -209,7 +210,7 @@ export async function voicePage(context) {
   ]));
   const tabs = el('div', {class: 'ds-segmented', attrs: {role: 'tablist'}}, [thumb, ...items]);
   function select(mode) {
-    const index = Math.max(0, MODES.findIndex(entry => entry.value === mode));
+    const index = Math.max(0, modes.findIndex(entry => entry.value === mode));
     tabs.style.setProperty('--segmented-index', String(index));
     items.forEach((item, i) => {
       item.classList.toggle('ds-segmented__item--active', i === index);
@@ -285,7 +286,22 @@ export async function voicePage(context) {
       : msg('voice.mode_off', '语音尚未启用，配置好以下提供商后即可使用'), 'page__note')]
     : []);
   const content = el('div', {}, [modeContent(shown, changed)]);
-  replace(body, [tabs, note, content]);
+  const enableRealtime = context.containerAgent && pending && currentName(snapshot, 'realtime')
+    ? button({
+        label: msg('voice.enable_realtime', '启用 Realtime 语音'),
+        variant: 'accent', block: true, action: 'enable-realtime',
+        onPress: async () => {
+          setDisabled(enableRealtime, true);
+          try {
+            await switchMode('realtime');
+          } finally {
+            setDisabled(enableRealtime, false);
+          }
+        },
+      })
+    : null;
+  replace(body, [context.containerAgent ? null : tabs, note, content,
+    enableRealtime ? el('div', {class: 'ds-group'}, [enableRealtime]) : null]);
   saver.refreshChrome();
   return screen([body]);
 }

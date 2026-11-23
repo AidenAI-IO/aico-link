@@ -43,7 +43,7 @@ async function listFiles(root, extension) {
 
 // 1. Documents only reference assets that exist. Client routes are served by the
 //    Go fallback, so they are checked against the route table instead.
-const documentNames = ['index.html', 'local.html', 'llm-logs.html'];
+const documentNames = ['index.html', 'local.html', 'container.html', 'llm-logs.html'];
 for (const name of documentNames) {
   const documentPath = path.join(webRoot, name);
   const source = await fs.readFile(documentPath, 'utf8');
@@ -169,13 +169,18 @@ for (const modulePath of modules) {
 process.stdout.write('config web settings shell tests passed\n');
 
 // The host profile has its own route/navigation boundary, even if snapshot loading fails.
-const {LOCAL_ITEMS} = await import(pathToFileURL(path.join(uiRoot, 'app/nav-items.js')).href);
-const {localRoutes} = await import(pathToFileURL(path.join(uiRoot, 'app/routes.js')).href);
+const {CONTAINER_ITEMS, LOCAL_ITEMS} = await import(pathToFileURL(path.join(uiRoot, 'app/nav-items.js')).href);
+const {containerRoutes, localRoutes} = await import(pathToFileURL(path.join(uiRoot, 'app/routes.js')).href);
 const localPaths = new Set(localRoutes.map(route => route.path));
-for (const item of LOCAL_ITEMS) assert.ok(localPaths.has(item.route));
-for (const retired of ['/wifi', '/voice', '/storage', '/firmware', '/memory', '/advanced', '/basic']) {
-  assert.ok(!localPaths.has(retired), `host route exposes ${retired}`);
+const containerPaths = new Set(containerRoutes.map(route => route.path));
+for (const [items, paths] of [[LOCAL_ITEMS, localPaths], [CONTAINER_ITEMS, containerPaths]]) {
+  for (const item of items) assert.ok(paths.has(item.route));
+  for (const retired of ['/wifi', '/storage', '/firmware', '/memory', '/advanced', '/basic']) {
+    assert.ok(!paths.has(retired), `PC route exposes ${retired}`);
+  }
 }
+assert.ok(!localPaths.has('/voice'));
+assert.ok(containerPaths.has('/voice/model'));
 assert.ok(localPaths.has('/model/providers/edit'));
 assert.ok(localPaths.has('/advanced/logs/agent'));
 const {applicationLabel} = await import(pathToFileURL(path.join(uiRoot, 'app/pages/local.js')).href);

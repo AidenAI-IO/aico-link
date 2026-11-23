@@ -253,6 +253,94 @@ func TestLocalAgentLoopbackBoundaryAndEnvironment(t *testing.T) {
 	}
 }
 
+func TestLocalAgentContainerSettingsRoundTrip(t *testing.T) {
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"ok":true,"data":{"status":"ok","bridge_type":"go-agent","device_type":"Android"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"ok":true,"applied":false,"pending":true,"state":"pending"}`)
+	}))
+	defer runtime.Close()
+	base := localTestServer(t, runtime.URL)
+	options := base.options
+	options.LocalAgent = false
+	options.ContainerAgent = true
+	options.BindAddress = "0.0.0.0"
+	s, err := NewServer(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
+	if s.storage != nil || s.services != nil || s.usbHTTP != nil || s.lanAccess != nil {
+		t.Fatal("container settings initialized board services")
+	}
+	if err := os.WriteFile(filepath.Join(options.WebRoot, "container.html"), []byte("PC settings"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AICO_PUBLIC_AGENT_WEB_PORT", "51278")
+	w := localRequest(s, "GET", "/api/device/status", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"url":"http://127.0.0.1:51278"`) || !strings.Contains(w.Body.String(), `"device_type":"Android"`) {
+		t.Fatalf("container status: %d %s", w.Code, w.Body)
+	}
+	for _, path := range []string{"/", "/voice/model", "/model/main"} {
+		if w := localRequest(s, "GET", path, ""); w.Code != 200 || w.Body.String() != "PC settings" {
+			t.Fatalf("container route %s: %d %s", path, w.Code, w.Body)
+		}
+	}
+	patch := `{"config":{"agent":{"input_mode":"realtime"},"voice_model":{"provider":"browser"},"voice_model_providers":{"browser":{"type":"openai","api_key":"voice-test-secret","model":"gpt-realtime"}}}}`
+	w = localRequest(s, "PATCH", "/api/config", patch)
+	if w.Code != 200 || strings.Contains(w.Body.String(), "voice-test-secret") {
+		t.Fatalf("voice settings: %d %s", w.Code, w.Body)
+	}
+	cfg, err := agent.LoadRuntimeConfig(options.AgentConfigPath)
+	if err != nil || cfg.VoiceModel.APIKey != "voice-test-secret" {
+		t.Fatalf("voice settings did not persist: %v", err)
+	}
+	for _, path := range []string{"/api/device/snapshot", "/api/config", "/api/config/schema"} {
+		w := localRequest(s, "GET", path, "")
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"voice_model"`) || strings.Contains(w.Body.String(), "voice-test-secret") {
+			t.Fatalf("container voice configuration %s: %d %s", path, w.Code, w.Body)
+		}
+		var payload struct {
+			Config   map[string]json.RawMessage `json:"config"`
+			Sections []struct {
+				Name string `json:"name"`
+			} `json:"sections"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"stt", "tts", "audio"} {
+			if _, exposed := payload.Config[forbidden]; exposed {
+				t.Fatalf("container configuration %s exposes %s", path, forbidden)
+			}
+			for _, section := range payload.Sections {
+				if section.Name == forbidden {
+					t.Fatalf("container schema exposes %s", forbidden)
+				}
+			}
+		}
+	}
+	for _, patch := range []string{`{"agent":{"input_mode":"stt"}}`, `{"device":{"device_type":"iOS"}}`, `{"audio":{"volume":50}}`} {
+		w := localRequest(s, "PATCH", "/api/config", `{"config":`+patch+`}`)
+		if w.Code != 400 {
+			t.Fatalf("accepted board settings %s: %d", patch, w.Code)
+		}
+	}
+	for _, path := range []string{"/wifi", "/firmware", "/storage", "/api/system/environment", "/api/services"} {
+		if w := localRequest(s, "GET", path, ""); w.Code != 404 {
+			t.Fatalf("container exposes %s: %d", path, w.Code)
+		}
+	}
+	request := httptest.NewRequest("GET", "http://attacker.example/api/config", nil)
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, request)
+	if w.Code != 403 {
+		t.Fatal("container settings accepted a non-loopback browser host")
+	}
+}
+
 func TestLocalAgentMirroringProxy(t *testing.T) {
 	for _, upstreamStatus := range []int{200, 409, 503} {
 		t.Run(fmt.Sprint(upstreamStatus), func(t *testing.T) {

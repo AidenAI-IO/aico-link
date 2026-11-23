@@ -65,6 +65,16 @@ Each instance keeps its Agent data (configuration, memory, logs) in its own
 Docker volume, `aico-launcher-<id>-data`, so stopping and starting keeps your
 settings. Deleting an instance with **Also delete the saved data volume** removes the volume.
 
+Launcher instances use the PC Config Web profile (`AICO_CONFIG_WEB_PROFILE=container`).
+It provides model providers, conversation and search settings, language and time
+zone, logs, and browser Realtime voice. Board Wi-Fi, GPIO, storage maintenance,
+firmware, device audio, and Classic voice controls are excluded from both the
+navigation and the API. Select and reconnect ADB devices in the launcher. The
+overview links to the instance's published Agent Web port.
+
+Rebuild the image and stop/start an existing instance to use this profile. A
+plain Compose sandbox retains its existing full configuration profile.
+
 Default ports are 8000 (Config Web) and 8080 (Agent Web UI). When they are in
 use, or used by another instance, the launcher picks free ports; you can set
 fixed ports under the instance's advanced options.

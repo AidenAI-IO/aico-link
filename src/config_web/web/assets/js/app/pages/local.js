@@ -1,6 +1,6 @@
 import {iphoneMirroringCard} from './iphone-mirroring.js';
 import {ensureSnapshot, request} from '../data.js';
-import {LOCAL_ITEMS} from '../nav-items.js';
+import {CONTAINER_ITEMS, LOCAL_ITEMS} from '../nav-items.js';
 import {el, replace} from '../../ui/dom.js';
 import {group, row, screen} from '../../ui/list.js';
 import {msg, text} from '../../ui/text.js';
@@ -67,7 +67,7 @@ export async function localOverviewPage(context) {
   const agentLink = initialStatus.url ? el('a', {class: 'local-agent-link', attrs: {
     href: initialStatus.url, target: '_blank', rel: 'noopener noreferrer',
   }}, [text(msg('local.open_agent', '打开 Agent 界面'))]) : null;
-  const shortcuts = el('div', {class: 'local-shortcuts'}, [group({rows: LOCAL_ITEMS.filter(item => item.route !== '/').map(item => row({
+  const shortcuts = el('div', {class: 'local-shortcuts'}, [group({rows: (context.containerAgent ? CONTAINER_ITEMS : LOCAL_ITEMS).filter(item => item.route !== '/').map(item => row({
     label: item.label, chevron: true, action: `open-${item.id}`, onPress: () => context.navigate(item.route),
   }))})]);
   const body = screen([

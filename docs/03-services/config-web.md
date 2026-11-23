@@ -53,6 +53,24 @@ field, and keeps editing available. Startup fails only when the configuration
 file itself cannot be read or decoded, such as a permissions error, a damaged
 TOML document, or an invalid file target.
 
+### PC profiles
+
+Native host Agents use `config-web --local-agent`, which binds to loopback and
+serves model providers, conversation, search, MCP servers, language, time zone,
+and logs without initializing board services. Launcher containers use
+`--container-agent`, adding browser Realtime voice settings to that profile.
+Classic voice, device audio, Wi-Fi, GPIO, storage maintenance, firmware, and
+system-service operations are unavailable through either profile's API.
+
+The Launcher sets `AICO_CONFIG_WEB_PROFILE=container` for its Agent containers.
+The image entrypoint selects the profile and listens on container port 80;
+the Launcher publishes it on host loopback only. The overview's Agent link uses
+the published Agent Web port rather than the internal container address.
+Both profiles require same-origin browser requests on a loopback hostname and
+save through the existing configuration update and live-application flow.
+The image's default Compose profile continues to serve the board interface.
+See [Try Aico on PC](../01-getting-started/try-aico-on-pc.md).
+
 ## Access
 
 Connect the device to your computer via USB-C. The device establishes a USB network at `192.168.42.1`. Visit:

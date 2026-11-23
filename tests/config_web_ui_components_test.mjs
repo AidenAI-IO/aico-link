@@ -58,7 +58,7 @@ class Element {
     this._listeners = new Map();
     this._text = '';
     this.classList = new ClassList(this);
-    this.style = {};
+    this.style = {setProperty(name, value) { this[name] = value; }};
     this.hidden = false;
     this.disabled = false;
     this.offsetHeight = 0;
@@ -682,6 +682,50 @@ process.stdout.write('config web UI component tests passed\n');
     globalThis.setTimeout = realSetTimeout;
     document.getElementById = realById;
     document.querySelectorAll = realQuery;
+  }
+}
+
+/* --------------------------------------------- Container Realtime voice --- */
+
+{
+  const {voicePage, voiceProvidersPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/voice.js')).href);
+  const {dismiss} = await load('toast');
+  const realFetch = globalThis.fetch;
+  const realSetTimeout = globalThis.setTimeout;
+  const requests = [];
+  globalThis.setTimeout = () => 0;
+  globalThis.fetch = async (url, options) => {
+    requests.push({url, options});
+    return {ok: true, status: 200, text: async () => JSON.stringify({ok: true, apply: 'live', sections: []})};
+  };
+  try {
+    for (const mode of ['stt', 'realtime']) {
+      const snapshot = {config: {
+        agent: {input_mode: mode}, voice_model: {provider: 'browser'},
+        voice_model_providers: {browser: {type: 'openai', has_api_key: true}},
+      }};
+      const navigation = [];
+      const context = {snapshot, localAgent: true, containerAgent: true, header() {}, navigate: path => navigation.push(path)};
+      const page = await voicePage({...context, query: {mode: 'stt'}});
+      assert.equal(page.querySelector('[data-action="voice-mode-stt"]'), null);
+      assert.equal(page.querySelector('[data-action="open-stt-providers"]'), null);
+      assert.ok(page.querySelector('[data-action="open-realtime-providers"]'));
+      const enable = page.querySelector('[data-action="enable-realtime"]');
+      if (mode === 'stt') {
+        assert.ok(enable, 'an existing Classic configuration can switch to browser voice');
+        await enable._listeners.get('click')[0]();
+        const save = requests.find(entry => entry.url === '/api/config');
+        assert.deepEqual(JSON.parse(save.options.body), {config: {agent: {input_mode: 'realtime'}}});
+        assert.equal(navigation.pop(), '/voice');
+      } else assert.equal(enable, null);
+      await voiceProvidersPage({...context, query: {kind: 'stt'}});
+      assert.equal(navigation.pop(), '/voice', 'a Classic deep link returns to browser voice');
+    }
+    assert.ok(!requests.some(entry => entry.url.startsWith('/api/speaker/')));
+  } finally {
+    dismiss();
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realSetTimeout;
   }
 }
 
