@@ -707,6 +707,7 @@ class ADBToolsAPIHandler:
             xml_text,
             text,
             xml_error=xml_error,
+            case_sensitive=native,
         )
         text_output: dict[str, Any] = {"ok": committed}
         if not committed:
@@ -1165,6 +1166,7 @@ def _verify_adb_text_entry(
     target_text: str,
     *,
     xml_error: str = "",
+    case_sensitive: bool = False,
 ) -> tuple[bool, str, bool, str, list[str]]:
     """Verify adb text entry from Android's focused/editable UIAutomator nodes."""
     steps: list[str] = []
@@ -1201,7 +1203,7 @@ def _verify_adb_text_entry(
         )
 
     for field_text in editable_texts:
-        if _field_text_matches(field_text, target_text):
+        if _field_text_matches(field_text, target_text, case_sensitive=case_sensitive):
             steps.append(f"uiautomator verified editable field text {field_text!r}")
             return (
                 True,
@@ -1283,7 +1285,9 @@ def _unique_texts(values: list[str], *, preserve_whitespace: bool = False) -> li
     return out
 
 
-def _field_text_matches(field_text: str, target_text: str) -> bool:
+def _field_text_matches(field_text: str, target_text: str, *, case_sensitive: bool = False) -> bool:
+    if case_sensitive:
+        return field_text.endswith(target_text)
     return field_text.lower().endswith(target_text.lower())
 
 

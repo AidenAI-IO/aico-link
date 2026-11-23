@@ -300,6 +300,22 @@ def test_enter_text_does_not_verify_missing_trailing_whitespace(bridge, text):
     assert result["ok"] is False
 
 
+@pytest.mark.parametrize("native,text,observed,expected", [
+    (True, "你好A", "你好a", False),
+    (True, "你好A", "existing: 你好A", True),
+    (True, "Hello", "hello", False),
+    (False, "Hello", "hello", True),
+])
+def test_enter_text_checks_native_case_and_preserves_legacy_matching(bridge, native, text, observed, expected):
+    _, device, base_url = bridge
+    device.unicode_input = native
+    device.window_text_override = observed
+    status, body = _invoke(base_url, "enter_text", {"text": text, "focus": {"x": 500, "y": 100}})
+    assert status == 200
+    result, _ = _text_entry_output(body)
+    assert result["ok"] is expected
+
+
 def test_uiautomator_extraction_keeps_legacy_whitespace_trimming():
     device = FakeADBAndroidDevice()
     device.window_text_override = " 你好\n\t"
