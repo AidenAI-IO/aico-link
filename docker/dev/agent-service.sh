@@ -394,6 +394,9 @@ run_agent() {
                 --environment-bridge-mode \
                 --environment-bridge-endpoint "$bridge_endpoint" \
                 --benchmark-task-id "$bridge_task_id"
+            if ! falsy "${AICO_LOCAL_PHONE_BRIDGE:-0}"; then
+                set -- "$@" --local-phone-bridge
+            fi
         else
             release_bridge_episode
             service_log ERROR bridge_disabled "task or episode id contains unsupported characters"
