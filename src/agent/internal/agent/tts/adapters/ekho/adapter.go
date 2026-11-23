@@ -213,7 +213,9 @@ func (s *session) Close() error {
 		// cancellation. Join them before releasing the provider/session lease.
 		<-s.done
 		<-s.watcherDone
-		s.record(s.ctx.Err())
+		if err := s.ctx.Err(); err != nil {
+			s.fail(err)
+		}
 		if s.Err() == nil {
 			if err := s.sink.Drain(s.ctx); err != nil {
 				s.fail(err)

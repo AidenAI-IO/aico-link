@@ -159,30 +159,40 @@ printf '%s\n' "$text" >> "$EKHO_TEST_LOG"
 }
 
 func TestEkhoWorkerCompletionHonorsCancellation(t *testing.T) {
-	for _, canceled := range []bool{false, true} {
-		// Exercise completion with cancellation already visible, including when
-		// both watcher signals are ready before it is scheduled.
-		for i := 0; i < 32; i++ {
-			ctx, cancel := context.WithCancel(context.Background())
-			sink := &testSink{}
-			s := &session{
-				ctx: ctx, cancel: cancel, sink: sink,
-				done: make(chan struct{}), watcherDone: make(chan struct{}),
-			}
-			close(s.done)
-			if canceled {
-				cancel()
-			}
-			s.watchContext()
-			cancel()
-			if canceled {
-				if !errors.Is(s.Err(), context.Canceled) || sink.stops != 1 {
-					t.Fatalf("canceled completion: err=%v stops=%d", s.Err(), sink.stops)
+	for _, cancellation := range []string{"none", "before watcher", "after watcher"} {
+		t.Run(cancellation, func(t *testing.T) {
+			// Cover both ready watcher signals and cancellation after the watcher
+			// has exited but before Close has drained the sink's buffered audio.
+			for i := 0; i < 32; i++ {
+				ctx, cancel := context.WithCancel(context.Background())
+				sink := &testSink{}
+				s := &session{
+					ctx: ctx, cancel: cancel, sink: sink,
+					pending: make(chan synthesisJob),
+					done:    make(chan struct{}), watcherDone: make(chan struct{}),
 				}
-			} else if s.Err() != nil || sink.stops != 0 {
-				t.Fatalf("normal completion: err=%v stops=%d", s.Err(), sink.stops)
+				close(s.done)
+				if cancellation == "before watcher" {
+					cancel()
+				}
+				s.watchContext()
+				if cancellation == "before watcher" && (!errors.Is(s.Err(), context.Canceled) || sink.stops != 1) {
+					t.Fatalf("watcher missed cancellation: Err=%v stops=%d", s.Err(), sink.stops)
+				}
+				if cancellation == "after watcher" {
+					cancel()
+				}
+				err := s.Close()
+				cancel()
+				if cancellation != "none" {
+					if !errors.Is(err, context.Canceled) || !errors.Is(s.Err(), context.Canceled) || sink.stops != 1 || sink.drains != 0 {
+						t.Fatalf("canceled completion: close=%v Err=%v stops=%d drains=%d", err, s.Err(), sink.stops, sink.drains)
+					}
+				} else if err != nil || s.Err() != nil || sink.stops != 0 || sink.drains != 1 {
+					t.Fatalf("normal completion: close=%v Err=%v stops=%d drains=%d", err, s.Err(), sink.stops, sink.drains)
+				}
 			}
-		}
+		})
 	}
 }
 
