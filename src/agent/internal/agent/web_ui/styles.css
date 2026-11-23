@@ -161,14 +161,18 @@ textarea:focus-visible {
 
 .inspector-section + .inspector-section { border-top: 1px solid var(--line); }
 
+.inspector-section-title,
+.task-history-table th {
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 500;
+}
+
 .inspector-section-title {
     display: flex;
     align-items: baseline;
     gap: 8px;
     margin: 0 0 8px;
-    color: var(--muted);
-    font-size: 0.82rem;
-    font-weight: 500;
 }
 
 .inspector-summary,
@@ -584,6 +588,12 @@ textarea:focus-visible {
 .inspector-row:hover,
 .inspector-row:focus-within { background: var(--surface-soft); }
 
+.inspector-row-main,
+.task-history-table td {
+    color: var(--text);
+    font-size: 0.88rem;
+}
+
 .inspector-row-main {
     flex: 1;
     min-width: 0;
@@ -593,8 +603,6 @@ textarea:focus-visible {
     padding: 8px;
     border: 0;
     background: transparent;
-    color: var(--text);
-    font-size: 0.88rem;
     text-align: left;
     text-decoration: none;
     cursor: pointer;
@@ -654,6 +662,89 @@ textarea:focus-visible {
 }
 
 .task-modal-card { width: min(720px, 100%); }
+
+.task-history-trigger { width: 100%; justify-content: space-between; margin: 0; border: 0; padding: 0; background: none; cursor: pointer; }
+.task-history-trigger:hover { color: var(--accent); }
+.task-history-chevron { font-size: 1rem; }
+.state-modal-card.task-history-dialog {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    padding: 0;
+    width: min(720px, calc(100vw - 32px));
+    max-height: min(87dvh, 720px);
+    color: var(--text);
+}
+.task-history-dialog:has(#taskHistoryListView:not(.hidden)) {
+    width: min(1000px, calc(100vw - 32px));
+}
+.task-history-dialog:not([open]) { display: none; }
+.task-history-dialog::backdrop { background: rgba(15, 18, 24, 0.48); }
+.task-history-heading { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.task-history-heading strong { overflow-wrap: anywhere; }
+.task-history-heading button { flex: 0 0 auto; }
+#taskHistoryListView { overflow-x: hidden; }
+.task-history-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-family: inherit; text-align: left; }
+.task-history-table th,
+.task-history-table td { padding: 7px 8px; overflow-wrap: anywhere; }
+.task-history-table th:first-child { width: 20%; }
+.task-history-table th:nth-child(2),
+.task-history-table th:nth-child(3) { width: 10%; }
+.task-history-table td { border-top: 1px solid var(--line); }
+.task-history-table :is(th, td):nth-child(n+4) { text-align: right; font-variant-numeric: tabular-nums; }
+.task-history-table .inspector-row-main { width: 100%; padding: 4px 0; overflow-wrap: anywhere; }
+.task-history-cell-label { display: none; }
+.task-history-row { cursor: pointer; }
+.task-history-row:hover td,
+.task-history-row:focus-within td { background: var(--surface-soft); }
+.task-history-row[data-status="completed"] .task-status { color: var(--tool-ok-text); background: var(--tool-ok); }
+.task-history-row[data-status="interrupted"] .task-status,
+.task-history-row[data-status="cancelled"] .task-status { color: var(--tool-call-text); background: var(--tool-call); }
+.task-history-row[data-status="failed"] .task-status,
+.task-history-row[data-status="tool_error"] .task-status { color: var(--tool-error-text); background: var(--tool-error); }
+
+@media (max-width: 980px) {
+    .task-history-dialog:has(#taskHistoryListView:not(.hidden)) { width: min(720px, calc(100vw - 32px)); }
+    .task-history-table,
+    .task-history-table tbody { display: block; }
+    .task-history-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+    .task-history-table .task-history-row {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px 12px;
+        padding: 10px 0;
+    }
+    .task-history-row + .task-history-row { border-top: 1px solid var(--line); }
+    .task-history-table .task-history-row td { padding: 0; border: 0; text-align: left; }
+    .task-history-table td:first-child { grid-column: span 3; }
+    .task-history-table .task-history-row td:nth-child(2) { text-align: right; }
+    .task-history-cell-label { display: block; color: var(--muted); font-size: 0.74rem; }
+}
+
+@media (max-width: 520px) {
+    .task-history-table .task-history-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .task-history-table td:first-child { grid-column: auto; }
+}
+
+.task-history-more { justify-self: start; cursor: pointer; }
+.task-history-outcome { padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; font-size: 0.85rem; overflow-wrap: anywhere; white-space: pre-wrap; }
+.task-history-outcome[data-status="failed"],
+.task-history-outcome[data-status="tool_error"] { color: var(--tool-error-text); background: var(--tool-error); }
+.task-history-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 5px; background: var(--surface-code); }
+.task-history-metrics > div { min-width: 0; padding: 8px 10px; }
+.task-history-metrics > div + div { border-left: 1px solid var(--line); }
+.task-history-metrics dt,
+.task-history-metrics small { color: var(--muted-strong); font-size: 0.73rem; }
+.task-history-metrics dd { font-size: clamp(1rem, 3vw, 1.3rem); font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.task-history-usage { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted-strong); font-size: 0.76rem; }
+.task-history-usage strong { color: var(--text); font-variant-numeric: tabular-nums; }
 
 .file-modal-card { width: min(960px, 100%); max-height: min(88vh, 900px); }
 .file-modal-heading { flex: 1 1 auto; min-width: 0; }
@@ -772,11 +863,11 @@ textarea:focus-visible {
 
 .task-step-title { font-weight: 600; }
 .task-step-status { margin-left: auto; color: var(--muted); font-size: 0.7rem; }
+.task-step-disclosure { margin-top: 4px; }
+.task-step-disclosure > summary { width: fit-content; color: var(--accent); cursor: pointer; }
 
 .task-step-detail {
     margin: 4px 0 0;
-    max-height: 9em;
-    overflow: auto;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     color: var(--muted-strong);

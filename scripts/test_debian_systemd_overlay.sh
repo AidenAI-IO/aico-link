@@ -253,9 +253,26 @@ grep -q -- '/usr/lib/aico/agent config-web' \
     "${UNIT_DIR}/aico-config-web.service"
 grep -q -- '--wifi-config-environment=/run/aico/wpa_supplicant-config.env' \
     "${UNIT_DIR}/aico-config-web.service"
-grep -Fq 'in_device = ($0 ~ /^[[:space:]]*\[basic_settings\.device\][[:space:]]*$/' \
-    "${OVERLAY}/usr/lib/aico/aico-usb-gadget" \
+# The gadget must pick the same pointer mode as the Agent: device_type from
+# [basic_settings.device] (a trailing comment allowed), iOS when absent, and
+# no stray pointer_mode line.
+sed -n '/^read_pointer_mode() {/,/^}/p' "${OVERLAY}/usr/lib/aico/aico-usb-gadget" \
+    > "${TEST_ROOT}/read_pointer_mode.sh"
+gadget_pointer_mode() {
+    printf '%b' "$1" > "${TEST_ROOT}/pointer-mode.toml"
+    (
+        AGENT_TOML="${TEST_ROOT}/pointer-mode.toml"
+        . "${TEST_ROOT}/read_pointer_mode.sh"
+        read_pointer_mode
+        printf '%s' "${POINTER_MODE}"
+    )
+}
+[ "$(gadget_pointer_mode '[basic_settings.device] # desktop\ndevice_type = "macOS"\n')" = absolute ] \
     || fail "Debian USB gadget must read device_type from the grouped config path"
+[ "$(gadget_pointer_mode '[basic_settings.device]\ndevice_type = "Android"\n')" = touchscreen ] \
+    || fail "Debian USB gadget must map Android to the touchscreen"
+[ "$(gadget_pointer_mode '[hid]\npointer_mode = "absolute"\n')" = touchpad ] \
+    || fail "Debian USB gadget must default to the iOS touchpad and ignore pointer_mode"
 grep -Fq "Unsupported top-level [device] table" \
     "${OVERLAY}/usr/lib/aico/aico-usb-gadget" \
     || fail "Debian USB gadget must reject the retired top-level device table"

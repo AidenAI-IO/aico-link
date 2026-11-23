@@ -32,9 +32,10 @@ const (
 
 	// Each task keeps a short, bounded timeline for observers such as the Web
 	// UI. Timelines of finished tasks are kept only for the most recent ones.
-	maxTimelineSteps         = 40
-	maxTimelineDetailRunes   = 400
-	maxFinishedTaskTimelines = 16
+	maxTimelineSteps           = 40
+	maxTimelineDetailRunes     = 400
+	maxTimelineToolResultRunes = 4000
+	maxFinishedTaskTimelines   = 16
 )
 
 // ErrStaleOrder reports a reorder request whose task list no longer matches
@@ -551,7 +552,11 @@ func (m *Manager) recordStepLocked(taskID string, step Step) {
 		step.At = m.now().UTC()
 	}
 	step.Title = limitText(step.Title, 120)
-	step.Detail = limitText(step.Detail, maxTimelineDetailRunes)
+	detailLimit := maxTimelineDetailRunes
+	if step.Kind == "tool" && step.Status != "running" {
+		detailLimit = maxTimelineToolResultRunes
+	}
+	step.Detail = limitText(step.Detail, detailLimit)
 	if m.timelines == nil {
 		m.timelines = make(map[string]*Timeline)
 	}

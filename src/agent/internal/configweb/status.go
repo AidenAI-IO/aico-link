@@ -2,6 +2,7 @@ package configweb
 
 import (
 	"aico-agent/internal/agent"
+	"aico-agent/internal/usbgadget"
 	"encoding/json"
 	"io"
 	"net"
@@ -204,8 +205,10 @@ func (s *Server) handleAgentStatus(w http.ResponseWriter, _ *http.Request) {
 	deviceType := s.deviceType()
 	usb := map[string]any{
 		"keyboard": pathExists("/dev/hidg0"),
-		"pointer":  pathExists("/dev/hidg1"),
-		"ecm":      pathExists("/sys/class/net/usb0"),
+		// The iOS touchpad gadget attaches the keyboard only while typing.
+		"keyboard_on_demand": usbgadget.KeyboardOnDemand(usbgadget.PointerDescriptorPath),
+		"pointer":            pathExists("/dev/hidg1"),
+		"ecm":                pathExists("/sys/class/net/usb0"),
 	}
 	capabilities := map[string]any{
 		"wifi": true, "ota": true, "storage": true,

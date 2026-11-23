@@ -598,6 +598,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/context", s.handleContext)
 	mux.HandleFunc("/api/context/attachment", s.handleContextAttachment)
 	mux.HandleFunc("/api/episodes/", s.handleEpisodes)
+	mux.HandleFunc("/api/agent-tasks/history", s.handleTaskHistory)
+	mux.HandleFunc("/api/agent-tasks/history/", s.handleTaskHistory)
 	mux.HandleFunc("/api/agent-tasks", s.handleAgentTasks)
 	mux.HandleFunc("/api/agent-tasks/", s.handleAgentTasks)
 	mux.HandleFunc("/api/setup", s.handleSetup)

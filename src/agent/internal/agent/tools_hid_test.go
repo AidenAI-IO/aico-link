@@ -1443,7 +1443,7 @@ func TestMouseScrollToolRejectsTouchscreenPointerMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Call returned error: %v", err)
 	}
-	want := "mouse_scroll is unsupported when pointer_mode is touchscreen; use touch_gesture"
+	want := "mouse_scroll is unsupported in direct-touch mode (touchscreen or touchpad); swipe with touch_gesture instead"
 	if out != want {
 		t.Fatalf("output = %q, want %q", out, want)
 	}

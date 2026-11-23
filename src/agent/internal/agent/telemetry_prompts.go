@@ -329,7 +329,9 @@ func telemetryCostDetailsFromMap(info map[string]any) map[string]float64 {
 	if v, ok := costMetricFloat(firstMapValue(info, "output_cost", "completion_cost")); ok {
 		cost["output"] = v
 	}
-	if v, ok := costMetricFloat(firstMapValue(info, "total_cost", "cost", "estimated_cost", "cost_usd")); ok {
+	if v, ok := providerCostUSD(info); ok {
+		cost["total"] = v
+	} else if v, ok := costMetricFloat(info["estimated_cost"]); ok {
 		cost["total"] = v
 	}
 	if _, hasTotal := cost["total"]; !hasTotal && (cost["input"] > 0 || cost["output"] > 0) {

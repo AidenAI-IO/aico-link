@@ -41,9 +41,10 @@ func MaxApplyLevel(a, b ApplyLevel) ApplyLevel {
 // gadget to re-enumerate. Only the system environment file, which the Agent
 // reads at start, needs a restart (see configweb's systemEnvironmentApply).
 //
-// The device type only matters through the pointer mode it derives: iOS,
-// macOS, Windows and Linux share absolute pointer mode, so switching among them
-// is live, while switching to or from Android changes the HID descriptor.
+// The device type only matters through the pointer mode it derives: macOS,
+// Windows and Linux share absolute pointer mode, so switching among them is
+// live, while switching to or from iOS (touchpad) or Android (touchscreen)
+// changes the HID descriptor.
 // Both checks read resolved runtime values, so a spelling alias in the source
 // file cannot masquerade as a USB/HID behaviour change.
 func ConfigApplyLevel(current, next Config) (ApplyLevel, []string) {
