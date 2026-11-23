@@ -312,6 +312,13 @@ class RuntimeConfigTests(unittest.TestCase):
             installed = installed.replace("share/doc/ekho/", "usr/share/doc/aico-business/ekho/")
             self.assertEqual((extracted / installed).read_text(), content)
         standalone_release.verify_runtime_config(package, 1)
+        depends = subprocess.check_output(
+            ["dpkg-deb", "--field", str(package), "Depends"], text=True)
+        dependencies = {item.strip().split()[0] for item in depends.split(",")}
+        self.assertTrue({"libc6", "libgcc-s1", "libstdc++6", "libsndfile1",
+                         "libflite1", "libsonic0", "libmpg123-0t64"} <= dependencies,
+                        f"Missing Ekho runtime dependencies: {depends}")
+        self.assertTrue({"libespeak-ng1", "espeak-ng-data"}.isdisjoint(dependencies), depends)
         # Only binary provenance is mocked: the test binaries are explicit fixtures.
         with patch.object(standalone_release, "check_source", return_value=("a" * 40, "b" * 40)), patch.dict(os.environ, env):
             standalone_release.stage(ROOT, apps, output)

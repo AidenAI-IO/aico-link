@@ -91,14 +91,7 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 	}
 	go s.synthesisLoop()
 	go s.playbackLoop()
-	go func() {
-		defer close(s.watcherDone)
-		select {
-		case <-ctx.Done():
-			s.fail(ctx.Err())
-		case <-s.done:
-		}
-	}()
+	go s.watchContext()
 	return s, nil
 }
 
@@ -139,6 +132,19 @@ type session struct {
 	stopErr     error
 	errMu       sync.Mutex
 	lastErr     error
+}
+
+func (s *session) watchContext() {
+	defer close(s.watcherDone)
+	select {
+	case <-s.ctx.Done():
+	case <-s.done:
+	}
+	// Worker completion and cancellation may both be ready. Whichever wins
+	// the select, cancellation must stop audio already buffered in the sink.
+	if err := s.ctx.Err(); err != nil {
+		s.fail(err)
+	}
 }
 
 func (s *session) WriteText(text string) error {

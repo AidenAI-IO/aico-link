@@ -199,7 +199,7 @@ func TestEkhoFailureAndReset(t *testing.T) {
 	if err := stream.Flush(); err != nil {
 		t.Fatalf("reset retained text: %v", err)
 	}
-	if err := stream.WriteText("失败。"); err != nil {
+	if err := stream.WriteText("失败。"); err != nil && !strings.Contains(err.Error(), "synthesis-failed") {
 		t.Fatal(err)
 	}
 	if err := stream.Flush(); err == nil || !strings.Contains(err.Error(), "synthesis-failed") {

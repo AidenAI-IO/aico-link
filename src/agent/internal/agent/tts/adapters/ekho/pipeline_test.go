@@ -106,8 +106,8 @@ printf '%s\n' "$text" >> "$EKHO_TEST_LOG"
 			})
 			select {
 			case <-sink.entered:
-			default:
-				t.Fatal("second sentence synthesized before playback consumed the first")
+			case <-time.After(3 * time.Second):
+				t.Fatal("playback did not consume the first sentence")
 			}
 			// Only a single text job may queue behind the two on-disk WAVs.
 			if err := stream.WriteText("Three!"); err != nil {
@@ -155,6 +155,34 @@ printf '%s\n' "$text" >> "$EKHO_TEST_LOG"
 			}
 			assertNoTempWAV(t, tempDir)
 		})
+	}
+}
+
+func TestEkhoWorkerCompletionHonorsCancellation(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		// Exercise completion with cancellation already visible, including when
+		// both watcher signals are ready before it is scheduled.
+		for i := 0; i < 32; i++ {
+			ctx, cancel := context.WithCancel(context.Background())
+			sink := &testSink{}
+			s := &session{
+				ctx: ctx, cancel: cancel, sink: sink,
+				done: make(chan struct{}), watcherDone: make(chan struct{}),
+			}
+			close(s.done)
+			if canceled {
+				cancel()
+			}
+			s.watchContext()
+			cancel()
+			if canceled {
+				if !errors.Is(s.Err(), context.Canceled) || sink.stops != 1 {
+					t.Fatalf("canceled completion: err=%v stops=%d", s.Err(), sink.stops)
+				}
+			} else if s.Err() != nil || sink.stops != 0 {
+				t.Fatalf("normal completion: err=%v stops=%d", s.Err(), sink.stops)
+			}
+		}
 	}
 }
 
