@@ -1,10 +1,16 @@
 ---
 sidebar_position: 1
 title: Try Aico on PC
-description: Run and develop Aico locally without a development board.
+description: Try a pre-release Aico simulator on your computer before Aico Link hardware ships.
 ---
 
 # Try Aico on PC
+
+> **Preview, not a product.** Running Aico on a PC is a pre-release simulator
+> for trying Aico before Aico Link hardware ships. It is not an officially
+> released product, and it does not reproduce the hardware experience: it relies
+> on ADB or other software bridges instead of HDMI capture and USB HID, and has
+> no onboard voice pipeline.
 
 For a native Agent running directly on your computer with a real Android phone
 or iPhone, start with [Local Agent with a Real Phone](local-agent-real-phone.md).
