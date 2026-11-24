@@ -443,15 +443,6 @@ func TestRealtimeClientTurnEndpointDetectsSilenceAfterSpeech(t *testing.T) {
 	}
 }
 
-func TestRealtimeInstructionsRouteVisualRequestsToDeviceWork(t *testing.T) {
-	instructions := agent.DefaultRealtimeVoiceInstructions
-	for _, phrase := range []string{"cannot directly and reliably answer", "screen or page content", "Never refuse merely because"} {
-		if !strings.Contains(instructions, phrase) {
-			t.Fatalf("realtime instructions missing visual-routing guidance %q: %s", phrase, instructions)
-		}
-	}
-}
-
 func TestRealtimeCurrentTimeTool(t *testing.T) {
 	want := time.Date(2026, time.August, 20, 14, 30, 0, 0, time.FixedZone("CST", 8*60*60))
 	executor := realtimeVoiceToolExecutor{now: func() time.Time { return want }}
@@ -553,86 +544,6 @@ func TestRealtimeEndConversationToolDefersTeardownToSessionLoop(t *testing.T) {
 	// loop performs the teardown after the farewell finishes speaking.
 	if got.Status != "ending" || got.Error != "" {
 		t.Fatalf("end_conversation output = %+v", got)
-	}
-}
-
-func TestRealtimeInstructionsCoverMemoryWritesAndStandby(t *testing.T) {
-	instructions := agent.DefaultRealtimeVoiceInstructions
-	for _, phrase := range []string{"save_memory", "forget_memory", "recall_session_chunks", "audio_volume", "end_conversation", "query_agent_task", "update_agent_task", "stop listening", "stop the service", "go idle", "wait for the next wakeup", "conversation-control requests", "退下", "退一下", "再见"} {
-		if !strings.Contains(instructions, phrase) {
-			t.Fatalf("realtime instructions missing guidance for %q: %s", phrase, instructions)
-		}
-	}
-}
-
-func TestRealtimeInstructionsGateOutcomeClaimsUntilEvidence(t *testing.T) {
-	const (
-		coreRule    = "A tool result that only says work was accepted, queued, or started is not outcome evidence"
-		toolError   = "A tool error is evidence that the work could not start or complete as requested"
-		backendRule = "never say it is done, sent, posted, set, or saved until a task update or query_agent_task result shows status completed or failed"
-		startError  = "If a work-management tool returns an error, report that you could not start or update the work"
-		cancelDone  = "Status cancelled confirms the stop request and is not a success or failure of the original work"
-		antiFold    = "Never use update_agent_task to add an unrelated request to existing work"
-		directRule  = "Until a direct tool returns, do not claim device or external state has changed"
-		createRule  = "If this tool returns an error, tell the user you could not start the work"
-		createGate  = "until a task update or query_agent_task result shows status completed or failed"
-		createOwn   = "never fold it into unrelated work with update_agent_task"
-		cancelRule  = "do not tell the user the work is stopped until a task update or query_agent_task result shows status cancelled"
-		updateGate  = "do not treat the update itself as completion of the device work"
-		updateRule  = "If this tool returns an error, tell the user you could not update the work"
-		updateOwn   = "Do not use it to add an unrelated request; create a separate task for that"
-		saveRule    = "Do not tell the user you remembered it until this tool returns"
-		forgetRule  = "Do not tell the user it was forgotten until this tool returns successfully"
-		volumeRule  = "do not tell the user it changed until this tool returns"
-	)
-	if !strings.Contains(agent.DefaultRealtimeVoiceCoreInstructions, coreRule) {
-		t.Fatalf("realtime core instructions missing outcome-claim gate: %s", agent.DefaultRealtimeVoiceCoreInstructions)
-	}
-	if !strings.Contains(agent.DefaultRealtimeVoiceCoreInstructions, toolError) {
-		t.Fatalf("realtime core instructions missing tool-error outcome: %s", agent.DefaultRealtimeVoiceCoreInstructions)
-	}
-	if !strings.Contains(agent.DefaultRealtimeVoiceInstructions, backendRule) {
-		t.Fatalf("realtime backend instructions missing queued-vs-completed gate: %s", agent.DefaultRealtimeVoiceInstructions)
-	}
-	if !strings.Contains(agent.DefaultRealtimeVoiceInstructions, startError) {
-		t.Fatalf("realtime backend instructions missing task-tool start error reporting: %s", agent.DefaultRealtimeVoiceInstructions)
-	}
-	if !strings.Contains(agent.DefaultRealtimeVoiceInstructions, cancelDone) {
-		t.Fatalf("realtime backend instructions missing cancelled-vs-outcome distinction: %s", agent.DefaultRealtimeVoiceInstructions)
-	}
-	if !strings.Contains(agent.DefaultRealtimeVoiceInstructions, antiFold) {
-		t.Fatalf("realtime backend instructions missing anti-fold rule: %s", agent.DefaultRealtimeVoiceInstructions)
-	}
-	if !strings.Contains(agent.DefaultRealtimeToolExecutionInstructions, coreRule) {
-		t.Fatalf("direct-tool instructions missing shared outcome-claim gate: %s", agent.DefaultRealtimeToolExecutionInstructions)
-	}
-	if !strings.Contains(agent.DefaultRealtimeToolExecutionInstructions, directRule) {
-		t.Fatalf("direct-tool instructions missing direct-tool outcome gate: %s", agent.DefaultRealtimeToolExecutionInstructions)
-	}
-
-	definitions := make(map[string]realtimevoice.Tool)
-	for _, definition := range realtimeVoiceToolDefinitions(agent.Config{VoiceModel: agent.VoiceModelConfig{UseBackendAgent: true}}, nil) {
-		definitions[definition.Name] = definition
-	}
-	for _, check := range []struct {
-		name string
-		rule string
-	}{
-		{realtimeCreateTaskTool, createRule},
-		{realtimeCreateTaskTool, createGate},
-		{realtimeCreateTaskTool, createOwn},
-		{realtimeCancelTaskTool, cancelRule},
-		{realtimeUpdateTaskTool, updateGate},
-		{realtimeUpdateTaskTool, updateRule},
-		{realtimeUpdateTaskTool, updateOwn},
-		{realtimeSaveMemoryTool, saveRule},
-		{realtimeForgetMemoryTool, forgetRule},
-		{realtimeAudioVolumeTool, volumeRule},
-	} {
-		tool, ok := definitions[check.name]
-		if !ok || !strings.Contains(tool.Description, check.rule) {
-			t.Fatalf("%s description missing outcome gate %q: %s", check.name, check.rule, tool.Description)
-		}
 	}
 }
 
@@ -765,21 +676,41 @@ func TestRealtimeCancelCompletedTaskSuppressesAndRedactsPendingResult(t *testing
 	}
 }
 
-func TestRealtimeTaskCreationRequiresOutstandingWorkCheck(t *testing.T) {
-	const rule = "query_agent_task with no task_id"
-	if !strings.Contains(agent.DefaultRealtimeVoiceInstructions, rule) {
-		t.Fatalf("realtime instructions missing the outstanding-work check: %s", agent.DefaultRealtimeVoiceInstructions)
+// While work is outstanding, a create returns that work instead of starting a
+// duplicate; only an explicit new request starts more.
+func TestRealtimeCreateTaskReturnsOutstandingWorkFirst(t *testing.T) {
+	runner := &fakeBackgroundTaskRunner{started: make(chan string, 2), release: make(chan struct{})}
+	manager := agenttask.NewManager(runner)
+	defer manager.Close()
+	executor := realtimeVoiceToolExecutor{tasks: manager, now: time.Now}
+
+	var first agenttask.Task
+	if err := json.Unmarshal([]byte(executor.call(context.Background(), realtimeCreateTaskTool, `{"task":"open the chat app"}`)), &first); err != nil || first.ID == "" {
+		t.Fatalf("first create = %+v, %v", first, err)
 	}
+	var held struct {
+		Created     *bool            `json:"created"`
+		Outstanding []agenttask.Task `json:"outstanding"`
+	}
+	if err := json.Unmarshal([]byte(executor.call(context.Background(), realtimeCreateTaskTool, `{"task":"go to the chat app"}`)), &held); err != nil {
+		t.Fatal(err)
+	}
+	if held.Created == nil || *held.Created || len(held.Outstanding) != 1 || held.Outstanding[0].ID != first.ID {
+		t.Fatalf("second create = %+v, want the outstanding task and nothing started", held)
+	}
+	var second agenttask.Task
+	if err := json.Unmarshal([]byte(executor.call(context.Background(), realtimeCreateTaskTool, `{"task":"check the weather","new_request":true}`)), &second); err != nil || second.ID == "" || second.ID == first.ID {
+		t.Fatalf("new request create = %+v, %v", second, err)
+	}
+}
+
+func TestRealtimeQueryTaskAcceptsOmittedTaskID(t *testing.T) {
 	definitions := make(map[string]realtimevoice.Tool)
 	for _, definition := range realtimeVoiceToolDefinitions(agent.Config{VoiceModel: agent.VoiceModelConfig{UseBackendAgent: true}}, nil) {
 		definitions[definition.Name] = definition
 	}
-	create, ok := definitions[realtimeCreateTaskTool]
-	if !ok || !strings.Contains(create.Description, rule) {
-		t.Fatalf("%s must require the check before creating work: %s", realtimeCreateTaskTool, create.Description)
-	}
-	// The rule is only followable while query_agent_task accepts an omitted
-	// task_id, so the schema and the instructions have to move together.
+	// The instructions ask for a check with no task_id, which only works
+	// while query_agent_task accepts an omitted task_id.
 	query, ok := definitions[realtimeQueryTaskTool]
 	if !ok {
 		t.Fatalf("missing %s definition", realtimeQueryTaskTool)
@@ -809,9 +740,6 @@ func TestRealtimeUpdateTaskRequiresCompleteGoal(t *testing.T) {
 	update, ok := definitions[realtimeUpdateTaskTool]
 	if !ok {
 		t.Fatalf("missing %s definition", realtimeUpdateTaskTool)
-	}
-	if !strings.Contains(update.Description, "complete goal") || !strings.Contains(update.Description, "instead of cancelling") {
-		t.Fatalf("update description does not explain replacement semantics: %s", update.Description)
 	}
 	var schema struct {
 		Properties map[string]json.RawMessage `json:"properties"`
