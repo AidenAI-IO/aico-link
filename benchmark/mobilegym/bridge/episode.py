@@ -6,6 +6,7 @@ import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from .aico_app import AicoAppSession
 from .input import SimulatorInput
 
 BENCHMARK_TASK_ID_HEADER = "benchmark-task-id"
@@ -131,6 +132,8 @@ class BridgeEpisodeState:
         self.owner_loop = owner_loop or asyncio.get_event_loop()
         self.active_episode_id: str | None = None
         self.action_log: list[dict[str, Any]] = []
+        # Set by /api/setup for tasks that configure the simulated Aico App.
+        self.aico_app: AicoAppSession | None = None
         self._action_counter = 0
         self._env_lock = asyncio.Lock()
         self._pending_sync_reset: asyncio.Task[Any] | None = None

@@ -936,7 +936,7 @@ def test_call_environment_setup_posts_to_api_setup(monkeypatch):
     assert result["data"]["episode_id"] == "reset-1"
 
 
-def test_call_environment_setup_sends_foreground_app_id(monkeypatch):
+def test_call_environment_setup_sends_optional_setup_fields(monkeypatch):
     class FakeResponse:
         def read(self):
             return b'{"ok": true}'
@@ -954,8 +954,14 @@ def test_call_environment_setup_sends_foreground_app_id(monkeypatch):
         return FakeResponse()
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    call_environment_setup("http://127.0.0.1:9090", app_ids=["settings"], foreground_app_id="scroll_lab")
-    assert bodies == [{"app_ids": ["settings"], "foreground_app_id": "scroll_lab"}]
+    call_environment_setup(
+        "http://127.0.0.1:9090", app_ids=["settings"], foreground_app_id="scroll_lab",
+        aico_app={"app_state": "background"}, initial_state={"apps": {"notes": {"notes": []}}},
+    )
+    assert bodies == [{
+        "app_ids": ["settings"], "foreground_app_id": "scroll_lab", "aico_app": {"app_state": "background"},
+        "initial_state": {"apps": {"notes": {"notes": []}}},
+    }]
 
 
 def test_call_environment_setup_sends_benchmark_task_id_header(monkeypatch):

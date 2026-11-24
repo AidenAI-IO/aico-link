@@ -13,6 +13,18 @@ def bridge_error(code: str, message: str, status: int = 400) -> dict[str, Any]:
     return {"ok": False, "error": {"code": code, "message": message}, "status": status}
 
 
+def parse_initial_state(raw: Any) -> dict[str, Any] | None:
+    """Validate a setup ``initial_state`` patch for ``window.__SIM__.setState``."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or not raw or set(raw) - {"apps", "os"}:
+        raise ValueError("initial_state must be a non-empty object with apps and/or os patches")
+    for key, patch in raw.items():
+        if not isinstance(patch, dict):
+            raise ValueError(f"initial_state.{key} must be an object")
+    return raw
+
+
 def encode_screenshot(
     payload: bytes,
     mime_type: str = "application/octet-stream",
