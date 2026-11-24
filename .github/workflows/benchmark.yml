@@ -521,6 +521,9 @@ jobs:
           --matrix-json "$MATRIX"
           --run-id-prefix "$RUN_ID_PREFIX"
           --max-parallel "$BENCHMARK_CI_MAX_PARALLEL"
+          --publish-langfuse
+          --publish-max-parallel 8
+          --publish-run-timeout-sec 300
       - name: Clean up benchmark services
         if: ${{ always() }}
         env:
@@ -560,6 +563,9 @@ jobs:
           done
       - name: Publish completed runs to Langfuse
         if: ${{ always() }}
+        # ci.run_cases already published each run as its case finished; this
+        # step only publishes runs without a success marker, such as failed
+        # publications or every run after an interrupted case step.
         # Observability is a side channel: a publish failure must not mask the
         # benchmark verdict this job exists to report. ci.publish_langfuse runs
         # each run in its own process (the Langfuse SDK shares one client per

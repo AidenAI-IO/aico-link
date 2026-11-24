@@ -735,9 +735,15 @@ container-backed (isolated and MobileGym) cases run at once, and MobileGym
 cases are scheduled first among them. Device-backed cases do not use those
 slots and start immediately, because they are usually the critical path: ADB
 cases wait only for free devices in the Android pool, and external-hardware
-cases share an exclusive lock to avoid device/bridge contention. With four
-emulators, the daily sweep finishes its cases in roughly 20 minutes instead of
-the 67 minutes the ADB cases needed back to back on one emulator.
+cases share an exclusive lock to avoid device/bridge contention. Device cases
+that need the most devices ask first; among equals, catalog order decides, so
+the catalog lists the longest single-device case first. With four emulators,
+the daily sweep finishes its cases in about 20–23 minutes instead of the
+67 minutes the ADB cases needed back to back on one emulator.
+Each run is published to Langfuse as soon as its case finishes, while later
+cases still run, and is marked as published. The separate publish step after
+the cases only publishes runs without that marker, such as a failed
+publication or every run after an interrupted case step.
 Every completed run uploads a 14-day diagnostic bundle containing its manifest,
 metrics, results, summary, HTML report, suite snapshot, setup/case logs, and an
 image-build log when an image had to be built. The upload is retried once after a

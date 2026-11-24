@@ -33,6 +33,7 @@ from ci.plan import (
     CatalogError,
     SuiteCase,
 )
+from ci.publish_langfuse import DEFAULT_RUN_TIMEOUT_SEC, publish_run
 from ci.run_case import _incomplete_run_reasons, android_serials, run_case
 
 DEFAULT_MAX_PARALLEL = 2
@@ -193,7 +194,11 @@ def run_cases(
     run_id_prefix: str,
     environment: Mapping[str, str],
     max_parallel: int = DEFAULT_MAX_PARALLEL,
+    publish_max_parallel: int = 0,
+    publish_run_timeout_sec: float = DEFAULT_RUN_TIMEOUT_SEC,
 ) -> list[CaseOutcome]:
+    """Run the cases; with ``publish_max_parallel`` > 0 also publish each run to
+    Langfuse as soon as its case finishes, while later cases are still running."""
     # Shared phones and Macs cannot serve two cases at once. ADB cases lease
     # emulators from the pool instead; container-backed ones touch neither.
     external_lock = threading.Lock()
@@ -311,6 +316,27 @@ def run_cases(
             error_summary=error_summary,
         )
 
+    publish_executor = (
+        concurrent.futures.ThreadPoolExecutor(
+            max_workers=publish_max_parallel, thread_name_prefix="langfuse-publish"
+        )
+        if publish_max_parallel > 0
+        else None
+    )
+    publish_futures: list[concurrent.futures.Future] = []
+
+    def execute_and_publish(case: SuiteCase) -> CaseOutcome:
+        outcome = execute(case)
+        run_dir = BENCHMARK_ROOT / "runs" / outcome.run_id
+        # Any run with a manifest is publishable, including one that failed or
+        # only recorded a setup failure; the workflow publishes the same set.
+        if publish_executor is not None and (run_dir / "manifest.json").is_file():
+            publish_futures.append(publish_executor.submit(
+                publish_run, run_dir, run_timeout_sec=publish_run_timeout_sec,
+                emit=lambda message: print(message, flush=True), output_lock=print_lock,
+            ))
+        return outcome
+
     # Device-backed cases wait on their devices, not on a container slot, and
     # they are usually the critical path, so they all start at once. The ones
     # that need the most devices ask first.
@@ -333,10 +359,25 @@ def run_cases(
     ) as device_executor, concurrent.futures.ThreadPoolExecutor(
         max_workers=workers, thread_name_prefix="bench-ci"
     ) as container_executor:
-        futures = [device_executor.submit(execute, case) for case in device_cases]
-        futures += [container_executor.submit(execute, case) for case in container_cases]
+        futures = [device_executor.submit(execute_and_publish, case) for case in device_cases]
+        futures += [container_executor.submit(execute_and_publish, case) for case in container_cases]
         for future in concurrent.futures.as_completed(futures):
             outcomes.append(future.result())
+    if publish_executor is not None:
+        pending = sum(1 for future in publish_futures if not future.done())
+        if pending:
+            emit(f"waiting for {pending} Langfuse publication(s)")
+        publish_executor.shutdown(wait=True)
+        published = 0
+        for future in publish_futures:
+            try:
+                published += future.result().ok
+            except Exception as exc:  # Publication must never fail the cases.
+                emit(f"WARN    Langfuse publication raised: {exc}")
+        emit(
+            f"Langfuse: {published} of {len(publish_futures)} run(s) published during the cases; "
+            "the publish step retries the rest"
+        )
     order = {case.id: index for index, case in enumerate(cases)}
     outcomes.sort(key=lambda outcome: order[outcome.case_id])
     return outcomes
@@ -392,9 +433,18 @@ def cli(argv: list[str] | None = None) -> int:
             "ADB cases are bounded by the devices in ANDROID_SERIAL instead"
         ),
     )
+    parser.add_argument(
+        "--publish-langfuse",
+        action="store_true",
+        help="Publish each run to Langfuse as soon as its case finishes",
+    )
+    parser.add_argument("--publish-max-parallel", type=int, default=4)
+    parser.add_argument("--publish-run-timeout-sec", type=float, default=DEFAULT_RUN_TIMEOUT_SEC)
     args = parser.parse_args(argv)
     if args.max_parallel < 1:
         parser.error("--max-parallel must be positive")
+    if args.publish_max_parallel < 1 or args.publish_run_timeout_sec <= 0:
+        parser.error("--publish-max-parallel and --publish-run-timeout-sec must be positive")
     try:
         cases = _cases_from_matrix(args.matrix_json)
     except CatalogError as exc:
@@ -406,6 +456,8 @@ def cli(argv: list[str] | None = None) -> int:
         run_id_prefix=args.run_id_prefix,
         environment=os.environ,
         max_parallel=args.max_parallel,
+        publish_max_parallel=args.publish_max_parallel if args.publish_langfuse else 0,
+        publish_run_timeout_sec=args.publish_run_timeout_sec,
     )
     _write_step_summary(outcomes)
 

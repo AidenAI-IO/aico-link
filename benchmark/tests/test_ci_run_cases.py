@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -346,3 +347,34 @@ def test_adb_cases_lease_disjoint_devices_outside_container_slots(monkeypatch, t
     assert len(leases["wide"]) == min(2, len(pool))
     assert len(leases["narrow"]) == 1
     assert set(leases["wide"] + leases["narrow"]) <= set(pool)
+
+
+def test_each_run_is_published_as_soon_as_its_case_finishes(monkeypatch, tmp_path):
+    slow_may_finish = threading.Event()
+    published: list[str] = []
+
+    def fake_run_case(case, *, run_id, environment, log_path, timeout_seconds):
+        if case.id == "slow":
+            # The fast case's run is published while this case still runs.
+            assert slow_may_finish.wait(timeout=2)
+        run_dir = tmp_path / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        if case.id != "no-manifest":
+            (run_dir / "manifest.json").write_text("{}", encoding="utf-8")
+        return 0
+
+    def fake_publish_run(run_dir, **kwargs):
+        published.append(run_dir.name)
+        slow_may_finish.set()
+        return SimpleNamespace(ok=True)
+
+    monkeypatch.setattr(run_cases_module, "BENCHMARK_ROOT", tmp_path)
+    monkeypatch.setattr(run_cases_module, "run_case", fake_run_case)
+    monkeypatch.setattr(run_cases_module, "publish_run", fake_publish_run)
+
+    run_cases_module.run_cases(
+        (_case("slow", "isolated"), _case("fast", "isolated"), _case("no-manifest", "isolated")),
+        run_id_prefix="ci-test", environment={}, max_parallel=3, publish_max_parallel=2,
+    )
+
+    assert published == ["ci-test-fast", "ci-test-slow"]
