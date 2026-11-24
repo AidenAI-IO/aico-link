@@ -284,10 +284,12 @@ jobs:
         if: ${{ contains(needs.plan.outputs.matrix, '"environment":"adb"') }}
         env:
           ANDROID_SDK_DIR: ${{ vars.BENCHMARK_ANDROID_SDK_DIR || '~/android-sdk' }}
-          # A fresh emulator service cgroup is about 8 GiB (4 GiB guest RAM plus
-          # SwiftShader). Above 16 GiB the RenderThread leak is large enough to
-          # matter once several emulators share the runner.
-          EMULATOR_MEMORY_LIMIT_BYTES: "17179869184"
+          # A fresh emulator service cgroup is about 7 GiB (4 GiB guest RAM plus
+          # SwiftShader) and grows about 120 MiB per Android process death; see
+          # "Recycle Android emulators". One job adds 2-3 GiB, so above 12 GiB
+          # the previous job could not recycle the emulator (cancelled, runner
+          # lost) and it is restarted before cases start.
+          EMULATOR_MEMORY_LIMIT_BYTES: "12884901888"
         run: |
           set -euo pipefail
           sdk_dir="${ANDROID_SDK_DIR/#\~/$HOME}"
@@ -356,9 +358,14 @@ jobs:
 
           # emulator-<port> runs as android-emulator@<port>.service. The first
           # serial may instead be the original single android-emulator.service.
+          # Any instance of a template unit resolves, so an instance counts only
+          # when it is enabled or running.
           emulator_unit() {
             local port="${serial#emulator-}"
-            if [[ "$port" != "$serial" ]] && systemctl --user cat "android-emulator@${port}.service" >/dev/null 2>&1; then
+            if [[ "$port" != "$serial" ]] && {
+              systemctl --user is-enabled --quiet "android-emulator@${port}.service" 2>/dev/null ||
+              systemctl --user is-active --quiet "android-emulator@${port}.service"
+            }; then
               echo "android-emulator@${port}.service"
             elif [[ "$serial" == "${serials[0]}" ]] && systemctl --user cat android-emulator.service >/dev/null 2>&1; then
               echo "android-emulator.service"
@@ -508,6 +515,8 @@ jobs:
           --mobilegym-image "$MOBILEGYM_IMAGE"
           --mobilegym-log "$PREPARE_LOG"
       - name: Run benchmark cases
+        # Each run is published to Langfuse as soon as its case finishes, while
+        # later cases still run; the step ends once those publications finish.
         working-directory: benchmark
         env:
           MATRIX: ${{ needs.plan.outputs.matrix }}
@@ -561,11 +570,50 @@ jobs:
             [[ -s "$pid_file" ]] || continue
             kill -TERM "$(cat "$pid_file")" >/dev/null 2>&1 || true
           done
-      - name: Publish completed runs to Langfuse
+      - name: Recycle Android emulators
+        # The emulator never frees the host RenderThreads of an Android process
+        # that dies, about 120 MiB per death, and every ADB task force-stops its
+        # app first. Restart every configured emulator after a job that used
+        # them, so the next job, scheduled or dispatched, starts from fresh
+        # emulators. Restarts run in parallel and return once each emulator is
+        # stopped and relaunched; it boots while this job publishes, and the
+        # next job's device check waits for the boot.
+        if: ${{ always() && contains(needs.plan.outputs.matrix, '"environment":"adb"') }}
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          IFS=',' read -r -a serials <<< "${ANDROID_SERIAL:-}"
+          first=""
+          for serial in "${serials[@]}"; do
+            serial="$(echo "$serial" | xargs)"
+            [[ -n "$serial" ]] || continue
+            first="${first:-$serial}"
+            # Same unit mapping as "Validate Android devices".
+            port="${serial#emulator-}"
+            if [[ "$port" != "$serial" ]] && {
+              systemctl --user is-enabled --quiet "android-emulator@${port}.service" 2>/dev/null ||
+              systemctl --user is-active --quiet "android-emulator@${port}.service"
+            }; then
+              unit="android-emulator@${port}.service"
+            elif [[ "$serial" == "$first" ]] && systemctl --user cat android-emulator.service >/dev/null 2>&1; then
+              unit="android-emulator.service"
+            else
+              echo "$serial has no emulator service; not recycled"
+              continue
+            fi
+            mem="$(systemctl --user show "$unit" -p MemoryCurrent --value 2>/dev/null || true)"
+            [[ "$mem" =~ ^[0-9]+$ ]] || mem=0
+            echo "Recycling $unit for $serial ($(( mem / 1048576 )) MiB)"
+            ( systemctl --user restart "$unit" || echo "::warning::could not restart $unit" ) &
+          done
+          wait
+      - name: Publish runs missed during the cases
         if: ${{ always() }}
-        # ci.run_cases already published each run as its case finished; this
-        # step only publishes runs without a success marker, such as failed
-        # publications or every run after an interrupted case step.
+        # "Run benchmark cases" publishes each run when its case finishes and
+        # marks it published. This step only publishes runs without that
+        # marker: a failed publication, or every run when the case step was
+        # interrupted. It is a no-op after a normal run.
         # Observability is a side channel: a publish failure must not mask the
         # benchmark verdict this job exists to report. ci.publish_langfuse runs
         # each run in its own process (the Langfuse SDK shares one client per

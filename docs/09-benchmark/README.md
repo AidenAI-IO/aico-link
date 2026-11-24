@@ -604,12 +604,18 @@ checks that `com.android.systemui` is running and
 `uiautomator dump` returns a hierarchy. `sys.boot_completed` alone is not
 enough: SystemUI can stay dead after a GPU hang while the device still reports
 a finished boot. On the self-hosted runner, a failed UI check or an
-emulator service cgroup above 16 GiB restarts that service once and runs the
+emulator service cgroup above 12 GiB restarts that service once and runs the
 same checks again. The service for `emulator-<port>` is the user unit
 `android-emulator@<port>.service`; the first serial may instead use the original
 `android-emulator.service`. A serial with neither unit cannot be restarted. The guest RAM limit is 4 GiB; a fresh service is
-about 8 GiB because SwiftShader sits on top of that. The rest of a long-lived
-process is the host RenderThread leak. A device that still has no usable UI is dropped
+about 7 GiB because SwiftShader sits on top of that. The emulator never frees
+the host RenderThreads of an Android process that dies, so each death leaks
+about 120 MiB; every ADB task force-stops its app, and a job adds 2-3 GiB per
+emulator. After any job that ran ADB cases, the workflow therefore restarts
+every configured emulator; they boot while the job publishes its results, and
+the next job, scheduled or dispatched, waits for the boot in its device check.
+The 12 GiB check only catches an emulator that a cancelled or lost job could
+not restart. A device that still has no usable UI is dropped
 from the pool with a warning, and the remaining devices run the ADB cases. The
 job fails before cases start only when no device is usable.
 
