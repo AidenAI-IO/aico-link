@@ -17,7 +17,7 @@ import {createHeader} from './header.js';
 import {ALL_ITEMS} from './nav-items.js';
 import {createRouter} from './router.js';
 import {localApplicationStatus} from './pages/local.js';
-import {localRoutes, routes} from './routes.js';
+import {containerRoutes, localRoutes, routes} from './routes.js';
 import {settingsList, updateWiFiStatus} from './settings-list.js';
 import {watchWiFi} from './wifi-status.js';
 import {el, replace} from '../ui/dom.js';
@@ -73,10 +73,10 @@ export async function boot(rootId = 'app', options = {}) {
 
   let navigate = () => {};
   const renderRail = (snapshot, currentPath) =>
-    replace(railBody, [settingsList(snapshot, navigate, currentPath, options.localAgent)]);
+    replace(railBody, [settingsList(snapshot, navigate, currentPath, options.localAgent, options.containerAgent)]);
 
   const router = createRouter({
-    routes: options.localAgent ? localRoutes : routes,
+    routes: options.containerAgent ? containerRoutes : options.localAgent ? localRoutes : routes,
     render: async context => {
       navigate = context.navigate;
       const current = ++generation;
@@ -114,7 +114,7 @@ export async function boot(rootId = 'app', options = {}) {
 
       view.className = context.name === 'home' ? 'app__scroll route-home' : 'app__scroll';
       const content = await context.page({
-        ...context, snapshot, localAgent: options.localAgent, header: setHeader,
+        ...context, snapshot, localAgent: options.localAgent, containerAgent: options.containerAgent, header: setHeader,
         onWiFiChange: listener => wifiListeners.push(listener),
       });
       if (current !== generation) return;

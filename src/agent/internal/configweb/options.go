@@ -32,6 +32,7 @@ const (
 // files, while production keeps the established locations.
 type Options struct {
 	LocalAgent                bool
+	ContainerAgent            bool
 	BindAddress               string
 	Port                      int
 	AgentConfigPath           string
@@ -181,7 +182,7 @@ func (o Options) Addr() string {
 }
 
 func (o Options) Validate() error {
-	if o.LocalAgent {
+	if o.LocalAgent || o.ContainerAgent {
 		return validateLocalAgentOptions(o)
 	}
 	switch o.BindAddress {

@@ -19,6 +19,7 @@ func Run(args []string) int {
 	fs := flag.NewFlagSet("config-web", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.BoolVar(&options.LocalAgent, "local-agent", false, "serve only host Agent settings on loopback")
+	fs.BoolVar(&options.ContainerAgent, "container-agent", false, "serve PC Agent settings inside a container; publish on host loopback only")
 	fs.StringVar(&options.AgentHTTPBaseURL, "agent-url", options.AgentHTTPBaseURL, "running Agent HTTP URL")
 	fs.StringVar(&options.BindAddress, "bind", options.BindAddress, "HTTP bind address")
 	fs.IntVar(&options.Port, "port", options.Port, "HTTP port")
@@ -66,7 +67,7 @@ func Run(args []string) int {
 		return 1
 	}
 
-	if options.LocalAgent {
+	if options.LocalAgent || options.ContainerAgent {
 		bindSet, portSet := false, false
 		fs.Visit(func(f *flag.Flag) {
 			if f.Name == "bind" {
@@ -76,10 +77,10 @@ func Run(args []string) int {
 				portSet = true
 			}
 		})
-		if !bindSet {
+		if !bindSet && !options.ContainerAgent {
 			options.BindAddress = "127.0.0.1"
 		}
-		if !portSet {
+		if !portSet && !options.ContainerAgent {
 			options.Port = 8000
 		}
 		if options.AgentHTTPBaseURL == "" {
