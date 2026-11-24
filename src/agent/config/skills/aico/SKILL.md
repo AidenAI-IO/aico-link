@@ -155,11 +155,10 @@ A normal task follows this loop:
 
 In legacy mode, ignore the Device CLI options in this table: use only the exposed
 Bridge tools for structured data and the `device-operator` skill for launch and
-visible UI, including screenshots. In Device CLI mode, when
-`app_connected || app_fgs_enabled || app_pip_enabled` is true, prefer the matching
-`device-cli app` data command. If all three are false, use the direct
-Bridge tool only if the runtime exposes it for the requested operation. This
-rule does not apply to notification queries, which read the board-side ring.
+visible UI, including screenshots. In Device CLI mode, use `device-cli app`
+for the clipboard, calendar, contacts, and notification sending. Each action
+checks its own transport and permissions. For notification reads, use the
+exposed `bridge_notification` query tool in either mode.
 
 | User need | Preferred path | Required verification |
 | --- | --- | --- |
@@ -229,7 +228,7 @@ The board-side public tools normalize wire responses into readable JSON. At the 
 successful response is represented by the absence of an `error` field; do not require an `ok`
 boolean unless the tool contract explicitly supplies one.
 
-### Supported Operations
+### Supported Operations (direct tool names refer to legacy mode)
 
 | Wire command | Payload purpose | Agent tool |
 | --- | --- | --- |

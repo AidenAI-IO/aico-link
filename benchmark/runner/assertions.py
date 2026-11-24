@@ -6,7 +6,7 @@ from typing import Any
 from runner.models import HardAssertionFailure, HardAssertionResults, ToolCall, Trace
 from runner.matching import dict_contains
 from runner.suite import HardAssertions, TraceObservationSpec, is_range_assertion
-from runner.trace import effective_tool_calls, trace_has_skill_read
+from runner.trace import effective_tool_calls, is_device_cli_shell, trace_has_skill_read
 
 
 PROHIBITED_ACTION_PATTERNS = {
@@ -151,27 +151,11 @@ def _trace_has_tool_call(trace: Trace, tool_name: str, input_contains: dict[str,
     return False
 
 
-# Only literal device-cli commands joined by && qualify. Do not parse arbitrary
-# shell programs or exempt a mixed command just because it used the device CLI.
-_CLI_LITERAL = r"(?:[a-zA-Z0-9_./,:+@%=-]+|'[^']*'|\"[^\"$`\\]*\")"
-_CLI_COMMAND = rf"device-cli(?:[ \t]+{_CLI_LITERAL})+"
-_CLI_CHAIN = re.compile(rf"{_CLI_COMMAND}(?:[ \t]+&&[ \t]+{_CLI_COMMAND})*")
-
-
-def _is_device_cli_shell(tc: ToolCall) -> bool:
-    if tc.tool != "shell" or not isinstance(tc.input, dict):
-        return False
-    command = tc.input.get("command")
-    return (bool(tc.device_cli_calls) and isinstance(command, str)
-            and not tc.input.get("background") and "action" not in tc.input
-            and _CLI_CHAIN.fullmatch(command.strip()) is not None)
-
-
 def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool) -> AssertionOutcome:
     calls = effective_tool_calls(trace)
     tools_used = [tc.tool for tc in calls]
     forbidden = [tc for tc in calls if tc.tool in spec.forbidden_tools
-                 and not (spec.allow_device_cli and _is_device_cli_shell(tc))]
+                 and not (spec.allow_device_cli and is_device_cli_shell(tc))]
     # Preserve legacy presence checks; a failed nested request isn't evidence
     # that a device command was performed. Forbidden checks still see attempts.
     required_tools_used = {tc.tool for tc in trace.tool_calls}
@@ -582,7 +566,7 @@ def _prohibited_action_offenders(trace: Trace, prohibited_actions: list[str]) ->
     for tc in effective_tool_calls(trace):
         # A qualifying shell command is transport, not evidence about its text args.
         # Its recorded device calls are still visited by effective_tool_calls.
-        values = [("tool", tc.tool)] if _is_device_cli_shell(tc) else _semantic_trace_values(tc.tool, tc.input)
+        values = [("tool", tc.tool)] if is_device_cli_shell(tc) else _semantic_trace_values(tc.tool, tc.input)
         for label, value in values:
             text = str(value)
             for _, pattern in patterns:

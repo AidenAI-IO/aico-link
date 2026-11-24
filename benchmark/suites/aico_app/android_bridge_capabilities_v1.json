@@ -149,6 +149,7 @@
         {"id": "created_event_deleted", "check": "Only the event created by this task is deleted and the final query confirms its ID is absent. Permission and provider errors do not count as success."}
       ],
       "hard_assertions": {
+        "allow_device_cli": true,
         "min_tool_calls": 4, "max_tool_calls": 7, "must_complete_within_sec": 180,
         "required_tools": ["bridge_calendar"],
         "forbidden_tools": ["touch_gesture", "shell", "enter_text"],
@@ -172,6 +173,7 @@
         {"id": "contact_updated", "check": "The second query returns the same contact ID with +12025550148 and bridge-after@example.com replacing the original phone and email. No unrelated contact is modified."}
       ],
       "hard_assertions": {
+        "allow_device_cli": true,
         "min_tool_calls": 4, "max_tool_calls": 7, "must_complete_within_sec": 180,
         "required_tools": ["bridge_contacts"],
         "forbidden_tools": ["touch_gesture", "shell", "enter_text"],
@@ -249,6 +251,7 @@
         }
       ],
       "hard_assertions": {
+        "allow_device_cli": true,
         "min_tool_calls": 4,
         "max_tool_calls": 8,
         "must_complete_within_sec": 240,

@@ -293,3 +293,22 @@ def test_tool_result_evidence_preserves_non_image_data():
     history = [{"type": "tool_result", "tool_name": "skill_read", "content": '{"data":"skill contents"}'}]
 
     assert tool_result_evidence(history) == history
+
+
+@pytest.mark.parametrize("suffix, expected", [("", {"action": "query", "query": "A && B"}), ("; echo extra", {})])
+def test_episode_evidence_recovers_redacted_app_data_args_from_literal_shell(suffix, expected):
+    from runner.trace import apply_episode_tool_evidence
+
+    command = '''device-cli app contacts query '{"query":"A && B"}' '''.strip() + suffix
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+        {"type": "tool_result", "tool_name": "shell", "content": "omitted"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": "bridge_contacts", "input": {}, "is_error": True, "not_dispatched": True},
+        ]},
+    }]})
+    call, = trace.tool_calls[0].device_cli_calls
+    assert call.input == expected
+    assert call.is_error and call.not_dispatched

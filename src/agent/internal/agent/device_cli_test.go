@@ -18,6 +18,7 @@ import (
 
 	"aico-agent/internal/agent/mnk"
 	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/ble"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/schema"
@@ -371,13 +372,14 @@ func (*cliTestKeyboard) Close() {}
 
 func TestDeviceCLIAppDataRequiresTransportWithoutCapturingScreen(t *testing.T) {
 	for _, tc := range []struct {
-		name, platform                              string
-		connected, fgs, pip, staleFGS, wantDispatch bool
+		name, platform                                       string
+		connected, fgs, pip, staleFGS, bleWake, wantDispatch bool
 	}{
 		{name: "no route"},
 		{name: "connected", connected: true, wantDispatch: true},
 		{name: "FGS without WebSocket", platform: "android", fgs: true, wantDispatch: true},
 		{name: "PiP without WebSocket", platform: "ios", pip: true, wantDispatch: true},
+		{name: "BLE Wake without WebSocket", platform: "ios", bleWake: true, wantDispatch: true},
 		{name: "expired FGS", platform: "android", fgs: true, staleFGS: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -385,6 +387,11 @@ func TestDeviceCLIAppDataRequiresTransportWithoutCapturingScreen(t *testing.T) {
 			bridge.platform, bridge.appState, bridge.connected = tc.platform, "background", tc.connected
 			bridge.fgsBridgeSeen, bridge.fgsBridgeEnabled, bridge.fgsBridgeAt = tc.fgs, tc.fgs, time.Now()
 			bridge.pipBridgeSeen, bridge.pipBridgeEnabled = tc.pip, tc.pip
+			if tc.bleWake {
+				bridge.bleStatus = func(context.Context) (ble.RuntimeStatus, error) {
+					return ble.RuntimeStatus{BackendAvailable: true, Connected: true, WakeSubscriber: true}, nil
+				}
+			}
 			if tc.staleFGS {
 				bridge.fgsBridgeAt = time.Now().Add(-time.Minute)
 			}

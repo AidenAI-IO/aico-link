@@ -318,11 +318,27 @@ func (c *deviceCLICapture) invoke(ctx context.Context, s *Server, call devicecli
 	return result, err
 }
 
+// App data also inherits the per-command BLE Wake and return-entry routes
+// previously available through direct Bridge tools. App typing keeps its own gate.
+func phoneBridgeCanAttemptAppData(ctx context.Context, bridge *PhoneBridge, call devicecli.Call) bool {
+	if bridge == nil {
+		return false
+	}
+	if phoneBridgeCanAttemptAppCLI(bridge) {
+		return true
+	}
+	verb, _ := call.Input["action"].(string)
+	command := strings.TrimPrefix(call.Tool, "bridge_") + "_" + verb
+	status := bridge.getStatus()
+	return phoneBridgeCanRestoreFromReturnEntry(status) ||
+		(phoneBridgeCanUseBLEBackground(status, command) && bridge.bleWakeAvailable(ctx))
+}
+
 func invokeDeviceHTTP(ctx context.Context, s *Server, call devicecli.Call) (ToolInvokeResponse, error) {
 	if call.AppData {
 		tools := s.runtime.toolSnapshot()
-		if tools == nil || !phoneBridgeCanAttemptAppCLI(tools.phoneBridge) {
-			te := NewToolErrorWithDetails(CodeBridgeNotConnected, appCLIRouteUnavailable, map[string]any{actionDispatchedDetail: false})
+		if tools == nil || !phoneBridgeCanAttemptAppData(ctx, tools.phoneBridge, call) {
+			te := NewToolErrorWithDetails(CodeBridgeNotConnected, "No companion app route is available for this operation.", map[string]any{actionDispatchedDetail: false})
 			return ToolInvokeResponse{IsError: true, Error: te.Message, ToolError: te}, nil
 		}
 	}

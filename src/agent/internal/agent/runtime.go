@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2016,9 +2017,16 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		return nil
 	}
 	tools := NewToolSpecs(r.toolSnapshot().All()).AgentToolsForPlatform(r.devicePlatformFromState())
-	if r.deviceCLIEnabled() {
+	cli := r.deviceCLIEnabled()
+	if cli {
 		filtered := tools[:0]
 		for _, tool := range tools {
+			// Keep the underlying Bridge handlers registered for CLI dispatch,
+			// but give the model only one entry point for these operations.
+			switch tool.Name() {
+			case toolBridgeClipboard, toolBridgeCalendar, toolBridgeContacts:
+				continue
+			}
 			if !builtInToolSpecMetadata[tool.Name()].UIOperation {
 				if shell, ok := tool.(*ShellTool); ok {
 					copy := *shell
@@ -2030,7 +2038,7 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		}
 		tools = filtered
 	}
-	return benchmarkHeadlessTools(r.ConfigSnapshot(), benchmarkMockTools(r.ConfigSnapshot(), r.filterPhoneBridgeAgentTools(tools)))
+	return benchmarkHeadlessTools(r.ConfigSnapshot(), benchmarkMockTools(r.ConfigSnapshot(), r.filterPhoneBridgeAgentTools(tools, cli)))
 }
 
 // AvailableTools returns the runtime-filtered tools exposed to the
@@ -2051,8 +2059,14 @@ func (r *Runtime) Tool(name string) (langtools.Tool, bool) {
 	return r.toolSnapshot().Get(name)
 }
 
-func (r *Runtime) filterPhoneBridgeAgentTools(tools []langtools.Tool) []langtools.Tool {
+func (r *Runtime) filterPhoneBridgeAgentTools(tools []langtools.Tool, cli bool) []langtools.Tool {
 	if r == nil || r.toolSnapshot() == nil || r.toolSnapshot().phoneBridge == nil {
+		if cli {
+			// A caller-injected catalog without a bridge cannot query the board ring.
+			return slices.DeleteFunc(tools, func(tool langtools.Tool) bool {
+				return tool != nil && tool.Name() == toolBridgeNotification
+			})
+		}
 		return tools
 	}
 	bridge := r.toolSnapshot().phoneBridge
@@ -2074,7 +2088,7 @@ func (r *Runtime) filterPhoneBridgeAgentTools(tools []langtools.Tool) []langtool
 	contactsCreateAvailable := phoneBridgeCommandAvailable(status, "contacts_create", capabilities.Wake)
 	contactsUpdateAvailable := phoneBridgeCommandAvailable(status, "contacts_update", capabilities.Wake)
 	contactsAvailable := contactsQueryAvailable || contactsCreateAvailable || contactsUpdateAvailable
-	notificationSendAvailable := phoneBridgeCommandAvailable(status, "notification_send", capabilities.Wake)
+	notificationSendAvailable := !cli && phoneBridgeCommandAvailable(status, "notification_send", capabilities.Wake)
 	notificationQueryAvailable := capabilities.NotificationQuery
 	notificationAvailable := notificationSendAvailable || notificationQueryAvailable
 

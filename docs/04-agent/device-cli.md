@@ -46,8 +46,8 @@ single-quoted shell argument with literal line breaks. In the shell tool's JSON,
 for example: `{"command":"device-cli app type 'First line\nSecond line'"}`.
 Do not use Bash-style `$'...'` quoting or send literal `\n` as part of the text.
 
-You can try other `device-cli app` commands under the same availability check. This permits an attempt; each operation still checks
-its own route, permissions, and prerequisites.
+App data commands also support BLE Wake or the return entry where the
+underlying Bridge action supports it.
 Without an active shell scope, the executable accepts `--url` to target a
 daemon directly (default `http://127.0.0.1:8080`).
 
@@ -58,8 +58,8 @@ A successful `drag-start` intentionally leaves it held for a later
 
 ## Companion app data
 
-These commands use the same connection, FGS, or PiP check as `app type` and
-still require the permissions needed for the requested operation. They return
+These commands check the available transport and permissions for the requested
+operation. They return
 structured data and do not attach a screenshot.
 
 ```sh
@@ -74,8 +74,10 @@ Calendar also supports `create` and `delete`; contacts also supports `create`
 and `update`. Use the existing Bridge tool argument fields, omitting `action`
 because the CLI verb supplies it. Notification `send` accepts `schedule_at`
 for a scheduled send. Confirm event details before creating or deleting events.
-The existing Bridge tools remain available according to their background-route
-policies. Notification queries still use `bridge_notification` with
+The model uses these commands instead of direct clipboard, calendar, contacts,
+and notification-send tools in Device CLI mode. The underlying Bridge handlers
+remain available to the CLI, Tools HTTP API, and legacy mode. Notification
+queries still use `bridge_notification` with
 `action=query` to read the board's notification ring. Top-level `open` and `url`
 keep their existing routing and UI fallbacks.
 

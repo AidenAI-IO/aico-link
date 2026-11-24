@@ -24,12 +24,12 @@ func TestAppDataKeepsServerConnectionGate(t *testing.T) {
 				if r.Method != http.MethodPost || r.URL.Path != tc.path || r.Header.Get("Authorization") != auth || json.NewDecoder(r.Body).Decode(&received) != nil || !reflect.DeepEqual(received, args) {
 					t.Errorf("unexpected request: %s %s %+v", r.Method, r.URL.Path, received)
 				}
-				_ = json.NewEncoder(w).Encode(map[string]any{"is_error": true, "error": "App commands require at least one of app_connected, app_fgs_enabled, or app_pip_enabled to be true."})
+				_ = json.NewEncoder(w).Encode(map[string]any{"is_error": true, "error": "No companion app route is available for this operation."})
 			}))
 			defer server.Close()
 			t.Setenv("AICO_DEVICE_CLI_URL", server.URL+tc.envSuffix)
 			t.Setenv("AICO_DEVICE_CLI_TOKEN", tc.token)
-			if err := run(server.URL, args); err == nil || err.Error() != "App commands require at least one of app_connected, app_fgs_enabled, or app_pip_enabled to be true." {
+			if err := run(server.URL, args); err == nil || err.Error() != "No companion app route is available for this operation." {
 				t.Fatalf("expected the connection error, got %v", err)
 			}
 		})

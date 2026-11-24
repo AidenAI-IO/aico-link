@@ -665,3 +665,40 @@ func newIOSPiPBackgroundBridge(t *testing.T) *PhoneBridge {
 	bridge.mu.Unlock()
 	return bridge
 }
+
+func TestDeviceCLICatalogDeduplicatesBridgeDataActions(t *testing.T) {
+	rt := newRuntimeWithTextEntryTools()
+	bridge := newPhoneBridgeForTest()
+	t.Cleanup(bridge.queue.Stop)
+	bridge.connected = true
+	bridge.bleStatus = func(context.Context) (ble.RuntimeStatus, error) {
+		return ble.RuntimeStatus{BackendAvailable: true, Connected: true, ANCSSubscribed: true}, nil
+	}
+	rt.tools.RegisterPhoneBridge(bridge)
+	for _, cli := range []bool{false, true} {
+		rt.deviceCLI = cli
+		tools := NewToolSpecs(rt.AvailableTools())
+		for _, name := range []string{toolBridgeCalendar, toolBridgeContacts, toolBridgeClipboard} {
+			if _, found := tools.Lookup(name); found == cli {
+				t.Fatalf("model catalog: CLI=%t, %s exposed=%t", cli, name, found)
+			}
+			if _, found := rt.ToolDescriptorByName(name); !found {
+				t.Fatalf("HTTP catalog lost %s", name)
+			}
+		}
+		notification, found := tools.Lookup(toolBridgeNotification)
+		if !found {
+			t.Fatal("notification query should remain exposed")
+		}
+		capability := notification.Tool.(*notificationCapabilityTool)
+		if !capability.allowQuery || capability.allowSend == cli {
+			t.Fatalf("unexpected notification actions: CLI=%t query=%t send=%t", cli, capability.allowQuery, capability.allowSend)
+		}
+		if cli {
+			ctx, _ := WithToolError(context.Background())
+			if _, err := capability.Call(ctx, `{"action":"send","title":"Test"}`); err != nil || ToolErrorFromContext(ctx) == nil {
+				t.Fatalf("direct send should be rejected: %v", err)
+			}
+		}
+	}
+}

@@ -44,6 +44,7 @@
         {"id": "stopped_after_success", "check": "After the successful read, the agent finishes without further clipboard calls or unrelated operations."}
       ],
       "hard_assertions": {
+        "allow_device_cli": true,
         "min_tool_calls": 1, "max_tool_calls": 6, "must_complete_within_sec": 120,
         "required_tool_calls": [{"tool": "bridge_clipboard", "input_contains": {"action": "read"}}],
         "forbidden_tools": ["shell", "request_user_action"]
@@ -74,6 +75,7 @@
         {"id": "honest_failure", "check": "The final response says the clipboard could not be read because the service is unavailable. It does not invent clipboard contents or present the failure as an empty clipboard."}
       ],
       "hard_assertions": {
+        "allow_device_cli": true,
         "min_tool_calls": 1, "max_tool_calls": 6, "must_complete_within_sec": 120,
         "forbidden_tools": ["shell", "request_user_action"]
       },
@@ -130,6 +132,7 @@
         {"id": "reported_value", "check": "The final response confirms Cedar room 619 as the stored clipboard text based on the successful read."}
       ],
       "hard_assertions": {
+        "allow_device_cli": true,
         "min_tool_calls": 1, "max_tool_calls": 6, "must_complete_within_sec": 120,
         "required_tool_calls": [{"tool": "bridge_clipboard", "input_contains": {"action": "read"}}],
         "forbidden_tools": ["shell", "request_user_action"]
@@ -233,6 +236,7 @@
         }
       ],
       "hard_assertions": {
+        "allow_device_cli": true,
         "min_tool_calls": 2,
         "max_tool_calls": 4,
         "must_complete_within_sec": 120,

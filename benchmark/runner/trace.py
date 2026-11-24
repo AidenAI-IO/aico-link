@@ -1,5 +1,7 @@
 from __future__ import annotations
 import json
+import re
+import shlex
 from collections.abc import Mapping
 from typing import Any
 from runner.models import ToolCall, Trace
@@ -103,6 +105,56 @@ def episode_device_cli_calls(event: Mapping[str, Any], step: int = 0) -> list[To
     return parsed
 
 
+# Only literal device-cli commands joined by && qualify. Never parse or
+# exempt arbitrary shell programs, even if they dispatched a CLI call.
+_CLI_LITERAL = r"(?:[a-zA-Z0-9_./,:+@%=-]+|'[^']*'|\"[^\"$`\\]*\")"
+_CLI_COMMAND = re.compile(rf"device-cli(?:[ \t]+{_CLI_LITERAL})+")
+_CLI_CHAIN = re.compile(rf"{_CLI_COMMAND.pattern}(?:[ \t]+&&[ \t]+{_CLI_COMMAND.pattern})*")
+_APP_DATA_VERBS = {
+    "clipboard": {"read", "write"}, "calendar": {"query", "create", "delete"},
+    "contacts": {"query", "create", "update"}, "notification": {"send"},
+}
+
+
+def is_device_cli_shell(tc: ToolCall) -> bool:
+    if tc.tool != "shell" or not isinstance(tc.input, dict):
+        return False
+    command = tc.input.get("command")
+    return (bool(tc.device_cli_calls) and isinstance(command, str)
+            and not tc.input.get("background") and "action" not in tc.input
+            and _CLI_CHAIN.fullmatch(command.strip()) is not None)
+
+
+def _restore_app_data_args(tc: ToolCall) -> None:
+    # Redaction removes nested private inputs, but the literal command is
+    # already in benchmark history. Recover only arguments, never execution
+    # or success, and only when the complete tool sequence agrees with it.
+    if not is_device_cli_shell(tc) or not any(not call.input for call in tc.device_cli_calls):
+        return
+    parsed = []
+    for match in _CLI_COMMAND.finditer(tc.input["command"].strip()):
+        args = shlex.split(match[0])
+        if len(args) not in (4, 5) or args[1] != "app":
+            return
+        domain, verb = args[2:4]
+        if verb not in _APP_DATA_VERBS.get(domain, ()):
+            return
+        if domain == "clipboard":
+            if len(args) != (4 if verb == "read" else 5):
+                return
+            fields = {} if verb == "read" else {"text": args[4]}
+        else:
+            fields = _safe_loads(args[4]) if len(args) == 5 else None
+            if not isinstance(fields, dict) or any(k.lower() == "action" for k in fields):
+                return
+        parsed.append(("bridge_" + domain, {**fields, "action": verb}))
+    if [name for name, _ in parsed] != [call.tool for call in tc.device_cli_calls]:
+        return
+    for (_, fields), call in zip(parsed, tc.device_cli_calls):
+        if not call.input:
+            call.input = fields
+
+
 def effective_tool_calls(trace: Trace) -> list[ToolCall]:
     """Keep outer calls for shell policy and expand recorded actions in order."""
     return [call for outer in trace.tool_calls for call in (outer, *outer.device_cli_calls)]
@@ -152,6 +204,7 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
         return False
     for (result, normalized), tool_call in zip(results, completed):
         tool_call.device_cli_calls = episode_device_cli_calls(result, tool_call.step)
+        _restore_app_data_args(tool_call)
         if isinstance(result.get("screenshot_ref"), str) and result["screenshot_ref"].strip():
             tool_call.has_screenshot = True
         tool_error = result.get("tool_error")
