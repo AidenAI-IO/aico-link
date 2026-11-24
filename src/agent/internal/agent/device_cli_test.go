@@ -226,18 +226,44 @@ func TestDeviceCLIDragStartCanBeReleasedFromAnotherShell(t *testing.T) {
 }
 
 func TestDeviceCLIShellFinalCaptureAfterWait(t *testing.T) {
-	before := terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})
-	after := terminationPolicyScreenshotObservation(t, 400, 200, image.Rectangle{})
-	shot := &stubTool{name: "screenshot", output: before}
-	s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"screenshot": shot}}}}
-	capture := &deviceCLICapture{deferObservation: true}
-	ctx := context.Background()
-	if got, err := executeDeviceCLI(ctx, s, []string{"wait", "0"}, capture); err != nil || got.IsError {
-		t.Fatalf("wait failed: %+v, %v", got, err)
+	for _, tc := range []struct {
+		name, ms string
+		delay    time.Duration
+	}{
+		{"no delay", "0", 0},
+		{"fixed delay", "20", 20 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shot := &stubTool{name: "screenshot", output: terminationPolicyScreenshotObservation(t, 400, 200, image.Rectangle{})}
+			s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"screenshot": shot}}}}
+			capture := &deviceCLICapture{deferObservation: true}
+			ctx := context.Background()
+			started := time.Now()
+			if got, err := executeDeviceCLI(ctx, s, []string{"wait", tc.ms}, capture); err != nil || got.IsError {
+				t.Fatalf("wait failed: %+v, %v", got, err)
+			}
+			if elapsed := time.Since(started); elapsed < tc.delay {
+				t.Fatalf("wait returned after %v, want at least %v", elapsed, tc.delay)
+			}
+			if len(shot.inputs) != 0 || len(capture.calls) != 0 {
+				t.Fatal("wait should not capture a frame or dispatch a device tool")
+			}
+			if err := capture.finishShell(ctx, s.runtime, true); err != nil || capture.frame.Result.Width != 400 || len(shot.inputs) != 1 {
+				t.Fatalf("expected one final screenshot, got width %d and %d captures: %v", capture.frame.Result.Width, len(shot.inputs), err)
+			}
+		})
 	}
-	shot.output = after // The screen changes after wait but before the shell exits.
-	if err := capture.finishShell(ctx, s.runtime, true); err != nil || capture.frame.Result.Width != 400 || len(shot.inputs) != 2 {
-		t.Fatalf("expected a fresh final screenshot, got dimensions %dx%d and %d captures: %v", capture.frame.Result.Width, capture.frame.Result.Height, len(shot.inputs), err)
+}
+
+func TestDeviceCLIWaitHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	capture := &deviceCLICapture{deferObservation: true}
+	if _, err := executeDeviceCLI(ctx, nil, []string{"wait", "30000"}, capture); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wait error = %v, want context deadline exceeded", err)
+	}
+	if capture.needsScreenshot {
+		t.Fatal("canceled wait should not request a screenshot on its own")
 	}
 }
 

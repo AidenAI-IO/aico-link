@@ -84,3 +84,28 @@ func TestAppDataCommandRestrictsAction(t *testing.T) {
 		}
 	}
 }
+
+func TestParseWaitDuration(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		ms   int
+	}{
+		{nil, 2000},
+		{[]string{"0"}, 0},
+		{[]string{"1200"}, 1200},
+		{[]string{"30000"}, 30000},
+		{[]string{"-1"}, -1},
+		{[]string{"30001"}, -1},
+		{[]string{"1s"}, -1},
+		{[]string{"1", "2"}, -1},
+	} {
+		delay, err := ParseWaitDuration(tc.args)
+		if tc.ms < 0 {
+			if err == nil {
+				t.Errorf("%q: wanted an error", tc.args)
+			}
+		} else if err != nil || delay.Milliseconds() != int64(tc.ms) {
+			t.Errorf("%q: delay=%v, err=%v; want %d ms", tc.args, delay, err, tc.ms)
+		}
+	}
+}

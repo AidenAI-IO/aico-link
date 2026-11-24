@@ -177,6 +177,22 @@ func (d *compositeDrag) cleanup(ctx context.Context) {
 }
 
 func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *deviceCLICapture) (ToolInvokeResponse, error) {
+	if len(args) > 0 && args[0] == "wait" {
+		delay, err := devicecli.ParseWaitDuration(args[1:])
+		if err != nil {
+			return ToolInvokeResponse{IsError: true, Error: err.Error(), ToolError: NewToolError(CodeInvalidArguments, err.Error())}, nil
+		}
+		if err := sleepWithContext(ctx, delay); err != nil {
+			return ToolInvokeResponse{}, err
+		}
+		if err := ctx.Err(); err != nil {
+			return ToolInvokeResponse{}, err
+		}
+		// Preserve wait 0 as a way to request a model-facing observation,
+		// but leave all capture to the existing shell finalizer.
+		capture.needsScreenshot = true
+		return ToolInvokeResponse{}, nil
+	}
 	calls, err := devicecli.Calls(args)
 	if err != nil {
 		return ToolInvokeResponse{IsError: true, Error: err.Error(), ToolError: NewToolError(CodeInvalidArguments, err.Error())}, nil
@@ -239,7 +255,7 @@ func (c *deviceCLICapture) executeInShell(ctx context.Context, s *Server, calls 
 		if err != nil || result.IsError {
 			return result, err
 		}
-		if call.Tool == "wait_for_stable_screen" || call.Tool == "screenshot" {
+		if call.Tool == "screenshot" {
 			if visual, ok := parseScreenshotObservation(result.Output); ok {
 				result.Output = screenshotObservationStatusSummary(call.Tool, visual.Result)
 			}

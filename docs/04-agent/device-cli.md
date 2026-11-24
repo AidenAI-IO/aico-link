@@ -94,7 +94,7 @@ pipe when the next action must not run after a failure.
 ## Viewing and saving screenshots
 
 ```sh
-device-cli wait 0                                      # Attach the current screen without waiting for stability
+device-cli wait 0                                      # Attach the final shell screenshot without a delay
 device-cli look                                        # Save a JPEG in /tmp
 device-cli look --dir /tmp --region 100 200 900 800     # Save a cropped JPEG
 ```
@@ -104,10 +104,10 @@ already exist and be writable; `/tmp` is the default and recommended choice.
 The Agent can inspect the saved JPEG with `read_image` using the printed path.
 `--region X1 Y1 X2 Y2` sets the top-left and bottom-right corners in normalized
 integer coordinates (0–1000). `look` only writes a file; it does not replace the shell's final screenshot.
-An explicit `wait` observation is reused when no device action follows it.
-
-`wait N` with a positive `N` sets the stability polling timeout in milliseconds
-(1–30000). Capturing the final frame can take additional time.
+`wait N` pauses for a fixed duration in milliseconds (0–30000; default 2000).
+It does not poll for screen stability or capture intermediate frames. In a
+foreground Agent shell, the usual final screenshot is captured at shell exit.
+Standalone `wait` only sleeps and does not contact the Agent.
 
 ## Experimental ConAct and Skill-UTG
 

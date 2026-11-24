@@ -39,6 +39,14 @@ func run(base string, args []string) error {
 		}
 		look = &options
 	}
+	if !scoped && len(args) > 0 && args[0] == "wait" {
+		delay, err := devicecli.ParseWaitDuration(args[1:])
+		if err != nil {
+			return err
+		}
+		time.Sleep(delay)
+		return nil
+	}
 	if scoped {
 		return runCall(client, base+"/command", args, os.Getenv("AICO_DEVICE_CLI_TOKEN"), look)
 	}

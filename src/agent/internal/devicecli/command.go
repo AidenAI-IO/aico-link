@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const Usage = `device-cli [--url URL] COMMAND
@@ -22,7 +23,7 @@ const Usage = `device-cli [--url URL] COMMAND
 App type requires a connected, FGS, or PiP route. App data uses the supported companion routes for each action. Quote JSON as a single object argument.
 For chords, use key meta+a or key meta a. Use key '+' for a literal plus.
 Coordinates are integers from 0 to 1000. Quote text as one shell argument.
-look saves a JPEG (default: /tmp). wait 0 captures without waiting for stability.`
+look saves a JPEG (default: /tmp). wait pauses for 0–30000 ms (default: 2000 ms).`
 
 // Text routes for the enter_text tool. Omitting route preserves legacy behavior.
 const (
@@ -157,23 +158,23 @@ func Calls(args []string) ([]Call, error) {
 			}
 			return one("mouse_scroll", map[string]any{"delta": n})
 		}
-	case "wait":
-		if len(a) <= 1 {
-			v := map[string]any{}
-			if len(a) == 1 {
-				ms, e := strconv.Atoi(a[0])
-				if e != nil || ms < 0 || ms > 30000 {
-					return nil, fmt.Errorf("wait must be 0–30000 ms")
-				}
-				if ms == 0 {
-					return one("screenshot", map[string]any{})
-				}
-				v["timeout_ms"] = ms
-			}
-			return one("wait_for_stable_screen", v)
-		}
 	}
 	return nil, fmt.Errorf("invalid arguments or unknown command: %s", cmd)
+}
+
+// ParseWaitDuration parses the arguments after wait. An omitted duration
+// keeps the previous default two-second budget as a fixed delay.
+func ParseWaitDuration(args []string) (time.Duration, error) {
+	if len(args) == 0 {
+		return 2 * time.Second, nil
+	}
+	if len(args) == 1 {
+		ms, err := strconv.Atoi(args[0])
+		if err == nil && ms >= 0 && ms <= 30000 {
+			return time.Duration(ms) * time.Millisecond, nil
+		}
+	}
+	return 0, fmt.Errorf("usage: device-cli wait [milliseconds] (0–30000)")
 }
 
 // App data commands reuse the existing Bridge schemas. The verb is selected
