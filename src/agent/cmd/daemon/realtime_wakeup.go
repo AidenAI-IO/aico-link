@@ -1933,16 +1933,21 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			return fmt.Errorf("persist realtime assistant response: %w", err)
 		}
 		assistantPersisted = true
+		// The usage belongs to the saved reply; a continuation reports its own.
+		realtimeResponseUsage = messages.Usage{}
+		hasRealtimeResponseUsage = false
 		return nil
 	}
-	defer func() {
-		// The session ended mid-reply, for example on a stop: keep what was said.
-		if turnState.responseActive && !responseDiscarded && activeNotificationToken == "" {
+	// saveCutOffReply keeps a reply whose terminal event will not be handled,
+	// because the session ends or the response loses its ownership first.
+	saveCutOffReply := func(reason string) {
+		if (turnState.responseActive || turnState.responseTerminalPending) && !responseDiscarded && activeNotificationToken == "" {
 			if err := saveAssistantReply(true); err != nil {
-				logging.Warnf("agent", "realtime", "Save interrupted reply at session end failed: %v", err)
+				logging.Warnf("agent", "realtime", "Save interrupted reply %s failed: %v", reason, err)
 			}
 		}
-	}()
+	}
+	defer saveCutOffReply("at session end")
 	var sleep realtimeSleepState
 	defer func() {
 		if notificationDrainCancel != nil {
@@ -2664,12 +2669,13 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				}
 			case realtimevoice.EventResponseStarted:
 				ownerTurn := turnState.responseOwnerTurn()
+				duplicateCreated := event.ResponseID != "" && event.ResponseID == turnState.responseID && !turnState.responseRequestPending
 				if !turnState.responseStarted(event.ResponseID) {
 					logging.Warnf("agent", "realtime", "Ignoring stale response.created: response_id=%s input_turn=%d request_turn=%d", event.ResponseID, turnState.inputTurnSequence, turnState.responseRequestTurn)
 					// The user spoke after this response was requested. Left
 					// running, it holds the provider: some providers then
 					// answer the user's turn with nothing at all.
-					if canInterrupt && event.ResponseID != "" {
+					if canInterrupt && event.ResponseID != "" && !duplicateCreated {
 						if err := responseInterrupter.Interrupt(ctx, realtimevoice.ResponseInterruption{}); err != nil {
 							logging.Warnf("agent", "realtime", "Cancel superseded response failed: response_id=%s err=%v", event.ResponseID, err)
 						}
@@ -2710,6 +2716,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				}
 				responseText.Reset()
 				responseTranscript.Reset()
+				deferredAssistantFinal = nil
 				assistantPersisted = false
 				responseDiscarded = false
 				if emptyTurn.shouldSuppressTurn(ownerTurn) && activeNotificationToken == "" && !responseSuppressed && activeChat == nil {
@@ -2895,7 +2902,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						return
 					}
 					sameResponse := final != nil && (final.ResponseID == "" || terminalEvent.ResponseID == "" || final.ResponseID == terminalEvent.ResponseID)
-					if sameResponse && !wasCanceled && terminalEvent.Kind == realtimevoice.EventResponseDone {
+					if sameResponse && !wasCanceled && !responseDiscarded && terminalEvent.Kind == realtimevoice.EventResponseDone {
 						semanticEmitter.emit(*final)
 					}
 					// Terminal events describe the response outcome even when the
@@ -2939,7 +2946,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					if hasTools, continueNow := toolTracker.done(event.ResponseID); hasTools {
 						// What it said before calling the tool is part of the
 						// conversation too; dropping it made the bubble vanish.
-						if !notificationResponse && !suppressedResponse {
+						if !notificationResponse && !suppressedResponse && !responseDiscarded {
 							if err := saveAssistantReply(false); err != nil {
 								return err
 							}
@@ -2961,7 +2968,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				}
 				if !notificationResponse && !suppressedResponse {
 					completed := !wasCanceled && (event.Status == "" || event.Status == "completed")
-					if completed || (wasCanceled && !responseDiscarded) {
+					if !responseDiscarded && (completed || wasCanceled) {
 						if err := saveAssistantReply(!completed); err != nil {
 							return err
 						}
@@ -2969,7 +2976,8 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				}
 				realtimeResponseUsage = messages.Usage{}
 				hasRealtimeResponseUsage = false
-				assistantPersisted = false
+				// This reply is settled; the next response start resets it.
+				assistantPersisted = true
 				emitTerminal()
 				feedbackStatus := event.Status
 				if feedbackStatus == "" {
@@ -3090,6 +3098,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						logging.Warnf("agent", "realtime", "Cancel running response failed: %v", err)
 					}
 				}
+				// The new request retires the running response, so its late
+				// cancellation is ignored: save what it said now.
+				saveCutOffReply("before answering the unanswered turn")
 				turnState.inputTurnPending = false
 				requestOwner = nil
 				if err := textSession.CreateResponse(ctx); err != nil {
