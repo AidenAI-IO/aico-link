@@ -1941,7 +1941,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	// saveCutOffReply keeps a reply whose terminal event will not be handled,
 	// because the session ends or the response loses its ownership first.
 	saveCutOffReply := func(reason string) {
-		if (turnState.responseActive || turnState.responseTerminalPending) && !responseDiscarded && activeNotificationToken == "" {
+		suppressed := responseSuppressed || suppressedNotificationResponsePending ||
+			hasSuppressedNotificationResponse(suppressedNotificationResponseIDs, turnState.responseID)
+		if (turnState.responseActive || turnState.responseTerminalPending) && !responseDiscarded && !suppressed && activeNotificationToken == "" {
 			if err := saveAssistantReply(true); err != nil {
 				logging.Warnf("agent", "realtime", "Save interrupted reply %s failed: %v", reason, err)
 			}
