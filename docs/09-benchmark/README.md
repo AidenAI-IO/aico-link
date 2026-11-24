@@ -288,6 +288,7 @@ Common options:
 - `--suite PATH` - Benchmark suite JSON path.
 - `--agent-url URL` - Existing agent daemon URL.
 - `--environment-url URL` - Environment bridge URL for setup, pre/post screen capture, and release.
+- `--additional-environment-url URL` - Another bridge of the same type and platform, repeatable. With `--auto-agent-setup`, each worker holds one bridge slot from task setup to release, so one run can spread its tasks over several ADB devices.
 - `--auto-agent-setup` - Start isolated agent daemon workers and schedule by bridge concurrency.
 - `--agent-config PATH` - Agent config used for auto-started daemon workers.
 - `--no-judge` - Only run hard assertions. Tasks with an unevaluated rubric are `skipped` and excluded from success rates until rejudged; assertion failures still fail.
@@ -513,8 +514,8 @@ The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
 case whose environment is `isolated`, `mobilegym`, or `adb` and whose catalog
 `runnable` flag is true. This includes both ADB comparison pairs (four cases)
 and the built-in app case on the runner's configured Android emulator. ADB cases remain available through
-the manual `hardware` profile and use the same exclusive device lock in every
-profile. The `all` profile runs each catalog case once, without duplication.
+the manual `hardware` profile and lease devices from the same Android device
+pool in every profile. The `all` profile runs each catalog case once, without duplication.
 The workflow starts Android MobileGym environments in Docker; isolated and mock
 suites run with isolated Agent workers and need no external device.
 VPhone is currently excluded because it requires a separately hosted macOS
@@ -590,7 +591,11 @@ repository setting. If neither is set, the workflow uses `1`. The report derives
 
 ADB cases need a booted Android device or emulator reachable from the runner
 host. Set `BENCHMARK_ANDROID_SERIAL` to its adb serial, for example
-`emulator-5554`; the workflow passes it to the runner as `ANDROID_SERIAL`. When
+`emulator-5554`, or to a comma-separated list such as
+`emulator-5554,emulator-5556,emulator-5558,emulator-5560` to give ADB cases a
+device pool; the workflow passes it to the runner as `ANDROID_SERIAL`. Each
+pooled device must be a separate emulator with the same system image and the
+same root, Aico App, and SystemUI readiness as a single device. When
 `adb` is not already on the runner's `PATH`, the workflow uses
 `<sdk>/platform-tools/adb`, where `<sdk>` is the optional
 `BENCHMARK_ANDROID_SDK_DIR` variable and defaults to `~/android-sdk`. Before any
@@ -599,16 +604,20 @@ checks that `com.android.systemui` is running and
 `uiautomator dump` returns a hierarchy. `sys.boot_completed` alone is not
 enough: SystemUI can stay dead after a GPU hang while the device still reports
 a finished boot. On the self-hosted runner, a failed UI check or an
-`android-emulator.service` cgroup above 16 GiB restarts that service once and
-runs the same checks again. The guest RAM limit is 4 GiB; a fresh service is
+emulator service cgroup above 16 GiB restarts that service once and runs the
+same checks again. The service for `emulator-<port>` is the user unit
+`android-emulator@<port>.service`; the first serial may instead use the original
+`android-emulator.service`. A serial with neither unit cannot be restarted. The guest RAM limit is 4 GiB; a fresh service is
 about 8 GiB because SwiftShader sits on top of that. The rest of a long-lived
-process is the host RenderThread leak. A device that still has no usable UI fails
-the job before cases start.
+process is the host RenderThread leak. A device that still has no usable UI is dropped
+from the pool with a warning, and the remaining devices run the ADB cases. The
+job fails before cases start only when no device is usable.
 
 When any selected case enables Aico App, CI reads the current release
 filename from the unversioned distribution URL and compares its `versionCode`
 with the `link.aico.app` package already installed on the emulator. It downloads
-and installs the APK only when the versions differ. The job summary records the
+and installs the APK only when the versions differ. Every pooled device gets
+the App and the routing setup, because any of them may receive an Aico App case. The job summary records the
 release filename, installed `versionCode`, and whether installation was reused; when an APK is
 downloaded, it also records its SHA-256. A republished APK with the same
 `versionCode` is treated as the same release. Installation runs once per job.
@@ -644,7 +653,11 @@ environment without a Phone Bridge connection. The connected variant establishes
 Phone Bridge on each task Agent while ADB continues to provide screenshots and
 input. Both variants retain the task's prepared screen; the connected variant
 does not bring the companion App to the foreground after task setup.
-ADB cases run exclusively on the shared emulator, including scheduled runs.
+Each ADB case leases devices from the pool for its whole run, so no two cases
+share an emulator. A case's catalog `max_concurrency` is the most devices it
+leases, one task per device; it uses fewer when fewer are configured. Aico App
+cases always use one device. Cases take their devices first come, first served,
+and the cases that need the most devices ask first.
 
 The companion App reaches the board only after binding to a USB or Ethernet
 Android Network that routes to the board subnet, and the emulator has neither.
@@ -717,9 +730,14 @@ The benchmark job uses the `aiden-hosted-02` runner by default (override with
 `AICO_RUNNER_PRIMARY`) because the MobileGym and agent-daemon paths require
 Docker. One job performs checkout,
 dependency and Docker setup once, prepares the reusable images, and fans the
-selected cases out with a configurable concurrency limit. MobileGym cases are
-scheduled first so multiple container-backed benchmarks can overlap;
-hardware-backed cases share an exclusive lock to avoid device/bridge contention.
+selected cases out. `BENCHMARK_CI_MAX_PARALLEL` limits how many
+container-backed (isolated and MobileGym) cases run at once, and MobileGym
+cases are scheduled first among them. Device-backed cases do not use those
+slots and start immediately, because they are usually the critical path: ADB
+cases wait only for free devices in the Android pool, and external-hardware
+cases share an exclusive lock to avoid device/bridge contention. With four
+emulators, the daily sweep finishes its cases in roughly 20 minutes instead of
+the 67 minutes the ADB cases needed back to back on one emulator.
 Every completed run uploads a 14-day diagnostic bundle containing its manifest,
 metrics, results, summary, HTML report, suite snapshot, setup/case logs, and an
 image-build log when an image had to be built. The upload is retried once after a

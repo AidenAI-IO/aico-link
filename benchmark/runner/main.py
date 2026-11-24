@@ -5,6 +5,7 @@ from contextlib import nullcontext
 import hashlib
 import json
 import os
+import queue
 import re
 import sys
 import time
@@ -121,6 +122,9 @@ def cli(argv: list[str] | None = None) -> int:
     p_run.add_argument("--agent-url", default=os.environ.get("AICO_AGENT_URL", "http://localhost:8080"))
     p_run.add_argument("--environment-url", default=os.environ.get("AICO_ENVIRONMENT_URL", ""),
                        help="Optional environment bridge endpoint; when set, each task calls /api/setup, POST /api/providers/screenshot, and /api/release")
+    p_run.add_argument("--additional-environment-url", action="append", default=[],
+                       help="Another bridge of the same type and platform as --environment-url; "
+                            "with --auto-agent-setup each worker holds one bridge slot at a time. Can be repeated")
     p_run.add_argument("--auto-agent-setup", action="store_true",
                        help="Start isolated agent daemons automatically and ignore --agent-url; concurrency is read from environment bridge /api/concurrent")
     p_run.add_argument("--android-phone-bridge-serial", default="",
@@ -463,6 +467,26 @@ def _read_environment_health(environment_url: str) -> dict:
     return read_environment_health(environment_url)
 
 
+def _additional_environment_urls(args: argparse.Namespace) -> list[str]:
+    urls = (str(url or "").strip() for url in getattr(args, "additional_environment_url", None) or [])
+    return [url for url in urls if url]
+
+
+def _environment_slots(environment_urls: list[str], read_concurrency) -> list[str]:
+    """One entry per concurrent task a bridge serves, interleaved across bridges.
+
+    Interleaving matters when --max-concurrency caps the workers below the total:
+    the first workers then land on different devices instead of queueing on one.
+    """
+    capacities = [max(1, read_concurrency(url) or 1) for url in environment_urls]
+    return [
+        url
+        for depth in range(max(capacities, default=0))
+        for url, capacity in zip(environment_urls, capacities)
+        if depth < capacity
+    ]
+
+
 def _preflight_mobilegym_environment(
     environment_url: str,
     *,
@@ -668,28 +692,30 @@ def _cmd_run_auto_agent_setup_inner(
     )
     total_runs = len(units)
     has_runnable_units = any(not unit.skip_reason for unit in units)
+    environment_urls = (
+        [args.environment_url, *_additional_environment_urls(args)]
+        if args.environment_url
+        else []
+    )
+    # Each worker leases one slot for a whole task; a bridge contributes as
+    # many slots as it reports concurrent environments.
+    environment_slots: queue.Queue[str] = queue.Queue()
     if has_runnable_units:
-        if args.environment_url:
-            clear_stale_adb_android_owner(args.environment_url)
+        for url in environment_urls:
+            clear_stale_adb_android_owner(url)
         ensure_daemon_image(args.daemon_image, not args.no_build_daemon_image, setup_log)
-        concurrency = (
-            read_environment_bridge_concurrency(args.environment_url) or 1
-            if args.environment_url
-            else 1
-        )
+        slots = _environment_slots(environment_urls, read_environment_bridge_concurrency)
+        for slot in slots:
+            environment_slots.put(slot)
+        concurrency = len(slots) if environment_urls else 1
         if args.max_concurrency > 0:
             concurrency = (
                 min(concurrency, args.max_concurrency)
-                if args.environment_url
+                if environment_urls
                 else args.max_concurrency
             )
     else:
         concurrency = 1
-    docker_environment_url = (
-        endpoint_for_docker(args.environment_url.rstrip("/"))
-        if args.environment_url
-        else ""
-    )
     judge_cfg = None if args.no_judge else JudgeConfig(model=args.judge_model, base_url=args.judge_base_url)
     judge_cache = run_dir / "_judge_cache"
     sha, dirty = git_sha(REPO_ROOT)
@@ -773,12 +799,18 @@ def _cmd_run_auto_agent_setup_inner(
             unit.attempt,
             unit.repeats,
         )
+        # The executor never runs more workers than there are slots, so this
+        # never waits; it only pins the task to one bridge from setup to release.
+        environment_url = environment_slots.get() if environment_urls else ""
+        docker_environment_url = (
+            endpoint_for_docker(environment_url.rstrip("/")) if environment_url else ""
+        )
         job = Job(
             id=f"{run_id}-{token}",
-            endpoint=args.environment_url.rstrip("/") if args.environment_url else "",
+            endpoint=environment_url.rstrip("/"),
             docker_endpoint=docker_environment_url,
             suites=[str(suite.source_path)],
-            environment_endpoint=args.environment_url.rstrip("/") if args.environment_url else "",
+            environment_endpoint=environment_url.rstrip("/"),
             agent_url=agent_url,
             container_name=f"aico-benchmark-agent-{run_id}-{token}",
             config_dir=str(config_dir),
@@ -813,7 +845,7 @@ def _cmd_run_auto_agent_setup_inner(
                 environment_bridge_endpoint=docker_environment_url,
                 benchmark_task_id=route_id,
                 device_type=unit.target_platform,
-                environment_bridge_mode=bool(args.environment_url),
+                environment_bridge_mode=bool(environment_url),
                 benchmark_mock_tools=task_mock_environment is not None,
                 benchmark_local_phone_bridge=bool(bridge_serial) or (environment_health or {}).get("bridge_type") == "adb_android",
                 benchmark_realtime_text=getattr(args, "execution_mode", "backend-text") == "realtime-text",
@@ -885,7 +917,7 @@ def _cmd_run_auto_agent_setup_inner(
                     judge_cfg,
                     judge_cache,
                     run_id,
-                    environment_url=args.environment_url or None,
+                    environment_url=environment_url or None,
                     benchmark_task_id=route_id,
                     **({"execution_mode": "realtime-text", "fixture_token": mock_server.control_token if mock_server else ""}
                        if getattr(args, "execution_mode", "backend-text") == "realtime-text" else {}),
@@ -950,24 +982,29 @@ def _cmd_run_auto_agent_setup_inner(
                 str(exc),
             )
         finally:
-            # No worker may keep operating a lease after it is released.
-            stop_daemon_compose(job)
-            if args.environment_url:
-                try:
-                    call_environment_release(args.environment_url, task_id=route_id)
-                except ResetError as exc:
-                    print(f"warning: failed to release environment task route for {route_id}: {exc}", file=sys.stderr, flush=True)
-            if client is not None:
-                client.close()
-            if log_proc is not None:
-                log_proc.terminate()
+            try:
+                # No worker may keep operating a lease after it is released.
+                stop_daemon_compose(job)
+                if environment_url:
+                    try:
+                        call_environment_release(environment_url, task_id=route_id)
+                    except ResetError as exc:
+                        print(f"warning: failed to release environment task route for {route_id}: {exc}", file=sys.stderr, flush=True)
+                if client is not None:
+                    client.close()
+                if log_proc is not None:
+                    log_proc.terminate()
+            finally:
+                # A lost slot would leave a later worker waiting forever.
+                if environment_url:
+                    environment_slots.put(environment_url)
 
     results = []
     completed = 0
     max_workers = min(max(1, concurrency), max(1, total_runs))
     print(
         f"auto agent setup enabled: concurrency={max_workers} "
-        f"environment={display_environment_url}",
+        f"environment={', '.join([display_environment_url or '', *environment_urls[1:]])}",
         flush=True,
     )
     # The companion App connects to the board only after binding to a USB or
@@ -1043,6 +1080,7 @@ def _cmd_run_auto_agent_setup_inner(
         "selected_task_ids": selected_task_ids,
         "agent_url": None,
         "environment_url": display_environment_url or None,
+        **({"additional_environment_urls": environment_urls[1:]} if len(environment_urls) > 1 else {}),
         "agent_model": args.agent_model,
         "skills_fingerprint": skills_fingerprint,
         "judge_config": {"provider": judge_cfg.provider, "model": args.judge_model, "base_url": args.judge_base_url} if judge_cfg else None,
@@ -1108,6 +1146,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
     ):
         print("Error: --android-phone-bridge-serial requires --auto-agent-setup and --environment-url", file=sys.stderr)
         return 2
+    additional_environment_urls = _additional_environment_urls(args)
+    if additional_environment_urls and not (args.auto_agent_setup and args.environment_url):
+        print("Error: --additional-environment-url requires --auto-agent-setup and --environment-url", file=sys.stderr)
+        return 2
+    if additional_environment_urls and getattr(args, "android_phone_bridge_serial", ""):
+        print("Error: Android Phone Bridge runs on one device; drop --additional-environment-url", file=sys.stderr)
+        return 2
     if any(task.android_bridge_input_text or task.android_bridge_fixture for task in suite.tasks):
         if not args.auto_agent_setup or not getattr(args, "android_phone_bridge_serial", ""):
             print("Error: Android Bridge assertions/fixtures require --auto-agent-setup and --android-phone-bridge-serial", file=sys.stderr)
@@ -1141,6 +1186,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
         target_platform = (
             resolved_platform.value if resolved_platform is not None else ""
         )
+        additional_environment_health = {}
+        for url in additional_environment_urls:
+            # Tasks are assigned to whichever bridge is free, so every bridge must
+            # be interchangeable with the primary one.
+            health = _read_environment_health(url)
+            bridge_type = str(health.get("bridge_type") or "")
+            if bridge_type != str((environment_health or {}).get("bridge_type") or ""):
+                raise ValueError(f"{url} is a {bridge_type or 'untyped'} bridge, unlike --environment-url")
+            platform = resolve_environment_platform(health, constraint=target_platform or None)
+            if platform is None or platform.value != target_platform:
+                raise ValueError(f"{url} does not serve the {target_platform or 'resolved'} platform")
+            additional_environment_health[url] = health
     except Exception as exc:
         print(f"Error: failed to resolve target platform: {exc}", file=sys.stderr)
         return 2
@@ -1175,6 +1232,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 args.environment_url,
                 health=environment_health,
             )
+            for url, health in additional_environment_health.items():
+                _preflight_mobilegym_environment(url, health=health)
         except Exception as exc:
             print(f"Error: environment preflight failed: {exc}", file=sys.stderr)
             return 2

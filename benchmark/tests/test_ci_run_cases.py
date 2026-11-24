@@ -213,7 +213,7 @@ def test_run_case_terminates_the_runner_process_group_on_timeout(
             raise RuntimeError("emulator unavailable")
 
     monkeypatch.setattr(run_case_module, "remove_board_network", remove_network)
-    monkeypatch.setattr(run_case_module, "_environment_url", lambda *args, **kwargs: ("", None))
+    monkeypatch.setattr(run_case_module, "_environment_url", lambda *args, **kwargs: ("", {"pid": 0}))
     monkeypatch.setattr(run_case_module, "_stop_service", lambda service: cleanup_events.append("service"))
     worker_dir = tmp_path / "runs" / "ci-timeout" / "workers" / "worker-token"
     worker_dir.mkdir(parents=True)
@@ -308,3 +308,41 @@ def test_run_json_terminates_environment_startup_process_group_on_timeout(
     assert captured["timeout"] == 1
     assert captured["kwargs"]["start_new_session"] is True
     assert captured["terminated"] is not None
+
+
+@pytest.mark.parametrize("serials", ["emulator-5554", "emulator-5554,emulator-5556,emulator-5558"])
+def test_adb_cases_lease_disjoint_devices_outside_container_slots(monkeypatch, tmp_path, serials):
+    pool = serials.split(",")
+    wide = SuiteCase(id="wide", suite="suites/wide.json", environment="adb",
+                     target_platform="android", max_concurrency=2)
+    narrow = _case("narrow", "adb")
+    cases = (narrow, _case("memory", "isolated"), wide)
+    in_use: set[str] = set()
+    leases: dict[str, list[str]] = {}
+    lock = threading.Lock()
+    # With enough devices every case overlaps, even with one container slot.
+    everyone_started = threading.Barrier(3 if len(pool) == 3 else 1, timeout=2)
+
+    def fake_run_case(case, *, run_id, environment, log_path, timeout_seconds):
+        leased = environment["ANDROID_SERIAL"].split(",") if case.environment == "adb" else []
+        with lock:
+            assert not in_use & set(leased)
+            in_use.update(leased)
+            leases[case.id] = leased
+        if len(pool) == 3:
+            everyone_started.wait()
+        with lock:
+            in_use.difference_update(leased)
+        return 0
+
+    monkeypatch.setattr(run_cases_module, "BENCHMARK_ROOT", tmp_path)
+    monkeypatch.setattr(run_cases_module, "run_case", fake_run_case)
+
+    outcomes = run_cases_module.run_cases(
+        cases, run_id_prefix="ci-test", environment={"ANDROID_SERIAL": serials}, max_parallel=1,
+    )
+
+    assert all(outcome.ok for outcome in outcomes)
+    assert len(leases["wide"]) == min(2, len(pool))
+    assert len(leases["narrow"]) == 1
+    assert set(leases["wide"] + leases["narrow"]) <= set(pool)

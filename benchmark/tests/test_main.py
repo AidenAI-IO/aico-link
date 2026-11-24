@@ -2268,6 +2268,80 @@ def test_auto_agent_setup_caps_environment_concurrency(monkeypatch, tmp_path):
     assert manifest["concurrency"] == 2
 
 
+@pytest.mark.parametrize("second_platform", ["android", "ios"])
+def test_auto_agent_setup_pins_each_task_to_one_free_bridge(monkeypatch, tmp_path, second_platform):
+    suite_path = tmp_path / "suite.json"
+    suite_path.write_text(json.dumps({"name": "adb_suite", "tasks": [
+        {"id": f"task_{i}", "category": "diagnostic", "prompt": "open",
+         "description_for_judge": "open", "rubric": [{"id": "done", "check": "done"}]}
+        for i in range(4)
+    ]}), encoding="utf-8")
+    first, second = "http://127.0.0.1:19090", "http://127.0.0.1:19091"
+    platforms = {first: "android", second: second_platform}
+
+    class FakeClient:
+        def __init__(self, base_url, benchmark_token=""):
+            pass
+
+        def close(self):
+            pass
+
+    in_use, used, released = set(), set(), []
+    lock = threading.Lock()
+    both_busy = threading.Barrier(2, timeout=2)
+
+    def fake_run_one_task(client, suite, task, attempt, artifact_dir, *args, environment_url, **kwargs):
+        with lock:
+            assert environment_url not in in_use
+            in_use.add(environment_url)
+            used.add(environment_url)
+        if task.id in {"task_0", "task_1"}:
+            both_busy.wait()  # The two bridges serve tasks at the same time.
+        with lock:
+            in_use.discard(environment_url)
+        return TaskResult(suite=suite.name, run_id="pool-run", task_id=task.id, category=task.category,
+                          attempt=attempt, status="passed", rubric=[], rubric_pass_count=0,
+                          rubric_total=0, artifact_dir=str(artifact_dir))
+
+    def fake_prepare_run_config(base_config_dir, config_dir, **kwargs):
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "control_token").write_text("test-token", encoding="utf-8")
+
+    monkeypatch.setattr(main, "AgentClient", FakeClient)
+    monkeypatch.setattr(main, "_read_environment_health",
+                        lambda url: {"platform": platforms[url], "bridge_type": "adb_android"})
+    monkeypatch.setattr(main, "clear_stale_adb_android_owner", lambda url: "")
+    monkeypatch.setattr(main, "wait_for_agent_ready", lambda *args, **kwargs: True)
+    monkeypatch.setattr(main, "wait_for_agent_clock", lambda *args, **kwargs: True)
+    monkeypatch.setattr(main, "generate_report_html", lambda run_dir: "<html></html>")
+    monkeypatch.setattr(main, "call_environment_release", lambda url, **kwargs: released.append(url))
+    monkeypatch.setattr(main, "run_one_task", fake_run_one_task)
+    monkeypatch.setattr(webui, "ensure_daemon_image", lambda *args, **kwargs: None)
+    monkeypatch.setattr(webui, "read_environment_bridge_concurrency", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(webui, "prepare_run_config", fake_prepare_run_config)
+    monkeypatch.setattr(webui, "docker_published_port", lambda container_id, container_port: 18081)
+    monkeypatch.setattr(webui, "start_daemon_compose", lambda *args, **kwargs: "container-id")
+    monkeypatch.setattr(webui, "start_daemon_logs", lambda *args, **kwargs: None)
+    monkeypatch.setattr(webui, "stop_daemon_compose", lambda *args, **kwargs: None)
+
+    rc = main.cli([
+        "run", "--suite", str(suite_path), "--out", str(tmp_path / "runs"), "--run-id", "pool-run",
+        "--environment-url", first, "--additional-environment-url", second,
+        "--target-platform", "android", "--auto-agent-setup", "--no-judge",
+    ])
+
+    if second_platform != "android":
+        assert rc == 2  # Tasks could land on either bridge, so both must match.
+        return
+    assert rc == 0
+    assert used == {first, second}
+    assert len(released) == 4 and set(released) == used  # Released where it ran.
+    manifest = json.loads((tmp_path / "runs" / "pool-run" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["concurrency"] == 2
+    assert manifest["environment_url"] == first
+    assert manifest["additional_environment_urls"] == [second]
+
+
 def test_auto_agent_setup_rejects_negative_max_concurrency_before_setup(monkeypatch, tmp_path, capsys):
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(

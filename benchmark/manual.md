@@ -829,6 +829,7 @@ Common parameters:
 | `--suite PATH` | Required, path to the suite JSON |
 | `--agent-url URL` | Agent daemon address; default `http://localhost:8080` or `AICO_AGENT_URL` |
 | `--environment-url URL` | Optional, environment bridge address; used for `/api/setup`, `/api/providers/screenshot`, `/api/release` |
+| `--additional-environment-url URL` | Optional and repeatable; another bridge of the same type and platform. With `--auto-agent-setup`, each worker holds one bridge slot per task, so one run can use several ADB devices |
 | `--target-platform PLATFORM` | Target device platform (`auto`, `ios`, or `android`); validated against the environment or agent |
 | `--benchmark-token-file PATH` | File containing the benchmark control token used for protected agent endpoints |
 | `--auto-agent-setup` | Ignore `--agent-url`; auto-start isolated agent daemons concurrently per `/api/concurrent` |

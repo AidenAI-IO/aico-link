@@ -6,13 +6,16 @@ time. Fanning out here collapses that setup to once per job and overlaps the
 cases that are genuinely independent: run directories, container names and
 published ports are all keyed by run id.
 
-Cases backed by shared hardware cannot overlap, so they are serialised behind a
-mutex while the container-backed ones run free.
+Container-backed cases share a bounded pool of slots. ADB cases lease Android
+devices from a pool instead, so they never use a container slot: the runner
+may host several emulators, and an ADB case can spread its tasks over more than
+one. External hardware cannot be shared, so those cases run one at a time.
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
 import concurrent.futures
 import dataclasses as dc
 import json
@@ -30,12 +33,48 @@ from ci.plan import (
     CatalogError,
     SuiteCase,
 )
-from ci.run_case import _incomplete_run_reasons, run_case
+from ci.run_case import _incomplete_run_reasons, android_serials, run_case
 
 DEFAULT_MAX_PARALLEL = 2
 LOG_TAIL_LINES = 40
 # Set to "0" by the workflow when the shared Aico App install failed.
 AIDENBRIDGE_READY_ENV = "AIDENBRIDGE_READY"
+
+
+class DevicePool:
+    """Lease ADB serials to cases first come, first served.
+
+    A case takes all of its devices at once, so two multi-device cases can never
+    each hold part of what the other needs. Strict arrival order keeps a case
+    that needs several devices from being overtaken indefinitely.
+    """
+
+    def __init__(self, serials: list[str]) -> None:
+        self._free = list(serials)
+        self.size = len(serials)
+        self._waiting: collections.deque[object] = collections.deque()
+        self._changed = threading.Condition()
+
+    def acquire(self, count: int) -> list[str]:
+        count = min(max(1, count), self.size)
+        if count == 0:
+            return []
+        ticket = object()
+        with self._changed:
+            self._waiting.append(ticket)
+            self._changed.wait_for(
+                lambda: self._waiting[0] is ticket and len(self._free) >= count
+            )
+            self._waiting.popleft()
+            leased, self._free = self._free[:count], self._free[count:]
+            # The next waiter may fit in what is left.
+            self._changed.notify_all()
+            return leased
+
+    def release(self, serials: list[str]) -> None:
+        with self._changed:
+            self._free.extend(serials)
+            self._changed.notify_all()
 
 
 @dc.dataclass(frozen=True)
@@ -155,9 +194,10 @@ def run_cases(
     environment: Mapping[str, str],
     max_parallel: int = DEFAULT_MAX_PARALLEL,
 ) -> list[CaseOutcome]:
-    # Shared phones and Macs cannot serve two cases at once, so every
-    # hardware-backed case takes this lock; container-backed ones never touch it.
-    hardware_lock = threading.Lock()
+    # Shared phones and Macs cannot serve two cases at once. ADB cases lease
+    # emulators from the pool instead; container-backed ones touch neither.
+    external_lock = threading.Lock()
+    devices = DevicePool(android_serials(environment))
     print_lock = threading.Lock()
     started = time.monotonic()
 
@@ -197,17 +237,24 @@ def run_cases(
             BENCHMARK_ROOT / "runs" / ".ci-case-logs" / run_id / "ci-case.log"
         )
         final_log_path = BENCHMARK_ROOT / "runs" / run_id / "ci-case.log"
-        needs_hardware = case.environment in HARDWARE_ENVIRONMENTS
-        if needs_hardware:
+        leased: list[str] = []
+        case_environment = environment
+        needs_external = case.environment == "external"
+        if needs_external:
             emit(f"WAIT    {case.id} (hardware is exclusive)")
-            hardware_lock.acquire()
+            external_lock.acquire()
+        elif case.environment == "adb" and devices.size:
+            emit(f"WAIT    {case.id} (needs {min(case.max_concurrency, devices.size)} Android device(s))")
+            leased = devices.acquire(case.max_concurrency)
+            case_environment = {**environment, "ANDROID_SERIAL": ",".join(leased)}
         case_started = time.monotonic()
-        emit(f"START   {case.id} ({case.environment}, {case.suite})")
+        on_devices = f", {','.join(leased)}" if leased else ""
+        emit(f"START   {case.id} ({case.environment}, {case.suite}{on_devices})")
         try:
             returncode = run_case(
                 case,
                 run_id=run_id,
-                environment=environment,
+                environment=case_environment,
                 log_path=staged_log_path,
                 timeout_seconds=case.timeout_minutes * 60,
             )
@@ -222,8 +269,10 @@ def run_cases(
                 pass
             emit(f"ERROR   {case.id}: {exc}")
         finally:
-            if needs_hardware:
-                hardware_lock.release()
+            if needs_external:
+                external_lock.release()
+            if leased:
+                devices.release(leased)
         outcome_log_path = staged_log_path
         if staged_log_path.is_file():
             try:
@@ -262,17 +311,30 @@ def run_cases(
             error_summary=error_summary,
         )
 
-    workers = max(1, min(max_parallel, len(cases)))
-    emit(f"fan-out: {len(cases)} case(s), up to {workers} at a time")
+    # Device-backed cases wait on their devices, not on a container slot, and
+    # they are usually the critical path, so they all start at once. The ones
+    # that need the most devices ask first.
+    device_cases = sorted(
+        (case for case in cases if case.environment in HARDWARE_ENVIRONMENTS),
+        key=lambda case: -case.max_concurrency,
+    )
+    container_cases = sorted(
+        (case for case in cases if case.environment not in HARDWARE_ENVIRONMENTS),
+        key=lambda case: case.environment != "mobilegym",
+    )
+    workers = max(1, min(max_parallel, len(container_cases)))
+    emit(
+        f"fan-out: {len(cases)} case(s), up to {workers} container case(s) at a time, "
+        f"{devices.size} Android device(s)"
+    )
     outcomes: list[CaseOutcome] = []
     with concurrent.futures.ThreadPoolExecutor(
+        max_workers=max(1, len(device_cases)), thread_name_prefix="bench-ci-device"
+    ) as device_executor, concurrent.futures.ThreadPoolExecutor(
         max_workers=workers, thread_name_prefix="bench-ci"
-    ) as executor:
-        execution_order = sorted(
-            cases,
-            key=lambda case: case.environment != "mobilegym",
-        )
-        futures = {executor.submit(execute, case): case for case in execution_order}
+    ) as container_executor:
+        futures = [device_executor.submit(execute, case) for case in device_cases]
+        futures += [container_executor.submit(execute, case) for case in container_cases]
         for future in concurrent.futures.as_completed(futures):
             outcomes.append(future.result())
     order = {case.id: index for index, case in enumerate(cases)}
@@ -325,7 +387,10 @@ def cli(argv: list[str] | None = None) -> int:
         "--max-parallel",
         type=int,
         default=DEFAULT_MAX_PARALLEL,
-        help=f"Cases to run at once (default {DEFAULT_MAX_PARALLEL})",
+        help=(
+            f"Container-backed cases to run at once (default {DEFAULT_MAX_PARALLEL}); "
+            "ADB cases are bounded by the devices in ANDROID_SERIAL instead"
+        ),
     )
     args = parser.parse_args(argv)
     if args.max_parallel < 1:
