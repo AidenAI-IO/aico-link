@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from mobilegym.bridge.aico_app import parse_aico_app_config
+from mobilegym.bridge.protocol import parse_initial_state
 from runner.matching import RFC3339_BOUNDS, parse_rfc3339
 from runner.platform import (
     TargetPlatform,
@@ -139,6 +141,8 @@ class TaskSpec:
     expected_recall_from_consolidation: bool = False
     app_ids: list[str] = dc.field(default_factory=list)
     foreground_app_id: str | None = None
+    aico_app: dict[str, Any] | None = None
+    initial_state: dict[str, Any] | None = None
     environment_assertions: dict[str, Any] = dc.field(default_factory=dict)
     android_bridge_input_text: str | None = None
     android_bridge_fixture: str | None = None
@@ -329,6 +333,26 @@ def load_suite(path: Path) -> Suite:
             for kind in environment_bridge_types
         ):
             raise SuiteValidationError(f"task {tid}: environment_bridge_types must be a list of bridge type names")
+        aico_app = raw.get("aico_app")
+        if aico_app is not None:
+            try:
+                parse_aico_app_config(aico_app)
+            except ValueError as exc:
+                raise SuiteValidationError(f"task {tid}: {exc}") from exc
+            if environment_bridge_types != ["mobilegym"]:
+                raise SuiteValidationError(
+                    f"task {tid}: aico_app requires environment_bridge_types [\"mobilegym\"]"
+                )
+        initial_state = raw.get("initial_state")
+        if initial_state is not None:
+            try:
+                parse_initial_state(initial_state)
+            except ValueError as exc:
+                raise SuiteValidationError(f"task {tid}: {exc}") from exc
+            if environment_bridge_types != ["mobilegym"]:
+                raise SuiteValidationError(
+                    f"task {tid}: initial_state requires environment_bridge_types [\"mobilegym\"]"
+                )
         task_mock_environment = _parse_mock_environment(
             raw.get("mock_environment"),
             path=f"task {tid}.mock_environment",
@@ -435,6 +459,8 @@ def load_suite(path: Path) -> Suite:
             expected_recall_from_consolidation=expected_recall_from_consolidation,
             app_ids=app_ids,
             foreground_app_id=foreground_app_id,
+            aico_app=aico_app,
+            initial_state=initial_state,
             environment_assertions=environment_assertions,
             android_bridge_input_text=android_bridge_input_text,
             android_bridge_fixture=android_bridge_fixture,

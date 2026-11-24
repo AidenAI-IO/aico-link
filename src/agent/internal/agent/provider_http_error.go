@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"aico-agent/internal/providerretry"
 )
 
 // ProviderHTTPError preserves structured details from a provider HTTP response
@@ -14,6 +16,10 @@ type ProviderHTTPError struct {
 	ProviderCode string
 	Message      string
 	Body         string
+}
+
+func newProviderStreamError(body []byte) *ProviderHTTPError {
+	return newProviderHTTPError(providerretry.JSONStatus(body), body)
 }
 
 func newProviderHTTPError(statusCode int, body []byte) *ProviderHTTPError {

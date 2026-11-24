@@ -7,8 +7,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +37,38 @@ var localConfigFields = map[string]map[string]bool{
 	"agent":           localAgentFields,
 }
 
+func (s *Server) localSettingsFields() map[string]map[string]bool {
+	if !s.options.ContainerAgent {
+		return localConfigFields
+	}
+	fields := map[string]map[string]bool{}
+	for section, allowed := range localConfigFields {
+		fields[section] = allowed
+	}
+	fields["agent"] = map[string]bool{}
+	for key, allowed := range localAgentFields {
+		fields["agent"][key] = allowed
+	}
+	fields["agent"]["input_mode"] = true
+	fields["voice_model"] = jsonFields(configupdate.VoiceModel{})
+	fields["voice_model_providers"] = jsonFields(configupdate.VoiceModelProvider{})
+	fields["stt"] = jsonFields(configupdate.STT{})
+	fields["stt_providers"] = jsonFields(configupdate.STTProvider{})
+	fields["tts"] = jsonFields(configupdate.TTS{})
+	fields["tts_providers"] = jsonFields(configupdate.TTSProvider{})
+	fields["quick_capture"] = map[string]bool{"screen_memory_ttl": true}
+	fields["voice_notifications"] = map[string]bool{"retention_days": true}
+	return fields
+}
+
+func isContainerSettingsRoute(path string) bool {
+	switch strings.TrimRight(path, "/") {
+	case "/voice", "/voice/providers", "/voice/providers/edit", "/voice/model", "/voice/extra", "/memory":
+		return true
+	}
+	return false
+}
+
 func jsonFields(value any) map[string]bool {
 	fields := map[string]bool{}
 	t := reflect.TypeOf(value)
@@ -48,7 +82,7 @@ func jsonFields(value any) map[string]bool {
 }
 
 func validateLocalAgentOptions(o Options) error {
-	if o.BindAddress != "127.0.0.1" {
+	if o.BindAddress != "127.0.0.1" && !(o.ContainerAgent && o.BindAddress == "0.0.0.0") {
 		return fmt.Errorf("--local-agent requires --bind 127.0.0.1")
 	}
 	if o.Port < 1 || o.Port > 65535 {
@@ -81,12 +115,14 @@ func (s *Server) allowLocalRequest(w http.ResponseWriter, r *http.Request) bool 
 	return true
 }
 
-func localAgentEndpoint(endpoint apiEndpoint) bool {
+func (s *Server) localAgentEndpoint(endpoint apiEndpoint) bool {
 	switch endpoint {
-	case apiIPhoneMirroring, apiIPhoneMirroringReconnect, apiDeviceSnapshot, apiDeviceStatus, apiConfigGet, apiConfigSchema, apiConfigUpdate,
+	case apiMCPServers, apiMCPServersChange, apiIPhoneMirroring, apiIPhoneMirroringReconnect, apiDeviceSnapshot, apiDeviceStatus, apiConfigGet, apiConfigSchema, apiConfigUpdate,
 		apiConfigPlan, apiConfigLocale, apiConfigApplication, apiConfigTest, apiModels,
 		apiConversationReset, apiAgentLogs, apiLLMLogs, apiLLMLogExport, apiLLMLogImport:
 		return true
+	case apiMemoryReset, apiSupportArchive:
+		return s.options.ContainerAgent
 	}
 	return false
 }
@@ -95,19 +131,20 @@ func isLocalSettingsRoute(path string) bool {
 	switch strings.TrimRight(path, "/") {
 	case "", "/basic/language", "/conversation", "/conversation/prompt", "/conversation/tools",
 		"/conversation/tools/provider", "/model", "/model/main", "/model/decision", "/model/providers",
-		"/model/providers/edit", "/model/models", "/advanced/logs", "/advanced/logs/agent", "/advanced/logs/level":
+		"/model/providers/edit", "/model/models", "/advanced/logs", "/advanced/logs/agent", "/advanced/logs/level", "/advanced/mcp":
 		return true
 	}
 	return false
 }
 
-func validateLocalConfigPatch(raw json.RawMessage) error {
+func (s *Server) validateLocalConfigPatch(raw json.RawMessage) error {
 	var patch map[string]json.RawMessage
 	if json.Unmarshal(raw, &patch) != nil || patch == nil {
 		return fmt.Errorf("config must be an object")
 	}
+	fieldsForSection := s.localSettingsFields()
 	for section, data := range patch {
-		allowed, ok := localConfigFields[section]
+		allowed, ok := fieldsForSection[section]
 		if !ok {
 			return fmt.Errorf("%s is not available for a local Agent", section)
 		}
@@ -115,7 +152,7 @@ func validateLocalConfigPatch(raw json.RawMessage) error {
 		if json.Unmarshal(data, &fields) != nil || fields == nil {
 			return fmt.Errorf("%s must be an object", section)
 		}
-		if section == "model_providers" {
+		if strings.HasSuffix(section, "_providers") {
 			for name, provider := range fields {
 				// Provider deletion is validated against selected models by config-update.
 				if string(provider) == "null" {
@@ -151,12 +188,12 @@ func (s *Server) projectConfig(config map[string]any) map[string]any {
 		return config
 	}
 	result := map[string]any{}
-	for section, fields := range localConfigFields {
+	for section, fields := range s.localSettingsFields() {
 		value, ok := config[section]
 		if !ok {
 			continue
 		}
-		if section != "agent" {
+		if strings.HasSuffix(section, "_providers") {
 			result[section] = value
 			continue
 		}
@@ -173,14 +210,15 @@ func (s *Server) projectConfig(config map[string]any) map[string]any {
 	return result
 }
 
-func localAgentMetadata(value any) any {
+func (s *Server) localAgentMetadata(value any) any {
 	metadata, _ := value.(map[string]any)
 	sections, _ := metadata["sections"].([]any)
 	filtered := []any{}
+	fieldsForSection := s.localSettingsFields()
 	for _, entry := range sections {
 		section, _ := entry.(map[string]any)
 		name, _ := section["name"].(string)
-		allowed, ok := localConfigFields[name]
+		allowed, ok := fieldsForSection[name]
 		if !ok {
 			continue
 		}
@@ -200,6 +238,25 @@ func localAgentMetadata(value any) any {
 
 func (s *Server) localAgentStatus() map[string]any {
 	status := map[string]any{"state": "offline", "process_running": false, "port_reachable": false, "url": s.options.AgentHTTPBaseURL}
+	if s.options.ContainerAgent {
+		port, err := strconv.Atoi(os.Getenv("AICO_PUBLIC_AGENT_WEB_PORT"))
+		if err != nil || port < 1 || port > 65535 {
+			port = 8080
+		}
+		status["public_port"] = port
+		status["url"] = fmt.Sprintf("http://127.0.0.1:%d", port)
+		switch os.Getenv("AICO_ENABLE_TERMINAL") {
+		case "1", "true", "TRUE", "True", "yes", "YES", "Yes", "on", "ON", "On":
+			status["terminal_url"] = fmt.Sprintf("http://127.0.0.1:%d/webtty/", port)
+		}
+		// Match the service helper's startup gate; provider settings remain editable.
+		switch os.Getenv("AICO_CLASSIC_VOICE") {
+		case "0", "false", "FALSE", "False", "no", "NO", "No", "off", "OFF", "Off":
+			status["classic_voice_enabled"] = false
+		default:
+			status["classic_voice_enabled"] = true
+		}
+	}
 	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Get(strings.TrimRight(s.options.AgentHTTPBaseURL, "/") + "/health")
 	if err != nil {

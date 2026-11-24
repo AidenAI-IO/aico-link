@@ -417,6 +417,8 @@ Common fields:
 | `environment_bridge_types` | Optional bridge allowlist, such as `["mobilegym"]`; other bridges and runs without a bridge skip the task before setup |
 | `app_ids` | Optional MobileGym app IDs to preload during environment setup; omitted tasks skip eager app data loading |
 | `foreground_app_id` | Optional exact MobileGym app ID to open after reset; independent of the `app_ids` preload list. Setup fails if it cannot be opened |
+| `aico_app` | Optional simulated Aico App for MobileGym tasks: connection, app state, permissions, and injected faults for Phone Bridge tools. Requires `environment_bridge_types: ["mobilegym"]`; see [Simulated Aico App](mobilegym/README.md#simulated-aico-app) |
+| `initial_state` | Optional MobileGym `window.__SIM__.setState` patch (`apps` and/or `os`) applied after reset, for seeding calendar events, contacts, notes, and other app data. Requires `environment_bridge_types: ["mobilegym"]` |
 | `environment_assertions` | Optional dotted-path checks against the environment's final state and route (for example `apps.scroll_lab.selectedItemId` or `route.path`). A scalar value must match exactly; an object whose keys are a subset of `min`/`max` is an inclusive numeric band (for example `{"min": 4, "max": 10}`) |
 | `memory_assertions` | Optional post-task `recall_memory` observation with `query`, `expected_count`, `expected`, and/or `absent_ids`; uses the same checks as `assert_memory` setup |
 | `rubric` | The judge model's scoring items. An optional `scope: "precondition"` evaluates a starting-state check against the pre-screenshot separately from Agent outcomes. The default scope is `outcome`; at least one outcome check is required. |

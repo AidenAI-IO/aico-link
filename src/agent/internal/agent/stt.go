@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 
+	"aico-agent/internal/providerretry"
 	"aico-agent/internal/stream"
 )
 
@@ -149,6 +150,13 @@ func (s *OpenAIWhisperSTT) TranscribeWAVWithContext(ctx context.Context, wavData
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	return providerretry.Do(ctx, providerretry.VoicePolicy(), func(ctx context.Context) (string, error) { return s.transcribeWAVAttempt(ctx, wavData) })
+}
+
+func (s *OpenAIWhisperSTT) transcribeWAVAttempt(ctx context.Context, wavData []byte) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
@@ -196,7 +204,7 @@ func (s *OpenAIWhisperSTT) TranscribeWAVWithContext(ctx context.Context, wavData
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+		return "", providerretry.ResponseError(resp, body)
 	}
 
 	// Parse response

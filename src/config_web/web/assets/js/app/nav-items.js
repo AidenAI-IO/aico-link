@@ -35,6 +35,14 @@ export const LOCAL_ITEMS = [
   {id: 'overview', label: msg('local.overview', '运行概览'), route: '/'},
   {id: 'model', label: msg('ui.nav_model', '模型设置'), route: '/model'},
   {id: 'conversation', label: msg('ui.nav_conversation', '对话与工具'), route: '/conversation'},
+  {id: 'mcp', label: 'MCP', route: '/advanced/mcp'},
   {id: 'language', label: msg('basic.language_title', '语言与时区'), route: '/basic/language'},
   {id: 'logs', label: msg('advanced.logs', '日志'), route: '/advanced/logs'},
+];
+
+/** PC containers also expose voice providers and software memory settings. */
+export const CONTAINER_ITEMS = [...LOCAL_ITEMS.slice(0, 3),
+  {id: 'voice', label: msg('ui.nav_voice', '语音'), route: '/voice'},
+  {id: 'memory', label: msg('ui.nav_memory', '记忆'), route: '/memory'},
+  ...LOCAL_ITEMS.slice(3),
 ];

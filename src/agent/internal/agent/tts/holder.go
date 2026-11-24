@@ -102,7 +102,7 @@ func (h *ProviderHolder) acquireProvider() (TTSProvider, *sync.WaitGroup, error)
 }
 
 func beginTrackedStream(ctx context.Context, p TTSProvider, wg *sync.WaitGroup, sink AudioSink) (StreamSession, error) {
-	session, err := p.BeginStream(ctx, sink)
+	session, err := beginRetryStream(ctx, p, sink)
 	if err != nil {
 		wg.Done()
 		return nil, err

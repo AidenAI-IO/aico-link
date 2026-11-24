@@ -529,6 +529,7 @@ class InstanceManager:
         settings = self.store.settings()
         route = route_id(instance_id)
         env: dict[str, str] = {
+            "AICO_CONFIG_WEB_PROFILE": "container",
             "AICO_ENVIRONMENT_BRIDGE_ENDPOINT": endpoint,
             "AICO_BENCHMARK_TASK_ID": route,
             "AICO_BRIDGE_EPISODE_ID": route,
@@ -538,6 +539,8 @@ class InstanceManager:
         }
         if device_type:
             env["AICO_DEVICE_TYPE"] = device_type
+        if (record.get("bridge") or {}).get("type") == "adb_android":
+            env["AICO_LOCAL_PHONE_BRIDGE"] = "1"
         preset = get_bridge((record.get("bridge") or {}).get("type")).quick_actions_preset
         if preset:
             # The image installs this quick-actions preset for the Agent (see docker/dev/entrypoint.sh).

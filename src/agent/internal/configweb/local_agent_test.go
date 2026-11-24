@@ -1,6 +1,8 @@
 package configweb
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"aico-agent/internal/agent"
 	"aico-agent/internal/configupdate"
@@ -250,6 +253,202 @@ func TestLocalAgentLoopbackBoundaryAndEnvironment(t *testing.T) {
 	env, err := s.agentCommandEnvironment()
 	if err != nil || !strings.Contains(strings.Join(env, "\n"), "HTTP_PROXY=http://127.0.0.1:1234") {
 		t.Fatal("host proxy environment was replaced")
+	}
+}
+
+func TestLocalAgentContainerSettingsRoundTrip(t *testing.T) {
+	resetCalls := 0
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"ok":true,"data":{"status":"ok","bridge_type":"go-agent","device_type":"Android"}}`)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/clear-all" {
+			resetCalls++
+		}
+		fmt.Fprint(w, `{"ok":true,"applied":false,"pending":true,"state":"pending"}`)
+	}))
+	defer runtime.Close()
+	base := localTestServer(t, runtime.URL)
+	options := base.options
+	options.LocalAgent = false
+	options.ContainerAgent = true
+	options.BindAddress = "0.0.0.0"
+	options.AgentInitScript = "/bin/true"
+	s, err := NewServer(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
+	if s.storage != nil || s.services != nil || s.usbHTTP != nil || s.lanAccess != nil {
+		t.Fatal("container settings initialized board services")
+	}
+	if err := os.WriteFile(filepath.Join(options.WebRoot, "container.html"), []byte("PC settings"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AICO_PUBLIC_AGENT_WEB_PORT", "51278")
+	t.Setenv("AICO_ENABLE_TERMINAL", "0")
+	t.Setenv("AICO_CLASSIC_VOICE", "0")
+	w := localRequest(s, "GET", "/api/device/status", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"url":"http://127.0.0.1:51278"`) || !strings.Contains(w.Body.String(), `"device_type":"Android"`) ||
+		!strings.Contains(w.Body.String(), `"classic_voice_enabled":false`) || strings.Contains(w.Body.String(), `"terminal_url"`) {
+		t.Fatalf("container status: %d %s", w.Code, w.Body)
+	}
+	t.Setenv("AICO_ENABLE_TERMINAL", "1")
+	t.Setenv("AICO_CLASSIC_VOICE", "1")
+	w = localRequest(s, "GET", "/api/device/status", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"terminal_url":"http://127.0.0.1:51278/webtty/"`) ||
+		!strings.Contains(w.Body.String(), `"classic_voice_enabled":true`) {
+		t.Fatalf("enabled container capabilities: %d %s", w.Code, w.Body)
+	}
+	for _, path := range []string{"/", "/voice/model", "/model/main", "/memory"} {
+		if w := localRequest(s, "GET", path, ""); w.Code != 200 || w.Body.String() != "PC settings" {
+			t.Fatalf("container route %s: %d %s", path, w.Code, w.Body)
+		}
+	}
+	patch := `{"config":{"agent":{"input_mode":"realtime"},"voice_model":{"provider":"browser"},"voice_model_providers":{"browser":{"type":"openai","api_key":"voice-test-secret","model":"gpt-realtime"}}}}`
+	w = localRequest(s, "PATCH", "/api/config", patch)
+	if w.Code != 200 || strings.Contains(w.Body.String(), "voice-test-secret") {
+		t.Fatalf("voice settings: %d %s", w.Code, w.Body)
+	}
+	cfg, err := agent.LoadRuntimeConfig(options.AgentConfigPath)
+	if err != nil || cfg.VoiceModel.APIKey != "voice-test-secret" {
+		t.Fatalf("voice settings did not persist: %v", err)
+	}
+	patch = `{"config":{"agent":{"input_mode":"stt"},"stt":{"provider":"speech","language":"en"},"stt_providers":{"speech":{"type":"openai-whisper","api_key":"stt-test-secret"}},"tts":{"provider":"voice","speed":1.2},"tts_providers":{"voice":{"type":"minimax-cn","api_key":"tts-test-secret"}},"quick_capture":{"screen_memory_ttl":"30d"},"voice_notifications":{"retention_days":14}}}`
+	w = localRequest(s, "PATCH", "/api/config", patch)
+	if w.Code != 200 {
+		t.Fatalf("Classic and memory settings: %d %s", w.Code, w.Body)
+	}
+	w = localRequest(s, "PATCH", "/api/config", `{"config":{"stt":{"language":"zh"}}}`)
+	if w.Code != 200 {
+		t.Fatalf("Classic preference update: %d %s", w.Code, w.Body)
+	}
+	cfg, err = agent.LoadRuntimeConfig(options.AgentConfigPath)
+	if err != nil || cfg.InputMode != "stt" || cfg.STT.Language != "zh" || cfg.STT.APIKey != "stt-test-secret" ||
+		cfg.TTS.APIKey != "tts-test-secret" || cfg.TTS.Speed != 1.2 || cfg.QuickCapture.ScreenMemoryTTL != "30d" || cfg.VoiceNotifications.RetentionDays != 14 ||
+		cfg.Device.DeviceType != "iOS" {
+		t.Fatalf("Classic/memory settings or preserved device settings did not persist: %v", err)
+	}
+	for _, path := range []string{"/api/device/snapshot", "/api/config", "/api/config/schema"} {
+		w := localRequest(s, "GET", path, "")
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"voice_model"`) || strings.Contains(w.Body.String(), "test-secret") {
+			t.Fatalf("container voice configuration %s: %d %s", path, w.Code, w.Body)
+		}
+		var payload struct {
+			Config   map[string]json.RawMessage `json:"config"`
+			Sections []struct {
+				Name   string `json:"name"`
+				Fields []struct {
+					Key string `json:"key"`
+				} `json:"fields"`
+			} `json:"sections"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"device", "audio", "storage"} {
+			if _, exposed := payload.Config[forbidden]; exposed {
+				t.Fatalf("container configuration %s exposes %s", path, forbidden)
+			}
+			for _, section := range payload.Sections {
+				if section.Name == forbidden {
+					t.Fatalf("container schema exposes %s", forbidden)
+				}
+			}
+		}
+		for _, required := range []string{"stt", "stt_providers", "tts", "tts_providers", "quick_capture", "voice_notifications"} {
+			if path != "/api/config/schema" {
+				if _, exposed := payload.Config[required]; !exposed {
+					t.Fatalf("container configuration %s omits %s", path, required)
+				}
+			} else {
+				found := false
+				for _, section := range payload.Sections {
+					if section.Name == required {
+						found = true
+						for _, field := range section.Fields {
+							if (required == "quick_capture" && (field.Key == "enabled" || field.Key == "gpio_pin")) ||
+								(required == "voice_notifications" && field.Key == "enabled") {
+								t.Fatalf("container schema exposes hardware fields in %s", required)
+							}
+						}
+					}
+				}
+				if !found {
+					t.Fatalf("container schema omits %s", required)
+				}
+			}
+		}
+		if data, ok := payload.Config["quick_capture"]; ok {
+			var fields map[string]json.RawMessage
+			_ = json.Unmarshal(data, &fields)
+			if fields["screen_memory_ttl"] == nil || fields["enabled"] != nil || fields["gpio_pin"] != nil {
+				t.Fatal("memory retention exposes board quick-capture fields")
+			}
+		}
+	}
+	for _, patch := range []string{`{"agent":{"input_mode":"invalid"}}`, `{"device":{"device_type":"iOS"}}`, `{"audio":{"volume":50}}`,
+		`{"quick_capture":{"enabled":false}}`, `{"quick_capture":{"gpio_pin":0}}`, `{"voice_notifications":{"enabled":false}}`,
+		`{"stt_providers":{"speech":{"gpio_pin":1}}}`} {
+		w := localRequest(s, "PATCH", "/api/config", `{"config":`+patch+`}`)
+		if w.Code != 400 {
+			t.Fatalf("accepted board settings %s: %d", patch, w.Code)
+		}
+	}
+	w = localRequest(s, "POST", "/api/memory/reset", "")
+	if w.Code != 200 || resetCalls != 1 || !strings.Contains(w.Body.String(), `"agent_restart_scheduled":true`) {
+		t.Fatalf("container memory reset: %d %s (calls=%d)", w.Code, w.Body, resetCalls)
+	}
+	if err := s.waitForAgentRestart(time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(s.llmLogDir(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.llmLogDir(), "agent.log"), []byte("container agent log"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w = localRequest(s, "GET", "/api/logs/support", "")
+	if w.Code != 200 {
+		t.Fatalf("container support archive: %d", w.Code)
+	}
+	gz, err := gzip.NewReader(w.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	archive := tar.NewReader(gz)
+	foundAgent := false
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Name == "agent.log" {
+			data, _ := io.ReadAll(archive)
+			foundAgent = string(data) == "container agent log"
+		}
+		if strings.HasPrefix(header.Name, "services/") || strings.HasPrefix(header.Name, "diagnostics/") || header.Name == "dmesg.log" {
+			t.Fatalf("container archive includes board diagnostics: %s", header.Name)
+		}
+	}
+	if !foundAgent {
+		t.Fatal("container archive omits the Agent log")
+	}
+	for _, path := range []string{"/wifi", "/firmware", "/storage", "/api/system/environment", "/api/services"} {
+		if w := localRequest(s, "GET", path, ""); w.Code != 404 {
+			t.Fatalf("container exposes %s: %d", path, w.Code)
+		}
+	}
+	request := httptest.NewRequest("GET", "http://attacker.example/api/config", nil)
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, request)
+	if w.Code != 403 {
+		t.Fatal("container settings accepted a non-loopback browser host")
 	}
 }
 

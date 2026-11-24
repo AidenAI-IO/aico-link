@@ -139,7 +139,7 @@ def test_prepare_task_isolation_retries_clear_before_environment_setup(monkeypat
 def test_prepare_task_isolation_runs_agent_prompt_after_environment_setup(monkeypatch):
     setup_calls = []
 
-    def fake_environment_setup(environment_url, task_id=None, timeout=30, app_ids=None, foreground_app_id=None):
+    def fake_environment_setup(environment_url, task_id=None, timeout=30, app_ids=None, foreground_app_id=None, aico_app=None, initial_state=None):
         setup_calls.append((environment_url, task_id, timeout, app_ids, foreground_app_id))
 
     monkeypatch.setattr(
@@ -187,7 +187,7 @@ def test_prepare_task_isolation_runs_agent_prompt_after_environment_setup(monkey
 def test_prepare_task_isolation_rebuilds_environment_after_agent_prompt_timeout(monkeypatch):
     events = []
 
-    def fake_environment_setup(environment_url, task_id=None, timeout=30, app_ids=None, foreground_app_id=None):
+    def fake_environment_setup(environment_url, task_id=None, timeout=30, app_ids=None, foreground_app_id=None, aico_app=None, initial_state=None):
         events.append(("environment_setup", task_id))
 
     class TimeoutThenSuccessClient(SetupClient):
@@ -258,7 +258,7 @@ def test_prepare_task_isolation_rebuilds_environment_after_agent_prompt_timeout(
 def test_prepare_task_isolation_runs_seed_memory_with_environment_setup(monkeypatch):
     setup_calls = []
 
-    def fake_environment_setup(environment_url, task_id=None, timeout=30, app_ids=None, foreground_app_id=None):
+    def fake_environment_setup(environment_url, task_id=None, timeout=30, app_ids=None, foreground_app_id=None, aico_app=None, initial_state=None):
         setup_calls.append((environment_url, task_id, timeout, app_ids))
 
     monkeypatch.setattr(
@@ -421,7 +421,7 @@ def test_prepare_task_isolation_does_not_retry_consolidation_contract_failure(
 def test_prepare_task_isolation_does_not_repeat_failed_environment_setup(monkeypatch):
     setup_calls = 0
 
-    def fail_environment_setup(environment_url, task_id=None, timeout=30, app_ids=None, foreground_app_id=None):
+    def fail_environment_setup(environment_url, task_id=None, timeout=30, app_ids=None, foreground_app_id=None, aico_app=None, initial_state=None):
         nonlocal setup_calls
         setup_calls += 1
         raise ResetError("environment reset failed")

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tmc/langchaingo/llms"
 	"gopkg.in/yaml.v3"
 )
 
@@ -431,6 +432,133 @@ func TestRecallDeviceMemoryTagFallbackWithoutTermsPreservesScope(t *testing.T) {
 	}
 	if len(decoded.Results) != 1 || decoded.Results[0].ID != "wanted" {
 		t.Fatalf("recall = %s, want only the matching app, device and type", out)
+	}
+}
+
+type recallRerankScriptedModel struct {
+	raw string
+	err error
+}
+
+func (m *recallRerankScriptedModel) GenerateContent(_ context.Context, _ []llms.MessageContent, _ ...llms.CallOption) (*llms.ContentResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: m.raw}}}, nil
+}
+
+func (m *recallRerankScriptedModel) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
+	resp, err := m.GenerateContent(ctx, []llms.MessageContent{
+		llms.TextParts(llms.ChatMessageTypeHuman, prompt),
+	}, options...)
+	if err != nil {
+		return "", err
+	}
+	if len(resp.Choices) == 0 {
+		return "", nil
+	}
+	return resp.Choices[0].Content, nil
+}
+
+func TestRecallCandidateLimitAndClamp(t *testing.T) {
+	if got := recallCandidateLimit(1); got != memoryRecallMinCandidates {
+		t.Fatalf("recallCandidateLimit(1)=%d, want %d", got, memoryRecallMinCandidates)
+	}
+	if got := recallCandidateLimit(10); got != 40 {
+		t.Fatalf("recallCandidateLimit(10)=%d, want 40", got)
+	}
+	terms := make([]string, memoryRecallMaxSearchTerms+5)
+	for i := range terms {
+		terms[i] = "t" + string(rune('a'+i%26))
+	}
+	clamped := clampMemorySearchTerms(terms, memoryRecallMaxSearchTerms)
+	if len(clamped) != memoryRecallMaxSearchTerms {
+		t.Fatalf("clamp len=%d, want %d", len(clamped), memoryRecallMaxSearchTerms)
+	}
+}
+
+func TestRecallMemoryToolRerankParseErrorFallsBack(t *testing.T) {
+	ctx := context.Background()
+	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+	for _, item := range []MemoryItem{
+		{ID: "mem_high", Type: "fact", Priority: 90, Tags: []string{"delivery"}, Title: "High", Content: "high priority delivery", EvidenceExcerpts: []string{"h"}},
+		{ID: "mem_low", Type: "fact", Priority: 10, Tags: []string{"delivery"}, Title: "Low", Content: "low priority delivery", EvidenceExcerpts: []string{"l"}},
+	} {
+		if _, err := store.AddMemory(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tool := NewRecallMemoryTool(store)
+	tool.SetRerankModel(&recallRerankScriptedModel{raw: `not-json`})
+	out, err := tool.Call(ctx, `{"tags":["delivery"],"limit":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Results []MemoryResult `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Results) != 1 || decoded.Results[0].ID != "mem_high" {
+		t.Fatalf("parse-fallback results=%#v, want mem_high", decoded.Results)
+	}
+}
+
+func TestRecallMemoryToolReranksWideCandidatesWithModel(t *testing.T) {
+	ctx := context.Background()
+	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+	for _, item := range []MemoryItem{
+		{ID: "mem_noise_a", Type: "fact", Priority: 90, Tags: []string{"delivery"}, Title: "Noise A", Content: "delivery note A", EvidenceExcerpts: []string{"a"}},
+		{ID: "mem_noise_b", Type: "fact", Priority: 85, Tags: []string{"delivery"}, Title: "Noise B", Content: "delivery note B", EvidenceExcerpts: []string{"b"}},
+		{ID: "mem_wanted", Type: "fact", Priority: 10, Tags: []string{"delivery", "friday"}, Title: "Wanted", Content: "Package arrives Friday.", EvidenceExcerpts: []string{"friday"}},
+	} {
+		if _, err := store.AddMemory(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tool := NewRecallMemoryTool(store)
+	tool.SetRerankModel(&recallRerankScriptedModel{raw: `{"ids":["mem_wanted"]}`})
+	out, err := tool.Call(ctx, `{"tags":["delivery"],"limit":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Results []MemoryResult `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Results) != 1 || decoded.Results[0].ID != "mem_wanted" {
+		t.Fatalf("reranked results=%#v, want mem_wanted first", decoded.Results)
+	}
+}
+
+func TestRecallMemoryToolRerankFailureFallsBackToScoreOrder(t *testing.T) {
+	ctx := context.Background()
+	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+	for _, item := range []MemoryItem{
+		{ID: "mem_high", Type: "fact", Priority: 90, Tags: []string{"delivery"}, Title: "High", Content: "high priority delivery", EvidenceExcerpts: []string{"h"}},
+		{ID: "mem_low", Type: "fact", Priority: 10, Tags: []string{"delivery"}, Title: "Low", Content: "low priority delivery", EvidenceExcerpts: []string{"l"}},
+	} {
+		if _, err := store.AddMemory(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tool := NewRecallMemoryTool(store)
+	tool.SetRerankModel(&recallRerankScriptedModel{err: context.DeadlineExceeded})
+	out, err := tool.Call(ctx, `{"tags":["delivery"],"limit":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Results []MemoryResult `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Results) != 1 || decoded.Results[0].ID != "mem_high" {
+		t.Fatalf("fallback results=%#v, want mem_high", decoded.Results)
 	}
 }
 

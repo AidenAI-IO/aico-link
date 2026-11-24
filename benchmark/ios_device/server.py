@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from desktop.bridge.server import DesktopBridgeServer, _handler_for
 from desktop.bridge.state import NoBridgeEnvAvailableError, benchmark_task_id_from_headers
-from desktop.bridge.tools_api import DesktopToolsAPIHandler
+from desktop.bridge.tools_api import DesktopToolsAPIHandler, _point
 from mnk_provider import execute_mnk_request
 from .text import validate_ios_text
 from .transport import IOSDeviceError
@@ -19,11 +19,29 @@ class IOSTools(DesktopToolsAPIHandler):
                 tool["args_schema"]["properties"]["button"]["enum"] = ["left"]
             if tool["name"] == "keyboard_tap":
                 tool["description"] = "Send Enter, Tab, or Backspace/Delete to the focused iPhone field; modifier chords are unsupported."
+            if tool["name"] in {"enter_text", "keyboard_text"}:
+                tool["args_schema"]["properties"]["text"]["maxLength"] = 512
+            if tool["name"] == "enter_text":
+                tool["description"] = "Insert committed Unicode at the focused iPhone field's caret/selection and verify its value through WDA. Accepts at most 512 UTF-16 units; sends no extra Enter key or retries."
+                tool["args_schema"]["additionalProperties"] = False
+                tool["args_schema"]["required"] = ["text", "focus"]
         tools.append({"name": "permission_dialog", "description": "Inspect an iOS alert or select an exact displayed button from a previously inspected alert.",
                       "args_schema": {"type": "object", "properties": {"alert_id": {"type": "string"}, "button": {"type": "string"}}}})
         return tools
 
     def _submit_tool_call(self, name, data):
+        if name == "enter_text":
+            try:
+                if set(data) - {"text", "focus"}:
+                    raise ValueError("enter_text requires only text and focus")
+                validate_ios_text(data.get("text"))
+                focus = data.get("focus")
+                if not isinstance(focus, dict) or set(focus) != {"x", "y"}:
+                    raise ValueError("focus requires only x and y")
+                point = _point(focus)
+                return self.state.device.enter_text(data["text"], point, self.action_settle_sec)
+            except (ValueError, IOSDeviceError) as exc:
+                return {"ok": False, "suggestion": str(exc)}
         if name == "system_action":
             if data.get("action") != "home":
                 raise ValueError("unsupported system action")
@@ -57,8 +75,8 @@ def execute_ios_mnk(payload, invoke):
             if not isinstance(params, dict) or params.get("action") != "home":
                 raise ValueError("system_action requires action home")
         else:
-            if not isinstance(params, dict):
-                raise ValueError("insert_text params required")
+            if not isinstance(params, dict) or set(params) - {"text", "replace"}:
+                raise ValueError("insert_text requires text and optional replace")
             validate_ios_text(params.get("text"))
             if not isinstance(params.get("replace", False), bool):
                 raise ValueError("replace must be a boolean")
@@ -89,6 +107,12 @@ def ios_handler(bridge):
                 self._send_error(500, "bridge_error", str(exc))
 
         def do_GET(self):
+            if self.path.split("?", 1)[0] == "/api/providers/mnk":
+                try:
+                    bridge.state.check_task_access(benchmark_task_id_from_headers(self.headers))
+                except NoBridgeEnvAvailableError as exc:
+                    self._send_error(429, "no_bridge_env_available", str(exc))
+                    return
             if self.path.split("?", 1)[0] == "/api/ios/alert":
                 return self._alert()
             return super().do_GET()

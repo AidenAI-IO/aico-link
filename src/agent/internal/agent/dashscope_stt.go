@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"aico-agent/internal/providerretry"
 	"aico-agent/internal/stream"
 )
 
@@ -70,6 +71,13 @@ func (s *DashScopeRealtimeSTT) TranscribeWAVWithContext(ctx context.Context, wav
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	return providerretry.Do(ctx, providerretry.VoicePolicy(), func(ctx context.Context) (string, error) { return s.transcribeWAVAttempt(ctx, wavData) })
+}
+
+func (s *DashScopeRealtimeSTT) transcribeWAVAttempt(ctx context.Context, wavData []byte) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -105,7 +113,12 @@ func (s *DashScopeRealtimeSTT) TranscribeWAVWithContext(ctx context.Context, wav
 
 // NewStreamingUploader creates a new streaming STT session over WebSocket.
 func (s *DashScopeRealtimeSTT) NewStreamingUploader(ctx context.Context, cfg STTStreamConfig) (STTStreamUploader, error) {
-	return s.newUploader(ctx, cfg)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	policy := providerretry.VoicePolicy()
+	policy.Timeout = 0 // Successful uploaders retain the caller's live context.
+	return providerretry.Do(ctx, policy, func(ctx context.Context) (STTStreamUploader, error) { return s.newUploader(ctx, cfg) })
 }
 
 // isDashScopeModel returns true if the model name is a valid DashScope ASR model.
@@ -148,7 +161,7 @@ func (s *DashScopeRealtimeSTT) newUploader(ctx context.Context, cfg STTStreamCon
 	header.Set("Authorization", "Bearer "+s.apiKey)
 
 	endpoint := s.buildEndpointURL()
-	conn, _, err := dialer.DialContext(ctx, endpoint, header)
+	conn, _, err := providerretry.Dial(ctx, &dialer, endpoint, header)
 	if err != nil {
 		return nil, fmt.Errorf("dashscope STT: dial websocket: %w", err)
 	}
@@ -199,13 +212,18 @@ func (s *DashScopeRealtimeSTT) newUploader(ctx context.Context, cfg STTStreamCon
 	}
 
 	// Wait for session.created or session.updated before sending audio.
+	timer := time.NewTimer(dashScopeConnTimeout)
+	defer timer.Stop()
 	select {
 	case <-uploader.ready:
 	case <-uploader.done:
-		return nil, fmt.Errorf("dashscope STT: session setup failed: %v", uploader.err)
+		return nil, fmt.Errorf("dashscope STT: session setup failed: %w", uploader.readErr())
 	case <-ctx.Done():
 		_ = conn.Close()
-		return nil, fmt.Errorf("dashscope STT: context cancelled waiting for session ready")
+		return nil, fmt.Errorf("dashscope STT: context cancelled waiting for session ready: %w", ctx.Err())
+	case <-timer.C:
+		_ = conn.Close()
+		return nil, fmt.Errorf("dashscope STT: session ready timeout: %w", context.DeadlineExceeded)
 	}
 
 	return uploader, nil

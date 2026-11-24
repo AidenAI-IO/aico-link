@@ -36,13 +36,13 @@ func TestSessionHTTPClientHonorsNoProxy(t *testing.T) {
 	assertProxy(t, transport.Proxy, "https://tts.example/api/v1/audio/speech", "http://127.0.0.1:7890")
 }
 
-func TestHTTPClientTimeoutAppliesOnlyWithProxyURL(t *testing.T) {
+func TestHTTPClientTimeoutBoundsDirectAndProxyRequests(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		proxy tts.ProxyConfig
 		want  time.Duration
 	}{
-		{name: "direct", proxy: tts.ProxyConfig{NoProxy: "openrouter.ai"}, want: 0},
+		{name: "direct", proxy: tts.ProxyConfig{NoProxy: "openrouter.ai"}, want: requestTimeout},
 		{name: "proxied", proxy: tts.ProxyConfig{HTTPSProxy: "http://127.0.0.1:7890"}, want: requestTimeout},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

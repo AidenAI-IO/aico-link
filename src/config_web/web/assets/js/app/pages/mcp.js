@@ -22,6 +22,7 @@ import {sheet} from '../../ui/sheet.js';
 import {setChecked, switchControl} from '../../ui/switch.js';
 import {msg, resolve, text} from '../../ui/text.js';
 import {toast} from '../../ui/toast.js';
+import {mcpServersCard} from './mcp-servers.js';
 
 const MCP_TOKENS_API = '/api/security/mcp-tokens';
 
@@ -126,9 +127,11 @@ function showSecret(secret, endpoint) {
 export async function mcpPage(context) {
   const snapshot = await ensureSnapshot(context);
   const body = el('div');
+  const installed = mcpServersCard();
+  const local = snapshot.profile === 'local';
   const saver = createSaver(context, {
     title: msg('advanced.mcp_enabled', 'MCP'),
-    back: '/advanced',
+    back: local ? '/' : '/advanced',
     root: body,
     onSaved: adoptSaved(snapshot, () => render()),
   });
@@ -273,20 +276,21 @@ export async function mcpPage(context) {
     });
     if (mcpSaving) mcpToggle.disabled = true;
     replace(body, [
-      group({
+      installed.element,
+      !local ? group({
         rows: [row({
           label: msg('advanced.mcp_enabled', 'MCP'),
           description: msg('advanced.mcp_enabled_help', '让电脑上的 AI 助手（如 Claude Code、Cursor）通过 Aico Link 操作手机，例如截屏、点击和输入文字。'),
           accessory: mcpToggle,
           action: 'toggle-mcp-enabled',
         })],
-      }),
-      mcpDraft ? tokenSection() : null,
+      }) : null,
+      !local && mcpDraft ? tokenSection() : null,
     ].filter(Boolean));
     saver.refreshChrome();
   }
 
-  await load();
+  await Promise.all([local ? Promise.resolve() : load(), installed.refresh()]);
   render();
   return screen([body]);
 }

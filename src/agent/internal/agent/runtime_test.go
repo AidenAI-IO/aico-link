@@ -35,6 +35,7 @@ import (
 	fakellm "github.com/tmc/langchaingo/llms/fake"
 	"github.com/tmc/langchaingo/schema"
 	langtools "github.com/tmc/langchaingo/tools"
+	"nhooyr.io/websocket"
 )
 
 func TestEffectiveMaxIterationsDefaultsAndUnlimited(t *testing.T) {
@@ -351,82 +352,40 @@ func TestRuntimeDoesNotForceDeviceMemoryRecallForRelevantQuestion(t *testing.T) 
 	}
 }
 
-func TestRuntimeIOSKeyboardIsolationCoalescesModifierActionsForWholeRun(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-	runtime := &Runtime{tools: &ToolSet{iosKeyboardIsolation: controller}}
+// A whole Agent run attaches the keyboard once, on its first keyboard action,
+// keeps it for nested composite tools, and detaches it when the run ends,
+// also when the run is canceled (the user stops the task).
+func TestRuntimeIOSKeyboardAttachedForWholeRun(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		events := []string{}
+		controller := newCancellationSensitiveIOSKeyboardIsolationController(&events)
+		runtime := &Runtime{tools: &ToolSet{iosKeyboardIsolation: controller}}
+		ctx, cancel := context.WithCancel(context.Background())
 
-	result, err := runtime.withIOSKeyboardIsolationRun(context.Background(), func(runCtx context.Context) (RunResult, error) {
-		if err := controller.withKeyboard(runCtx, true, func() error {
-			events = append(events, "first-shortcut")
-			return nil
-		}); err != nil {
-			return RunResult{}, err
-		}
-		if err := controller.withBatch(runCtx, func(compositeCtx context.Context) error {
-			return controller.withKeyboard(compositeCtx, true, func() error {
-				events = append(events, "second-shortcut")
-				return nil
-			})
-		}); err != nil {
-			return RunResult{}, err
-		}
-		return RunResult{Output: "done"}, nil
-	})
-	if err != nil {
-		t.Fatalf("withIOSKeyboardIsolationRun() error = %v", err)
-	}
-	if result.Output != "done" {
-		t.Fatalf("output = %q, want done", result.Output)
-	}
-	if want := []string{"isolate", "first-shortcut", "second-shortcut", "restore"}; !slices.Equal(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestRuntimeIOSKeyboardIsolationDoesNotSwitchWithoutModifier(t *testing.T) {
-	events := []string{}
-	controller := newTestIOSKeyboardIsolationController(&events)
-	runtime := &Runtime{tools: &ToolSet{iosKeyboardIsolation: controller}}
-
-	_, err := runtime.withIOSKeyboardIsolationRun(context.Background(), func(runCtx context.Context) (RunResult, error) {
-		return RunResult{}, controller.withKeyboard(runCtx, false, func() error {
-			events = append(events, "plain-key")
-			return nil
+		_, err := runtime.withIOSKeyboardIsolationRun(ctx, func(runCtx context.Context) (RunResult, error) {
+			if err := controller.withKeyboard(runCtx, false, keyboardAction(&events, "type")); err != nil {
+				return RunResult{}, err
+			}
+			if err := controller.withBatch(runCtx, func(compositeCtx context.Context) error {
+				return controller.withKeyboard(compositeCtx, true, keyboardAction(&events, "shortcut"))
+			}); err != nil {
+				return RunResult{}, err
+			}
+			if canceled {
+				cancel()
+			}
+			return RunResult{}, runCtx.Err()
 		})
-	})
-	if err != nil {
-		t.Fatalf("withIOSKeyboardIsolationRun() error = %v", err)
-	}
-	if want := []string{"plain-key"}; !slices.Equal(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestRuntimeIOSKeyboardIsolationRestoresWhenRunIsCanceled(t *testing.T) {
-	events := []string{}
-	controller := newCancellationSensitiveIOSKeyboardIsolationController(&events)
-	runtime := &Runtime{tools: &ToolSet{iosKeyboardIsolation: controller}}
-	ctx, cancel := context.WithCancel(context.Background())
-
-	_, err := runtime.withIOSKeyboardIsolationRun(ctx, func(runCtx context.Context) (RunResult, error) {
-		if err := controller.withKeyboard(runCtx, true, func() error {
-			events = append(events, "shortcut")
-			cancel()
-			return nil
-		}); err != nil {
-			return RunResult{}, err
+		cancel()
+		if errors.Is(err, errIOSKeyboardDetachUsedCanceledContext) {
+			t.Fatalf("canceled=%t: detach used the canceled context: %v", canceled, err)
 		}
-		return RunResult{}, runCtx.Err()
-	})
-	if errors.Is(err, errIOSKeyboardRestoreUsedCanceledContext) {
-		t.Fatalf("withIOSKeyboardIsolationRun() restore used canceled context: %v", err)
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("withIOSKeyboardIsolationRun() error = %v, want context canceled", err)
-	}
-	if want := []string{"isolate", "shortcut", "restore"}; !slices.Equal(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
+		if canceled != errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled=%t: error = %v", canceled, err)
+		}
+		if want := []string{"attach", "type", "shortcut", "detach"}; !slices.Equal(events, want) {
+			t.Fatalf("canceled=%t: events = %v, want %v", canceled, events, want)
+		}
 	}
 }
 
@@ -2487,7 +2446,9 @@ func TestRuntimeRunCompactsWithoutLogger(t *testing.T) {
 			spec:  model.ModelSpec{ContextWindow: 8_192},
 		},
 		NewMemoryManager(""),
-		&ToolSet{tools: map[string]langtools.Tool{}},
+		// nil tools avoids RegisterMemoryTools; this case only covers compaction
+		// with a nil logger, not memory-tool schema size.
+		nil,
 		NewSkillIndex(),
 	)
 	runtime.contextManager = manager
@@ -4134,13 +4095,20 @@ func TestRuntimeCloseStopsStoragePoller(t *testing.T) {
 	}
 }
 
-func TestRuntimeKeepsPhoneBridgeLocalWithBenchmarkADBEnvironment(t *testing.T) {
+func TestRuntimeKeepsPhoneBridgeLocalWithADBEnvironment(t *testing.T) {
+	var bridgeRequests atomic.Int32
+	adbBridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bridgeRequests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer adbBridge.Close()
 	rt, err := NewRuntime(Config{
 		ConfigDir: ensureTestConfigDir(t, t.TempDir()),
 		Model:     ModelConfig{Provider: "fake"},
+		Device:    DeviceConfig{DeviceType: "Android"},
 		EnvironmentBridge: EnvironmentBridgeConfig{
 			Enabled:          true,
-			Endpoint:         "http://127.0.0.1:18080",
+			Endpoint:         adbBridge.URL,
 			LocalPhoneBridge: true,
 		},
 	})
@@ -4150,6 +4118,98 @@ func TestRuntimeKeepsPhoneBridgeLocalWithBenchmarkADBEnvironment(t *testing.T) {
 	defer rt.Close()
 	if rt.phoneBridge.proxyMode {
 		t.Fatal("Phone Bridge must stay local when the ADB environment handles screen and input")
+	}
+	server := NewServer(rt, "")
+	defer server.Close()
+	local := httptest.NewServer(server.Handler())
+	defer local.Close()
+	client := &http.Client{Timeout: 2 * time.Second}
+	requestJSON := func(method, path, body string, wantCode int, result any) {
+		t.Helper()
+		req, err := http.NewRequest(method, local.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != wantCode {
+			t.Fatalf("%s %s returned %d, want %d", method, path, resp.StatusCode, wantCode)
+		}
+		if result != nil {
+			if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var status PhoneBridgeStatus
+	for range 20 {
+		requestJSON(http.MethodGet, "/api/phone-bridge/status", "", http.StatusOK, &status)
+		if status.Connected || status.Platform != "android" {
+			t.Fatalf("status without companion App = %+v", status)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	appURL := "ws" + strings.TrimPrefix(local.URL, "http") + "/api/phone-bridge?platform=android&phone_id=local-phone"
+	appConn, _, err := websocket.Dial(ctx, appURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer appConn.Close(websocket.StatusNormalClosure, "")
+	for !rt.phoneBridge.getStatus().Connected && ctx.Err() == nil {
+		time.Sleep(time.Millisecond)
+	}
+	requestJSON(http.MethodGet, "/api/phone-bridge/status", "", http.StatusOK, &status)
+	if !status.Connected || status.PhoneID != "local-phone" {
+		t.Fatalf("local App connection missing from status: %+v", status)
+	}
+	commandDone := make(chan error, 1)
+	go func() {
+		resp, err := rt.phoneBridge.SendCommand(ctx, BridgeCommand{ID: "local-ws", Type: "clipboard_read"})
+		if err == nil && (resp.Error != nil || string(resp.Data) != `{"text":"local clipboard"}`) {
+			err = fmt.Errorf("unexpected local command response: %+v", resp)
+		}
+		commandDone <- err
+	}()
+	_, commandData, err := appConn.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var command BridgeCommand
+	if err := json.Unmarshal(commandData, &command); err != nil || command.ID != "local-ws" {
+		t.Fatalf("local App command = %s, err = %v", commandData, err)
+	}
+	if err := appConn.Write(ctx, websocket.MessageText, []byte(`{"id":"local-ws","data":{"text":"local clipboard"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-commandDone; err != nil {
+		t.Fatal(err)
+	}
+	// The Android FGS HTTP transport must use the same local queue and status.
+	pollPath := "/api/phone-bridge/commands?platform=android&phone_id=local-phone&app_state=background&fgs_bridge_enabled=true"
+	requestJSON(http.MethodGet, pollPath, "", http.StatusOK, nil)
+	requestJSON(http.MethodPost, "/api/phone-bridge/commands", `{"command":{"id":"local-http","type":"clipboard_read"}}`, http.StatusAccepted, nil)
+	var poll PollCommandsResponse
+	requestJSON(http.MethodGet, pollPath, "", http.StatusOK, &poll)
+	if len(poll.Commands) != 1 || poll.Commands[0].ID != "local-http" {
+		t.Fatalf("local HTTP commands = %+v", poll.Commands)
+	}
+	requestJSON(http.MethodPost, "/api/phone-bridge/results", `{"id":"local-http","data":{"text":"background clipboard"}}`, http.StatusOK, nil)
+	var result GetResultResponse
+	requestJSON(http.MethodGet, "/api/phone-bridge/results/local-http", "", http.StatusOK, &result)
+	if result.Result == nil || string(result.Result.Data) != `{"text":"background clipboard"}` {
+		t.Fatalf("local HTTP result = %+v", result)
+	}
+	requestJSON(http.MethodGet, "/api/phone-bridge/status", "", http.StatusOK, &status)
+	if status.FgsBridgeEnabled == nil || !*status.FgsBridgeEnabled || status.AppState != "background" {
+		t.Fatalf("local FGS state missing from status: %+v", status)
+	}
+	if got := bridgeRequests.Load(); got != 0 {
+		t.Fatalf("Phone Bridge sent %d requests to the ADB screen/input bridge", got)
 	}
 }
 
@@ -4878,5 +4938,25 @@ func TestRuntimePreemptHookPanicDoesNotStopOtherHooks(t *testing.T) {
 	case <-firstDone:
 	case <-time.After(2 * time.Second):
 		t.Fatal("first run did not complete")
+	}
+}
+
+func TestTouchPointerModeMismatchGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		platform, mode string
+		want           bool
+	}{
+		{"ios", "touchpad", false},
+		{"ios", "absolute", true},
+		{"ipados", "touchscreen", true},
+		{"android", "touchscreen", false},
+		{"android", "touchpad", true},
+		{"android", "absolute", true},
+		{"macos", "touchpad", false},
+		{"ios", "", false},
+	} {
+		if got := touchPointerModeMismatchGuidance(tc.platform, tc.mode) != ""; got != tc.want {
+			t.Errorf("%s/%s guidance=%v, want %v", tc.platform, tc.mode, got, tc.want)
+		}
 	}
 }

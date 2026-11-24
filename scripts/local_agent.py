@@ -321,9 +321,12 @@ def launch(args, stopped):
             processes.check()
             request(endpoint + "/api/setup", {}, args.task, timeout=30)
             processes.check()
-            processes.start("agent", [binary, "-dir", str(directory), "-addr", f"127.0.0.1:{args.agent_port}",
-                            "--device-type", args.device, "--environment-bridge-mode",
-                            "--environment-bridge-endpoint", endpoint, "--benchmark-task-id", args.task], env)
+            command = [binary, "-dir", str(directory), "-addr", f"127.0.0.1:{args.agent_port}",
+                       "--device-type", args.device, "--environment-bridge-mode",
+                       "--environment-bridge-endpoint", endpoint, "--benchmark-task-id", args.task]
+            if args.mode == "android":
+                command.append("--local-phone-bridge")
+            processes.start("agent", command, env)
             health = processes.wait_http(args.agent_url + "/health").get("data", {})
             if health.get("device_type") != args.device:
                 raise RuntimeError("Agent identity does not match the selected mode")

@@ -39,12 +39,14 @@ type FilesystemMemoryPlane struct {
 }
 
 type MemoryRetrieveRequest struct {
-	Input        string
-	Attachments  []InputAttachment
-	ToolNames    []string
-	EpisodeID    string
-	DeviceID     string
-	CurrentHints CurrentEnvironmentHints
+	Input         string
+	Attachments   []InputAttachment
+	ToolNames     []string
+	EpisodeID     string
+	TaskID        string
+	TaskCreatedAt time.Time
+	DeviceID      string
+	CurrentHints  CurrentEnvironmentHints
 }
 
 type CurrentEnvironmentHints struct {

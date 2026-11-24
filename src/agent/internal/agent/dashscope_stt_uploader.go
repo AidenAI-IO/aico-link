@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"aico-agent/internal/providerretry"
 	"aico-agent/internal/stream"
 	"github.com/gorilla/websocket"
 )
@@ -225,7 +226,7 @@ func (u *dashScopeUploader) Finalize() (string, error) {
 		select {
 		case <-u.done:
 		case <-u.ctx.Done():
-			u.finish("", fmt.Errorf("dashscope STT: context timeout waiting for response"))
+			u.finish("", fmt.Errorf("dashscope STT: context timeout waiting for response: %w", u.ctx.Err()))
 		}
 	} else {
 		<-u.done
@@ -322,7 +323,11 @@ func (u *dashScopeUploader) readLoop() {
 			if event.Error != nil {
 				msg = event.Error.Code + ": " + event.Error.Message
 			}
-			u.finish("", fmt.Errorf("dashscope STT server error: %s", msg))
+			status := 400
+			if event.Error != nil {
+				status = providerretry.ProviderStatus(event.Error.Code)
+			}
+			u.finish("", &providerretry.StatusError{Status: status, Body: "dashscope STT server error: " + msg})
 			return
 		case "input_audio_buffer.speech_started",
 			"input_audio_buffer.speech_stopped",

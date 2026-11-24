@@ -67,10 +67,16 @@ func FinishInputContext(ctx context.Context, session StreamSession) (bool, error
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if retry, ok := session.(*retrySession); ok {
+		return true, retry.run(synthesisOp{kind: "finish", ctx: ctx})
+	}
 	if finisher, ok := session.(ContextFinishInputter); ok {
 		return true, finisher.FinishInput(ctx)
 	}
 	if tracked, ok := session.(*trackedSession); ok {
+		if retry, ok := tracked.StreamSession.(*retrySession); ok {
+			return FinishInputContext(ctx, retry)
+		}
 		if finisher, ok := tracked.StreamSession.(ContextFinishInputter); ok {
 			return true, finisher.FinishInput(ctx)
 		}
@@ -87,10 +93,16 @@ func CancelContext(ctx context.Context, session StreamSession) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if retry, ok := session.(*retrySession); ok {
+		return retry.cancelContext(ctx)
+	}
 	if canceller, ok := session.(ContextCanceller); ok {
 		return canceller.Cancel(ctx)
 	}
 	if tracked, ok := session.(*trackedSession); ok {
+		if retry, ok := tracked.StreamSession.(*retrySession); ok {
+			return CancelContext(ctx, retry)
+		}
 		if canceller, ok := tracked.StreamSession.(ContextCanceller); ok {
 			return canceller.Cancel(ctx)
 		}

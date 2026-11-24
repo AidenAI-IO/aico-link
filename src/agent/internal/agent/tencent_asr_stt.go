@@ -19,7 +19,9 @@ import (
 	"sync"
 	"time"
 
+	"aico-agent/internal/providerretry"
 	"aico-agent/internal/stream"
+
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -112,6 +114,13 @@ func (s *TencentASRSTT) TranscribeWAVWithContext(ctx context.Context, wavData []
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	return providerretry.Do(ctx, providerretry.VoicePolicy(), func(ctx context.Context) (string, error) { return s.transcribeWAVAttempt(ctx, wavData) })
+}
+
+func (s *TencentASRSTT) transcribeWAVAttempt(ctx context.Context, wavData []byte) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -166,7 +175,7 @@ func (s *TencentASRSTT) TranscribeWAVWithContext(ctx context.Context, wavData []
 		return "", fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+		return "", providerretry.ResponseError(resp, body)
 	}
 
 	var parsed tencentASRResponse
@@ -178,7 +187,18 @@ func (s *TencentASRSTT) TranscribeWAVWithContext(ctx context.Context, wavData []
 		if msg == "" {
 			msg = strings.TrimSpace(parsed.Response.Error.Code)
 		}
-		return "", fmt.Errorf("tencent ASR API error: %s", msg)
+		status := 400
+		code := parsed.Response.Error.Code
+		if strings.HasPrefix(code, "RequestLimitExceeded") {
+			status = 429
+		}
+		if strings.HasPrefix(code, "InternalError") {
+			status = 500
+		}
+		if strings.HasPrefix(code, "ServiceUnavailable") {
+			status = 503
+		}
+		return "", &providerretry.StatusError{Status: status, Body: "tencent ASR API error: " + msg}
 	}
 	text := strings.TrimSpace(parsed.Response.Result)
 	if text == "" {
@@ -188,6 +208,15 @@ func (s *TencentASRSTT) TranscribeWAVWithContext(ctx context.Context, wavData []
 }
 
 func (s *TencentASRSTT) NewStreamingUploader(ctx context.Context, cfg STTStreamConfig) (STTStreamUploader, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	policy := providerretry.VoicePolicy()
+	policy.Timeout = 0
+	return providerretry.Do(ctx, policy, func(ctx context.Context) (STTStreamUploader, error) { return s.newStreamingUploaderAttempt(ctx, cfg) })
+}
+
+func (s *TencentASRSTT) newStreamingUploaderAttempt(ctx context.Context, cfg STTStreamConfig) (STTStreamUploader, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -217,7 +246,7 @@ func (s *TencentASRSTT) NewStreamingUploader(ctx context.Context, cfg STTStreamC
 		return nil, fmt.Errorf("configure websocket proxy: %w", err)
 	}
 
-	conn, _, err := dialer.DialContext(ctx, endpoint, nil)
+	conn, _, err := providerretry.Dial(ctx, &dialer, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("dial realtime ASR websocket: %w", err)
 	}
@@ -232,15 +261,22 @@ func (s *TencentASRSTT) NewStreamingUploader(ctx context.Context, cfg STTStreamC
 		finalized:   make(map[int]bool),
 	}
 
+	_ = conn.SetReadDeadline(time.Now().Add(tencentRealtimeASRConnTimeout))
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	initial, err := uploader.readServerMessage()
+	stop()
 	if err != nil {
 		_ = conn.Close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	if err := uploader.handleMessage(initial); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 
 	go uploader.readLoop()
 	return uploader, nil
@@ -481,7 +517,11 @@ func (u *tencentASRStreamingUploader) readServerMessage() (tencentASRRealtimeSer
 
 func (u *tencentASRStreamingUploader) handleMessage(msg tencentASRRealtimeServerMessage) error {
 	if msg.Code != 0 {
-		return fmt.Errorf("tencent realtime ASR error %d: %s", msg.Code, strings.TrimSpace(msg.Message))
+		status := 400
+		if msg.Code >= 5000 && msg.Code <= 5002 {
+			status = 503
+		}
+		return &providerretry.StatusError{Status: status, Body: fmt.Sprintf("tencent realtime ASR error %d: %s", msg.Code, strings.TrimSpace(msg.Message))}
 	}
 
 	if msg.Result != nil {

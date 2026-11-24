@@ -20,8 +20,19 @@ type HIDProvider struct {
 	// pointerState tracks current pointer position
 	pointerState *PointerState
 
-	// touchscreen indicates if we're in touchscreen mode vs absolute mouse mode
+	// touchscreen means the pointer touches the screen directly (touchscreen
+	// or touchpad): no cursor to settle, no hover, no wheel.
 	touchscreen bool
+
+	// touchpad selects the 12-byte digitizer touchpad report (iOS) instead of
+	// the 6-byte touchscreen report; it implies touchscreen.
+	touchpad bool
+	// touchpadStart is the scan-time origin for touchpad reports.
+	touchpadStart time.Time
+	// touchpadTurn maps upright screenshot coordinates onto the touchpad's
+	// panel coordinates; see TouchpadTurn.
+	touchpadTurnMu sync.Mutex
+	touchpadTurn   TouchpadTurn
 
 	// keyboardDev is the HID device for standard boot keyboard
 	keyboardDev Device
@@ -81,7 +92,23 @@ func NewHIDProvider(pointerDev, keyboardDev, androidKeyboardDev Device, screenSt
 		keyboardLayout = DefaultKeyboardLayout
 	}
 
+	return newHIDProvider(pointerDev, keyboardDev, androidKeyboardDev, screenState, touchscreen, false, keyboardLayout, gate)
+}
+
+// NewTouchpadHIDProvider creates an HID provider whose pointer is the iOS
+// digitizer touchpad (report id 5). iOS takes it as direct touch with Zoom on
+// and AssistiveTouch off; its logical range covers the phone screen only.
+func NewTouchpadHIDProvider(pointerDev, keyboardDev, androidKeyboardDev Device, screenState *screen.ScreenState, keyboardLayout string, gate ProfileGate) *HIDProvider {
+	if keyboardLayout == "" {
+		keyboardLayout = DefaultKeyboardLayout
+	}
+	return newHIDProvider(pointerDev, keyboardDev, androidKeyboardDev, screenState, true, true, keyboardLayout, gate)
+}
+
+func newHIDProvider(pointerDev, keyboardDev, androidKeyboardDev Device, screenState *screen.ScreenState, touchscreen, touchpad bool, keyboardLayout string, gate ProfileGate) *HIDProvider {
 	return &HIDProvider{
+		touchpad:               touchpad,
+		touchpadStart:          time.Now(),
 		pointerDev:             pointerDev,
 		pointerState:           &PointerState{},
 		touchscreen:            touchscreen,
@@ -726,7 +753,7 @@ func (p *HIDProvider) Move(ctx context.Context, x, y float64) error {
 		}
 
 		if p.touchscreen {
-			return InvalidArguments("move is unsupported in touchscreen mode (no hover capability)")
+			return InvalidArguments("move is unsupported in direct-touch mode (touchscreen or touchpad have no hover); use touch_gesture")
 		}
 
 		absX, absY, err := p.normalizedToAbsolute(x, y)
@@ -747,7 +774,7 @@ func (p *HIDProvider) Scroll(ctx context.Context, scrollX, scrollY int) error {
 		return InvalidArguments("horizontal scroll is unsupported by the absolute mouse HID descriptor; use scroll_y")
 	}
 	if p.touchscreen {
-		return InvalidArguments("mouse_scroll is unsupported when pointer_mode is touchscreen; use touch_gesture")
+		return InvalidArguments("mouse_scroll is unsupported in direct-touch mode (touchscreen or touchpad); swipe with touch_gesture instead")
 	}
 
 	return runPointerGate(p.gate, ctx, func() error {
@@ -783,6 +810,13 @@ func (p *HIDProvider) normalizedToAbsolute(x, y float64) (int, int, error) {
 	}
 	if x < 0 || x > 1000 || y < 0 || y > 1000 {
 		return 0, 0, InvalidArgumentsf("coordinates must use the normalized 0-1000 scale, got x=%.2f y=%.2f", x, y)
+	}
+
+	// The touchpad's logical range covers the phone screen itself, not the
+	// HDMI frame, so black bars around the mirrored phone do not matter.
+	if p.touchpad {
+		px, py := p.TouchpadTurn().ToPanel(x, y)
+		return TouchpadPoint(px, py)
 	}
 
 	// Try to use active_area from screen state
@@ -905,6 +939,9 @@ func (p *HIDProvider) releasePointerRepeated(x, y int) error {
 }
 
 func (p *HIDProvider) movePointer(x, y int, buttons uint8) error {
+	if p.touchpad {
+		return p.writeTouchpadReport(x, y, buttons != 0)
+	}
 	if p.touchscreen {
 		return p.writeTouchscreenReport(x, y, buttons != 0)
 	}
@@ -935,6 +972,9 @@ func (p *HIDProvider) getCurrentPosition() (int, int) {
 			return x, y
 		}
 	}
+	if p.touchpad {
+		return TouchpadMaxX / 2, TouchpadMaxY / 2
+	}
 	return AbsMouseMaxPos / 2, AbsMouseMaxPos / 2
 }
 
@@ -964,6 +1004,134 @@ func AbsMouseReport(x, y int, buttons uint8, wheel int8) (report []byte, absX, a
 	return report, int(clampedX), int(clampedY)
 }
 
+// TouchpadTurn says how the phone's panel is turned against the upright
+// mirrored picture. iOS reads the touchpad in panel coordinates, like a finger
+// on the glass, so in landscape a point chosen on the upright screenshot must
+// be turned back before it is sent. Measured on an iPhone with Zoom on: one
+// landscape direction lands a sent (x, y) at (1000-y, x), the other at
+// (y, 1000-x); portrait is the identity.
+type TouchpadTurn int
+
+const (
+	// TouchpadUpright sends coordinates unchanged (portrait).
+	TouchpadUpright TouchpadTurn = iota
+	// TouchpadTurnedLeft is the landscape direction where a sent (x, y)
+	// lands at (1000-y, x).
+	TouchpadTurnedLeft
+	// TouchpadTurnedRight is the landscape direction where a sent (x, y)
+	// lands at (y, 1000-x).
+	TouchpadTurnedRight
+)
+
+func (t TouchpadTurn) String() string {
+	switch t {
+	case TouchpadTurnedLeft:
+		return "turned_left"
+	case TouchpadTurnedRight:
+		return "turned_right"
+	default:
+		return "upright"
+	}
+}
+
+// ToPanel returns the point to send so that it lands at (x, y) on the
+// upright picture.
+func (t TouchpadTurn) ToPanel(x, y float64) (float64, float64) {
+	switch t {
+	case TouchpadTurnedLeft:
+		return y, 1000 - x
+	case TouchpadTurnedRight:
+		return 1000 - y, x
+	default:
+		return x, y
+	}
+}
+
+// SetTouchpadTurn sets how later touchpad input is turned.
+func (p *HIDProvider) SetTouchpadTurn(turn TouchpadTurn) {
+	p.touchpadTurnMu.Lock()
+	p.touchpadTurn = turn
+	p.touchpadTurnMu.Unlock()
+}
+
+// TouchpadTurn reports how touchpad input is currently turned.
+func (p *HIDProvider) TouchpadTurn() TouchpadTurn {
+	p.touchpadTurnMu.Lock()
+	defer p.touchpadTurnMu.Unlock()
+	return p.touchpadTurn
+}
+
+// TouchpadTurnProvider is implemented by providers whose pointer is the iOS
+// touchpad.
+type TouchpadTurnProvider interface {
+	SetTouchpadTurn(TouchpadTurn)
+	TouchpadTurn() TouchpadTurn
+	// HoldTouch presses at a normalized point, runs during while the contact
+	// is down, then releases. It is a tap with a caller-controlled hold.
+	HoldTouch(ctx context.Context, x, y float64, during func() error) error
+}
+
+// HoldTouch presses at (x, y), runs during with the contact held, and always
+// releases afterwards.
+func (p *HIDProvider) HoldTouch(ctx context.Context, x, y float64, during func() error) error {
+	if err := p.rejectActiveDrag("hold touch"); err != nil {
+		return err
+	}
+	if err := p.validateCoordinate(x, y); err != nil {
+		return err
+	}
+	absX, absY, err := p.normalizedToAbsolute(x, y)
+	if err != nil {
+		return err
+	}
+	return runPointerGate(p.gate, ctx, func() error {
+		if err := p.pressPointer(absX, absY, p.mouseButtonByte(ButtonLeft)); err != nil {
+			return err
+		}
+		duringErr := during()
+		if releaseErr := p.releasePointerRepeated(absX, absY); releaseErr != nil && duringErr == nil {
+			return releaseErr
+		}
+		return duringErr
+	})
+}
+
+// TouchpadMaxX and TouchpadMaxY are the touchpad's logical maxima. iOS maps
+// them onto the phone screen in its current orientation.
+const (
+	TouchpadMaxX = 1919
+	TouchpadMaxY = 1079
+)
+
+// TouchpadPoint maps a normalized 0-1000 point onto the touchpad surface.
+func TouchpadPoint(x, y float64) (int, int, error) {
+	absX := int(math.Round(clampFloat(x, 0, 1000) / 1000.0 * TouchpadMaxX))
+	absY := int(math.Round(clampFloat(y, 0, 1000) / 1000.0 * TouchpadMaxY))
+	return absX, absY, nil
+}
+
+// TouchpadReport encodes a 12-byte digitizer touchpad report:
+// [0x05, scan_lo, scan_hi, buttons, finger1(4), finger2(4)]. Each finger is
+// [tip|confidence<<1|contact_id<<2, then X (12 bits) | Y (12 bits) << 12,
+// little endian]. Only finger 1 is used; finger 2 stays lifted. scan is the
+// scan time in 100 microsecond units.
+func TouchpadReport(x, y int, touching bool, scan uint16) (report []byte, absX, absY int) {
+	clampedX := int(clampUint16(x, TouchpadMaxX))
+	clampedY := int(clampUint16(y, TouchpadMaxY))
+	report = make([]byte, 12)
+	report[0] = 0x05
+	binary.LittleEndian.PutUint16(report[1:3], scan)
+	if touching {
+		report[4] = 0x03 // tip switch + confidence, contact id 0
+	}
+	packed := uint32(clampedX) | uint32(clampedY)<<12
+	report[5] = byte(packed)
+	report[6] = byte(packed >> 8)
+	report[7] = byte(packed >> 16)
+	report[8] = 1 << 2 // finger 2: contact id 1, lifted
+	return report, clampedX, clampedY
+}
+
 // TouchscreenReport encodes a 6-byte single-contact touch report
 // [flags, contact_id, x_lo, x_hi, y_lo, y_hi] and returns the clamped contact
 // position. flags: bit0=tip switch (touching), bit1=in range.
@@ -989,6 +1157,18 @@ func (p *HIDProvider) writeAbsMouseReport(x, y int, buttons uint8, wheel int8) e
 		return err
 	}
 
+	if p.pointerState != nil {
+		p.pointerState.Update(absX, absY)
+	}
+	return nil
+}
+
+func (p *HIDProvider) writeTouchpadReport(x, y int, touching bool) error {
+	scan := uint16(time.Since(p.touchpadStart) / (100 * time.Microsecond))
+	report, absX, absY := TouchpadReport(x, y, touching, scan)
+	if err := writeDevice(p.pointerDev, report); err != nil {
+		return err
+	}
 	if p.pointerState != nil {
 		p.pointerState.Update(absX, absY)
 	}
@@ -1101,14 +1281,14 @@ func (p *HIDProvider) resolveKeys(keys []string) (*resolvedKeys, error) {
 
 func (p *HIDProvider) androidExtensionPressReport(key string, usage uint16) ([]byte, error) {
 	// Touchscreen gadgets accept standard Consumer Control usage LE reports.
-	if p != nil && p.touchscreen {
+	if p != nil && p.touchscreen && !p.touchpad {
 		return []byte{byte(usage), byte(usage >> 8)}, nil
 	}
 	// Absolute pointer-mode hid.usb2 uses a packed bitfield report and only
 	// exposes a media/volume/brightness/screenshot subset.
 	report, ok := absolutePointerModeExtensionReports[key]
 	if !ok {
-		return nil, InvalidArgumentsf("android extension key is unavailable in the configured pointer mode: %q requires hid.pointer_mode=\"touchscreen\"; hid.pointer_mode=\"absolute\" only exposes these hid.usb2 keys: %s", key, AbsolutePointerModeExtensionKeyList)
+		return nil, InvalidArgumentsf("android extension key is unavailable in the configured pointer mode: %q requires hid.pointer_mode=\"touchscreen\"; the iOS touchpad and absolute pointer modes only expose these hid.usb2 keys: %s", key, AbsolutePointerModeExtensionKeyList)
 	}
 	return []byte{byte(report), byte(report >> 8)}, nil
 }

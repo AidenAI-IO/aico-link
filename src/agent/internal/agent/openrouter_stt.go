@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"aico-agent/internal/providerretry"
 )
 
 const defaultOpenRouterSTTBaseURL = "https://openrouter.ai/api/v1"
@@ -52,6 +54,13 @@ func (s *OpenRouterSTT) TranscribeWAV(wavData []byte) (string, error) {
 
 // TranscribeWAVWithContext transcribes WAV audio data with context for timeout/cancellation.
 func (s *OpenRouterSTT) TranscribeWAVWithContext(ctx context.Context, wavData []byte) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return providerretry.Do(ctx, providerretry.VoicePolicy(), func(ctx context.Context) (string, error) { return s.transcribeWAVAttempt(ctx, wavData) })
+}
+
+func (s *OpenRouterSTT) transcribeWAVAttempt(ctx context.Context, wavData []byte) (string, error) {
 	reqBody := openRouterSTTRequest{
 		Model: s.model,
 		InputAudio: openRouterInputAudio{
@@ -85,7 +94,7 @@ func (s *OpenRouterSTT) TranscribeWAVWithContext(ctx context.Context, wavData []
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+		return "", providerretry.ResponseError(resp, body)
 	}
 
 	var result openRouterSTTResponse

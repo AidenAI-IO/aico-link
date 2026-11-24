@@ -190,6 +190,14 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	cli, _ := ctx.Value(deviceCLICaptureKey{}).(*deviceCLICapture)
 	deferObservation := cli != nil && cli.deferObservation
 	seenWidth, seenHeight, seenOK := t.screen.ScreenshotDimensions()
+	// An unconfirmed landscape touch is observed as early as possible: its
+	// reaction shows the turn direction and can fade within seconds, so the
+	// baseline comparison and grounding are skipped and the screen is read
+	// shortly after the touch instead of after a stable-screen wait.
+	turnPending := false
+	if reporter, ok := t.inner.(landscapeTurnChecker); ok {
+		turnPending = reporter.landscapeTurnCheck(input)
+	}
 	var baselineImage image.Image
 	release := releasesHeldContact(t.inner.Name(), input)
 	checkOrientation := seenOK && !release
@@ -202,9 +210,10 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		seenWidth, seenHeight = cli.guardDimensions[0], cli.guardDimensions[1]
 		checkOrientation = seenWidth > 0 && seenHeight > 0
 	}
-	if !deferObservation || checkOrientation {
+	if !turnPending && (!deferObservation || checkOrientation) {
 		var baselineOutput string
 		baselineOutput, baselineImage = t.captureBaseline(ctx)
+		timing.mark(&timing.baselineMs)
 		if checkOrientation && baselineImage != nil {
 			bounds := baselineImage.Bounds()
 			if (seenWidth > seenHeight) != (bounds.Dx() > bounds.Dy()) {
@@ -267,7 +276,12 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		Content: "Action sent; waiting for the screen to stabilize",
 	})
 	var waitResult waitStableScreenResult
-	if t.waitStable != nil {
+	waitStable := t.waitStable != nil && !turnPending
+	delay := t.delay
+	if turnPending {
+		delay = touchpadTurnPendingObserveDelay
+	}
+	if waitStable {
 		touchscreenRCALogf("post_action wait_stable start inner=%q", t.inner.Name())
 		if waiter, ok := t.waitStable.(stableScreenWaiter); ok {
 			waitResult, err = waiter.wait(ctx, "{}")
@@ -323,7 +337,7 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 			waitResult.FramesDiffered != nil && *waitResult.FramesDiffered,
 			formatTouchscreenRCAFloatPtr(waitResult.LastDiff),
 		)
-	} else if err := sleepWithContext(ctx, t.delay); err != nil {
+	} else if err := sleepWithContext(ctx, delay); err != nil {
 		return postActionErrorResultf(ctx, postActionErrorCode(err), "%s completed with output %q, but post-action delay failed: %v", t.inner.Name(), actionOutput, err), nil
 	}
 
@@ -378,12 +392,12 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	timing.mark(&timing.compareMs)
 	// Ground after the comparison, which needs the plain image, and before
 	// the touch markers, so they are drawn on top and not detected.
-	if grounder, ok := t.screenshot.(screenshotResultGrounder); ok && t.groundingEnabled() {
+	if grounder, ok := t.screenshot.(screenshotResultGrounder); ok && t.groundingEnabled() && !turnPending {
 		reportToolProgress(ctx, ToolProgress{Status: "verifying", Content: "Marking interface components on the screen"})
 		grounder.groundResult(ctx, &payload.screenshotResult)
 		timing.mark(&timing.groundMs)
 	}
-	if t.waitStable != nil {
+	if waitStable {
 		stable := waitResult.Stable
 		elapsed := waitResult.ElapsedMs
 		payload.ScreenStable = &stable
@@ -392,7 +406,21 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	}
 	if t.inner.Name() == "touch_gesture" && ctx.Value(deviceCLICaptureKey{}) == nil {
 		if marker, ok := parseTouchGesturePostMarker(input); ok {
-			applyTouchGesturePostMarkers(&payload.screenshotResult, []touchGesturePostMarkerInfo{marker})
+			markers := []touchGesturePostMarkerInfo{marker}
+			if turnPending && !(marker.X == 500 && marker.Y == 500) {
+				markers = append(markers, touchGesturePostMarkerInfo{Type: touchMarkerMirror, X: 1000 - marker.X, Y: 1000 - marker.Y})
+			}
+			applyTouchGesturePostMarkers(&payload.screenshotResult, markers)
+		} else if turnPending {
+			// The action output is the turn note, and an unguarded sequence
+			// sends every tap, so the last input point is the one to judge.
+			if last, ok := lastTapSequencePoint(input); ok {
+				markers := []touchGesturePostMarkerInfo{last}
+				if !(last.X == 500 && last.Y == 500) {
+					markers = append(markers, touchGesturePostMarkerInfo{Type: touchMarkerMirror, X: 1000 - last.X, Y: 1000 - last.Y})
+				}
+				applyTouchGesturePostMarkers(&payload.screenshotResult, markers)
+			}
 		} else if markers := parseTapSequencePostMarkers(input, actionOutput); len(markers) > 0 {
 			applyTouchGesturePostMarkers(&payload.screenshotResult, markers)
 		}
@@ -575,7 +603,11 @@ func drawTouchGesturePostMarkers(jpegData []byte, markers []touchGesturePostMark
 	for _, marker := range markers {
 		x := int(math.Round(marker.X / 1000 * float64(max(width-1, 0))))
 		y := int(math.Round(marker.Y / 1000 * float64(max(height-1, 0))))
-		drawTouchMarker(marked, x, y)
+		ring := color.RGBA{R: 255, G: 32, B: 32, A: 255}
+		if marker.Type == touchMarkerMirror {
+			ring = color.RGBA{R: 32, G: 128, B: 255, A: 255}
+		}
+		drawTouchMarker(marked, x, y, ring)
 	}
 
 	var output bytes.Buffer
@@ -585,7 +617,53 @@ func drawTouchGesturePostMarkers(jpegData []byte, markers []touchGesturePostMark
 	return output.Bytes(), nil
 }
 
-func drawTouchMarker(img *image.RGBA, x, y int) {
+// touchMarkerMirror marks where an unconfirmed landscape touch lands if the
+// phone is turned the other way.
+const touchMarkerMirror = "mirror"
+
+// turnCheckPoint returns the point a direction check is judged at: the point
+// of a single touch or the last point of a tap_sequence.
+func turnCheckPoint(input string) (touchGesturePostMarkerInfo, bool) {
+	if marker, ok := parseTouchGesturePostMarker(input); ok {
+		return marker, true
+	}
+	return lastTapSequencePoint(input)
+}
+
+// lastTapSequencePoint returns the last point of a tap_sequence input.
+func lastTapSequencePoint(input string) (touchGesturePostMarkerInfo, bool) {
+	points, ok := tapSequenceInput(input)
+	if !ok {
+		return touchGesturePostMarkerInfo{}, false
+	}
+	last := points[len(points)-1]
+	marker := touchGesturePostMarkerInfo{Type: "tap", X: last.X, Y: last.Y}
+	return marker, validTouchGesturePostMarker(marker)
+}
+
+// turnCheckTouchInput reports whether input is a mirror_ok point touch, the
+// form a landscape direction check takes.
+func turnCheckTouchInput(input string) bool {
+	var args struct {
+		Type     string `json:"type"`
+		MirrorOK bool   `json:"mirror_ok"`
+	}
+	if json.Unmarshal([]byte(input), &args) != nil || !args.MirrorOK {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(args.Type)) {
+	case "tap", "double_tap", "long_press", "tap_sequence":
+		return true
+	}
+	return false
+}
+
+// landscapeTurnChecker is implemented by touch_gesture on the iOS touchpad.
+type landscapeTurnChecker interface {
+	landscapeTurnCheck(input string) bool
+}
+
+func drawTouchMarker(img *image.RGBA, x, y int, ring color.Color) {
 	if img == nil {
 		return
 	}
@@ -593,7 +671,7 @@ func drawTouchMarker(img *image.RGBA, x, y int) {
 	radius := max(10, min(24, minDimension/28))
 	outer := radius + 3
 	drawMarkerRing(img, x, y, outer, 3, color.RGBA{R: 255, G: 255, B: 255, A: 255})
-	drawMarkerRing(img, x, y, radius, 3, color.RGBA{R: 255, G: 32, B: 32, A: 255})
+	drawMarkerRing(img, x, y, radius, 3, ring)
 }
 
 func drawMarkerRing(img *image.RGBA, centerX, centerY, radius, thickness int, c color.Color) {

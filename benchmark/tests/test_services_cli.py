@@ -3,6 +3,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from runner import services, webui
 
 
@@ -98,7 +100,8 @@ def test_start_mobilegym_env_uses_docker_assigned_ports_when_auto(tmp_path: Path
     assert "127.0.0.1::9090" in command
 
 
-def test_start_agent_daemon_prints_agent_url_and_rewrites_environment_bridge(tmp_path: Path, monkeypatch, capsys):
+@pytest.mark.parametrize("bridge_type", ["", "mobilegym", "adb_android"])
+def test_start_agent_daemon_prints_agent_url_and_rewrites_environment_bridge(tmp_path: Path, monkeypatch, capsys, bridge_type):
     captured = {}
     _write_minimal_agent_config(tmp_path / "base")
 
@@ -108,7 +111,7 @@ def test_start_agent_daemon_prints_agent_url_and_rewrites_environment_bridge(tmp
     monkeypatch.setattr(
         services,
         "read_environment_health",
-        lambda endpoint: {"platform": "android"},
+        lambda endpoint: {"platform": "android", "bridge_type": bridge_type},
     )
     def fake_start_daemon_compose(job, **kwargs):
         captured["job"] = job
@@ -155,6 +158,7 @@ def test_start_agent_daemon_prints_agent_url_and_rewrites_environment_bridge(tmp
     assert kwargs["environment_bridge_endpoint"] == "http://host.docker.internal:19090"
     assert kwargs["benchmark_task_id"] == "suite.json:t1"
     assert kwargs["environment_bridge_mode"] is True
+    assert kwargs["benchmark_local_phone_bridge"] == (bridge_type == "adb_android")
 
 
 def test_start_agent_daemon_passes_environment_platform_as_runtime_override(

@@ -936,7 +936,7 @@ func TestManagerTimelineIsBoundedAndKeyedByCall(t *testing.T) {
 	short := newManager(runnerFunc(func(ctx context.Context) {
 		record := StepRecorderFromContext(ctx)
 		record(Step{ID: "call-1", Kind: "tool", Title: "screenshot", Status: "running"})
-		record(Step{ID: "call-1", Kind: "tool", Title: "screenshot", Status: "done", Detail: strings.Repeat("x", maxTimelineDetailRunes+50)})
+		record(Step{ID: "call-1", Kind: "tool", Title: "screenshot", Status: "done", Detail: strings.Repeat("x", maxTimelineToolResultRunes+50)})
 	}), 4, time.Now)
 	defer short.Close()
 	task, _ = short.Create("goal")
@@ -948,7 +948,7 @@ func TestManagerTimelineIsBoundedAndKeyedByCall(t *testing.T) {
 			tools = append(tools, step)
 		}
 	}
-	if len(tools) != 1 || tools[0].Status != "done" || len([]rune(tools[0].Detail)) > maxTimelineDetailRunes+1 {
+	if len(tools) != 1 || tools[0].Status != "done" || tools[0].Detail != strings.Repeat("x", maxTimelineToolResultRunes)+"…" {
 		t.Fatalf("tool steps = %+v", tools)
 	}
 }

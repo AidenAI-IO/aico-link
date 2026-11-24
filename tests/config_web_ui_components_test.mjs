@@ -58,7 +58,7 @@ class Element {
     this._listeners = new Map();
     this._text = '';
     this.classList = new ClassList(this);
-    this.style = {};
+    this.style = {setProperty(name, value) { this[name] = value; }};
     this.hidden = false;
     this.disabled = false;
     this.offsetHeight = 0;
@@ -685,6 +685,82 @@ process.stdout.write('config web UI component tests passed\n');
   }
 }
 
+/* ------------------------------------------------ Container voice/settings --- */
+
+{
+  const {t} = await import(pathToFileURL(path.join(uiRoot, '../app/data.js')).href);
+  const {voicePage, voiceProvidersPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/voice.js')).href);
+  const {memoryPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/memory.js')).href);
+  const {localOverviewPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/local.js')).href);
+  const {logsPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/advanced.js')).href);
+  const {dismiss} = await load('toast');
+  const realFetch = globalThis.fetch;
+  const realSetTimeout = globalThis.setTimeout;
+  const requests = [];
+  globalThis.setTimeout = () => 0;
+  globalThis.fetch = async (url, options) => {
+    requests.push({url, options});
+    return {ok: true, status: 200, text: async () => JSON.stringify({ok: true, apply: 'live', sections: []})};
+  };
+  try {
+    for (const mode of ['stt', 'realtime']) {
+      const snapshot = {config: {
+        agent: {input_mode: mode}, voice_model: {provider: 'browser'},
+        voice_model_providers: {browser: {type: 'openai', has_api_key: true}},
+        stt: {provider: 'speech'}, stt_providers: {speech: {type: 'openai-whisper', has_api_key: true}},
+        tts: {provider: 'voice'}, tts_providers: {voice: {type: 'minimax-cn', has_api_key: true}},
+      }, agent_status: {classic_voice_enabled: false}};
+      const navigation = [];
+      const context = {snapshot, localAgent: true, containerAgent: true, header() {}, navigate: path => navigation.push(path)};
+      const page = await voicePage(context);
+      assert.ok(page.querySelector(`[data-action="voice-mode-${mode}"]`));
+      assert.ok(page.querySelector(`[data-action="open-${mode}-providers"]`));
+      assert.ok(page.textContent.includes(t('voice.classic_disabled')));
+      assert.equal(page.querySelector('[data-action="speaker-panel"]'), null);
+      const next = mode === 'stt' ? 'realtime' : 'stt';
+      requests.length = 0;
+      await page.querySelector(`[data-action="voice-mode-${next}"]`)._listeners.get('click')[0]();
+      const save = requests.find(entry => entry.url === '/api/config');
+      assert.deepEqual(JSON.parse(save.options.body), {config: {agent: {input_mode: next}}});
+      assert.equal(navigation.pop(), '/voice');
+      for (const [kind, name] of [['stt', 'speech'], ['tts', 'voice']]) {
+        const providers = await voiceProvidersPage({...context, query: {kind}});
+        await providers.querySelector(`[data-action="edit-${kind}-provider-${name}"]`)._listeners.get('click')[0]();
+        assert.equal(navigation.pop(), `/voice/providers/edit?kind=${kind}&name=${name}`);
+      }
+    }
+    assert.ok(!requests.some(entry => entry.url.startsWith('/api/speaker/')));
+    const context = {snapshot: {config: {quick_capture: {screen_memory_ttl: '90d'}, voice_notifications: {retention_days: 7}}},
+      localAgent: true, containerAgent: true, header() {}, navigate() {}};
+    const memory = await memoryPage(context);
+    assert.equal(memory.querySelector('[role="switch"]'), null, 'PC memory has no board capture-button switch');
+    assert.ok(memory.querySelector('[data-action="reset-memory"]'));
+    for (const [action, choice, patch] of [
+      ['open-screen-memory-ttl', '30d', {quick_capture: {screen_memory_ttl: '30d'}}],
+      ['open-notification-retention', 14, {voice_notifications: {retention_days: 14}}],
+    ]) {
+      requests.length = 0;
+      memory.querySelector(`[data-action="${action}"]`).click();
+      body.querySelector(`[data-action="choose-${choice}"]`).click();
+      await new Promise(resolve => setImmediate(resolve));
+      const save = requests.find(entry => entry.url === '/api/config');
+      assert.deepEqual(JSON.parse(save.options.body), {config: patch});
+    }
+    for (const enabled of [false, true]) {
+      const status = {url: 'http://127.0.0.1:51278', ...(enabled ? {terminal_url: 'http://127.0.0.1:51278/webtty/'} : {})};
+      const page = await localOverviewPage({...context, snapshot: {config: {}, agent_status: status}});
+      const terminal = page.querySelector('[data-action="open-terminal"]');
+      if (enabled) assert.equal(terminal.getAttribute('href'), status.terminal_url);
+      else assert.equal(terminal, null);
+    }
+    assert.ok((await logsPage(context)).querySelector('[data-action="export-logs"]'));
+  } finally {
+    dismiss();
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realSetTimeout;
+  }
+}
+
 /* -------------------------------------------------------------- MCP page --- */
 
 {
@@ -721,6 +797,80 @@ process.stdout.write('config web UI component tests passed\n');
     walkOff(off);
     assert.ok(offActions.includes('toggle-mcp-enabled'));
     assert.ok(!offActions.includes('create-mcp-token'), 'tokens are hidden while MCP is off');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// MCP imports retain editable configuration after a server failure and only
+// clear credentials after successful installation. Local mode has this same
+// installation surface without board access-token controls.
+{
+  const {mcpPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/mcp.js')).href);
+  const realFetch = globalThis.fetch;
+  const {dismiss} = await load('toast');
+  const requests = [];
+  let rejectInstall = true;
+  let installed = false;
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({url, options});
+    const failed = options.method === 'POST' && rejectInstall;
+    if (options.method === 'POST' && !failed) installed = true;
+    const payload = failed ? {ok: false, error: 'Handshake failed'} : {ok: true,
+      servers: installed ? [{name: 'demo', state: 'connected', enabled: true, transport: 'http', tools: ['echo']}] : []};
+    return {ok: !failed, status: failed ? 400 : 200, text: async () => JSON.stringify(payload)};
+  };
+  let page;
+  try {
+    page = await mcpPage({snapshot: {profile: 'local', config: {}}, header() {}, navigate() {}});
+    body.appendChild(page);
+    assert.ok(!requests.some(request => request.url.includes('mcp-tokens')));
+    page.querySelector('[data-action="install-mcp-server"]').click();
+    const dialog = body.querySelectorAll('.ds-sheet').findLast(node => node.querySelector('textarea'));
+    const input = dialog.querySelector('textarea');
+    const submit = dialog.querySelector('[data-action="install-mcp-submit"]');
+    const config = {mcpServers: {demo: {url: 'https://example.com/mcp', headers: {Authorization: 'Bearer fixture-only'}}}};
+    input.value = 'invalid json';
+    await submit._listeners.get('click')[0]();
+    assert.equal(requests.filter(request => request.options.method === 'POST').length, 0);
+    input.value = JSON.stringify(config);
+    await submit._listeners.get('click')[0]();
+    assert.equal(input.value, JSON.stringify(config), 'failed installation preserves editable input');
+    assert.equal(dialog.querySelector('.ds-field__error').textContent, 'Handshake failed');
+    rejectInstall = false;
+    await submit._listeners.get('click')[0]();
+    assert.equal(input.value, '', 'successful installation clears credentials');
+    assert.ok(page.textContent.includes('demo'), 'installed server appears in the catalog');
+    assert.deepEqual(JSON.parse(requests.find(request => request.options.method === 'POST').options.body), config);
+  } finally {
+    if (page?.parentNode) page.parentNode.removeChild(page);
+    dismiss();
+    globalThis.fetch = realFetch;
+  }
+}
+
+// A refresh started before a catalog change must not overwrite a newer result,
+// whether the old request succeeds or fails after the current one.
+{
+  const {mcpServersCard} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/mcp-servers.js')).href);
+  const realFetch = globalThis.fetch;
+  const respond = servers => ({ok: true, status: 200, text: async () => JSON.stringify({servers})});
+  try {
+    for (const staleFailure of [false, true]) {
+      const pending = [];
+      globalThis.fetch = () => new Promise((resolve, reject) => pending.push({resolve, reject}));
+      const card = mcpServersCard();
+      const stale = card.refresh();
+      const current = card.refresh();
+      pending[1].resolve(respond([{name: 'current-server', enabled: true, state: 'connected', transport: 'http'}]));
+      await current;
+      const currentText = card.element.textContent;
+      assert.ok(currentText.includes('current-server'));
+      if (staleFailure) pending[0].reject(new Error('stale refresh failure'));
+      else pending[0].resolve(respond([{name: 'removed-server', enabled: true, state: 'connected', transport: 'http'}]));
+      await stale;
+      assert.equal(card.element.textContent, currentText, 'superseded refresh leaves the current catalog intact');
+    }
   } finally {
     globalThis.fetch = realFetch;
   }

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"aico-agent/internal/agent/mnk"
 )
 
 const (
@@ -88,7 +86,7 @@ func (r *PhoneBridgeRestorer) tap(ctx context.Context, status PhoneBridgeStatus)
 	default:
 	}
 	x, y := phoneBridgeDynamicIslandTapPoint()
-	absX, absY := mnk.NormalizedToAbsolutePoint(x, y)
+	absX, absY := r.pc.normalizedPoint(x, y)
 	return tapPointer(r.pc, absX, absY, mouseButtonByte("left"))
 }
 

@@ -13,14 +13,14 @@ func TestUSBBootConfigSurvivesAgentRestart(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cfg.ConfigDir, "agent.toml"), []byte("[device]\ndevice_type='iOS'\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ConfigForUSBBoot(cfg, path, "boot-one", "absolute"); err != nil {
+	if _, err := ConfigForUSBBoot(cfg, path, "boot-one", "touchpad"); err != nil {
 		t.Fatal(err)
 	}
 	next := cfg
 	next.Device.DeviceType = "Android"
 	next.HID.KeyboardLayout = "azerty"
 	next.MaxIterations = 23
-	active, err := ConfigForUSBBoot(next, path, "boot-one", "absolute")
+	active, err := ConfigForUSBBoot(next, path, "boot-one", "touchpad")
 	if err != nil {
 		t.Fatal(err)
 	}

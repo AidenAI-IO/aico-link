@@ -1809,3 +1809,28 @@ func TestAnthropicModelLiveRelay(t *testing.T) {
 	}
 	t.Logf("live model=%s streamed_chars=%d stop_reason=%s", modelName, streamed.Len(), choice.StopReason)
 }
+
+func TestAnthropicFallbackPreservesHTTPFailureClassification(t *testing.T) {
+	for _, status := range []int{401, 503} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request anthropicRequest
+				_ = json.NewDecoder(r.Body).Decode(&request)
+				if !request.Stream {
+					w.WriteHeader(status)
+					_, _ = w.Write([]byte(`{"error":{"message":"fallback rejected"}}`))
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"))
+			}))
+			defer server.Close()
+			model := newAnthropicModel(server.URL, "claude-test", "k", server.Client(), withAnthropicProtocolRetry(0, 0))
+			_, err := model.GenerateContent(context.Background(), []llms.MessageContent{llms.TextParts(llms.ChatMessageTypeHuman, "hi")}, llms.WithStreamingFunc(func(context.Context, []byte) error { return nil }))
+			var failure interface{ HTTPStatusCode() int }
+			if !errors.As(err, &failure) || failure.HTTPStatusCode() != status || isRetryableProviderError(err, 0) != (status == 503) {
+				t.Fatalf("status=%d error=%v", status, err)
+			}
+		})
+	}
+}

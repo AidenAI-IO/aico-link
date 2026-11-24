@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import socket
@@ -136,6 +137,7 @@ role = sys.argv[1] if sys.argv[1] in ('config-web', 'bridge') else 'agent'
 def option(name): return sys.argv[sys.argv.index(name) + 1]
 directory = Path(os.environ['AICO_SYSTEM_ENV']).parent
 (directory / (role + '.pid')).write_text(str(os.getpid()))
+(directory / (role + '.args')).write_text(json.dumps(sys.argv[1:]))
 if role == 'bridge' and os.environ.get('TEST_BRIDGE_FAIL') == '1': sys.exit(7)
 port = int(option('--port')) if role != 'agent' else int(option('-addr').split(':')[1])
 class Handler(BaseHTTPRequestHandler):
@@ -204,6 +206,8 @@ HTTPServer(('127.0.0.1', port), Handler).serve_forever()
             assert ready.is_set(), "Agent UI was not opened after completed initialization"
             assert (args.data_dir / "captured").exists(), "no fresh capture before readiness"
             assert (args.data_dir / "setup-task").read_text() == args.task
+            agent_args = json.loads((args.data_dir / "agent.args").read_text())
+            assert ("--local-phone-bridge" in agent_args) == (mode == "android")
     finally:
         stopped.set()
         thread.join(timeout=15)

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/providerretry"
 )
 
 const (
@@ -220,7 +221,7 @@ func (s *session) synthesize(text string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		err := fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+		err := providerretry.ResponseError(resp, body)
 		s.recordErr(err)
 		return err
 	}

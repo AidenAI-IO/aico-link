@@ -179,15 +179,32 @@ applications' permissions.
   complete single-contact atomic touch programs are supported. Atomic programs
   are limited to 128 actions and 10 seconds; partial drag contacts and
   multi-finger gestures are not supported.
-- Native `insert_text` uses WDA Unicode keys. Replacement clears the focused
-  accessible field before typing. `keyboard_text` retains the bridge's ASCII
-  contract. Enter, Tab, and Backspace/Delete are supported; desktop modifier
+- Native `insert_text` uses WDA Unicode keys after identifying a focused
+  accessible text field. Replacement clears that field before typing.
+  `keyboard_text` retains the bridge's ASCII contract. Enter, Tab, and
+  Backspace/Delete are supported; desktop modifier
   chords and arbitrary physical keys are not.
   Direct iOS text input accepts at most 512 UTF-16 units per request (256
   supplementary-plane emoji or 512 BMP characters). Oversized input is rejected
   before clearing or typing. WDA types at an explicit 60 keys/s, leaving time
   for keyboard synchronization within the 25s WDA and 30s Agent deadlines.
   Mirroring and other backends retain their existing text limits.
+- The bridge's `/api/tools/enter_text` requires `text` and a normalized
+  `focus: {"x": ..., "y": ...}`. It validates the entire request before tapping,
+  inserts the original Unicode once, and reads the same accessible field
+  before and after typing. It returns `{"ok": true}` only when the value shows
+  the exact insertion or selection replacement, preserving case, emoji,
+  literal `%s`, and whitespace. Existing text and placeholder labels alone
+  cannot verify delivery. WDA does not expose the caret/selection range, so
+  verification requires the changed span between the unchanged prefix and
+  suffix to match the entire requested text. Repeated text that makes this
+  range ambiguous remains unverified even if the input was delivered.
+  A timeout, mismatch, or unavailable readback returns
+  `{"ok": false, "suggestion": "..."}` without clearing or replaying input;
+  inspect the field before retrying. No additional Enter key is sent.
+  Secure fields cannot be verified this way; native `insert_text` remains
+  available with independent verification. The Agent's own `enter_text` uses
+  native insertion followed by screenshot verification.
 - This target's Home binding uses WDA's native `/wda/pressButton` command
   with `name: home`, which also dismisses Spotlight;
   Spotlight first uses the same command, then swipes down on Home. App Switcher

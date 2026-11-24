@@ -69,9 +69,30 @@ When `[advanced_settings.hardware.hid].input_backend = "adb"` is active, the des
 adb reverse tcp:8080 tcp:8080
 ```
 
-The benchmark's `aidenbridge-capabilities-android` case configures the emulator NAT rule and maps ADB reverse to each task Agent's published port. It requires a rooted emulator and checks `/api/phone-bridge/status` before running its clipboard and URL tasks. The benchmark daemon keeps Phone Bridge local while the ADB environment bridge still supplies screen and input operations.
+The ADB Android environment bridge provides screenshots and input, and has no
+Phone Bridge endpoints. Keep the companion App connection, status, and HTTP
+command queue on the Agent with `--local-phone-bridge`. This flag does not
+require a benchmark token. The Aico Launcher, native Android launcher, and
+benchmark ADB startup paths select local Phone Bridge automatically. For a
+manually started PC Docker container, set `AICO_LOCAL_PHONE_BRIDGE=1`.
+
+Local Phone Bridge still requires a network path from the companion App to the
+Agent. The benchmark's `aidenbridge-capabilities-android` case configures the
+emulator NAT rule and maps ADB reverse to each task Agent's published port. It
+requires a rooted emulator and checks `/api/phone-bridge/status` before running
+its clipboard and URL tasks. Selecting local Phone Bridge alone does not
+redirect the App's fixed board address.
 
 For host microphone recording and TTS replies in this desktop/PC Agent mode, keep `audio.backend = "auto"` or set it to `"local"`. The Agent captures PCM through an installed host recorder command and plays temporary WAV files through the host OS player instead of `audio_service`.
+
+When Phone Bridge proxy mode is enabled, an environment bridge that only
+provides screen and input operations may have no `/api/phone-bridge/status`
+endpoint. HTTP 404, 405, or 501 is treated as an unavailable Phone Bridge:
+the Agent reports it as disconnected, logs the probe at debug level, and
+waits five minutes before probing again. Other failures, including timeouts
+and invalid responses, report disconnected and retry after 30 seconds.
+Concurrent status reads share the failure backoff. Successful status reads
+remain live, and normal polling resumes when a later probe succeeds.
 
 ## App Opening Flow
 

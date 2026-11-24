@@ -7,6 +7,16 @@ from __future__ import annotations
 
 from typing import Any
 
+# Like Android's `cmd statusbar collapse`: close an open shade, otherwise hide the
+# soft keyboard. A swipe would start on keyboard keys and type a character.
+_DISMISS_PANEL = r"""() => {
+    const os = window.__OS__;
+    if (os?.shade?.isOpen?.()) { os.shade.close(); return; }
+    if (os?.keyboard?.isVisible?.()) os.keyboard.hide();
+}"""
+
+_CLIPBOARD_TEXT = "() => window.__OS__?.clipboard?.getText?.() ?? ''"
+
 # Match MobileGym's simInput touch/pointer events, but keep the original target
 # and contact across requests. Coordinates are normalized against the viewport,
 # not divided by a guessed device-pixel ratio.
@@ -104,7 +114,18 @@ class SimulatorInput:
                 chord.append(normalized)
             else:
                 raise ValueError(f"unsupported simulator keyboard key: {key!r}")
+        if sorted(chord) == ["Control", "v"]:
+            # The browser's native paste reads the host clipboard. On a phone,
+            # keyboard paste reads the system clipboard that apps (including the
+            # Aico App) write, which in MobileGym is __OS__.clipboard.
+            text = await self.page.evaluate(_CLIPBOARD_TEXT)
+            if text:
+                await self.page.keyboard.insert_text(text)
+            return
         await self.page.keyboard.press("+".join(chord))
+
+    async def dismiss_panel(self) -> None:
+        await self.page.evaluate(_DISMISS_PANEL)
 
     async def contact(self, operation: str, point: dict[str, float]) -> None:
         if operation == "drag_start" and self.contact_active:

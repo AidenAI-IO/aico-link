@@ -849,3 +849,29 @@ func pixelBrightness(c color.Color) float64 {
 	r, g, b, _ := c.RGBA()
 	return (0.299*float64(r>>8) + 0.587*float64(g>>8) + 0.114*float64(b>>8))
 }
+
+// capturedPictureLandscape captures a frame cropped to the phone picture, as a
+// screenshot is, and reports whether that picture is wider than tall. The
+// crop comes from the frame service's phone-screen geometry, not from how
+// bright the picture's content is.
+func capturedPictureLandscape(client screenshotFrameClient, screenState *screen.ScreenState) (bool, error) {
+	meta, _, _, err := captureScreenshotJPEG(client, screenState, true)
+	if err != nil {
+		return false, err
+	}
+	if meta == nil {
+		return false, fmt.Errorf("frame service returned no metadata")
+	}
+	if meta.Stale {
+		// A stale frame may predate a turn back to portrait.
+		return false, fmt.Errorf("frame service: STALE_FRAME")
+	}
+	width, height := meta.Width, meta.Height
+	if meta.CropWidth > 0 && meta.CropHeight > 0 {
+		width, height = meta.CropWidth, meta.CropHeight
+	}
+	if width == 0 || height == 0 {
+		return false, fmt.Errorf("frame service returned an empty picture")
+	}
+	return width > height, nil
+}

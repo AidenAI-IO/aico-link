@@ -27,7 +27,10 @@ func (d *closeCountingDevice) closeCount() int {
 	return d.closes
 }
 
-func TestIOSKeyboardIsolationProfileGateBatchSticky(t *testing.T) {
+// Through the MNK provider, the first keypress of a run attaches the keyboard
+// (closing the shared descriptors for the switch), later keypresses and taps
+// reuse it, and the run's end detaches it once.
+func TestIOSKeyboardIsolationProfileGateKeepsKeyboardForRun(t *testing.T) {
 	events := []string{}
 	pointer := &closeCountingDevice{}
 	keyboard := &closeCountingDevice{}
@@ -41,40 +44,34 @@ func TestIOSKeyboardIsolationProfileGateBatchSticky(t *testing.T) {
 		},
 	}
 	gate := newIOSKeyboardIsolationProfileGate(controller)
-	provider := mnk.NewHIDProvider(pointer, keyboard, nil, nil, false, "qwerty", gate)
+	provider := mnk.NewTouchpadHIDProvider(pointer, keyboard, nil, nil, "qwerty", gate)
 
 	err := controller.withBatch(context.Background(), func(batchCtx context.Context) error {
-		if err := provider.Keypress(batchCtx, []string{"ctrl", "a"}); err != nil {
+		if err := provider.Keypress(batchCtx, []string{"a"}); err != nil {
 			return err
 		}
 		if pointer.closeCount() == 0 {
-			t.Fatalf("expected shared pointer device Close during isolate")
+			t.Fatalf("expected shared pointer device Close during attach")
 		}
-		closesAfterFirst := pointer.closeCount()
+		closesAfterAttach := pointer.closeCount()
 		if err := provider.Keypress(batchCtx, []string{"ctrl", "c"}); err != nil {
 			return err
-		}
-		if pointer.closeCount() != closesAfterFirst {
-			t.Fatalf("sticky isolate should not Close again between modifier keypresses")
-		}
-		if want := []string{"isolate"}; !reflect.DeepEqual(events, want) {
-			t.Fatalf("profile events mid-batch = %v, want %v", events, want)
 		}
 		if err := provider.Click(batchCtx, 100, 100, "left", 0); err != nil {
 			return err
 		}
-		if pointer.closeCount() <= closesAfterFirst {
-			t.Fatalf("expected shared pointer Close on restore before Click")
+		if pointer.closeCount() != closesAfterAttach {
+			t.Fatalf("keyboard and tap input must not switch profiles again mid-run")
 		}
-		if want := []string{"isolate", "restore"}; !reflect.DeepEqual(events, want) {
-			t.Fatalf("profile events after Click = %v, want %v", events, want)
+		if want := []string{"attach"}; !reflect.DeepEqual(events, want) {
+			t.Fatalf("profile events mid-run = %v, want %v", events, want)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("withBatch: %v", err)
 	}
-	if want := []string{"isolate", "restore"}; !reflect.DeepEqual(events, want) {
-		t.Fatalf("final profile events = %v, want %v (no extra restore when already normal)", events, want)
+	if want := []string{"attach", "detach"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("final profile events = %v, want %v", events, want)
 	}
 }

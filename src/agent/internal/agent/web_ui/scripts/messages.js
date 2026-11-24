@@ -340,7 +340,7 @@ function renderMessageUsage(usage) {
 
     const root = document.createElement('div');
     root.className = 'message-usage';
-    root.title = 'LLM token usage';
+    root.title = 'Reply token usage';
 
     [
         ['Input', usage.input_tokens],

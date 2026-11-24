@@ -6,7 +6,7 @@ import urllib.request
 import pytest
 
 from adbandroid.bridge.server import ADBBridgeServer
-from adbandroid.bridge.tools_api import _normalized_point_arg, _to_pixels
+from adbandroid.bridge.tools_api import _normalized_point_arg, _to_pixels, _uiautomator_texts
 
 from tests.test_adbandroid_bridge import FakeADBAndroidDevice, _request
 
@@ -275,6 +275,62 @@ def test_enter_text_reports_unsupported_text_without_typing(bridge):
     assert output["ok"] is False
     assert "US-keyboard ASCII" in output["suggestion"]
     assert all(call[0] != "input_text" for call in device.calls)
+
+
+@pytest.mark.parametrize("text", ["你好，世界 😸 %s", "你好\n", "你好\t", "\n", "\t"])
+def test_enter_text_uses_adbkeyboard_and_verifies_unicode(bridge, text):
+    _, device, base_url = bridge
+    device.unicode_input = True
+    status, body = _invoke(base_url, "enter_text", {"text": text, "focus": {"x": 500, "y": 100}})
+    assert status == 200
+    result, _ = _text_entry_output(body)
+    assert result["ok"] is True
+    assert device.calls[:2] == [("tap", 540, 192), ("insert_text", text, False)]
+    assert not any(call[0] == "input_text" for call in device.calls)
+
+
+@pytest.mark.parametrize("text", ["你好\n", "你好\t"])
+def test_enter_text_does_not_verify_missing_trailing_whitespace(bridge, text):
+    _, device, base_url = bridge
+    device.unicode_input = True
+    device.window_text_override = "你好"
+    status, body = _invoke(base_url, "enter_text", {"text": text, "focus": {"x": 500, "y": 100}})
+    assert status == 200
+    result, _ = _text_entry_output(body)
+    assert result["ok"] is False
+
+
+@pytest.mark.parametrize("native,text,observed,expected", [
+    (True, "你好A", "你好a", False),
+    (True, "你好A", "existing: 你好A", True),
+    (True, "Hello", "hello", False),
+    (False, "Hello", "hello", True),
+])
+def test_enter_text_checks_native_case_and_preserves_legacy_matching(bridge, native, text, observed, expected):
+    _, device, base_url = bridge
+    device.unicode_input = native
+    device.window_text_override = observed
+    status, body = _invoke(base_url, "enter_text", {"text": text, "focus": {"x": 500, "y": 100}})
+    assert status == 200
+    result, _ = _text_entry_output(body)
+    assert result["ok"] is expected
+
+
+def test_uiautomator_extraction_keeps_legacy_whitespace_trimming():
+    device = FakeADBAndroidDevice()
+    device.window_text_override = " 你好\n\t"
+    editable, visible, error = _uiautomator_texts(device.dump_window_xml())
+    assert editable == ["你好"]
+    assert visible == ["你好"]
+    assert error == ""
+
+
+def test_enter_text_rejects_invalid_unicode_before_focus(bridge):
+    _, device, base_url = bridge
+    device.unicode_input = True
+    _, body = _invoke(base_url, "enter_text", {"text": "你好\x00", "focus": {"x": 500, "y": 100}})
+    assert json.loads(body["output"])["ok"] is False
+    assert device.calls == []
 
 
 # ---- mouse tools --------------------------------------------------------------

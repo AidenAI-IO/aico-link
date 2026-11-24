@@ -221,6 +221,16 @@
                 <p class="inspector-hint" id="taskHint" hidden>Drag queued tasks to change their order.</p>
             </section>
 
+            <section class="inspector-section" aria-labelledby="taskHistoryHeading">
+                <h2 id="taskHistoryHeading">
+                    <button type="button" class="inspector-section-title task-history-trigger" id="taskHistoryOpen" aria-haspopup="dialog">
+                        <span>Task history</span>
+                        <span class="task-history-chevron" aria-hidden="true">›</span>
+                    </button>
+                </h2>
+                <p class="inspector-empty" id="taskHistoryEmpty" hidden>No task history.</p>
+            </section>
+
             <section class="inspector-section" aria-labelledby="filesTitle">
                 <h2 class="inspector-section-title" id="filesTitle">Shared files</h2>
                 <ul class="inspector-list file-list" id="fileList"></ul>
@@ -273,6 +283,38 @@
         </section>
     </div>
 
+    <dialog class="state-modal-card task-modal-card task-history-dialog" id="taskHistoryDialog" aria-labelledby="taskHistoryTitle">
+        <div class="state-detail-header">
+            <div class="task-history-heading">
+                <button type="button" class="state-detail-close hidden" id="taskHistoryBack" aria-label="Back to task history">‹</button>
+                <div>
+                    <div class="message-role hidden" id="taskHistoryMetadata"></div>
+                    <strong id="taskHistoryTitle" tabindex="-1">Task history</strong>
+                </div>
+            </div>
+            <form method="dialog">
+                <button type="submit" class="state-detail-close" aria-label="Close task history">×</button>
+            </form>
+        </div>
+        <div class="state-detail-body" id="taskHistoryListView">
+            <div class="hidden" id="taskHistoryTable" role="region" aria-label="Task list">
+                <table class="task-history-table" role="table">
+                    <thead><tr>
+                        <th scope="col">Task</th><th scope="col">Status</th><th scope="col">Time</th>
+                        <th scope="col">Duration</th>
+                        <th scope="col" title="Total tokens across the backend agent’s model calls for this task, including cached input.">Backend tokens</th>
+                        <th scope="col">Cached input</th><th scope="col">Uncached input</th>
+                        <th scope="col">Output</th><th scope="col">Cache hit rate</th><th scope="col">Cost</th>
+                    </tr></thead>
+                    <tbody id="taskHistoryRows" role="rowgroup"></tbody>
+                </table>
+            </div>
+            <p class="inspector-empty hidden" id="taskHistoryNotice" role="status"></p>
+            <button type="button" class="terminal-open-link task-history-more hidden" id="taskHistoryMore">Load more</button>
+        </div>
+        <div class="state-detail-body task-modal-body hidden" id="taskHistoryDetail"></div>
+    </dialog>
+
     <!-- These classic scripts share page state. Load projection first and bootstrap last. -->
     <script defer src="/web-ui/scripts/toast.js"></script>
     <script defer src="/web-ui/scripts/conversation_projection.js"></script>
@@ -287,6 +329,7 @@
     <script defer src="/web-ui/scripts/resources.js"></script>
     <script defer src="/web-ui/scripts/core_services.js"></script>
     <script defer src="/web-ui/scripts/inspector.js"></script>
+    <script defer src="/web-ui/scripts/task_history.js"></script>
     <script defer src="/web-ui/scripts/shared_links.js"></script>
     <script defer src="/web-ui/scripts/voice.js"></script>
     <script defer src="/web-ui/scripts/bootstrap.js"></script>

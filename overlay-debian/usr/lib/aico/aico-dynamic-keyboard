@@ -1,6 +1,7 @@
 #!/bin/sh
-# Temporarily remove the pointer from the iOS USB composite while sending a
-# modifier shortcut, then restore the normal keyboard + pointer profile.
+# Attach the keyboard to the iOS touchpad USB composite while the Agent types,
+# then detach it again. iOS hides its software keyboard while a hardware
+# keyboard is attached, so the composite idles without one.
 set -eu
 
 CONF_FILE=/etc/aico_dynamic_keyboard.conf
@@ -64,10 +65,10 @@ read_udc() {
 }
 
 current_mode() {
-	if [ -L "$CONFIG_DIR/hid.usb0" ] && [ ! -L "$CONFIG_DIR/hid.usb1" ] && [ -L "$CONFIG_DIR/hid.usb2" ] && [ -L "$CONFIG_DIR/ecm.usb0" ]; then
-		printf 'isolated\n'
-	elif [ -L "$CONFIG_DIR/hid.usb0" ] && [ -L "$CONFIG_DIR/hid.usb1" ] && [ -L "$CONFIG_DIR/hid.usb2" ] && [ -L "$CONFIG_DIR/ecm.usb0" ]; then
-		printf 'normal\n'
+	if [ -L "$CONFIG_DIR/hid.usb0" ] && [ -L "$CONFIG_DIR/hid.usb1" ] && [ -L "$CONFIG_DIR/hid.usb2" ] && [ -L "$CONFIG_DIR/ecm.usb0" ]; then
+		printf 'attached\n'
+	elif [ ! -L "$CONFIG_DIR/hid.usb0" ] && [ -L "$CONFIG_DIR/hid.usb1" ] && [ -L "$CONFIG_DIR/hid.usb2" ] && [ -L "$CONFIG_DIR/ecm.usb0" ]; then
+		printf 'detached\n'
 	else
 		printf 'invalid\n'
 	fi
@@ -77,35 +78,31 @@ unlink_functions() {
 	rm -f "$CONFIG_DIR"/hid.* "$CONFIG_DIR"/ecm.* 2>/dev/null || true
 }
 
-link_normal_profile() {
-	ln -s "$KEYBOARD_FUNC" "$CONFIG_DIR/hid.usb0"
+# Interface order: keyboard (when attached) -> media keys -> touchpad -> ECM.
+# Every HID stays before ECM: a HID after the ECM IAD makes iOS reset the bus.
+link_profile() {
+	if [ "$1" = attached ]; then
+		ln -s "$KEYBOARD_FUNC" "$CONFIG_DIR/hid.usb0"
+	fi
 	ln -s "$EXTRA_KEYS_FUNC" "$CONFIG_DIR/hid.usb2"
 	ln -s "$POINTER_FUNC" "$CONFIG_DIR/hid.usb1"
-}
-
-link_isolated_profile() {
-	ln -s "$KEYBOARD_FUNC" "$CONFIG_DIR/hid.usb0"
-	ln -s "$EXTRA_KEYS_FUNC" "$CONFIG_DIR/hid.usb2"
-}
-
-link_ecm() {
 	ln -s "$ECM_FUNC" "$CONFIG_DIR/ecm.usb0"
 }
 
 set_identity() {
 	mode=$1
 	case "$mode" in
-		normal)
-			echo "$DYNAMIC_KEYBOARD_NORMAL_ID_PRODUCT" > "$GADGET_DIR/idProduct"
-			echo "$DYNAMIC_KEYBOARD_NORMAL_BCD_DEVICE" > "$GADGET_DIR/bcdDevice"
-			echo "$DYNAMIC_KEYBOARD_NORMAL_SERIAL" > "$GADGET_DIR/strings/0x409/serialnumber"
-			echo "$DYNAMIC_KEYBOARD_NORMAL_PRODUCT" > "$GADGET_DIR/strings/0x409/product"
+		detached)
+			echo "$DYNAMIC_KEYBOARD_DETACHED_ID_PRODUCT" > "$GADGET_DIR/idProduct"
+			echo "$DYNAMIC_KEYBOARD_DETACHED_BCD_DEVICE" > "$GADGET_DIR/bcdDevice"
+			echo "$DYNAMIC_KEYBOARD_DETACHED_SERIAL" > "$GADGET_DIR/strings/0x409/serialnumber"
+			echo "$DYNAMIC_KEYBOARD_DETACHED_PRODUCT" > "$GADGET_DIR/strings/0x409/product"
 			;;
-		isolated)
-			echo "$DYNAMIC_KEYBOARD_ISOLATED_ID_PRODUCT" > "$GADGET_DIR/idProduct"
-			echo "$DYNAMIC_KEYBOARD_ISOLATED_BCD_DEVICE" > "$GADGET_DIR/bcdDevice"
-			echo "$DYNAMIC_KEYBOARD_ISOLATED_SERIAL" > "$GADGET_DIR/strings/0x409/serialnumber"
-			echo "$DYNAMIC_KEYBOARD_ISOLATED_PRODUCT" > "$GADGET_DIR/strings/0x409/product"
+		attached)
+			echo "$DYNAMIC_KEYBOARD_ATTACHED_ID_PRODUCT" > "$GADGET_DIR/idProduct"
+			echo "$DYNAMIC_KEYBOARD_ATTACHED_BCD_DEVICE" > "$GADGET_DIR/bcdDevice"
+			echo "$DYNAMIC_KEYBOARD_ATTACHED_SERIAL" > "$GADGET_DIR/strings/0x409/serialnumber"
+			echo "$DYNAMIC_KEYBOARD_ATTACHED_PRODUCT" > "$GADGET_DIR/strings/0x409/product"
 			;;
 		*) die "unknown mode: $mode" ;;
 	esac
@@ -172,19 +169,10 @@ switch_mode() {
 	udc=$(read_udc)
 	mark_watchdog_grace
 	echo "" > "$UDC_PATH"
-	detach_seconds=0.1
-	if [ "$mode" = normal ]; then
-		detach_seconds=$DYNAMIC_KEYBOARD_RESTORE_DETACH_SECONDS
-	fi
-	sleep "$detach_seconds"
+	sleep "$DYNAMIC_KEYBOARD_DETACH_SECONDS"
 	unlink_functions
 	set_identity "$mode"
-	if [ "$mode" = isolated ]; then
-		link_isolated_profile
-	else
-		link_normal_profile
-	fi
-	link_ecm
+	link_profile "$mode"
 	echo "$udc" > "$UDC_PATH"
 	restore_usb0
 
@@ -205,8 +193,8 @@ status() {
 }
 
 case "${1:-}" in
-	isolate) switch_mode isolated ;;
-	restore) switch_mode normal ;;
+	attach) switch_mode attached ;;
+	detach) switch_mode detached ;;
 	status) status ;;
-	*) echo "Usage: $0 {isolate|restore|status}" >&2; exit 1 ;;
+	*) echo "Usage: $0 {attach|detach|status}" >&2; exit 1 ;;
 esac

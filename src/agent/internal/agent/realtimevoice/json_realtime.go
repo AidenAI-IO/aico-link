@@ -35,7 +35,7 @@ func (s *jsonRealtimeSession) waitReady(ctx context.Context, count int) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-timer.C:
-			return fmt.Errorf("%s: timed out waiting for session ready", s.label)
+			return fmt.Errorf("%s: timed out waiting for session ready: %w", s.label, context.DeadlineExceeded)
 		case err, ok := <-s.errs:
 			if !ok {
 				return fmt.Errorf("%s: event stream closed", s.label)

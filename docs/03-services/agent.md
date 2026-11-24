@@ -40,6 +40,17 @@ voice start is refused. Typed chat keeps working and replies with text. The
 setting persists across configuration reloads, and `realtime` mode is not
 affected. The Agent logs one startup line when the flag is off.
 
+## Task history
+
+In the Agent Web UI, open **Task history** under **Background tasks**.
+Select a task to see its tool-call timeline, backend model usage, and cost
+source.
+
+In the **Cost** column, a dash (`—`) means the amount is unavailable, and a
+`+` after the amount means it may exclude some model calls. Task history
+follows the Agent's local record retention policy and is available when
+telemetry export is disabled.
+
 ## Configuration
 
 The service reads `/userdata/agent/agent.toml`. Provider tables define named provider instances, and the corresponding selection table references one of those names:

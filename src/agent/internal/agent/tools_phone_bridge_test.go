@@ -567,7 +567,7 @@ func TestSearchLaunchAppBatchesIOSModifierIsolationAcrossSubtools(t *testing.T) 
 	if !result.OK {
 		t.Fatalf("Call() output = %s, want ok", out)
 	}
-	if want := []string{"isolate", "restore", "pointer"}; !reflect.DeepEqual(events, want) {
+	if want := []string{"attach", "pointer", "detach"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("profile events = %v, want %v", events, want)
 	}
 }

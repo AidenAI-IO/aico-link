@@ -37,6 +37,19 @@ type ScreenState struct {
 	screenshotGeneration uint64
 	phoneScreenFallback  PhoneScreenFallback
 	captureInvalidated   func()
+	screenshotObserved   func(width, height int)
+}
+
+// SetScreenshotObserver sets a function called with the dimensions of every
+// stored screenshot, from any path that stores one. A later call replaces the
+// previous observer.
+func (s *ScreenState) SetScreenshotObserver(fn func(width, height int)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.screenshotObserved = fn
+	s.mu.Unlock()
 }
 
 // SetCaptureInvalidatedHook sets a function called after InvalidateCapture
@@ -300,7 +313,11 @@ func (s *ScreenState) UpdateScreenshot(jpegData []byte, width, height int) {
 	s.screenshotHeight = height
 	s.screenshotUpdatedAt = time.Now()
 	s.screenshotGeneration++
+	observe := s.screenshotObserved
 	s.mu.Unlock()
+	if observe != nil {
+		observe(width, height)
+	}
 }
 
 // ScreenshotDimensions returns the stored image's dimensions after cropping and

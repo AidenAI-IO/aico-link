@@ -26,7 +26,7 @@ Aico Link connects to a phone or computer over USB-C:
 - the Go Agent sends screenshots to a configured multimodal model, decides the next action, and writes keyboard, pointer/touch, and Android extension or Consumer Control reports to `/dev/hidg0`, `/dev/hidg1`, and `/dev/hidg2`;
 - voice mode records audio on the board, applies VAD, then uses configured STT, LLM, and TTS providers.
 
-The basic control path does not require jailbreak, ADB, developer mode, or a custom app on the target device. It does require a target that can output video to the capture path and accept USB HID input. iOS control also requires AssistiveTouch to be enabled.
+The basic control path does not require jailbreak, ADB, developer mode, or a custom app on the target device. It does require a target that can output video to the capture path and accept USB HID input. iOS control also requires Zoom to be on and AssistiveTouch to be off.
 
 ## Key Features
 
@@ -95,6 +95,8 @@ At runtime, the Agent is intentionally decoupled from C++ service internals: Fra
 
 ## Quick Start
 
+To try Aico before Aico Link hardware ships, you can run it on your computer.
+This PC version simulates Aico Link in software and is not an official product.
 To run the Agent directly on your computer with a real Android phone or an
 iPhone through USB/WDA or macOS iPhone Mirroring, start with
 [Local Agent with a Real Phone](docs/01-getting-started/local-agent-real-phone.md).
@@ -103,7 +105,7 @@ From the repository root, use `python3 scripts/local_agent.py android`,
 `python3 scripts/local_agent.py ios` to start the selected native workflow.
 It covers native startup, Config Web, phone connection, verification, and switching targets.
 
-For the fastest hardware-free experience, start Config Web and Agent Web with
+To try it in a Docker sandbox instead, start Config Web and Agent Web with
 the [Try Aico on PC](docs/01-getting-started/try-aico-on-pc.md) guide:
 
 ```bash

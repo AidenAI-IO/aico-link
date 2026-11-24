@@ -242,7 +242,8 @@ Optional request body:
   "episode_id": "task-episode",
   "setup_token": "optional-idempotency-token",
   "app_ids": ["settings"],
-  "foreground_app_id": "settings"
+  "foreground_app_id": "settings",
+  "aico_app": {"app_state": "active"}
 }
 ```
 
@@ -250,7 +251,11 @@ Optional request body:
 the named apps; an omitted or empty list skips eager loading. Apps still load
 their own data when opened. `foreground_app_id` is an optional exact app ID to
 open after reset; it is not inferred from the preload list. A failed launch
-fails setup.
+fails setup. `aico_app` is optional and only meaningful to bridges that
+implement the Phone Bridge endpoints below; other bridges may ignore it.
+`initial_state` is an optional simulator state patch applied after the reset
+and before the foreground app opens; MobileGym passes it to
+`window.__SIM__.setState`.
 
 For bridges that do not need setup, return success with `setup: false`.
 
@@ -289,6 +294,27 @@ Returns the number of task workers this bridge can support at the same time.
 
 Schedulers should treat missing or invalid values as `1`.
 
+## Optional Phone Bridge Endpoints
+
+In environment-bridge mode, the Agent sends its Phone Bridge traffic to the
+bridge endpoint unless it runs with a local Phone Bridge. A bridge that answers
+these endpoints plays the Aico App's side of the
+[Phone Bridge protocol](../docs/04-agent/phone-bridge-protocol.md). A bridge that
+does not implement them returns HTTP 404; the Agent then treats the phone as
+disconnected, hides the `bridge_*` tools, and launches apps through the screen.
+
+| Endpoint | Response |
+| --- | --- |
+| `GET /api/phone-bridge/status` | The native `PhoneBridgeStatus` object, without the `{ok,data}` envelope. `{"connected": false}` when the task has no app |
+| `GET /api/phone-bridge?benchmark_relay=1` | WebSocket. Each text message is one `BridgeCommand`; the bridge replies with one `BridgeCommandResponse` |
+| `POST /api/phone-bridge/commands` | Queues `{"command": {...}}` for the background route; HTTP 202 `{command_id, status, queued_at}`, HTTP 409 for a duplicate id |
+| `GET /api/phone-bridge/results/{id}` | `{command_id, status, result}`; the Agent polls until `status` is `completed` |
+| `DELETE /api/phone-bridge/commands/{id}` | Cancels a queued command after the Agent's wait times out |
+
+The MobileGym bridge implements these endpoints with a simulated Aico App when a
+task's setup includes `aico_app`; see
+[the MobileGym README](mobilegym/README.md#simulated-aico-app).
+
 ## Task Routing
 
 Concurrent bridges must route all task-scoped requests by the
@@ -298,6 +324,7 @@ Concurrent bridges must route all task-scoped requests by the
 - `/api/providers/screenshot`
 - `/api/providers/mnk`
 - `/api/release`
+- `/api/phone-bridge/*`, when implemented
 
 The bridge should keep requests with the same `benchmark-task-id` on the same
 underlying env until `/api/release` is called.
@@ -319,3 +346,10 @@ daemon \
 
 The agent still exposes its normal `/api/chat` endpoint. The agent also exposes
 `POST /api/providers/screenshot` when it is itself used as a bridge.
+
+For an ADB Android bridge, add `--local-phone-bridge`: that bridge handles only
+screen and input, so the Agent must own the companion App's WebSocket, status,
+and HTTP command queue. This option does not require a benchmark token. The
+native Android launcher, Aico Launcher, and benchmark ADB startup paths set it
+or the equivalent benchmark option automatically. Bridges that provide a
+remote Phone Bridge keep the default proxy routing.

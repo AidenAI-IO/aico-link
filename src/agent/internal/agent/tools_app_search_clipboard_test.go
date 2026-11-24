@@ -244,9 +244,6 @@ func newSearchIsolationTestTool(t *testing.T, events *[]string, keys *recordingT
 		entryTool:            &EnterTextTool{engine: newFastTextInputEngine(*hw, entryVision), iosKeyboardIsolation: controller},
 		iosKeyboardIsolation: controller, sleep: testNoWaitSleep,
 		findAppTapFn: func(ctx context.Context, _ screenshotResult, _ string) (bridgeSearchResult, error) {
-			if batch := controller.batchFromContext(ctx); batch != nil && batch.isolated {
-				t.Fatal("result lookup must observe the screen after the pointer profile is restored")
-			}
 			return lookup(ctx), nil
 		},
 		confirmAppOpenFn: func(context.Context, screenshotResult, string) (bridgeAppOpenResult, error) {
@@ -276,7 +273,7 @@ func TestOpenAppSearchChecksResultsAfterUnverifiedEntry(t *testing.T) {
 	if err != nil || !enterTextOutputOK(out, err) || !*confirmed {
 		t.Fatalf("open_app=%s, %v; confirmed=%t", out, err, *confirmed)
 	}
-	if !reflect.DeepEqual(events, []string{"isolate", "restore", "pointer"}) {
+	if !reflect.DeepEqual(events, []string{"attach", "pointer", "detach"}) {
 		t.Fatalf("HID events=%v", events)
 	}
 	if !strings.Contains(out, "search input unverified; checking results") {
@@ -309,7 +306,10 @@ func TestOpenAppSearchDoesNotTapWhenUnverifiedEntryHasNoResult(t *testing.T) {
 	}
 }
 
-func TestOpenAppSearchRestoresHIDBeforeLookupAfterVerifiedEntry(t *testing.T) {
+// The keyboard attached for the search query stays attached while the result
+// is located and tapped: detaching it there re-lays out the results under the
+// tap. It is detached once the call ends.
+func TestOpenAppSearchKeepsKeyboardAttachedForResultTap(t *testing.T) {
 	events := []string{}
 	keys := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
 	vision := &plannedTextInputVision{
@@ -319,27 +319,16 @@ func TestOpenAppSearchRestoresHIDBeforeLookupAfterVerifiedEntry(t *testing.T) {
 		}},
 		plans: map[string][]string{"豆包": {"dou", "bao"}},
 	}
-	var delays []time.Duration
 	tool, confirmed := newSearchIsolationTestTool(t, &events, keys, vision, func(context.Context) bridgeSearchResult {
 		return bridgeSearchResult{Found: true, Label: "豆包", TapPoint: &focusPointArgs{X: 150, Y: 160}}
 	})
 	tool.exactEntryOnly = true
-	tool.sleep = func(_ context.Context, delay time.Duration) error {
-		delays = append(delays, delay)
-		return nil
-	}
 	out, err := tool.Call(context.Background(), `{"app":"豆包"}`)
 	if err != nil || !enterTextOutputOK(out, err) || !*confirmed {
 		t.Fatalf("open_app=%s, %v; confirmed=%t", out, err, *confirmed)
 	}
-	if !reflect.DeepEqual(events, []string{"isolate", "restore", "pointer"}) {
+	if !reflect.DeepEqual(events, []string{"attach", "pointer", "detach"}) {
 		t.Fatalf("HID events=%v", events)
-	}
-	if len(vision.analyses) != 0 {
-		t.Fatalf("%d analyses left; want only the probe and the entry verification", len(vision.analyses))
-	}
-	if countDelays(delays, appSearchPointerRestoreSettleDelay) == 0 {
-		t.Fatalf("delays=%v, want pointer restore settle %s", delays, appSearchPointerRestoreSettleDelay)
 	}
 }
 

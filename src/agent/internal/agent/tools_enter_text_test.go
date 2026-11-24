@@ -961,8 +961,8 @@ func TestEnterTextToolLocalPathRestoresIsolationOnSuccessAndFailure(t *testing.T
 			if gotOK := strings.Contains(out, `"ok": true`); gotOK != tc.wantOK {
 				t.Fatalf("output = %s, want ok=%v", out, tc.wantOK)
 			}
-			if want := []string{"isolate", "restore"}; !reflect.DeepEqual(events, want) {
-				t.Fatalf("isolation events = %v, want %v", events, want)
+			if want := []string{"attach", "detach"}; !reflect.DeepEqual(events, want) {
+				t.Fatalf("keyboard events = %v, want %v", events, want)
 			}
 			if len(touch.calls) != 0 {
 				t.Fatalf("touch_gesture calls = %v, want none", touch.calls)

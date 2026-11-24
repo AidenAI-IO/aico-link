@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"aico-agent/internal/logging"
+	"aico-agent/internal/providerretry"
 
 	"github.com/gorilla/websocket"
 )
@@ -93,7 +94,7 @@ func (p GeminiProvider) Open(ctx context.Context, cfg SessionConfig) (Session, e
 		logging.Infof("agent", "gemini", "realtime connection route: proxy_selected=false")
 	}
 	d = &dialer
-	conn, resp, err := d.DialContext(ctx, endpoint, p.headers(cfg.APIKey))
+	conn, resp, err := providerretry.Dial(ctx, d, endpoint, p.headers(cfg.APIKey))
 	if err != nil {
 		return nil, dialError("gemini live", resp, err)
 	}
@@ -615,7 +616,7 @@ func waitGeminiReady(ctx context.Context, s *geminiSession) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-timer.C:
-			return errors.New("gemini live: timed out waiting for setupComplete")
+			return fmt.Errorf("gemini live: timed out waiting for setupComplete: %w", context.DeadlineExceeded)
 		case err, ok := <-s.errs:
 			if !ok {
 				return errors.New("gemini live: event stream closed")
@@ -673,7 +674,7 @@ func (s *geminiSession) translate(body []byte) []Event {
 		return []Event{{Kind: EventReady}}
 	}
 	if envelope.Error != nil {
-		return []Event{{Kind: EventError, Error: classifyServerErrorMessage(envelope.Error.Message)}}
+		return []Event{{Kind: EventError, Error: providerServerError(body, envelope.Error.Message)}}
 	}
 	var events []Event
 	usageEmitted := false
