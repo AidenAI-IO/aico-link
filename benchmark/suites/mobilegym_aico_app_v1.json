@@ -2,7 +2,7 @@
   "name": "mobilegym_aico_app_v1",
   "suite_category": "MobileGym",
   "version": "1.0",
-  "description": "Phone Bridge coverage in MobileGym with the simulated Aico App: every bridge command (app and URL launch, dialing, clipboard, calendar create/query/delete, contacts query/create/update, immediate and scheduled notifications), foreground/background/disconnected states, denied permissions, transient and disconnect faults, and non-ASCII text entry through the bridge clipboard. Final calendar, contacts, clipboard, notification, route and Aico App command state are checked through /state.",
+  "description": "Phone Bridge coverage in MobileGym with the simulated Aico App: every bridge command (app and URL launch, dialing, clipboard, calendar create/query/delete, contacts query/create/update, a batch import from a TXT file read in the Files app, immediate and scheduled notifications), foreground/background/disconnected states, denied permissions, transient and disconnect faults, and non-ASCII text entry through the bridge clipboard. Final calendar, contacts, clipboard, notification, route and Aico App command state are checked through /state.",
   "prompt_prefix": "",
   "global_reset": {},
   "tasks": [
@@ -975,6 +975,124 @@
         "os.providers.contacts.contacts.0.company": "Aiden Robotics",
         "os.providers.contacts.contacts.0.notes": "Product advisor",
         "aico_app.failed_command_counts.contacts_create": 0
+      }
+    },
+    {
+      "id": "contacts_import_from_txt",
+      "category": "multi_step",
+      "prompt": "There's a file contacts.txt in the Download folder on my phone. Add everyone in it to my phone contacts. The list is confirmed, so go ahead without asking me again, and tell me who you added when you're done.",
+      "description_for_judge": "Download/contacts.txt lists three people: 张晓明 (+86 139 0000 1111), Priya Natarajan (+1 415-555-0132, priya.n@example.com) and Oliver Brooks (+44 20 7946 0958). The agent opens the file in the Files app, reads it, and creates each contact with the matching phone number (and email for Priya) through the Phone Bridge. The existing contact Alice Chen stays unchanged. Whether the contacts were saved is checked from the final contacts state; the rubric only judges the reply.",
+      "rubric": [
+        {
+          "id": "reports_imported_contacts",
+          "check": "The final response says that 张晓明, Priya Natarajan and Oliver Brooks were added, and does not claim any other contact was added."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 4,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 300,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_contacts",
+            "input_contains": {
+              "action": "create"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "filemanager",
+        "contacts"
+      ],
+      "aico_app": {},
+      "initial_state": {
+        "os": {
+          "providers": {
+            "contacts": {
+              "contacts": [
+                {
+                  "id": "c_seed_alice",
+                  "displayName": "Alice Chen",
+                  "phones": [
+                    {
+                      "id": "c_seed_alice_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13900138001",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                }
+              ]
+            }
+          }
+        },
+        "files": [
+          {
+            "path": "/sdcard/Download/contacts.txt",
+            "content": "Volunteer sign-up export\n\nName: 张晓明\nPhone: +86 139 0000 1111\n\nName: Priya Natarajan\nPhone: +1 415-555-0132\nEmail: priya.n@example.com\n\nName: Oliver Brooks\nPhone: +44 20 7946 0958\n",
+            "mime_type": "text/plain"
+          }
+        ]
+      },
+      "environment_assertions": {
+        "os.providers.contacts.contacts": {
+          "$length": 4,
+          "$exactly_once": [
+            {
+              "displayName": "Alice Chen",
+              "phones": {
+                "$contains": {
+                  "number": {
+                    "$digits": "8613900138001"
+                  }
+                }
+              }
+            },
+            {
+              "displayName": "张晓明",
+              "phones": {
+                "$contains": {
+                  "number": {
+                    "$digits": "8613900001111"
+                  }
+                }
+              }
+            },
+            {
+              "displayName": "Priya Natarajan",
+              "phones": {
+                "$contains": {
+                  "number": {
+                    "$digits": "14155550132"
+                  }
+                }
+              },
+              "emails": {
+                "$contains": {
+                  "email": "priya.n@example.com"
+                }
+              }
+            },
+            {
+              "displayName": "Oliver Brooks",
+              "phones": {
+                "$contains": {
+                  "number": {
+                    "$digits": "442079460958"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "aico_app.command_counts.contacts_create": {
+          "min": 3
+        }
       }
     },
     {

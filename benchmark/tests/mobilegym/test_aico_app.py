@@ -327,13 +327,23 @@ def test_bridge_serves_the_phone_bridge_protocol_for_a_configured_task():
 
 def test_setup_seeds_initial_state_after_reset():
     patch = {"apps": {"calendar": {"events": [{"id": "evt_seed", "title": "Standup"}]}}}
+    files = [{"path": "/sdcard/Download/contacts.txt", "content": "Name: Ada\nPhone: +1 555 0100\n"}]
     with AicoBridge() as bridge:
-        status, _ = request_json(bridge.base_url, "POST", "/api/setup", {"initial_state": patch})
-        assert request_json(bridge.base_url, "POST", "/api/setup", {"initial_state": {"apps": []}})[0] == 400
+        status, _ = request_json(bridge.base_url, "POST", "/api/setup", {"initial_state": {**patch, "files": files}})
+        for invalid in (
+            {"apps": []},
+            {"files": []},
+            {"files": [{"path": "/etc/contacts.txt", "content": "x"}]},
+            {"files": [{"path": "/sdcard/../etc/x", "content": "x"}]},
+            {"files": [{"path": "/sdcard/a.txt", "content": 1}]},
+            {"files": [files[0], files[0]]},
+        ):
+            assert request_json(bridge.base_url, "POST", "/api/setup", {"initial_state": invalid})[0] == 400
 
     assert status == 200
     assert bridge.env.reset_calls == 1
-    assert bridge.env.page.operations == [patch]
+    # State patches land first, then the files are written into phone storage.
+    assert bridge.env.page.operations == [patch, files]
 
 
 def test_setup_rejects_an_invalid_aico_app_config():
