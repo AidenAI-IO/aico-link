@@ -592,7 +592,7 @@ repository setting. If neither is set, the workflow uses `1`. The report derives
 ADB cases need a booted Android device or emulator reachable from the runner
 host. Set `BENCHMARK_ANDROID_SERIAL` to its adb serial, for example
 `emulator-5554`, or to a comma-separated list such as
-`emulator-5554,emulator-5556,emulator-5558,emulator-5560` to give ADB cases a
+`emulator-5554,emulator-5556,emulator-5558,emulator-5560,emulator-5562` to give ADB cases a
 device pool; the workflow passes it to the runner as `ANDROID_SERIAL`. Each
 pooled device must be a separate emulator with the same system image and the
 same root, Aico App, and SystemUI readiness as a single device. When
@@ -743,9 +743,10 @@ slots and start immediately, because they are usually the critical path: ADB
 cases wait only for free devices in the Android pool, and external-hardware
 cases share an exclusive lock to avoid device/bridge contention. Device cases
 that need the most devices ask first; among equals, catalog order decides, so
-the catalog lists the longest single-device case first. With four emulators,
-the daily sweep finishes its cases in about 20–23 minutes instead of the
-67 minutes the ADB cases needed back to back on one emulator.
+the catalog lists the longest single-device case first. With five emulators,
+`adb_android_builtin_apps` uses three and every other ADB case one, so the
+ADB cases finish in about 20 minutes instead of the 67 minutes they needed
+back to back on one emulator.
 Each run is published to Langfuse as soon as its case finishes, while later
 cases still run, and is marked as published. The separate publish step after
 the cases only publishes runs without that marker, such as a failed
