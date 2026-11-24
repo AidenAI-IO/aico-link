@@ -563,7 +563,7 @@ jobs:
         # Observability is a side channel: a publish failure must not mask the
         # benchmark verdict this job exists to report. ci.publish_langfuse runs
         # each run in its own process (the Langfuse SDK shares one client per
-        # process, which deadlocks concurrent in-process publishes), four at a
+        # process, which deadlocks concurrent in-process publishes), eight at a
         # time, and kills any run that exceeds its limit. The step limit is a
         # backstop so publication can never hold the shared runner.
         continue-on-error: true
@@ -575,6 +575,7 @@ jobs:
           uv run python -m ci.publish_langfuse
           --runs-dir runs
           --run-id-prefix "$RUN_ID_PREFIX"
+          --max-parallel 8
           --run-timeout-sec 300
           --summary-path "$GITHUB_STEP_SUMMARY"
       - name: Generate benchmark dashboard
