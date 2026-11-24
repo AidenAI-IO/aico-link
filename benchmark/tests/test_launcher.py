@@ -363,6 +363,7 @@ def test_start_runs_agent_on_loopback_with_bridge_env(app: Launcher, fake: FakeS
     assert env["AICO_DEVICE_TYPE"] == "Android"
     assert env["AICO_BENCHMARK_TASK_ID"] == env["AICO_BRIDGE_EPISODE_ID"] == route
     assert env["AICO_PUBLIC_AGENT_WEB_PORT"] == "8080"
+    assert env["AICO_CONFIG_WEB_PROFILE"] == "container"
     assert env["AICO_ENABLE_TERMINAL"] == "1"
     # A proxy on the host's loopback is reached through host.docker.internal.
     assert env["HTTPS_PROXY"] == "http://host.docker.internal:7890"

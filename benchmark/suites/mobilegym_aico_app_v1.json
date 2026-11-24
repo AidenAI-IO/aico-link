@@ -1,0 +1,1135 @@
+{
+  "name": "mobilegym_aico_app_v1",
+  "suite_category": "MobileGym",
+  "version": "1.0",
+  "description": "Phone Bridge coverage in MobileGym with the simulated Aico App: every bridge command (app and URL launch, dialing, clipboard, calendar create/query/delete, contacts query/create/update, immediate and scheduled notifications), foreground/background/disconnected states, denied permissions, transient and disconnect faults, and non-ASCII text entry through the bridge clipboard. Final calendar, contacts, clipboard, notification, route and Aico App command state are checked through /state.",
+  "prompt_prefix": "",
+  "global_reset": {},
+  "tasks": [
+    {
+      "id": "calendar_create_via_bridge",
+      "category": "single_step",
+      "prompt": "Add an event to my phone calendar: June 2, 2026, 3-4 PM Beijing time (UTC+8), Dentist follow-up, at Renai Clinic. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The simulated Aico App is connected and in the foreground. The agent creates the event through the Phone Bridge calendar tool with the requested time, title and location.",
+      "rubric": [
+        {
+          "id": "event_created",
+          "check": "The agent confirms that the Dentist follow-up was added for 2026-06-02 15:00-16:00 Beijing time."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 12,
+        "must_complete_within_sec": 180,
+        "required_tools": [
+          "bridge_calendar"
+        ],
+        "required_tool_calls": [
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "create"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "apps.calendar.events.0.title": "Dentist follow-up",
+        "apps.calendar.events.0.startTs": 1780383600000,
+        "apps.calendar.events.0.endTs": 1780387200000,
+        "apps.calendar.events.0.location": "Renai Clinic",
+        "aico_app.command_counts.calendar_create": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "open_app_via_bridge",
+      "category": "single_step",
+      "prompt": "Open the Weather app on my phone.",
+      "description_for_judge": "The simulated Aico App is connected and in the foreground, so the agent can launch Weather, which is not on the home screen, through the Phone Bridge open_app command.",
+      "rubric": [
+        {
+          "id": "clock_opened",
+          "check": "The post-screenshot shows the Weather app."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 120,
+        "required_tools": [
+          "open_app"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "route.app": "weather",
+        "aico_app.command_counts.open_app": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "background_clipboard_then_launch",
+      "category": "multi_step",
+      "prompt": "Copy ORDER-7731 to my phone's clipboard, then open the Calculator app.",
+      "description_for_judge": "The simulated Aico App runs in the background with its foreground service enabled. Clipboard writes still work through the Phone Bridge, but launching another app through the bridge is rejected, so the agent opens Calculator from the screen.",
+      "rubric": [
+        {
+          "id": "clipboard_written",
+          "check": "The agent reports that ORDER-7731 was copied to the clipboard."
+        },
+        {
+          "id": "calculator_opened",
+          "check": "The post-screenshot shows the Calculator app."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 15,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_clipboard",
+            "input_contains": {
+              "action": "write",
+              "text": "ORDER-7731"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {
+        "app_state": "background",
+        "fgs_bridge_enabled": true
+      },
+      "environment_assertions": {
+        "os.clipboard.content": "ORDER-7731",
+        "route.app": "calculator"
+      }
+    },
+    {
+      "id": "contacts_permission_denied_gui_fallback",
+      "category": "multi_step",
+      "prompt": "Create a contact on my phone: Alex Wang, phone 13800001234. The details are confirmed, so go ahead without asking me again. I can't use my phone right now, so handle it on the phone yourself.",
+      "description_for_judge": "The simulated Aico App is connected but contacts access is denied, so the Phone Bridge contacts tool returns permission_denied. The agent creates the contact through the Contacts app on screen instead.",
+      "rubric": [
+        {
+          "id": "contact_created",
+          "check": "The post-screenshot or final response shows that the contact Alex Wang with phone 13800001234 was saved."
+        },
+        {
+          "id": "fallback_after_denial",
+          "check": "After the contacts permission error, the agent completes the task through the phone screen instead of stopping."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 3,
+        "max_tool_calls": 40,
+        "must_complete_within_sec": 300,
+        "required_tools": [
+          "touch_gesture"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "contacts"
+      ],
+      "aico_app": {
+        "permissions": {
+          "contacts": "denied"
+        }
+      },
+      "environment_assertions": {
+        "os.providers.contacts.contacts.0.displayName": "Alex Wang"
+      }
+    },
+    {
+      "id": "contacts_disconnect_gui_fallback",
+      "category": "multi_step",
+      "prompt": "Create a contact on my phone: Jamie Lee, phone 13900005678. The details are confirmed, so go ahead without asking me again. I can't use my phone right now, so handle it on the phone yourself.",
+      "description_for_judge": "The simulated Aico App drops its connection on the first contacts command. Later Phone Bridge calls report that the phone is not connected, so the agent creates the contact in the Contacts app on screen.",
+      "rubric": [
+        {
+          "id": "contact_created",
+          "check": "The post-screenshot or final response shows that the contact Jamie Lee with phone 13900005678 was saved."
+        },
+        {
+          "id": "fallback_after_disconnect",
+          "check": "After the Phone Bridge disconnect, the agent completes the task through the phone screen instead of stopping."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 3,
+        "max_tool_calls": 40,
+        "must_complete_within_sec": 300,
+        "required_tools": [
+          "touch_gesture"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "contacts"
+      ],
+      "aico_app": {
+        "faults": [
+          {
+            "command": "contacts_create",
+            "error": "disconnect"
+          }
+        ]
+      },
+      "environment_assertions": {
+        "os.providers.contacts.contacts.0.displayName": "Jamie Lee",
+        "aico_app.connected": false
+      }
+    },
+    {
+      "id": "scheduled_reminder_via_bridge",
+      "category": "single_step",
+      "prompt": "Schedule a notification on my phone for January 1, 2030 at 9 AM Beijing time (UTC+8) reminding me to pay the rent. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The agent schedules a local notification through the Phone Bridge notification tool for 2030-01-01 09:00 Beijing time.",
+      "rubric": [
+        {
+          "id": "reminder_scheduled",
+          "check": "The agent confirms a phone notification reminding the user to pay the rent at 2030-01-01 09:00 Beijing time."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 10,
+        "must_complete_within_sec": 180,
+        "required_tools": [
+          "bridge_notification"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "aico_app.scheduled_notifications.0.schedule_ts": 1893459600000
+      }
+    },
+    {
+      "id": "clipboard_round_trip",
+      "category": "multi_step",
+      "prompt": "Write AICO-CLIP-42 to my phone's clipboard, then read the clipboard back to check it.",
+      "description_for_judge": "The agent writes AICO-CLIP-42 through the Phone Bridge clipboard tool, then reads the clipboard back to confirm it.",
+      "rubric": [
+        {
+          "id": "verified",
+          "check": "The final response confirms that the clipboard contains AICO-CLIP-42 after reading it back."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_clipboard",
+            "input_contains": {
+              "action": "write",
+              "text": "AICO-CLIP-42"
+            }
+          },
+          {
+            "tool": "bridge_clipboard",
+            "input_contains": {
+              "action": "read"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "os.clipboard.content": "AICO-CLIP-42",
+        "aico_app.failed_command_counts.clipboard_write": 0
+      }
+    },
+    {
+      "id": "calendar_query_day",
+      "category": "single_step",
+      "prompt": "What's on my phone calendar on June 2, 2026?",
+      "description_for_judge": "The phone calendar holds Standup (09:30-10:00) and Product review (14:00-15:00, Room 3) on 2026-06-02 and Team weekly on 2026-06-03. The agent queries the calendar through the Phone Bridge and lists only the June 2 events.",
+      "rubric": [
+        {
+          "id": "listed_events",
+          "check": "The final response lists Standup at 09:30-10:00 and Product review at 14:00-15:00 on June 2."
+        },
+        {
+          "id": "no_other_day",
+          "check": "The final response does not present Team weekly as a June 2 event."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "query"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "initial_state": {
+        "apps": {
+          "calendar": {
+            "events": [
+              {
+                "id": "evt_seed_standup",
+                "type": "event",
+                "title": "Standup",
+                "allDay": false,
+                "startTs": 1780363800000,
+                "endTs": 1780365600000
+              },
+              {
+                "id": "evt_seed_review",
+                "type": "event",
+                "title": "Product review",
+                "allDay": false,
+                "startTs": 1780380000000,
+                "endTs": 1780383600000,
+                "location": "Room 3"
+              },
+              {
+                "id": "evt_seed_weekly",
+                "type": "event",
+                "title": "Team weekly",
+                "allDay": false,
+                "startTs": 1780452000000,
+                "endTs": 1780455600000
+              }
+            ]
+          }
+        }
+      },
+      "aico_app": {},
+      "environment_assertions": {
+        "aico_app.command_counts.calendar_query": {
+          "min": 1
+        },
+        "aico_app.command_counts.calendar_create": 0,
+        "aico_app.command_counts.calendar_delete": 0
+      }
+    },
+    {
+      "id": "calendar_delete_event",
+      "category": "multi_step",
+      "prompt": "Delete the Team weekly event on June 3, 2026 from my phone calendar. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The agent finds the Team weekly event on 2026-06-03 through the Phone Bridge calendar query and deletes it, leaving Standup on June 2.",
+      "rubric": [
+        {
+          "id": "deleted",
+          "check": "The final response confirms that the June 3 Team weekly event was deleted."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 10,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "delete"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "initial_state": {
+        "apps": {
+          "calendar": {
+            "events": [
+              {
+                "id": "evt_seed_weekly",
+                "type": "event",
+                "title": "Team weekly",
+                "allDay": false,
+                "startTs": 1780452000000,
+                "endTs": 1780455600000
+              },
+              {
+                "id": "evt_seed_standup",
+                "type": "event",
+                "title": "Standup",
+                "allDay": false,
+                "startTs": 1780363800000,
+                "endTs": 1780365600000
+              }
+            ]
+          }
+        }
+      },
+      "aico_app": {},
+      "environment_assertions": {
+        "apps.calendar.events.0.title": "Standup",
+        "aico_app.command_counts.calendar_delete": {
+          "min": 1
+        },
+        "aico_app.failed_command_counts.calendar_delete": 0
+      }
+    },
+    {
+      "id": "calendar_conflict_then_create",
+      "category": "multi_step",
+      "prompt": "Am I free on June 2, 2026 from 3 to 4 PM Beijing time (UTC+8) on my phone calendar? If so, add an event called Dentist follow-up; if there's a conflict, book it the same day from 4 to 5 PM instead. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The phone calendar already has Client call on 2026-06-02 15:00-16:00. The agent checks the calendar, finds the conflict, and creates Dentist follow-up for 16:00-17:00 Beijing time instead.",
+      "rubric": [
+        {
+          "id": "explained_conflict",
+          "check": "The final response mentions the 15:00-16:00 conflict and that Dentist follow-up was booked for 16:00-17:00."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 10,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "query"
+            }
+          },
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "create"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "initial_state": {
+        "apps": {
+          "calendar": {
+            "events": [
+              {
+                "id": "evt_seed_client",
+                "type": "event",
+                "title": "Client call",
+                "allDay": false,
+                "startTs": 1780383600000,
+                "endTs": 1780387200000
+              }
+            ]
+          }
+        }
+      },
+      "aico_app": {},
+      "environment_assertions": {
+        "apps.calendar.events.0.title": "Dentist follow-up",
+        "apps.calendar.events.0.startTs": 1780387200000,
+        "apps.calendar.events.0.endTs": 1780390800000
+      }
+    },
+    {
+      "id": "transient_timeout_retry",
+      "category": "multi_step",
+      "prompt": "Add an event to my phone calendar: June 8, 2026, 9-10 AM Beijing time (UTC+8), Weekly planning. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The first Phone Bridge calendar create times out. The agent retries the bridge command and the event is created.",
+      "rubric": [
+        {
+          "id": "event_created",
+          "check": "The final response confirms the Weekly planning event on 2026-06-08 09:00-10:00."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 12,
+        "must_complete_within_sec": 180,
+        "required_tools": [
+          "bridge_calendar"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "aico_app": {
+        "faults": [
+          {
+            "command": "calendar_create",
+            "error": "bridge_timeout"
+          }
+        ]
+      },
+      "environment_assertions": {
+        "apps.calendar.events.0.title": "Weekly planning",
+        "apps.calendar.events.0.startTs": 1780880400000,
+        "aico_app.failed_command_counts.calendar_create": 1,
+        "aico_app.command_counts.calendar_create": {
+          "min": 2
+        }
+      }
+    },
+    {
+      "id": "contacts_lookup_answer",
+      "category": "single_step",
+      "prompt": "What's Alice Chen's phone number?",
+      "description_for_judge": "The agent looks up Alice Chen through the Phone Bridge contacts query and reports +86 13900138001 without changing contacts.",
+      "rubric": [
+        {
+          "id": "reported_number",
+          "check": "The final response gives Alice Chen's phone number as +86 13900138001."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_contacts",
+            "input_contains": {
+              "action": "query"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "aico_app.command_counts.contacts_query": {
+          "min": 1
+        },
+        "aico_app.command_counts.contacts_create": 0,
+        "aico_app.command_counts.contacts_update": 0
+      },
+      "initial_state": {
+        "os": {
+          "providers": {
+            "contacts": {
+              "contacts": [
+                {
+                  "id": "c_seed_alice",
+                  "displayName": "Alice Chen",
+                  "phones": [
+                    {
+                      "id": "c_seed_alice_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13900138001",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_ben",
+                  "displayName": "Ben Carter",
+                  "phones": [
+                    {
+                      "id": "c_seed_ben_mobile",
+                      "label": "Mobile",
+                      "number": "+86 15600001111",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_dana",
+                  "displayName": "Dana Wu",
+                  "phones": [
+                    {
+                      "id": "c_seed_dana_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13912345678",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "contacts_update_company",
+      "category": "multi_step",
+      "prompt": "Change Ben Carter's company in my phone contacts to Aiden Robotics. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The agent finds Ben Carter through the Phone Bridge contacts query, then updates the contact's organization to Aiden Robotics with the returned contact id.",
+      "rubric": [
+        {
+          "id": "updated",
+          "check": "The final response confirms that Ben Carter's company is now Aiden Robotics."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 10,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_contacts",
+            "input_contains": {
+              "action": "query"
+            }
+          },
+          {
+            "tool": "bridge_contacts",
+            "input_contains": {
+              "action": "update"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "os.providers.contacts.contacts.1.displayName": "Ben Carter",
+        "os.providers.contacts.contacts.1.company": "Aiden Robotics",
+        "aico_app.failed_command_counts.contacts_update": 0
+      },
+      "initial_state": {
+        "os": {
+          "providers": {
+            "contacts": {
+              "contacts": [
+                {
+                  "id": "c_seed_alice",
+                  "displayName": "Alice Chen",
+                  "phones": [
+                    {
+                      "id": "c_seed_alice_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13900138001",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_ben",
+                  "displayName": "Ben Carter",
+                  "phones": [
+                    {
+                      "id": "c_seed_ben_mobile",
+                      "label": "Mobile",
+                      "number": "+86 15600001111",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_dana",
+                  "displayName": "Dana Wu",
+                  "phones": [
+                    {
+                      "id": "c_seed_dana_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13912345678",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "call_contact_via_bridge",
+      "category": "multi_step",
+      "prompt": "Call Dana Wu on my phone. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The agent looks up Dana Wu's number through the Phone Bridge contacts query and starts the call with a tel: link through the Phone Bridge. The dialer opens with 8613912345678 on the dial pad (the simulator drops the leading +); pressing a call button places the simulated call.",
+      "rubric": [
+        {
+          "id": "dialed",
+          "check": "The post-screenshot or final response shows the dial pad holding Dana Wu's number (8613912345678 or 13912345678) or a simulated call to it."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 10,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_contacts",
+            "input_contains": {
+              "action": "query"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "route.app": "contacts",
+        "aico_app.command_counts.open_app": {
+          "min": 1
+        },
+        "aico_app.command_counts.contacts_query": {
+          "min": 1
+        }
+      },
+      "initial_state": {
+        "os": {
+          "providers": {
+            "contacts": {
+              "contacts": [
+                {
+                  "id": "c_seed_alice",
+                  "displayName": "Alice Chen",
+                  "phones": [
+                    {
+                      "id": "c_seed_alice_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13900138001",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_ben",
+                  "displayName": "Ben Carter",
+                  "phones": [
+                    {
+                      "id": "c_seed_ben_mobile",
+                      "label": "Mobile",
+                      "number": "+86 15600001111",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                },
+                {
+                  "id": "c_seed_dana",
+                  "displayName": "Dana Wu",
+                  "phones": [
+                    {
+                      "id": "c_seed_dana_mobile",
+                      "label": "Mobile",
+                      "number": "+86 13912345678",
+                      "isPrimary": true
+                    }
+                  ],
+                  "emails": []
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "open_url_via_bridge",
+      "category": "single_step",
+      "prompt": "Open https://example.com in my phone's browser.",
+      "description_for_judge": "The agent opens the URL through the Phone Bridge open_url route instead of typing it into the browser. The browser shows https://example.com in its address bar; page rendering depends on the simulator's network, so only the launch is checked.",
+      "rubric": [
+        {
+          "id": "browser_opened",
+          "check": "The post-screenshot shows the browser with https://example.com in the address bar."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 180,
+        "required_tools": [
+          "open_url"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "route.app": "browser",
+        "aico_app.command_counts.open_app": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "notification_send_now",
+      "category": "single_step",
+      "prompt": "Send a notification to my phone now, titled \"Hydrate\" with the text \"Time to drink water\". The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The agent posts an immediate local notification through the Phone Bridge notification tool.",
+      "rubric": [
+        {
+          "id": "sent",
+          "check": "The final response confirms that the Hydrate notification was sent."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 120,
+        "required_tools": [
+          "bridge_notification"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "os.notifications.items.0.title": "Hydrate",
+        "aico_app.failed_command_counts.notification_send": 0
+      }
+    },
+    {
+      "id": "notification_permission_denied",
+      "category": "single_step",
+      "prompt": "Send a notification to my phone now, titled \"Standup\" with the text \"Standup at 10 AM\". The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "Notification permission is denied for the simulated Aico App, and there is no screen path to post a phone notification. The agent must report that notification permission is needed, either in its reply or by requesting the user's action, instead of claiming success.",
+      "rubric": [
+        {
+          "id": "reported_permission",
+          "check": "The final response or the user-action request says notification permission must be granted."
+        },
+        {
+          "id": "no_false_success",
+          "check": "The agent does not claim that the notification was sent."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 120,
+        "required_tools": [
+          "bridge_notification"
+        ],
+        "response_required": false
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {
+        "permissions": {
+          "notifications": "denied"
+        }
+      },
+      "environment_assertions": {
+        "aico_app.failed_command_counts.notification_send": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "disconnected_phone_gui_only",
+      "category": "multi_step",
+      "prompt": "Create a contact on my phone: Chris Park, phone 13700002222. The details are confirmed, so go ahead without asking me again. I can't use my phone right now, so handle it on the phone yourself.",
+      "description_for_judge": "The Aico App is not connected for the whole task, so Phone Bridge tools are unavailable. The agent creates the contact in the Contacts app on screen.",
+      "rubric": [
+        {
+          "id": "contact_created",
+          "check": "The post-screenshot or final response shows that the contact Chris Park with phone 13700002222 was saved."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 3,
+        "max_tool_calls": 40,
+        "must_complete_within_sec": 300,
+        "required_tools": [
+          "touch_gesture"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "contacts"
+      ],
+      "aico_app": {
+        "connected": false
+      },
+      "environment_assertions": {
+        "os.providers.contacts.contacts.0.displayName": "Chris Park",
+        "aico_app.connected": false,
+        "aico_app.command_counts.contacts_create": 0
+      }
+    },
+    {
+      "id": "non_ascii_note_via_bridge_clipboard",
+      "category": "multi_step",
+      "prompt": "Create a new note in the Notes app on my phone with the text \"Résumé review at the café on Friday\".",
+      "description_for_judge": "Notes is open with no notes. The agent creates a note on screen; the accented text cannot be typed on the simulator's ASCII keyboard, so text entry goes through the Phone Bridge clipboard.",
+      "rubric": [
+        {
+          "id": "note_saved",
+          "check": "The post-screenshot or final response shows a note containing Résumé review at the café on Friday."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 3,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 300,
+        "required_tools": [
+          "enter_text"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_state": {
+        "apps": {
+          "notes": {
+            "notes": []
+          }
+        }
+      },
+      "aico_app": {},
+      "environment_assertions": {
+        "apps.notes.notes.0.content": "Résumé review at the café on Friday",
+        "aico_app.command_counts.clipboard_write": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "contacts_create_via_bridge",
+      "category": "single_step",
+      "prompt": "Add a contact to my phone: Morgan Lee, phone 13600003333, email morgan@example.com, company Aiden Robotics, notes \"Product advisor\". The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The agent creates the contact with phone, email, organization and notes through the Phone Bridge contacts tool.",
+      "rubric": [
+        {
+          "id": "created",
+          "check": "The final response confirms that Morgan Lee was saved with the given phone, email, company and notes."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_contacts",
+            "input_contains": {
+              "action": "create"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "os.providers.contacts.contacts.0.displayName": "Morgan Lee",
+        "os.providers.contacts.contacts.0.phones.0.number": "13600003333",
+        "os.providers.contacts.contacts.0.emails.0.email": "morgan@example.com",
+        "os.providers.contacts.contacts.0.company": "Aiden Robotics",
+        "os.providers.contacts.contacts.0.notes": "Product advisor",
+        "aico_app.failed_command_counts.contacts_create": 0
+      }
+    },
+    {
+      "id": "calendar_all_day_with_notes",
+      "category": "single_step",
+      "prompt": "Add an all-day event to my phone calendar on June 12, 2026: Team outing, with the note \"Bring sneakers\". The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The agent creates an all-day event with notes through the Phone Bridge calendar tool.",
+      "rubric": [
+        {
+          "id": "created",
+          "check": "The final response confirms the all-day Team outing event on 2026-06-12 with the note Bring sneakers."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "create",
+              "all_day": true
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "aico_app": {},
+      "environment_assertions": {
+        "apps.calendar.events.0.title": "Team outing",
+        "apps.calendar.events.0.allDay": true,
+        "apps.calendar.events.0.description": "Bring sneakers"
+      }
+    },
+    {
+      "id": "calendar_permission_denied",
+      "category": "single_step",
+      "prompt": "Add an event to my phone calendar: June 9, 2026, 2-3 PM Beijing time (UTC+8), Retro. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "Calendar permission is denied for the simulated Aico App. The agent must not claim the event was created; it either reports that calendar permission is needed or requests the user's action. Creating the event on screen also counts.",
+      "rubric": [
+        {
+          "id": "handled_denial",
+          "check": "The final response or user-action request says calendar permission must be granted, or the post-screenshot shows the Retro event created on screen."
+        },
+        {
+          "id": "no_false_success",
+          "check": "The agent does not claim the event was created through the bridge."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 180,
+        "required_tools": [
+          "bridge_calendar"
+        ],
+        "response_required": false
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "aico_app": {
+        "permissions": {
+          "calendar": "denied"
+        }
+      },
+      "environment_assertions": {
+        "aico_app.failed_command_counts.calendar_create": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "open_app_launch_failure_fallback",
+      "category": "single_step",
+      "prompt": "Open the Weather app on my phone.",
+      "description_for_judge": "The Phone Bridge launch fails once with app_launch_failed. The open_app tool falls back to the visible system search, so Weather still opens.",
+      "rubric": [
+        {
+          "id": "weather_opened",
+          "check": "The post-screenshot shows the Weather app."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 10,
+        "must_complete_within_sec": 180,
+        "required_tools": [
+          "open_app"
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "aico_app": {
+        "faults": [
+          {
+            "command": "open_app",
+            "error": "app_launch_failed"
+          }
+        ]
+      },
+      "environment_assertions": {
+        "route.app": "weather",
+        "aico_app.failed_command_counts.open_app": 1
+      }
+    },
+    {
+      "id": "background_without_fgs",
+      "category": "single_step",
+      "prompt": "Add an event to my phone calendar: June 15, 2026, 11 AM-12 PM Beijing time (UTC+8), Supplier call. The details are confirmed, so go ahead without asking me again.",
+      "description_for_judge": "The simulated Aico App is in the background without its foreground service. On Android, background-safe data commands still run over the WebSocket, so the agent creates the event through the Phone Bridge.",
+      "rubric": [
+        {
+          "id": "created",
+          "check": "The final response confirms the Supplier call event on 2026-06-15 11:00-12:00."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 180,
+        "required_tool_calls": [
+          {
+            "tool": "bridge_calendar",
+            "input_contains": {
+              "action": "create"
+            }
+          }
+        ]
+      },
+      "environment_bridge_types": [
+        "mobilegym"
+      ],
+      "app_ids": [
+        "calendar"
+      ],
+      "aico_app": {
+        "app_state": "background"
+      },
+      "environment_assertions": {
+        "apps.calendar.events.0.title": "Supplier call",
+        "apps.calendar.events.0.startTs": 1781492400000,
+        "apps.calendar.events.0.endTs": 1781496000000,
+        "aico_app.failed_command_counts.calendar_create": 0
+      }
+    }
+  ]
+}

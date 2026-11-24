@@ -94,6 +94,8 @@ def call_environment_setup(
     task_id: str | None = None,
     app_ids: list[str] | None = None,
     foreground_app_id: str | None = None,
+    aico_app: dict[str, Any] | None = None,
+    initial_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return _post_environment(
         _environment_endpoint(environment_url).setup,
@@ -103,6 +105,8 @@ def call_environment_setup(
         payload={
             "app_ids": list(app_ids or []),
             **({"foreground_app_id": foreground_app_id} if foreground_app_id else {}),
+            **({"aico_app": aico_app} if aico_app is not None else {}),
+            **({"initial_state": initial_state} if initial_state is not None else {}),
         },
     )
 

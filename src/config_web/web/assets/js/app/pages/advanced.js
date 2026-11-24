@@ -252,7 +252,7 @@ export async function logsPage(context) {
           onSelect: value => saver.change('log.llm_http_retention_days', {log: {llm_http_retention_days: value}}),
         }),
       })]}), msg('advanced.retention_help', '详细模型请求日志在自动清理前保留的天数。')),
-      context.localAgent ? null : el('div', {class: 'ds-group'}, [exportButton]),
+      context.localAgent && !context.containerAgent ? null : el('div', {class: 'ds-group'}, [exportButton]),
     ]);
     saver.refreshChrome();
   }
