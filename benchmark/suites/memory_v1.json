@@ -898,6 +898,242 @@
         },
         "expected_count": 1
       }
+    },
+    {
+      "id": "recall_near_synonym_pet_diet",
+      "category": "memory",
+      "description_for_judge": "Recall a seeded pet-diet memory when the user asks about their cat using near-synonym wording. The fixture is tagged 宠物 and never contains the character 猫, so a narrow tags=[猫] search misses it; success requires wide synonym recall (e.g. 宠物) plus naming Orijen/渴望.",
+      "setup": [
+        {
+          "type": "seed_memory",
+          "memories": [
+            {
+              "id": "fixture_unrelated_coffee",
+              "store": "long_term",
+              "type": "preference",
+              "content": "User drinks americano without sugar on weekdays.",
+              "tags": ["饮食", "咖啡", "coffee"],
+              "entities": ["americano"],
+              "priority": 70
+            },
+            {
+              "id": "fixture_pet_diet",
+              "store": "long_term",
+              "type": "fact",
+              "title": "宠物口粮",
+              "content": "家里养的小动物奶糖的主粮是渴望（Orijen），不能吃巧克力。",
+              "tags": ["宠物", "口粮"],
+              "entities": ["奶糖", "渴望"],
+              "priority": 80
+            },
+            {
+              "id": "fixture_unrelated_delivery",
+              "store": "long_term",
+              "type": "fact",
+              "content": "Usual parcel delivery takes two days.",
+              "tags": ["物流", "delivery"],
+              "entities": ["parcel"],
+              "priority": 60
+            }
+          ]
+        },
+        {
+          "type": "assert_memory",
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 3,
+          "expected": [
+            {
+              "id": "fixture_pet_diet",
+              "content_contains": "渴望"
+            }
+          ]
+        }
+      ],
+      "prompt": "我家养的那只猫平时吃什么牌子的粮？有没有不能吃的东西？",
+      "rubric": [
+        {
+          "id": "called_recall_memory",
+          "check": "The tool trace contains at least one recall_memory call."
+        },
+        {
+          "id": "answer_mentions_food_brand",
+          "check": "The final response identifies the cat food brand as Orijen or 渴望."
+        },
+        {
+          "id": "answer_mentions_chocolate_ban",
+          "check": "The final response mentions that chocolate must not be eaten, or equivalent wording in any language."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 10,
+        "must_complete_within_sec": 120,
+        "response_required": true,
+        "required_tools": [
+          "recall_memory"
+        ]
+      },
+      "expected_recalled_memory_ids": [
+        "fixture_pet_diet"
+      ]
+    },
+    {
+      "id": "recall_near_synonym_expense_oa",
+      "category": "memory",
+      "description_for_judge": "Recall a seeded OA expense procedure when the user asks about invoice 核销 without saying 报销. The fixture is tagged 报销/OA/审批 and never contains 核销, so narrow tags=[核销] misses it; success requires wide synonym recall and listing upload-invoice then manager approval.",
+      "setup": [
+        {
+          "type": "seed_memory",
+          "memories": [
+            {
+              "id": "fixture_noise_meeting_notes",
+              "store": "long_term",
+              "type": "fact",
+              "content": "Weekly sync notes live in the shared docs folder.",
+              "tags": ["会议", "文档"],
+              "entities": ["docs"],
+              "priority": 55
+            },
+            {
+              "id": "fixture_expense_oa_flow",
+              "store": "long_term",
+              "type": "procedure",
+              "title": "OA 费用申请",
+              "content": "费用走公司 OA：先上传发票，再等主管审批通过。",
+              "tags": ["报销", "OA", "审批"],
+              "entities": ["发票", "主管"],
+              "priority": 85
+            },
+            {
+              "id": "fixture_noise_wifi",
+              "store": "long_term",
+              "type": "fact",
+              "content": "Office guest Wi-Fi password rotates monthly.",
+              "tags": ["网络", "wifi"],
+              "entities": ["wifi"],
+              "priority": 50
+            }
+          ]
+        },
+        {
+          "type": "assert_memory",
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 3,
+          "expected": [
+            {
+              "id": "fixture_expense_oa_flow",
+              "content_contains": "上传发票"
+            }
+          ]
+        }
+      ],
+      "prompt": "公司里发票核销一般怎么走流程？先做什么再做什么？",
+      "rubric": [
+        {
+          "id": "called_recall_memory",
+          "check": "The tool trace contains at least one recall_memory call."
+        },
+        {
+          "id": "answer_mentions_upload_invoice",
+          "check": "The final response says invoices must be uploaded first, or equivalent wording in any language."
+        },
+        {
+          "id": "answer_mentions_manager_approval",
+          "check": "The final response says a manager must approve afterward, or equivalent wording in any language."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 10,
+        "must_complete_within_sec": 120,
+        "response_required": true,
+        "required_tools": [
+          "recall_memory"
+        ]
+      },
+      "expected_recalled_memory_ids": [
+        "fixture_expense_oa_flow"
+      ]
+    },
+    {
+      "id": "recall_near_synonym_default_city",
+      "category": "memory",
+      "description_for_judge": "Recall a seeded default-city preference when the user asks where parcels should be sent. The fixture is tagged 居住地/默认城市 and never contains 快递 or 寄, so narrow parcel wording misses it; success requires wide synonym recall and naming Shanghai/上海.",
+      "setup": [
+        {
+          "type": "seed_memory",
+          "memories": [
+            {
+              "id": "fixture_noise_timezone",
+              "store": "long_term",
+              "type": "profile",
+              "content": "User keeps calendar reminders in Asia/Tokyo.",
+              "tags": ["时区", "日历"],
+              "entities": ["Asia/Tokyo"],
+              "priority": 60
+            },
+            {
+              "id": "fixture_default_city_shanghai",
+              "store": "long_term",
+              "type": "preference",
+              "title": "默认城市",
+              "content": "默认按上海处理天气和本地推荐。",
+              "tags": ["居住地", "默认城市"],
+              "entities": ["上海"],
+              "priority": 80
+            },
+            {
+              "id": "fixture_noise_language",
+              "store": "long_term",
+              "type": "preference",
+              "content": "Prefer concise English replies for technical questions.",
+              "tags": ["语言", "回复风格"],
+              "entities": ["English"],
+              "priority": 65
+            }
+          ]
+        },
+        {
+          "type": "assert_memory",
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 3,
+          "expected": [
+            {
+              "id": "fixture_default_city_shanghai",
+              "content_contains": "上海"
+            }
+          ]
+        }
+      ],
+      "prompt": "快递默认寄到哪个城市？按我平时的习惯来。",
+      "rubric": [
+        {
+          "id": "called_recall_memory",
+          "check": "The tool trace contains at least one recall_memory call."
+        },
+        {
+          "id": "answer_mentions_shanghai",
+          "check": "The final response identifies Shanghai / 上海 as the default city."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 10,
+        "must_complete_within_sec": 120,
+        "response_required": true,
+        "required_tools": [
+          "recall_memory"
+        ]
+      },
+      "expected_recalled_memory_ids": [
+        "fixture_default_city_shanghai"
+      ]
     }
   ]
 }
