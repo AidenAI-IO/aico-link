@@ -1062,7 +1062,7 @@
     {
       "id": "recall_near_synonym_default_city",
       "category": "memory",
-      "description_for_judge": "Recall a seeded default-city preference when the user asks where parcels should be sent. The fixture is tagged 居住地/默认城市 and never contains 快递 or 寄, so narrow parcel wording misses it; success requires wide synonym recall and naming Shanghai/上海.",
+      "description_for_judge": "Recall a seeded general default-city preference when the user asks where parcels should be sent. The fixture is tagged 居住地/默认城市, states Shanghai as the default city for address-related defaults, and never contains 快递 or 寄, so narrow parcel wording misses it; success requires wide synonym recall and naming Shanghai/上海.",
       "setup": [
         {
           "type": "seed_memory",
@@ -1081,7 +1081,7 @@
               "store": "long_term",
               "type": "preference",
               "title": "默认城市",
-              "content": "默认按上海处理天气和本地推荐。",
+              "content": "用户的默认城市是上海；涉及地址、配送目的地、天气和本地推荐时均按上海处理。",
               "tags": ["居住地", "默认城市"],
               "entities": ["上海"],
               "priority": 80
@@ -1119,7 +1119,7 @@
         },
         {
           "id": "answer_mentions_shanghai",
-          "check": "The final response identifies Shanghai / 上海 as the default city."
+          "check": "The final response identifies Shanghai / 上海 as the default city for delivery or address defaults."
         }
       ],
       "hard_assertions": {
