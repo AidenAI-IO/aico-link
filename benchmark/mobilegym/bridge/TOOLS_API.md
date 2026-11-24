@@ -109,8 +109,10 @@ app's data on demand.
 
 `foreground_app_id` is an optional exact installed app ID. Setup opens it after
 reset and fails if it cannot be launched. The preload list does not determine
-the foreground app. The agent's Phone Bridge `open_app` tool is not routed
-through MobileGym's `/api/tools` catalog.
+the foreground app. The agent's Phone Bridge tools (`open_app`, `bridge_*`)
+are not routed through MobileGym's `/api/tools` catalog; they use the
+`/api/phone-bridge/*` endpoints when setup includes `aico_app` (see
+[Simulated Aico App](../README.md#simulated-aico-app)).
 
 ## Deterministic State And Route
 

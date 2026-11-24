@@ -105,20 +105,22 @@ export async function memoryPage(context) {
     });
     const days = (config().voice_notifications || {}).retention_days;
     replace(body, [
-      el('div', {}, [
-        groupNoted({
-          rows: [
-            row({ label: msg('memory.screen_enabled', '屏幕记忆'), accessory: captureToggle }),
-          ],
-        }),
-        text(
-          msg(
-            'memory.screen_enabled_help',
-            '开启后，按下设备上的截屏按键会保存当前屏幕内容，供 Aico 之后回忆。',
-          ),
-          'page__note page__note--below',
-        ),
-      ]),
+      context.containerAgent
+        ? null
+        : el('div', {}, [
+            groupNoted({
+              rows: [
+                row({ label: msg('memory.screen_enabled', '屏幕记忆'), accessory: captureToggle }),
+              ],
+            }),
+            text(
+              msg(
+                'memory.screen_enabled_help',
+                '开启后，按下设备上的截屏按键会保存当前屏幕内容，供 Aico 之后回忆。',
+              ),
+              'page__note page__note--below',
+            ),
+          ]),
       group({
         rows: [
           row({

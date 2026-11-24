@@ -6,6 +6,7 @@ import { createDeviceState } from './state';
 
 const model = createDeviceState(request, {
   local: document.documentElement.dataset.profile === 'local',
+  container: document.documentElement.dataset.profile === 'container',
 });
 const root = createRoot(document.getElementById('app')!);
 root.render(

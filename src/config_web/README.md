@@ -1,7 +1,7 @@
 # Config Web frontend
 
-The device and native Agent profiles share a React application written in strict
-TypeScript. Jotai owns confirmed device state; forms own their unsaved drafts.
+The device, native host and Launcher container profiles share a React application
+written in strict TypeScript. Jotai owns confirmed device state; forms own their unsaved drafts.
 The Go Config Web server and Device Management API remain the backend.
 
 ## Development
@@ -14,7 +14,8 @@ bash scripts/build-config-web.sh
 ```
 
 Serve `src/config_web/dist` with `agent config-web --web-root` (add
-`--local-agent` for the host profile). Debian packaging, the development sandbox,
+`--local-agent` for the native host profile or `--container-agent` for Launcher
+containers). Debian packaging, the development sandbox,
 and `scripts/local_agent.py` build and use these static assets automatically.
 The device does not need Node.js. Do not deploy `web/` directly: it contains
 TypeScript source and bare package imports.
@@ -28,7 +29,8 @@ AICO_CONFIG_WEB_URL=http://192.168.42.1 npm run dev
 ```
 
 Vite proxies `/api` and `/login` to that origin. Open `/` for the device profile
-or `/local.html` for the native profile. Override the API origin when developing
+or `/local.html` for the native profile, or `/container.html` for the Launcher
+container profile. Override the API origin when developing
 against a native Agent's Config Web port.
 
 ```bash
@@ -82,4 +84,7 @@ Generated design tokens are excluded from Prettier; regenerate them with
 
 The router preserves real URLs and the native WebView bridge. CSS, icons,
 translations and API transport are shared with the retained editors. The build
-emits both profile documents and the separate LLM log viewer.
+emits all three profile documents and the separate LLM log viewer. PC profiles
+poll only their available APIs. The container profile retains software voice,
+memory retention/reset and support-log export while excluding board controls;
+its overview follows published Agent and optional terminal URLs from status.

@@ -7,7 +7,7 @@ import { confirmSheet } from '../assets/js/ui/confirm.js';
 import { msg, resolve } from '../assets/js/ui/text.js';
 import { toast } from '../assets/js/ui/toast.js';
 import { isEmbedded } from '../assets/js/ui/environment.js';
-import { LOCAL_ITEMS } from '../assets/js/app/nav-items.js';
+import { CONTAINER_ITEMS, LOCAL_ITEMS } from '../assets/js/app/nav-items.js';
 import { terminalUrl } from '../assets/js/app/pages/advanced.js';
 import { FILESYSTEMS, storagePage } from '../assets/js/app/pages/storage.js';
 import { mcpPage } from '../assets/js/app/pages/mcp.js';
@@ -524,15 +524,34 @@ export function LocalOverview({ model, navigate }: PageProps) {
         />
       </Group>
       {status.url && (
-        <a href={status.url} target="_blank" rel="noreferrer">
+        <a
+          className="local-agent-link"
+          data-action="open-agent"
+          href={status.url}
+          target="_blank"
+          rel="noreferrer"
+        >
           <Text value={msg('local.open_agent', '打开 Agent 界面')} />
+        </a>
+      )}
+      {model.container && status.terminal_url && (
+        <a
+          className="local-agent-link"
+          data-action="open-terminal"
+          href={status.terminal_url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <Text value={msg('local.open_terminal', '打开容器终端')} />
         </a>
       )}
       <div className="local-shortcuts">
         <Group>
-          {LOCAL_ITEMS.filter((item) => item.route !== '/').map((item) => (
-            <Row key={item.id} label={item.label} chevron onPress={() => navigate(item.route)} />
-          ))}
+          {(model.container ? CONTAINER_ITEMS : LOCAL_ITEMS)
+            .filter((item) => item.route !== '/')
+            .map((item) => (
+              <Row key={item.id} label={item.label} chevron onPress={() => navigate(item.route)} />
+            ))}
         </Group>
       </div>
     </div>

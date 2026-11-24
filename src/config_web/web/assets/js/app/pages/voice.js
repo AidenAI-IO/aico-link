@@ -225,11 +225,17 @@ export async function voicePage(context) {
   });
   const saved = effectiveMode(snapshot);
   const requested = context.query && context.query.mode;
-  const shown = MODES.some((entry) => entry.value === requested) ? requested : saved || 'realtime';
+  const modes = MODES;
+  const shown = modes.some((entry) => entry.value === requested)
+    ? requested
+    : modes.some((entry) => entry.value === saved)
+      ? saved
+      : 'realtime';
   const pending = shown !== saved ? shown : '';
+  const classicDisabled =
+    context.containerAgent && snapshot.agent_status?.classic_voice_enabled === false;
 
   async function switchMode(mode) {
-    if (mode === shown) return;
     if (mode === saved) {
       context.navigate('/voice', { replace: true });
       return;
@@ -248,7 +254,7 @@ export async function voicePage(context) {
   // Every item carries its check, faded out unless active, so the switch can
   // cross-fade instead of inserting and removing the glyph.
   const thumb = el('span', { class: 'ds-segmented__thumb', attrs: { 'aria-hidden': 'true' } });
-  const items = MODES.map((entry) =>
+  const items = modes.map((entry) =>
     el(
       'button',
       {
@@ -265,7 +271,7 @@ export async function voicePage(context) {
             lastShownMode = entry.value;
             replace(content, [modeContent(entry.value, true)]);
             replace(note, []);
-            switchMode(entry.value);
+            return switchMode(entry.value);
           },
         },
       },
@@ -279,7 +285,7 @@ export async function voicePage(context) {
   function select(mode) {
     const index = Math.max(
       0,
-      MODES.findIndex((entry) => entry.value === mode),
+      modes.findIndex((entry) => entry.value === mode),
     );
     tabs.style.setProperty('--segmented-index', String(index));
     items.forEach((item, i) => {
@@ -353,13 +359,15 @@ export async function voicePage(context) {
         kindGroup('realtime', undefined, mode),
       ]);
     }
-    const speakerHost = el('div', { data: { action: 'speaker-panel' } });
+    const speakerHost = context.containerAgent
+      ? null
+      : el('div', { data: { action: 'speaker-panel' } });
     const root = el('div', { class: animate ? 'ds-fade-in' : null }, [
       kindGroup('stt', KINDS.stt.title, mode),
       kindGroup('tts', KINDS.tts.title, mode),
       speakerHost,
     ]);
-    renderSpeakerPanel(speakerHost, saver, snapshot);
+    if (speakerHost) renderSpeakerPanel(speakerHost, saver, snapshot);
     return root;
   }
 
@@ -368,7 +376,7 @@ export async function voicePage(context) {
   const note = el(
     'div',
     {},
-    pending
+    pending && !(shown === 'stt' && classicDisabled)
       ? [
           text(
             saved
@@ -380,7 +388,20 @@ export async function voicePage(context) {
       : [],
   );
   const content = el('div', {}, [modeContent(shown, changed)]);
-  replace(body, [tabs, note, content]);
+  replace(body, [
+    tabs,
+    classicDisabled
+      ? text(
+          msg(
+            'voice.classic_disabled',
+            '当前容器未启用 Classic 语音，Classic 模式仅支持文字对话。你仍可编辑 STT/TTS 配置；使用浏览器语音请选择 Realtime。',
+          ),
+          'page__note',
+        )
+      : null,
+    note,
+    content,
+  ]);
   saver.refreshChrome();
   return screen([body]);
 }

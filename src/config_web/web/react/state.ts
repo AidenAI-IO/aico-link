@@ -83,7 +83,11 @@ const wifiOrder = (next: WiFiData, previous: WiFiData | null) => {
 };
 
 /** Stores belong to one app, not a module singleton (also isolates tests). */
-export function createDeviceState(send: Transport, { local = false } = {}) {
+export function createDeviceState(
+  send: Transport,
+  { local: native = false, container = false } = {},
+) {
+  const local = native || container;
   const store = createStore();
   const config = atom<Configuration | null>(null);
   const snapshotFailure = atom<Snapshot['snapshot_error'] | undefined>(undefined);
@@ -167,9 +171,12 @@ export function createDeviceState(send: Transport, { local = false } = {}) {
   let runtime: string | null = null;
   function activate(route = '/') {
     const names = local ? ['application'] : ['wifi', 'storage', 'ota', 'application', 'device'];
-    if (route === '/' && local) names.push('device', 'mirroring');
-    if (route.startsWith('/advanced')) names.push('lan');
-    if (route === '/advanced') names.push('usb');
+    if (route === '/' && local) {
+      names.push('device');
+      if (!container) names.push('mirroring');
+    }
+    if (!local && route.startsWith('/advanced')) names.push('lan');
+    if (!local && route === '/advanced') names.push('usb');
     if (route === '/advanced/mcp') names.push('mcp');
     if (route.startsWith('/firmware')) names.push('device');
     selected = new Set(names);
@@ -219,6 +226,7 @@ export function createDeviceState(send: Transport, { local = false } = {}) {
     current,
     locale,
     local,
+    container,
     send: request,
     activate,
     publishSave,

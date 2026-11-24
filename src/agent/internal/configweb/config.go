@@ -167,7 +167,7 @@ func (s *Server) handleConfigMeta(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	if s.options.LocalAgent {
-		metadata = localAgentMetadata(metadata)
+		metadata = s.localAgentMetadata(metadata)
 	}
 	writeJSON(w, http.StatusOK, metadata)
 }
@@ -176,7 +176,7 @@ func (s *Server) handleConfigMeta(w http.ResponseWriter, _ *http.Request) {
 // `--dry-run` are passed through.
 func (s *Server) updateConfig(config json.RawMessage, flags ...string) (map[string]any, int, error) {
 	if s.options.LocalAgent {
-		if err := validateLocalConfigPatch(config); err != nil {
+		if err := s.validateLocalConfigPatch(config); err != nil {
 			return nil, http.StatusBadRequest, err
 		}
 	}

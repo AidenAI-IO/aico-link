@@ -29,6 +29,7 @@ export function Editor({
       ...spec.route,
       ...spec.options,
       localAgent: model.local,
+      containerAgent: model.container,
       snapshot: structuredClone(model.store.get(model.current)),
       navigate: spec.navigate,
       header: (value) => {

@@ -35,6 +35,7 @@ export default defineConfig({
       input: {
         device: `${root}/index.html`,
         local: `${root}/local.html`,
+        container: `${root}/container.html`,
         logs: `${root}/llm-logs.html`,
       },
     },

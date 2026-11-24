@@ -130,6 +130,30 @@ describe('resource lifecycle', () => {
 });
 
 describe('device state', () => {
+  it.each([false, true])(
+    'keeps board polling out of PC routes (container: %s)',
+    async (container) => {
+      const send = vi.fn(async (path) => {
+        if (path === '/api/config/application') return { state: 'applied' };
+        if (path === '/api/mcp/servers') return { servers: [] };
+        if (path === '/api/device/iphone-mirroring') return { supported: false };
+        return { config: {}, agent_status: {} };
+      });
+      const model = createDeviceState(send, { local: !container, container });
+      for (const route of ['/', '/advanced/logs', '/advanced/mcp', '/voice', '/memory']) {
+        model.activate(route);
+        await flush();
+        await vi.advanceTimersByTimeAsync(10000);
+      }
+      const requested = send.mock.calls.map(([path]) => path);
+      expect(requested).toContain('/api/config/application');
+      expect(requested).toContain('/api/mcp/servers');
+      expect(requested.some((path) => /^\/api\/(network|storage|ota|security)\//.test(path))).toBe(
+        false,
+      );
+      model.dispose();
+    },
+  );
   it('refreshes active route resources immediately on network recovery', async () => {
     const send = vi.fn(async (path) =>
       path === '/api/network/usb-internet' ? { enabled: true, via_usb: true } : { config: {} },

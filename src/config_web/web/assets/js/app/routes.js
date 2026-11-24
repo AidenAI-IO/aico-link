@@ -94,3 +94,8 @@ export const localRoutes = [
       route.path.startsWith('/advanced/logs'),
   ),
 ];
+
+export const containerRoutes = [
+  ...localRoutes,
+  ...routes.filter((route) => route.path.startsWith('/voice') || route.path === '/memory'),
+];

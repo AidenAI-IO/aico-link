@@ -529,6 +529,7 @@ class InstanceManager:
         settings = self.store.settings()
         route = route_id(instance_id)
         env: dict[str, str] = {
+            "AICO_CONFIG_WEB_PROFILE": "container",
             "AICO_ENVIRONMENT_BRIDGE_ENDPOINT": endpoint,
             "AICO_BENCHMARK_TASK_ID": route,
             "AICO_BRIDGE_EPISODE_ID": route,

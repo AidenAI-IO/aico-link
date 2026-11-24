@@ -318,7 +318,9 @@ export async function logsPage(context) {
         }),
         msg('advanced.retention_help', '详细模型请求日志在自动清理前保留的天数。'),
       ),
-      context.localAgent ? null : el('div', { class: 'ds-group' }, [exportButton]),
+      context.localAgent && !context.containerAgent
+        ? null
+        : el('div', { class: 'ds-group' }, [exportButton]),
     ]);
     saver.refreshChrome();
   }

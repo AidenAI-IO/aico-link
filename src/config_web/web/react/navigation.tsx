@@ -1,7 +1,12 @@
 import type { DeviceState } from './state';
 import type { Navigate, Snapshot, TextSpec } from './types';
 import { useAtomValue } from 'jotai';
-import { PRIMARY_ITEMS, SECONDARY_ITEMS, LOCAL_ITEMS } from '../assets/js/app/nav-items.js';
+import {
+  PRIMARY_ITEMS,
+  SECONDARY_ITEMS,
+  LOCAL_ITEMS,
+  CONTAINER_ITEMS,
+} from '../assets/js/app/nav-items.js';
 import { voiceMode, storageStatus } from '../assets/js/app/data.js';
 import { shortVersion } from '../assets/js/app/ota-progress.js';
 import { msg } from '../assets/js/ui/text.js';
@@ -67,7 +72,7 @@ export function Navigation({
   return (
     <div className="ds-screen">
       {model.local ? (
-        <Group>{LOCAL_ITEMS.map(build)}</Group>
+        <Group>{(model.container ? CONTAINER_ITEMS : LOCAL_ITEMS).map(build)}</Group>
       ) : (
         <>
           <Group>{PRIMARY_ITEMS.map(build)}</Group>

@@ -49,3 +49,11 @@ export const LOCAL_ITEMS = [
   { id: 'language', label: msg('basic.language_title', '语言与时区'), route: '/basic/language' },
   { id: 'logs', label: msg('advanced.logs', '日志'), route: '/advanced/logs' },
 ];
+
+/** PC containers also expose voice providers and software memory settings. */
+export const CONTAINER_ITEMS = [
+  ...LOCAL_ITEMS.slice(0, 3),
+  { id: 'voice', label: msg('ui.nav_voice', '语音'), route: '/voice' },
+  { id: 'memory', label: msg('ui.nav_memory', '记忆'), route: '/memory' },
+  ...LOCAL_ITEMS.slice(3),
+];

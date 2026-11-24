@@ -80,6 +80,8 @@ def prepare_task_isolation(
                     timeout=DEFAULT_ENVIRONMENT_SETUP_TIMEOUT_SEC,
                     app_ids=task.app_ids,
                     foreground_app_id=task.foreground_app_id,
+                    aico_app=task.aico_app,
+                    initial_state=task.initial_state,
                 )
             except (ResetError, AgentTimeoutError, AgentRequestError):
                 raise

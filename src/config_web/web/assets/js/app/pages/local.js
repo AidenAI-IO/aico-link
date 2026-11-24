@@ -1,6 +1,6 @@
 import { iphoneMirroringCard } from './iphone-mirroring.js';
 import { ensureSnapshot, request } from '../data.js';
-import { LOCAL_ITEMS } from '../nav-items.js';
+import { CONTAINER_ITEMS, LOCAL_ITEMS } from '../nav-items.js';
 import { el, replace } from '../../ui/dom.js';
 import { group, row, screen } from '../../ui/list.js';
 import { msg, text } from '../../ui/text.js';
@@ -47,6 +47,7 @@ export function localApplicationStatus() {
 export async function localOverviewPage(context) {
   const snapshot = await ensureSnapshot(context);
   const statusHost = el('div');
+  const accessHost = el('div', { class: 'ds-group' });
   const mirroring = iphoneMirroringCard();
   void mirroring.refresh();
   const config = snapshot.config || {};
@@ -85,33 +86,48 @@ export async function localOverviewPage(context) {
         ],
       }),
     ]);
+    const accessLink = (url, label, action) =>
+      url
+        ? el(
+            'a',
+            {
+              class: 'local-agent-link',
+              attrs: {
+                href: url,
+                target: '_blank',
+                rel: 'noopener noreferrer',
+              },
+              data: { action },
+            },
+            [text(label)],
+          )
+        : null;
+    replace(accessHost, [
+      accessLink(status.url, msg('local.open_agent', '打开 Agent 界面'), 'open-agent'),
+      context.containerAgent
+        ? accessLink(
+            status.terminal_url,
+            msg('local.open_terminal', '打开容器终端'),
+            'open-terminal',
+          )
+        : null,
+    ]);
+    accessHost.hidden = !accessHost.childNodes.length;
   }
   showStatus(initialStatus);
 
-  const agentLink = initialStatus.url
-    ? el(
-        'a',
-        {
-          class: 'local-agent-link',
-          attrs: {
-            href: initialStatus.url,
-            target: '_blank',
-            rel: 'noopener noreferrer',
-          },
-        },
-        [text(msg('local.open_agent', '打开 Agent 界面'))],
-      )
-    : null;
   const shortcuts = el('div', { class: 'local-shortcuts' }, [
     group({
-      rows: LOCAL_ITEMS.filter((item) => item.route !== '/').map((item) =>
-        row({
-          label: item.label,
-          chevron: true,
-          action: `open-${item.id}`,
-          onPress: () => context.navigate(item.route),
-        }),
-      ),
+      rows: (context.containerAgent ? CONTAINER_ITEMS : LOCAL_ITEMS)
+        .filter((item) => item.route !== '/')
+        .map((item) =>
+          row({
+            label: item.label,
+            chevron: true,
+            action: `open-${item.id}`,
+            onPress: () => context.navigate(item.route),
+          }),
+        ),
     }),
   ]);
   const body = screen([
@@ -178,7 +194,7 @@ export async function localOverviewPage(context) {
         }),
       ],
     }),
-    agentLink ? el('div', { class: 'ds-group' }, [agentLink]) : null,
+    accessHost,
     shortcuts,
   ]);
   async function refresh() {

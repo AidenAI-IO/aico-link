@@ -14,6 +14,7 @@ const messages = {
     'storage.format_warning': 'This operation erases all data on the storage card.',
     'storage.used_space': 'Used space',
     'wifi.scanning': 'Scanning…',
+
     'mcp.install_title': 'Install MCP for Agent',
     'mcp.install_enabled': 'Enabled',
     'mcp.install_reconnect': 'Reconnect',
@@ -76,6 +77,7 @@ const messages = {
     'local.target_help':
       'Selected by Agent launch arguments. Check device connectivity in the Agent interface.',
     'local.open_agent': 'Open Agent',
+    'local.open_terminal': 'Open container terminal',
     'local.intro':
       'Manage models, conversations and runtime preferences. Settings are saved locally and applied to the running Agent.',
     'local.config_invalid': 'Configuration needs repair',
@@ -1179,6 +1181,8 @@ const messages = {
     'voice.mode_off': 'Voice is off. It turns on once the providers below are configured',
     'voice.mode_classic': 'Classic',
     'voice.mode_realtime': 'Realtime',
+    'voice.classic_disabled':
+      'Classic voice is disabled in this container, so Classic mode supports text chat only. STT/TTS settings remain editable; choose Realtime for browser voice.',
     'voice.type_alicloud': 'Alibaba Cloud',
     'voice.type_minimax_cn': 'MiniMax (China)',
     'voice.type_qwen_asr': 'Qwen ASR',
@@ -1360,6 +1364,7 @@ const messages = {
     'storage.format_warning': '此操作会清除存储卡上的所有数据。',
     'storage.used_space': '已用空间',
     'wifi.scanning': '正在扫描…',
+
     'mcp.install_title': '给 Agent 安装 MCP',
     'mcp.install_enabled': '启用',
     'mcp.install_reconnect': '重新连接',
@@ -1411,6 +1416,7 @@ const messages = {
     'local.target': '当前目标设备',
     'local.target_help': '由 Agent 启动参数决定；设备连接状态请在 Agent 界面查看。',
     'local.open_agent': '打开 Agent 界面',
+    'local.open_terminal': '打开容器终端',
     'local.intro': '管理模型、对话和运行偏好。设置会保存到本机，并自动应用到正在运行的 Agent。',
     'local.config_invalid': '配置需要修复',
     'local.config_read_failed': '无法读取配置',
@@ -2438,6 +2444,8 @@ const messages = {
     'voice.mode_off': '语音尚未启用，配置好以下提供商后即可使用',
     'voice.mode_classic': '经典模式',
     'voice.mode_realtime': '实时模式',
+    'voice.classic_disabled':
+      '当前容器未启用 Classic 语音，Classic 模式仅支持文字对话。你仍可编辑 STT/TTS 配置；使用浏览器语音请选择 Realtime。',
     'voice.type_alicloud': '阿里云',
     'voice.type_minimax_cn': 'MiniMax（中国）',
     'voice.type_qwen_asr': '通义千问 ASR',

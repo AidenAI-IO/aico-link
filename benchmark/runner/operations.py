@@ -115,6 +115,7 @@ class OperationAdapter:
             setup = call_environment_setup(
                 self.environment_url, timeout=120, task_id=route,
                 app_ids=task.app_ids, foreground_app_id=task.foreground_app_id,
+                aico_app=task.aico_app, initial_state=task.initial_state,
             )
             (artifacts / "setup.json").write_text(json.dumps(setup), encoding="utf-8")
             if stop.is_set():

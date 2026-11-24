@@ -111,7 +111,13 @@ if truthy "${AICO_ENABLE_TERMINAL:-0}"; then
     ttyd_pid="$!"
 fi
 
+config_web_args=()
+if [ "${AICO_CONFIG_WEB_PROFILE:-board}" = "container" ]; then
+    config_web_args+=(--container-agent --agent-url=http://127.0.0.1:8080)
+fi
+
 "$env_run_bin" "${AICO_AGENT_BIN:-/usr/lib/aico/agent}" config-web \
+    "${config_web_args[@]}" \
     --bind=0.0.0.0 \
     --port=80 \
     --config="$agent_dir/agent.toml" \

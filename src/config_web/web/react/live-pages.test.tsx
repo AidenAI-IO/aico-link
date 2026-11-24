@@ -9,6 +9,7 @@ import { OTAPage } from './ota';
 import { WiFiDetail, WiFiPage } from './wifi';
 import { Navigation } from './navigation';
 import { ReadyEditor } from './editor';
+import { App } from './app';
 import { applyLocale } from '../assets/js/app/data.js';
 
 vi.mock('../assets/js/app/wifi-service.js', async (original) => ({
@@ -19,8 +20,12 @@ const models: DeviceState[] = [];
 const flush = async () => {
   for (let n = 0; n < 12; n++) await Promise.resolve();
 };
-function model(send: Parameters<typeof createDeviceState>[0] = async () => ({}), local = false) {
-  const value = createDeviceState(send, { local });
+function model(
+  send: Parameters<typeof createDeviceState>[0] = async () => ({}),
+  local = false,
+  container = false,
+) {
+  const value = createDeviceState(send, { local, container });
   models.push(value);
   return value;
 }
@@ -42,6 +47,7 @@ const wifi = (ssid: string, networks = ['Home', 'Work']) => ({
 beforeEach(() => {
   vi.useFakeTimers();
   applyLocale('zh-CN', false);
+  window.history.replaceState({}, '', '/');
 });
 afterEach(() => {
   cleanup();
@@ -50,6 +56,56 @@ afterEach(() => {
 });
 
 describe('live React views', () => {
+  it('routes container voice, memory and logs with the PC capabilities passed to editors', async () => {
+    window.history.replaceState({}, '', '/voice');
+    const value = model(
+      async (path) =>
+        path === '/api/device/snapshot'
+          ? {
+              config: { agent: { input_mode: 'stt' } },
+              agent_status: { classic_voice_enabled: false },
+            }
+          : { state: 'applied' },
+      false,
+      true,
+    );
+    const view = mount(value, <App model={value} />);
+    await act(flush);
+    expect(view.container.querySelector('[data-action="voice-mode-realtime"]')).toBeTruthy();
+    expect(screen.getByText(/当前容器未启用 Classic 语音/)).toBeTruthy();
+    expect(view.container.querySelector('[data-action="speaker-panel"]')).toBe(null);
+    fireEvent.click(view.container.querySelector('[data-action="open-memory"]')!);
+    await act(flush);
+    expect(view.container.querySelector('[data-action="open-screen-memory-ttl"]')).toBeTruthy();
+    expect(view.container.querySelector('[data-action="reset-memory"]')).toBeTruthy();
+    expect(screen.queryByRole('switch')).toBe(null);
+    fireEvent.click(view.container.querySelector('[data-action="open-logs"]')!);
+    await act(flush);
+    expect(view.container.querySelector('[data-action="export-logs"]')).toBeTruthy();
+  });
+  it('updates published Agent and optional container terminal links from shared observations', () => {
+    const value = model(undefined, false, true);
+    value.resources.device.publish({ agent_status: { url: 'http://127.0.0.1:51278' } });
+    mount(value, <LocalOverview {...props(value, '/')} />);
+    const link = screen.getByRole('link', { name: '打开 Agent 界面' });
+    expect(link.getAttribute('href')).toBe('http://127.0.0.1:51278');
+    expect(screen.queryByRole('link', { name: '打开容器终端' })).toBe(null);
+    act(() =>
+      value.resources.device.publish({
+        agent_status: {
+          url: 'http://127.0.0.1:51279',
+          terminal_url: 'http://127.0.0.1:51279/webtty/',
+        },
+      }),
+    );
+    expect(screen.getByRole('link', { name: '打开 Agent 界面' })).toBe(link);
+    expect(link.getAttribute('href')).toBe('http://127.0.0.1:51279');
+    expect(screen.getByRole('link', { name: '打开容器终端' }).getAttribute('href')).toBe(
+      'http://127.0.0.1:51279/webtty/',
+    );
+    act(() => value.resources.device.publish({ agent_status: { url: 'http://127.0.0.1:51279' } }));
+    expect(screen.queryByRole('link', { name: '打开容器终端' })).toBe(null);
+  });
   it('keeps the focused USB switch while its confirmed status changes', () => {
     const value = model();
     value.resources.usb.publish({ enabled: true, via_usb: true, active: false });

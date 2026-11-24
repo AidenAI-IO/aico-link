@@ -2,7 +2,7 @@ import type { DeviceState } from './state';
 import type { HeaderSpec, Navigate, PageProps, Route, TextSpec } from './types';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useAtomValue } from 'jotai';
-import { routes, localRoutes } from '../assets/js/app/routes.js';
+import { routes, localRoutes, containerRoutes } from '../assets/js/app/routes.js';
 import { createRouter } from '../assets/js/app/router.js';
 import { ALL_ITEMS } from '../assets/js/app/nav-items.js';
 import { applyEnvironmentClass, isEmbedded } from '../assets/js/ui/environment.js';
@@ -79,7 +79,7 @@ export function App({ model }: { model: DeviceState }) {
     window.addEventListener('aico:wifi-changed', onWiFi);
     window.addEventListener('online', onOnline);
     router.current = createRouter({
-      routes: model.local ? localRoutes : routes,
+      routes: model.container ? containerRoutes : model.local ? localRoutes : routes,
       render: (value) => {
         const next = { ...value, path: (value as Route).path.replace(/\/+$/, '') || '/' } as Route;
         setRoute(next);

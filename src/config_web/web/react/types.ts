@@ -58,6 +58,8 @@ export interface AgentStatus {
   port_reachable?: boolean;
   device_type?: string;
   url?: string;
+  terminal_url?: string;
+  classic_voice_enabled?: boolean;
 }
 export interface DeviceData {
   firmware?: Firmware;
@@ -146,6 +148,7 @@ export interface EditorContext extends EditorOptions {
   params?: Record<string, string>;
   query?: Record<string, string>;
   localAgent: boolean;
+  containerAgent: boolean;
   navigate: Navigate;
   header: (value: HeaderSpec) => void;
   onWiFiChange: (listener: (value: Snapshot) => void) => void;
