@@ -32,6 +32,7 @@ type runContextBudget struct {
 	compactionTrigger  int
 	compactionEnabled  bool
 	providerCompaction bool
+	conactActive       bool
 }
 
 func newRunContextBudget(r *Runtime, cfg Config, contextCompactor *compactor.Compactor, recorder *EpisodeRecorder, usableInputBudget, contextWindow int) *runContextBudget {
@@ -65,7 +66,10 @@ func (b *runContextBudget) historicalPruneDecision(messageTokens, stateCount int
 }
 
 func (b *runContextBudget) activePruneDecision(messageTokens, stateCount, promptTokens, toolSchemaTokens int) contextPruneDecision {
-	decision := b.historicalPruneDecision(messageTokens, stateCount)
+	var decision contextPruneDecision
+	if !b.conactActive {
+		decision = b.historicalPruneDecision(messageTokens, stateCount)
+	}
 	if decision.reason != "" {
 		decision.reason = "active_turn_" + decision.reason
 	}

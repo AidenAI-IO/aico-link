@@ -1378,6 +1378,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		return RunResult{}, err
 	}
 
+	conactEnabled := r.conactEnabled(cfg)
+	contextBudget.conactActive = conactEnabled
+
 	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, r.contextManager)
 	agentLoop.notices = notices
 	agentLoop.ScreenState = r.screenState
@@ -1391,7 +1394,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	agentLoop.DevicePlatform = r.devicePlatformFromState()
 	agentLoop.PointerMode = r.devicePointerModeFromState()
 	agentLoop.ContextBudgetGuard = contextBudget.guard
-	if contextBudget.thresholdCompactionEnabled() {
+	if !conactEnabled && contextBudget.thresholdCompactionEnabled() {
 		agentLoop.ContextCompactionTrigger = contextBudget.compactionTrigger
 		agentLoop.ContextThresholdCompaction = contextBudget.compactAtThreshold
 	}
@@ -1400,6 +1403,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	loopCtx := ctx
 	if r.deviceCLIEnabled() {
 		loopCtx = context.WithValue(ctx, deviceCLIRuntimeKey{}, r)
+		if conactEnabled {
+			agentLoop.conact = newConactRun(r)
+		}
 	}
 	output, err = agentLoop.Run(loopCtx, normalizedInput, callOptions...)
 	// If the agent couldn't parse the LLM output format, extract the raw

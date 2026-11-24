@@ -99,3 +99,44 @@ An explicit `wait` observation is reused when no device action follows it.
 
 `wait N` with a positive `N` sets the stability polling timeout in milliseconds
 (1–30000). Capturing the final frame can take additional time.
+
+## Experimental ConAct and Skill-UTG
+
+Set `AICO_CONACT_UTG=1` in the Agent daemon's environment to opt in. The
+experiment applies only to backend Device CLI runs; it does not change the
+standalone CLI, legacy tools, or headless/scripted benchmark fixtures. Unset the
+variable to return to the normal context and tool policy.
+
+- **`fold_subtask`** records verbatim facts and the next goal at an explicit
+  subtask boundary. It replaces the active subtask with those facts and one
+  new device screenshot, while keeping the original conversation revision on
+  disk. It preserves user messages and attachments. At least one dispatched UI
+  action is required since the last boundary. Each eighth action turn can nudge
+  the Agent to fold; a separate fallback retains the newest six screenshot
+  observations when the count reaches fourteen. Existing provider-overflow and
+  hard input-budget safeguards still apply.
+- **`utg_search` and `utg_goto`** return lookup results and route guidance, not
+  device actions. The graph separates `nav`, `create`, `edit`, `commit`,
+  `cancel`, and `delete` edges. A default route uses only navigation edges;
+  non-navigation guidance requires an explicit final-hop intent. The Agent
+  must verify landmarks on the live screen before acting. Successful memory
+  calls use a separate bounded allowance, not the normal action-iteration limit.
+
+For native targets, a completed run can make one best-effort reflection
+request to the same model, with a 30-second timeout. It uses the live prompt
+and a bounded ledger of individually attributable controller transitions;
+chained UI actions are not learned as individual edges. It saves reusable
+labels, guidance, and coarse screenshot fingerprints under
+`<config-dir>/memory/skill-utg/<platform>.json`, scoped to the local Agent
+profile and target platform. It does not store raw screenshots or command
+arguments in the graph. The text filter is not a privacy classifier: use a
+separate Agent profile for a different target or sensitive work. Reads and
+writes of this graph are disabled for environment-bridge runs; folding still
+works there. This implementation does not automatically return to a home screen
+or execute a suggested graph route.
+
+The Agent web UI's debug link opens `/debug`. Use **Coordinate** to inspect a
+screenshot or send a normalized tap, and **UTG** (`/debug#utg`) to inspect the
+saved landmarks, transitions, and tips. The UTG tab is read-only and matches
+against an existing recent screenshot, if available; refreshing it does not
+capture the screen or send a device action.

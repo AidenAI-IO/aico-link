@@ -82,6 +82,16 @@ func (e *LLMExecutor) AppendMessages(messagesToAppend []messages.Message) error 
 }
 
 func (e *LLMExecutor) GenerateContent(ctx context.Context, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	return e.generateContent(ctx, nil, options...)
+}
+
+// GenerateContentWithSuffix forks the current model context without appending
+// the new instruction to session history or executing any returned tool call.
+func (e *LLMExecutor) GenerateContentWithSuffix(ctx context.Context, suffix messages.Message, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	return e.generateContent(ctx, []messages.Message{suffix}, options...)
+}
+
+func (e *LLMExecutor) generateContent(ctx context.Context, suffix []messages.Message, options ...llms.CallOption) (*llms.ContentResponse, error) {
 	messageList := e.contextManager.CloneMessageList()
 	for _, transform := range e.transforms {
 		if transform == nil {
@@ -89,6 +99,7 @@ func (e *LLMExecutor) GenerateContent(ctx context.Context, options ...llms.CallO
 		}
 		messageList = transform.Transform(messageList)
 	}
+	messageList = append(messageList, suffix...)
 	var contentResponse *llms.ContentResponse
 	var err error
 	if model, ok := e.model.(contextMessageContentModel); ok {

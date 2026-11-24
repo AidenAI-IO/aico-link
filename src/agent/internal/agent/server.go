@@ -655,10 +655,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/diagnostics/incident-log", s.handleServiceIncidentLog)
 	mux.HandleFunc("/api/storage/cleanup", s.handleStorageCleanup)
 
-	// Coordinate debug tool. Live frames come from POST /api/providers/screenshot.
-	mux.HandleFunc("/api/coordinate-debug/tap", s.handleCoordinateDebugTap)
-	mux.HandleFunc("/coordinate-debug", s.handleCoordinateDebug)
-	mux.HandleFunc("/coordinate-debug.html", s.handleCoordinateDebug)
+	// Debug workspace. Live frames come from POST /api/providers/screenshot.
+	mux.HandleFunc("/debug", s.handleDebug)
+	mux.HandleFunc("/api/debug/utg", s.handleDebugUTG)
+	mux.HandleFunc("/api/debug/coordinate/tap", s.handleCoordinateDebugTap)
+	mux.HandleFunc("/api/coordinate-debug/tap", s.handleCoordinateDebugTap) // compatibility
 	mux.HandleFunc("/keyboard-tap-android-keys", s.handleKeyboardTapAndroidKeys)
 
 	mux.HandleFunc("/user_files", s.handleUserFiles)
@@ -679,7 +680,7 @@ func (s *Server) Handler() http.Handler {
 		// /mcp is intentionally omitted: long support_bundle/device_status calls must
 		// not hold configOperations for the whole request. Runtime tool paths take
 		// the lock inside mcpServerBackend.CallRuntimeTool / DescribeRuntimeTool.
-		if s.runtime != nil && (strings.HasPrefix(r.URL.Path, "/api/tools/") || strings.HasPrefix(r.URL.Path, "/api/device-cli/") || r.URL.Path == "/api/providers/mnk" || r.URL.Path == "/api/providers/screenshot" || r.URL.Path == "/api/coordinate-debug/tap") {
+		if s.runtime != nil && (strings.HasPrefix(r.URL.Path, "/api/tools/") || strings.HasPrefix(r.URL.Path, "/api/device-cli/") || r.URL.Path == "/api/providers/mnk" || r.URL.Path == "/api/providers/screenshot" || r.URL.Path == "/api/coordinate-debug/tap" || r.URL.Path == "/api/debug/coordinate/tap") {
 			s.runtime.configOperations.RLock()
 			defer s.runtime.configOperations.RUnlock()
 		}

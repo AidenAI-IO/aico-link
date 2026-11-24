@@ -9,14 +9,14 @@ import (
 	"net/http"
 )
 
-// handleCoordinateDebug serves the normalized-coordinate debug page.
-func (s *Server) handleCoordinateDebug(w http.ResponseWriter, r *http.Request) {
+// handleDebug serves the device diagnostics workspace.
+func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(coordinateDebugHTML))
+	w.Write([]byte(debugHTML))
 }
 
 type coordinateDebugTapRequest struct {

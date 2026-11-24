@@ -21,6 +21,7 @@ import (
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/schema"
+	langtools "github.com/tmc/langchaingo/tools"
 )
 
 const agentLoopOutputKey = "output"
@@ -114,6 +115,7 @@ const (
 	iterationContinue iterationOutcome = iota
 	iterationDone
 	iterationRestartBudget
+	iterationMemoryTool
 )
 
 type AgentLoop struct {
@@ -142,6 +144,7 @@ type AgentLoop struct {
 	ContextBudgetGuard         ContextBudgetGuard
 	ContextOverflowRecovery    func(context.Context, *contextmanager.ContextManager) (*contextmanager.ContextManager, bool, error)
 	toolExecutionHookFactory   func() toolExecutionHookHandler
+	conact                     *conactRun
 	contextManager             *contextmanager.ContextManager
 	notices                    *runNotices
 }
@@ -182,6 +185,12 @@ func (l *AgentLoop) Run(ctx context.Context, input string, options ...chains.Cha
 		agentTools = frames.wrap(agentTools)
 	}
 	llmExecutor := executor.NewLLMExecutor(l.Model, l.contextManager, transforms...)
+	if l.conact != nil {
+		if err := l.conact.start(l.contextManager); err != nil {
+			return "", err
+		}
+		agentTools = append(append([]langtools.Tool(nil), agentTools...), l.conact.tools(llmExecutor)...)
+	}
 	toolSpecs := NewToolSpecs(agentTools)
 	parser := &FunctionAgent{
 		Tools:     agentTools,
@@ -201,13 +210,14 @@ func (l *AgentLoop) Run(ctx context.Context, input string, options ...chains.Cha
 	policy := l.loopGuardPolicy()
 	state := &runIterationState{}
 
+	iteration := 0
 restartBudget:
 	for {
-		for i := 0; i < l.MaxIterations; i++ {
+		for used := 0; used < l.MaxIterations; {
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
-			if decision := policy.CheckBeforeIteration(ctx, i+1, l.MaxIterations); decision.Stop {
+			if decision := policy.CheckBeforeIteration(ctx, used+1, l.MaxIterations); decision.Stop {
 				answer, done, err := l.stopWithSteerCheck(ctx, llmExecutor, policy, decision)
 				if err != nil {
 					return "", err
@@ -217,9 +227,13 @@ restartBudget:
 				}
 				continue restartBudget
 			}
-			answer, outcome, err := l.runIteration(ctx, i+1, callOptions, llmExecutor, parser, toolSpecs, toolExecutionHooks, policy, state)
+			iteration++
+			answer, outcome, err := l.runIteration(ctx, iteration, callOptions, llmExecutor, parser, toolSpecs, toolExecutionHooks, policy, state)
 			if err != nil {
 				return "", err
+			}
+			if outcome != iterationMemoryTool {
+				used++
 			}
 			if outcome == iterationDone {
 				return answer, nil
@@ -296,6 +310,11 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		return "", iterationRestartBudget, nil
 	}
 
+	if l.conact != nil {
+		if err := l.conact.fallback(llmExecutor.ContextManager()); err != nil {
+			return "", iterationContinue, fmt.Errorf("ConAct screenshot fallback: %w", err)
+		}
+	}
 	turnOptions := append([]llms.CallOption{}, callOptions...)
 	turnOptions = append(turnOptions, llms.WithTools(parser.toolsAsLLM()))
 	if err := l.guardContextBudgetBeforeLLM(ctx, llmExecutor, turnOptions); err != nil {
@@ -496,6 +515,9 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 			l.Recorder.RecordDefaultFinish(answer)
 		}
 		answer, err = l.finishRun(ctx, answer)
+		if err == nil && l.conact != nil {
+			l.conact.consolidate(ctx, llmExecutor, turnOptions)
+		}
 		return answer, iterationDone, err
 	}
 	if len(actions) == 0 {
@@ -540,7 +562,12 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		Callback:       l.CallbacksHandler,
 		ResultObserver: l.ToolResultObserver,
 	})
-	if l.Recorder != nil {
+	name := toolExecution.Call.Spec.Name
+	memoryTurn := l.conact != nil && isConactTool(name) && !toolExecution.Result.IsError() && toolExecution.Error == nil
+	if l.Recorder != nil && memoryTurn && name == conactFold {
+		// A successful fold replaces its own tool exchange with the memory block.
+		l.Recorder.RecordEvent(TaskEpisodeEvent{Type: "conact_fold", ToolName: name})
+	} else if l.Recorder != nil {
 		l.Recorder.RecordExecution(ToolCallExecutionResult{
 			Call:   toolExecution.Call,
 			Step:   toolExecution.Step,
@@ -594,7 +621,27 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		})
 	}
 	prepared.IsError = toolExecution.Result.IsError()
-	appendErr := appendToolExecutionMessages(llmExecutor, parser, toolCallMessage, toolExecution.Step, prepared, deviceCLIStateMessages(toolExecution.Result.deviceFrame)...)
+	var appendErr error
+	if memoryTurn {
+		l.conact.free++
+	}
+	if !memoryTurn || name != conactFold {
+		followup := deviceCLIStateMessages(toolExecution.Result.deviceFrame)
+		if l.conact != nil && name == "shell" {
+			if l.conact.revision != llmExecutor.ContextManager().GetSessionID() {
+				l.conact.rebase(llmExecutor.ContextManager())
+			}
+			previous := len(l.conact.steps)
+			nudge := l.conact.observe(toolExecution.Result)
+			if nudge && len(followup) > 0 {
+				followup[0].Parts = append(followup[0].Parts, llms.TextPart("If this subtask is complete, call fold_subtask with exact verified facts before switching goals."))
+			}
+			if len(followup) > 0 && len(l.conact.steps) > previous {
+				followup[0].Parts = append(followup[0].Parts, llms.TextPart(fmt.Sprintf("%s%d (after) [%s]", conactEvidencePrefix, len(l.conact.steps), l.conact.evidenceTag)))
+			}
+		}
+		appendErr = appendToolExecutionMessages(llmExecutor, parser, toolCallMessage, toolExecution.Step, prepared, followup...)
+	}
 	if err := ctx.Err(); err != nil {
 		if appendErr != nil {
 			return "", iterationContinue, errors.Join(err, appendErr)
@@ -716,7 +763,9 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		return l.finishStopDecision(ctx, policy, decision)
 	}
 	l.applyLoopGuardDecision(decision)
-
+	if memoryTurn {
+		return "", iterationMemoryTool, nil
+	}
 	return "", iterationContinue, nil
 }
 
@@ -914,6 +963,11 @@ func (l *AgentLoop) persistSteer(ctx context.Context, executor *executor.LLMExec
 		return err
 	}
 
+	if l.conact != nil {
+		l.conact.rebase(manager)
+		l.conact.steps = nil
+		l.conact.hasLast = false
+	}
 	// Step 2: Track the steer for session event persistence.
 	if l.SteerRecorder != nil {
 		if err := l.SteerRecorder.RecordSteer(steer); err != nil {

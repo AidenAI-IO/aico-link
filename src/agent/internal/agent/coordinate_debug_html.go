@@ -1,15 +1,13 @@
 package agent
 
-// coordinateDebugHTML is the normalized-coordinate debug tool served at
-// /coordinate-debug. It loads the live device screen via
-// POST /api/providers/screenshot (or a local upload) and maps clicks to the
-// agent's 0-1000 normalized scale used by the HID tools.
-const coordinateDebugHTML = `<!DOCTYPE html>
+// debugHTML is the workspace served at /debug. The Coordinate panel maps
+// screenshots to the normalized scale used by the HID tools.
+const debugHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Coordinate Debug · Aico</title>
+<title>Debug · Aico</title>
 <link rel="stylesheet" href="/web-ui/styles.css">
 <script src="/web-ui/scripts/theme.js"></script>
 <style>
@@ -42,14 +40,43 @@ const coordinateDebugHTML = `<!DOCTYPE html>
 .debug-info-label { color: var(--muted); }
 .debug-info-value { color: var(--text); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; overflow-wrap: anywhere; }
 @media (max-width: 760px) { .debug-layout { grid-template-columns: 1fr; } .debug-workspace { padding: 16px; } }
+[hidden] { display: none !important; }
+.debug-tabs { display: flex; gap: 10px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.debug-tabs button { padding: 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted-strong); font: inherit; cursor: pointer; }
+.debug-tabs button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--text); font-weight: 600; }
+.debug-tabs button:focus-visible, [role="tabpanel"]:focus-visible, .utg-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.utg-panel { max-width: 1260px; margin: 0 auto; padding: clamp(16px, 3vw, 32px); }
+.utg-heading, .utg-filters { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 12px; }
+.utg-heading .debug-button { width: auto; }
+.utg-heading .debug-intro { margin: 5px 0 0; }
+.utg-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; margin: 16px 0; }
+.utg-overview > div { min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel); }
+.utg-overview dt { color: var(--muted-strong); font-size: 12px; }
+.utg-overview dd { margin: 3px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.utg-filters { justify-content: start; margin: 16px 0 4px; }
+.utg-filters .debug-field:first-child { flex: 1 1 220px; max-width: 360px; }
+.utg-card { margin: 12px 0; }
+.utg-card h3 { margin: 0 0 4px; font-size: 15px; }
+.utg-scroll { overflow-x: auto; }
+.utg-scroll table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.utg-scroll td, .utg-scroll th { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.utg-scroll th { color: var(--muted-strong); }
+.utg-scroll td { max-width: 32ch; overflow-wrap: anywhere; }
+.utg-scroll code { overflow-wrap: anywhere; }
+.utg-card ul { margin: 8px 0 0; padding-left: 20px; }
 </style>
 </head>
 <body>
 <header class="topbar">
-<div class="topbar-title"><span class="brand-dot" aria-hidden="true"></span><div><h1>Coordinate Debug</h1><span class="topbar-subtitle">WORKSPACE</span></div></div>
+<div class="topbar-title"><span class="brand-dot" aria-hidden="true"></span><div><h1>Debug</h1><span class="topbar-subtitle">WORKSPACE</span></div></div>
 <a class="new-chat-btn" href="/" style="text-decoration:none;">Back to chat</a>
 </header>
-<main class="debug-layout">
+<nav class="debug-tabs" role="tablist" aria-label="Debug tools">
+<button type="button" role="tab" id="coordinateTab" aria-controls="coordinatePanel" aria-selected="true" data-tab="coordinate">Coordinate</button>
+<button type="button" role="tab" id="utgTab" aria-controls="utgPanel" aria-selected="false" data-tab="utg" tabindex="-1">UTG</button>
+</nav>
+<main>
+<section class="debug-layout" id="coordinatePanel" role="tabpanel" aria-labelledby="coordinateTab" tabindex="0">
 <aside class="debug-controls" aria-label="Coordinate controls">
 <section class="debug-card">
 <h2>Screenshot</h2>
@@ -86,6 +113,37 @@ const coordinateDebugHTML = `<!DOCTYPE html>
 <div class="debug-info-item"><span class="debug-info-label">Clicked pixel</span><span class="debug-info-value" id="clickPixel">-</span></div>
 <div class="debug-info-item"><span class="debug-info-label">Normalized coordinates</span><span class="debug-info-value" id="normalizedCoord">-</span></div>
 <div class="debug-info-item"><span class="debug-info-label">Marker pixel</span><span class="debug-info-value" id="markerPixel">-</span></div>
+</div>
+</section>
+</section>
+<section class="utg-panel" id="utgPanel" role="tabpanel" aria-labelledby="utgTab" tabindex="0" hidden>
+<div class="utg-heading">
+<div><h2>Skill-UTG</h2><p class="debug-intro">Learned device screens and intent-specific transitions. Read-only snapshot.</p></div>
+<button type="button" class="debug-button" id="refreshUTG">Refresh</button>
+</div>
+<p id="utgStatus" role="status" class="debug-status"></p>
+<div id="utgContent" hidden>
+<dl class="utg-overview">
+<div><dt>Platform</dt><dd id="utgPlatform"></dd></div>
+<div><dt>Landmarks</dt><dd id="utgNodeCount"></dd></div>
+<div><dt>Transitions</dt><dd id="utgEdgeCount"></dd></div>
+<div><dt>Cached screen match</dt><dd id="utgMatch"></dd></div>
+</dl>
+<div class="utg-filters" id="utgFilters" hidden>
+<div class="debug-field"><label for="utgQuery">Search landmarks or guides</label><input type="search" id="utgQuery" placeholder="e.g. Settings"></div>
+<div class="debug-field"><label for="utgIntent">Transition intent</label><select id="utgIntent"><option value="">All intents</option></select></div>
+</div>
+<section class="debug-card utg-card" id="utgLandmarks" hidden>
+<h3>Landmarks</h3>
+<p class="debug-status" id="utgNodeStatus"></p>
+<div class="utg-scroll" role="region" aria-label="Landmark table" tabindex="0"><table aria-label="UTG landmarks"><thead><tr><th scope="col">Label</th><th scope="col">Summary</th><th scope="col">Samples</th><th scope="col">Pitfall</th></tr></thead><tbody id="utgNodes"></tbody></table></div>
+</section>
+<section class="debug-card utg-card" id="utgTransitions" hidden>
+<h3>Transitions</h3>
+<p class="debug-status" id="utgEdgeStatus"></p>
+<div class="utg-scroll" role="region" aria-label="Transition table" tabindex="0"><table aria-label="UTG transitions"><thead><tr><th scope="col">From</th><th scope="col">To</th><th scope="col">Intent</th><th scope="col">Successes</th><th scope="col">Guide</th></tr></thead><tbody id="utgEdges"></tbody></table></div>
+</section>
+<section class="debug-card utg-card" id="utgTipCard" hidden><h3>Tips</h3><ul id="utgTips"></ul></section>
 </div>
 </section>
 </main>
@@ -294,7 +352,7 @@ function screenshotMetaFromProvider(frame, capture) {
 }
 
 async function captureFromDevice() {
-    if (captureInFlight) return;
+    if (captureInFlight || document.getElementById('coordinatePanel').hidden) return;
     captureInFlight = true;
     loadDeviceBtn.disabled = true;
     deviceStatus.textContent = 'Capturing...';
@@ -333,10 +391,14 @@ async function captureFromDevice() {
 }
 
 loadDeviceBtn.addEventListener('click', captureFromDevice);
-autoRefresh.addEventListener('change', () => {
+function syncCoordinateRefresh() {
     if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
-    if (autoRefresh.checked) autoTimer = setInterval(captureFromDevice, 2000);
-});
+    if (autoRefresh.checked && !document.getElementById('coordinatePanel').hidden) {
+        autoTimer = setInterval(captureFromDevice, 2000);
+    }
+}
+autoRefresh.addEventListener('change', syncCoordinateRefresh);
+document.getElementById('coordinatePanel').addEventListener('debug-tab-change', syncCoordinateRefresh);
 
 function handleFile(file) {
     if (!file.type.startsWith('image/')) { alert('Choose an image file.'); return; }
@@ -444,7 +506,7 @@ tapCoordBtn.addEventListener('click', async () => {
     tapStatus.textContent = 'Sending action...';
     try {
         showNormalizedMarker(point.x, point.y);
-        const res = await fetch('/api/coordinate-debug/tap', {
+        const res = await fetch('/api/debug/coordinate/tap', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -503,6 +565,7 @@ function showMarker(pixelX, pixelY) {
 }
 
 document.addEventListener('keydown', (e) => {
+    if (document.getElementById('coordinatePanel').hidden) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
         if (!navigator.clipboard || typeof navigator.clipboard.read !== 'function') return;
         navigator.clipboard.read().then(items => {
@@ -520,6 +583,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 </script>
+<script src="/web-ui/scripts/debug.js"></script>
 </body>
 </html>
 `

@@ -186,6 +186,9 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"command":"pwd"}`,
 	},
+	conactFold:   {Category: "memory", InputMode: toolInputModeJSON, HTTPExposed: toolSpecBoolPtr(false)},
+	conactSearch: {Category: "memory", InputMode: toolInputModeJSON, HTTPExposed: toolSpecBoolPtr(false)},
+	conactGoto:   {Category: "memory", InputMode: toolInputModeJSON, HTTPExposed: toolSpecBoolPtr(false)},
 	"skill_list": {
 		Category:     "skills",
 		InputMode:    toolInputModeJSON,

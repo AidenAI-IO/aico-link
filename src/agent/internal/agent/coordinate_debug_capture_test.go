@@ -117,10 +117,10 @@ func TestProviderScreenshotUsesReportedPhoneWidthWhenRequestOmitsHint(t *testing
 }
 
 func TestCoordinateDebugHTMLUsesProviderScreenshot(t *testing.T) {
-	if !strings.Contains(coordinateDebugHTML, "/api/providers/screenshot") {
+	if !strings.Contains(debugHTML, "/api/providers/screenshot") {
 		t.Fatal("coordinate debug page should load frames from POST /api/providers/screenshot")
 	}
-	if strings.Contains(coordinateDebugHTML, "/api/screenshot.jpg") {
+	if strings.Contains(debugHTML, "/api/screenshot.jpg") {
 		t.Fatal("coordinate debug page should not call /api/screenshot.jpg")
 	}
 }
@@ -137,11 +137,11 @@ func TestCoordinateDebugHTMLMatchesChatThemeAndLanguage(t *testing.T) {
 		`Enter valid coordinates`,
 		`Action failed:`,
 	} {
-		if !strings.Contains(coordinateDebugHTML, expected) {
+		if !strings.Contains(debugHTML, expected) {
 			t.Errorf("coordinate debug page missing %q", expected)
 		}
 	}
-	if strings.IndexFunc(coordinateDebugHTML, func(r rune) bool { return unicode.Is(unicode.Han, r) }) != -1 {
+	if strings.IndexFunc(debugHTML, func(r rune) bool { return unicode.Is(unicode.Han, r) }) != -1 {
 		t.Error("coordinate debug page still contains untranslated Chinese text")
 	}
 }
