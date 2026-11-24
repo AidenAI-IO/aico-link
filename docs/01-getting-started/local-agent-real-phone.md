@@ -129,6 +129,12 @@ The bridge temporarily selects that IME for Base64 input and restores the
 original keyboard; devices without it retain the ASCII fallback. Mirroring
 supports committed Unicode through the Mac.
 
+In USB/WDA mode, the Agent sends the original Unicode through native
+`insert_text` and verifies the result from screenshots. Direct bridge
+`/api/tools/enter_text` calls require `text` and `focus`; they verify the same
+accessible field's value through WDA. Both paths avoid replaying uncertain
+delivery. Inspect the field before retrying a failed text entry.
+
 For an existing bridge, pass its loopback origin. The launcher verifies that
 its type matches the mode and claims the same task route; it leaves that bridge
 process running on exit:

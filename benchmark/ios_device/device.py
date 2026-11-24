@@ -7,7 +7,7 @@ import time
 from urllib.parse import quote
 
 from .permissions import PermissionPolicy, alert_snapshot, deduplicate_alert_buttons
-from .text import TYPING_FREQUENCY, validate_ios_text
+from .text import TYPING_FREQUENCY, text_insertion_matches, validate_ios_text
 from .transport import IOSDeviceError
 from .touch import validate_touch_actions, wda_actions
 
@@ -159,19 +159,62 @@ class IOSDevice:
     def write(self, text):
         self.insert_text(text)
 
+    def _focused_text_field(self):
+        element = self._call("GET", "/element/active")
+        identifier = (element.get("element-6066-11e4-a52e-4f735466cecf") or element.get("ELEMENT")) if isinstance(element, dict) else None
+        if not isinstance(identifier, str) or not identifier:
+            raise IOSDeviceError("field_unavailable", "Focus an accessible iPhone text field before typing.")
+        path = f"/element/{quote(identifier, safe='')}"
+        kind = self._call("GET", path + "/name")
+        if kind not in {"XCUIElementTypeTextField", "XCUIElementTypeTextView", "XCUIElementTypeSearchField", "XCUIElementTypeSecureTextField"}:
+            raise IOSDeviceError("field_unavailable", "Focus an accessible iPhone text field before typing.")
+        return path, kind
+
+    def _field_text(self, path):
+        # WDA's text endpoint falls back to labels, and its value attribute
+        # falls back to the placeholder. Neither is proof of committed input.
+        value = self._call("GET", path + "/attribute/value")
+        placeholder = self._call("GET", path + "/attribute/placeholderValue")
+        if value is None or value == placeholder:
+            return ""
+        if not isinstance(value, str):
+            raise IOSDeviceError("verification_unavailable", "The iPhone field does not expose readable text.")
+        return value
+
     def insert_text(self, text, replace=False):
         validate_ios_text(text)
         if not isinstance(replace, bool):
             raise ValueError("replace must be a boolean")
         with self.lock:
             self._unlocked()
-            if replace:
-                element = self._call("GET", "/element/active")
-                identifier = element.get("element-6066-11e4-a52e-4f735466cecf") or element.get("ELEMENT")
-                if not identifier:
-                    raise IOSDeviceError("field_unavailable", "No focused field could be identified before replacement.")
-                self._call("POST", f"/element/{quote(identifier, safe='')}/clear", {})
-            self._call("POST", "/wda/keys", {"value": [text], "frequency": TYPING_FREQUENCY})
+            path, _ = self._focused_text_field()
+            self._type_text(path, text, replace)
+
+    def _type_text(self, path, text, replace=False):
+        if replace:
+            self._call("POST", path + "/clear", {})
+        self._call("POST", "/wda/keys", {"value": [text], "frequency": TYPING_FREQUENCY})
+
+    def enter_text(self, text, focus, settle_sec=0.2):
+        validate_ios_text(text)
+        with self.lock:
+            self.click(*focus)
+            path, kind = self._focused_text_field()
+            if kind == "XCUIElementTypeSecureTextField":
+                raise IOSDeviceError("verification_unavailable", "Secure iPhone fields cannot be verified through WDA; use native insert_text with independent verification.")
+            before = self._field_text(path)
+            # A timeout, partial delivery, or failed readback must never replay
+            # keys or clear the user's field. Only reads follow this call.
+            try:
+                self._type_text(path, text)
+                if settle_sec:
+                    time.sleep(settle_sec)
+                after = self._field_text(path)
+                if text_insertion_matches(before, after, text):
+                    return {"ok": True}
+            except IOSDeviceError:
+                pass
+            return {"ok": False, "suggestion": "Text may already be present. Inspect the iPhone field and correct its contents before retrying; WDA could not verify the insertion."}
 
     def press(self, keys):
         values = {"enter": "\n", "return": "\n", "tab": "\t", "backspace": "\b", "delete": "\b"}
