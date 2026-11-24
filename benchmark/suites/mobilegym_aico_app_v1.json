@@ -1044,6 +1044,7 @@
           "$length": 4,
           "$exactly_once": [
             {
+              "id": "c_seed_alice",
               "displayName": "Alice Chen",
               "phones": {
                 "$contains": {

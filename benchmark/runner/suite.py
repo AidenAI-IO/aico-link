@@ -899,6 +899,10 @@ def _validate_list_assertion(task_id: str, path: str, spec: dict[str, Any]) -> N
         raise SuiteValidationError(
             f"task {task_id}: environment_assertions[{path!r}].$exactly_once must be a non-empty array"
         )
+    # An invalid operand would raise during evaluation and drop the result.
+    _validate_matcher_bounds(
+        matchers or [], f"task {task_id}: environment_assertions[{path!r}].$exactly_once"
+    )
 
 
 def _validate_range_assertion(task_id: str, path: str, spec: dict[str, Any]) -> None:
@@ -1096,6 +1100,11 @@ def _validate_matcher_bounds(value: Any, path: str) -> None:
     if not isinstance(value, dict):
         return
     keys = set(value)
+    if "$digits" in keys:
+        digits = value["$digits"]
+        if keys != {"$digits"} or not isinstance(digits, str) or not digits.isdigit():
+            raise SuiteValidationError(f"{path}.$digits must be the only key and a string of digits")
+        return
     if keys and keys <= {"$gte", "$lte"}:
         for key, bound in value.items():
             if isinstance(bound, bool) or not isinstance(bound, (int, float)) or not math.isfinite(bound):

@@ -147,6 +147,8 @@ def test_load_suite_parses_range_environment_assertions(tmp_path: Path):
         {"$length": True},
         {"$exactly_once": []},
         {"$exactly_once": {"displayName": "Ada"}},
+        {"$exactly_once": [{"score": {"$gte": "1"}}]},
+        {"$exactly_once": [{"phones": {"$contains": {"number": {"$digits": "+1 415"}}}}]},
     ],
 )
 def test_load_suite_rejects_invalid_environment_assertion_specs(tmp_path: Path, spec):

@@ -2268,15 +2268,21 @@ def test_auto_agent_setup_caps_environment_concurrency(monkeypatch, tmp_path):
     assert manifest["concurrency"] == 2
 
 
-@pytest.mark.parametrize("second_platform", ["android", "ios"])
-def test_auto_agent_setup_pins_each_task_to_one_free_bridge(monkeypatch, tmp_path, second_platform):
+@pytest.mark.parametrize(("second", "second_platform", "accepted"), [
+    ("http://127.0.0.1:19091", "android", True),
+    # Tasks could land on either bridge, so both must serve the same platform.
+    ("http://127.0.0.1:19091", "ios", False),
+    # The same bridge twice would let two workers lease one device at once.
+    ("http://127.0.0.1:19090/", "android", False),
+])
+def test_auto_agent_setup_pins_each_task_to_one_free_bridge(monkeypatch, tmp_path, second, second_platform, accepted):
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(json.dumps({"name": "adb_suite", "tasks": [
         {"id": f"task_{i}", "category": "diagnostic", "prompt": "open",
          "description_for_judge": "open", "rubric": [{"id": "done", "check": "done"}]}
         for i in range(4)
     ]}), encoding="utf-8")
-    first, second = "http://127.0.0.1:19090", "http://127.0.0.1:19091"
+    first = "http://127.0.0.1:19090"
     platforms = {first: "android", second: second_platform}
 
     class FakeClient:
@@ -2330,14 +2336,16 @@ def test_auto_agent_setup_pins_each_task_to_one_free_bridge(monkeypatch, tmp_pat
         "--target-platform", "android", "--auto-agent-setup", "--no-judge",
     ])
 
-    if second_platform != "android":
-        assert rc == 2  # Tasks could land on either bridge, so both must match.
+    if not accepted:
+        assert rc == 2
         return
     assert rc == 0
     assert used == {first, second}
     assert len(released) == 4 and set(released) == used  # Released where it ran.
     manifest = json.loads((tmp_path / "runs" / "pool-run" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["concurrency"] == 2
+    # A broken overlap barrier would turn tasks into skipped results.
+    assert manifest["totals"]["passed"] == 4 and manifest["totals"]["skipped"] == 0
     assert manifest["environment_url"] == first
     assert manifest["additional_environment_urls"] == [second]
 

@@ -1150,6 +1150,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if additional_environment_urls and not (args.auto_agent_setup and args.environment_url):
         print("Error: --additional-environment-url requires --auto-agent-setup and --environment-url", file=sys.stderr)
         return 2
+    bridge_urls = [args.environment_url, *additional_environment_urls] if additional_environment_urls else []
+    if len({url.strip().rstrip("/") for url in bridge_urls}) != len(bridge_urls):
+        # The same bridge twice would get twice its slots, letting two workers
+        # lease one device at once.
+        print("Error: --environment-url and --additional-environment-url must name distinct bridges", file=sys.stderr)
+        return 2
     if additional_environment_urls and getattr(args, "android_phone_bridge_serial", ""):
         print("Error: Android Phone Bridge runs on one device; drop --additional-environment-url", file=sys.stderr)
         return 2
