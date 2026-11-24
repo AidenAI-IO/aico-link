@@ -10,6 +10,12 @@ Run Aico directly on your computer with a real phone, without an Aico Link
 board or a Docker sandbox. One launcher starts Config Web, the phone bridge,
 and Agent Web, and stops its own processes together on `Ctrl-C`.
 
+> **Simulator, not a product.** Running Aico on a PC simulates Aico Link in
+> software so you can try Aico before the hardware ships. It is not an officially
+> released product, and it does not reproduce the hardware experience: it relies
+> on ADB or other software bridges instead of HDMI capture and USB HID, and has
+> no board microphone or speaker.
+
 ## Prepare Once
 
 Install Git, Go 1.26 or newer, Python 3.10 or newer, and
