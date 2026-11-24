@@ -76,22 +76,26 @@ func (t *textInputBridge) platform() string {
 	return textInputHardwarePlatform(t.hw)
 }
 
-func (t *textInputBridge) runClipboardFirstResult(ctx context.Context, args textInputArgs) (textInputResult, bool) {
+func (t *textInputBridge) runClipboardFirstResult(ctx context.Context, args textInputArgs, verify bool) (textInputResult, bool) {
 	platform := t.platform()
 	if strings.TrimSpace(args.Text) == "" {
 		return textInputResult{Reason: "text is required"}, false
 	}
-	bridgeResult := t.runClipboardFirstFlow(ctx, platform, args)
+	bridgeResult := t.runClipboardFirstFlow(ctx, platform, args, verify)
 	if !bridgeResult.Attempted {
 		if bridgeResult.Err != nil {
 			return textViaBridgeResultToTextInputResult(bridgeResult), true
 		}
 		return textInputResult{Reason: "reliable bridge clipboard path unavailable"}, false
 	}
+	// For explicit app typing, success means dispatch, not a verified field.
+	if !verify && bridgeResult.TextMayBeInserted && bridgeResult.Err == nil {
+		return textInputResult{OK: true, TextMayBeInserted: true}, true
+	}
 	return textViaBridgeResultToTextInputResult(bridgeResult), true
 }
 
-func (t *textInputBridge) runClipboardFirstFlow(ctx context.Context, platform string, args textInputArgs) textViaBridgeResult {
+func (t *textInputBridge) runClipboardFirstFlow(ctx context.Context, platform string, args textInputArgs, verify bool) textViaBridgeResult {
 	bridge := t.currentBridge()
 	if bridge == nil {
 		return textViaBridgeResult{Err: fmt.Errorf("phone bridge is not configured")}
@@ -100,20 +104,20 @@ func (t *textInputBridge) runClipboardFirstFlow(ctx context.Context, platform st
 	switch strings.ToLower(strings.TrimSpace(platform)) {
 	case "ios":
 		if bridge.ClipboardRecentlyEquals(args.Text, preparedClipboardMaxAge) {
-			return t.runPreparedClipboardPasteFlow(ctx, platform, args)
+			return t.finishClipboardPaste(ctx, platform, args, verify)
 		}
 		if phoneBridgeCanUsePiPBackground(status, "clipboard_write") {
-			return t.runClipboardWritePasteFlow(ctx, platform, args)
+			return t.runClipboardWritePasteFlow(ctx, platform, args, verify)
 		}
 		if args.Focus != nil && (phoneBridgeCanRestoreFromReturnEntry(status) || phoneBridgeReadyForCommand(status)) {
-			return t.runLegacyBridgeFlow(ctx, platform, args)
+			return t.runLegacyBridgeFlow(ctx, platform, args, verify)
 		}
 		return textViaBridgeResult{}
 	case "android":
 		if bridge.ClipboardRecentlyEquals(args.Text, preparedClipboardMaxAge) {
-			return t.runPreparedClipboardPasteFlow(ctx, platform, args)
+			return t.finishClipboardPaste(ctx, platform, args, verify)
 		}
-		return t.runClipboardWritePasteFlow(ctx, platform, args)
+		return t.runClipboardWritePasteFlow(ctx, platform, args, verify)
 	default:
 		return textViaBridgeResult{}
 	}
@@ -135,14 +139,14 @@ func textViaBridgeResultToTextInputResult(bridgeResult textViaBridgeResult) text
 	return result
 }
 
-func (t *textInputBridge) runPreparedClipboardPasteFlow(ctx context.Context, platform string, args textInputArgs) textViaBridgeResult {
+func (t *textInputBridge) finishClipboardPaste(ctx context.Context, platform string, args textInputArgs, verify bool) textViaBridgeResult {
 	engine := newTextInputEngineWithSleep(*t.hw, t.vision, t.sleep)
-	result := t.focusPasteVerify(ctx, engine, platform, args)
+	result := t.focusPaste(ctx, engine, platform, args, verify)
 	result.Attempted = true
 	return result
 }
 
-func (t *textInputBridge) runClipboardWritePasteFlow(ctx context.Context, platform string, args textInputArgs) textViaBridgeResult {
+func (t *textInputBridge) runClipboardWritePasteFlow(ctx context.Context, platform string, args textInputArgs, verify bool) textViaBridgeResult {
 	bridge := t.currentBridge()
 	if bridge == nil {
 		return textViaBridgeResult{Attempted: true, Err: fmt.Errorf("phone bridge is not configured")}
@@ -150,18 +154,14 @@ func (t *textInputBridge) runClipboardWritePasteFlow(ctx context.Context, platfo
 	if err := t.writeClipboard(ctx, bridge, args.Text); err != nil {
 		return textViaBridgeResult{Attempted: true, Err: err}
 	}
-	engine := newTextInputEngineWithSleep(*t.hw, t.vision, t.sleep)
-	result := t.focusPasteVerify(ctx, engine, platform, args)
-	result.Attempted = true
-	return result
+	return t.finishClipboardPaste(ctx, platform, args, verify)
 }
 
-func (t *textInputBridge) runLegacyBridgeFlow(ctx context.Context, platform string, args textInputArgs) textViaBridgeResult {
+func (t *textInputBridge) runLegacyBridgeFlow(ctx context.Context, platform string, args textInputArgs, verify bool) textViaBridgeResult {
 	bridge := t.currentBridge()
 	if bridge == nil {
 		return textViaBridgeResult{Attempted: true, Err: fmt.Errorf("phone bridge is not configured")}
 	}
-	engine := newTextInputEngineWithSleep(*t.hw, t.vision, t.sleep)
 	if _, err := ensurePhoneBridgeReadyForCommand(ctx, bridge, t.restorer, "clipboard_write"); err != nil {
 		return textViaBridgeResult{Attempted: true, Err: err}
 	}
@@ -178,9 +178,7 @@ func (t *textInputBridge) runLegacyBridgeFlow(ctx context.Context, platform stri
 	if _, err := t.callQuickAction(ctx, "app_switch_back"); err != nil {
 		return textViaBridgeResult{Attempted: true, Err: err}
 	}
-	result := t.focusPasteVerify(ctx, engine, platform, args)
-	result.Attempted = true
-	return result
+	return t.finishClipboardPaste(ctx, platform, args, verify)
 }
 
 func (t *textInputBridge) canUseClipboardFirst(platform string, text string) bool {
@@ -204,11 +202,11 @@ func (t *textInputBridge) canUseClipboardFirst(platform string, text string) boo
 	}
 }
 
-func (t *textInputBridge) focusPasteVerify(ctx context.Context, engine *textInputEngine, platform string, args textInputArgs) textViaBridgeResult {
+func (t *textInputBridge) focusPaste(ctx context.Context, engine *textInputEngine, platform string, args textInputArgs, verify bool) textViaBridgeResult {
 	if err := engine.applyFocus(ctx, args.Focus); err != nil {
 		return textViaBridgeResult{Err: err}
 	}
-	if !args.ReplaceField {
+	if verify && !args.ReplaceField {
 		before, err := engine.captureScreenshot(ctx)
 		if err != nil {
 			return textViaBridgeResult{Err: fmt.Errorf("capture field before paste: %w", err)}
@@ -217,7 +215,7 @@ func (t *textInputBridge) focusPasteVerify(ctx context.Context, engine *textInpu
 	}
 	mayHavePasted, pasteErr := t.pasteClipboard(ctx, platform)
 	result := textViaBridgeResult{TextMayBeInserted: mayHavePasted, Err: pasteErr}
-	if !mayHavePasted {
+	if !verify || !mayHavePasted {
 		return result
 	}
 	// A dispatch error, blank OCR result, or failed verification does not prove

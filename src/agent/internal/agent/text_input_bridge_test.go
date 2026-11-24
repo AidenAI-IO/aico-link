@@ -17,7 +17,7 @@ func callEnterTextBridgeForTest(ctx context.Context, tool *textInputBridge, inpu
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return "", err
 	}
-	result, _ := tool.runClipboardFirstResult(ctx, args)
+	result, _ := tool.runClipboardFirstResult(ctx, args, true)
 	return jsonString(result), nil
 }
 
@@ -518,10 +518,10 @@ func TestEnterTextDoesNotReplayPossibleBridgePaste(t *testing.T) {
 
 func TestDeviceCLITextRoutesDoNotSwitchBackends(t *testing.T) {
 	for _, tc := range []struct {
-		name, route, platform, code     string
-		connected, fgs, pip, writeFails bool
-		wantWrites, wantPastes          int
-		wantDevice                      bool
+		name, route, platform, code                 string
+		connected, fgs, pip, writeFails, pasteFails bool
+		wantWrites, wantPastes                      int
+		wantDevice                                  bool
 	}{
 		{name: "type bypasses connected app", route: "type", platform: "android", connected: true, wantDevice: true},
 		{name: "app requires transport even with cached clipboard", route: "app", platform: "android", code: CodeBridgeNotConnected},
@@ -529,6 +529,7 @@ func TestDeviceCLITextRoutesDoNotSwitchBackends(t *testing.T) {
 		{name: "app pastes through PiP without WebSocket", route: "app", platform: "ios", pip: true, wantWrites: 1, wantPastes: 1},
 		{name: "app only pastes", route: "app", platform: "android", connected: true, wantWrites: 1, wantPastes: 1},
 		{name: "app write failure does not fall back", route: "app", platform: "android", connected: true, writeFails: true, wantWrites: 1, code: CodeToolExecutionFailed},
+		{name: "app ambiguous paste failure does not replay", route: "app", platform: "ios", pip: true, pasteFails: true, wantWrites: 1, wantPastes: 1, code: CodeToolExecutionFailed},
 		{name: "connected but no usable paste route", route: "app", platform: "ios", connected: true, code: CodeModuleUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -544,13 +545,20 @@ func TestDeviceCLITextRoutesDoNotSwitchBackends(t *testing.T) {
 			}
 			typing := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
 			keyboard := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
-			quick := &recordingTextInputTool{name: "quick_action", out: `{"ok":true}`}
+			quick := &stubTool{name: "quick_action", callFn: func(context.Context, string) (string, error) {
+				if tc.pasteFails {
+					return "", fmt.Errorf("fixture paste acknowledgement lost")
+				}
+				return `{"ok":true}`, nil
+			}}
+			shot := &recordingTextInputTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`}
+			vision := &nativeVerificationStub{err: fmt.Errorf("unexpected vision verification")}
 			hw := &textInputHardwareDeps{deviceTypeFn: func() string { return tc.platform }, keyboardText: typing, keyboardTap: keyboard,
-				quickAction: quick, screenshot: textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`}}
+				quickAction: quick, screenshot: shot}
 			writes := 0
 			tool := &EnterTextTool{
 				engine: newFastTextInputEngine(*hw, &stubTextInputVision{analyses: []textInputScreenAnalysis{{ObservedMode: textInputModeASCII}}}),
-				bridgeTool: &textInputBridge{hw: hw, vision: &nativeVerificationStub{analysis: textInputScreenAnalysis{TargetMatched: true}},
+				bridgeTool: &textInputBridge{hw: hw, vision: vision,
 					bridgeFn: func() *PhoneBridge { return pb }, sleep: testNoWaitSleep,
 					clipboardWriteFn: func(context.Context, *PhoneBridge, string) error {
 						writes++
@@ -570,8 +578,14 @@ func TestDeviceCLITextRoutesDoNotSwitchBackends(t *testing.T) {
 			if err != nil || result.IsError != (tc.code != "") || (tc.code != "" && (result.ToolError == nil || result.ToolError.Code != tc.code)) {
 				t.Fatalf("unexpected result %+v, err=%v", result, err)
 			}
-			if writes != tc.wantWrites || len(quick.calls) != tc.wantPastes || (len(typing.calls) > 0) != tc.wantDevice || (!tc.wantDevice && len(keyboard.calls) > 0) {
-				t.Fatalf("writes=%d, pastes=%v, typing=%v, keypresses=%v", writes, quick.calls, typing.calls, keyboard.calls)
+			if tc.route == "app" && (len(shot.calls) != 0 || vision.calls != 0) {
+				t.Fatalf("explicit app typing must not capture or verify the field: screenshots=%d vision=%d", len(shot.calls), vision.calls)
+			}
+			if tc.pasteFails && !strings.Contains(result.Error, "Text may already be present") {
+				t.Fatalf("ambiguous dispatch must warn against replay: %q", result.Error)
+			}
+			if writes != tc.wantWrites || len(quick.inputs) != tc.wantPastes || (len(typing.calls) > 0) != tc.wantDevice || (!tc.wantDevice && len(keyboard.calls) > 0) {
+				t.Fatalf("writes=%d, pastes=%v, typing=%v, keypresses=%v", writes, quick.inputs, typing.calls, keyboard.calls)
 			}
 		})
 	}

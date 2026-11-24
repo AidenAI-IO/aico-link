@@ -84,7 +84,7 @@ func (t *EnterTextTool) platform() string {
 func (t *EnterTextTool) Description() string {
 	return `Enter exact text into a visible, focused input field or composer. ` +
 		`When an environment bridge advertises native text insertion (such as macOS iPhone Mirroring), it inserts the original Unicode text through the host and verifies the field, without phone IME probing or candidate selection. ` +
-		`Unless route is specified, first prefers the Phone Bridge clipboard route when it is currently usable, including long, multiline, CJK, and non-ASCII text; it pastes and verifies the complete target. ` +
+		`Unless route is specified, first prefers the Phone Bridge clipboard route when it is currently usable, including long, multiline, CJK, and non-ASCII text; it pastes and verifies the complete target. Explicit route=app reports successful paste dispatch without visual field verification. ` +
 		`If Bridge is unavailable or fails before paste dispatch, the local HID/IME path uses the current focus. If paste may already have changed the field, inspect it before retrying. The local path holds the pointer-free keyboard isolation profile for the whole operation, probes the current ENG/IME state with a temporary "a", and maintains that state while entering parts in order. ` +
 		`ASCII parts are typed directly in ENG mode without a vision verification step. IME parts are typed in IME mode and use vision-guided candidate selection until the part is committed. The local path never uses mouse input. ` +
 		`Before calling, focus the intended editable field yourself and inspect the screen. ` +
@@ -96,7 +96,7 @@ func (t *EnterTextTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
 		"text":  stringArgSchema("Exact text that must appear in the field when done."),
 		"focus": focusPointArgSchema("Optional legacy hint. Omit when the Agent has already focused the field."),
-		"route": stringEnumArgSchema("Optional: device uses native input or HID/IME without Phone Bridge; app uses the companion clipboard via a connected, FGS, or PiP route and never falls back to device typing.", devicecli.TextRouteDevice, devicecli.TextRouteApp),
+		"route": stringEnumArgSchema("Optional: device uses native input or HID/IME without Phone Bridge; app uses the companion clipboard via a connected, FGS, or PiP route, reports paste dispatch without visual verification, and never falls back to device typing.", devicecli.TextRouteDevice, devicecli.TextRouteApp),
 	}, "text")
 }
 
@@ -151,12 +151,12 @@ func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, option
 			return enterTextToolResultString(result), nil
 		}
 		if appOnly || (!options.disableBridge && publicArgs.Route != devicecli.TextRouteDevice && t.bridgeAvailable(args)) {
-			bridgeResult, attempted := t.bridgeTool.runClipboardFirstResult(batchCtx, args)
+			bridgeResult, attempted := t.bridgeTool.runClipboardFirstResult(batchCtx, args, !appOnly)
 			if attempted && bridgeResult.OK {
 				return enterTextToolResultString(bridgeResult), nil
 			}
 			if bridgeResult.TextMayBeInserted {
-				logging.Warnf("agent", "text_input", "Bridge paste unverified; skipping HID fallback: %s", bridgeResult.Reason)
+				logging.Warnf("agent", "text_input", "Bridge paste outcome uncertain; skipping HID fallback: %s", bridgeResult.Reason)
 				return enterTextToolFailure(batchCtx, CodeToolExecutionFailed, enterTextFailureSuggestion(bridgeResult)), nil
 			}
 			if appOnly {

@@ -168,7 +168,7 @@ func (f *openURLBrowserFallback) enterURL(ctx context.Context, engine *textInput
 	platform := f.platform()
 	args := textInputArgs{Text: url, Focus: &focus, ReplaceField: true}
 	if bridgeTool := f.search.entryTool.bridgeTool; bridgeTool != nil && openURLBackgroundClipboardUsable(bridgeTool.currentBridge(), platform) {
-		result := bridgeTool.runClipboardWritePasteFlow(ctx, platform, args)
+		result := bridgeTool.runClipboardWritePasteFlow(ctx, platform, args, true)
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}

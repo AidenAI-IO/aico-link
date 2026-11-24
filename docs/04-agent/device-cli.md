@@ -33,10 +33,12 @@ focus coordinates or chooses a field for you.
 - `device-cli type TEXT` uses device input (native insertion where available,
   otherwise HID/IME). It does not use the companion app.
 - `device-cli app type TEXT` requires a usable Phone Bridge clipboard route. It
-  writes or reuses the clipboard and pastes into the focused field. It never falls back to device typing. If paste may have
-  reached the field but verification fails, inspect the screen before retrying
-  or switching routes. On iOS without PiP, this command needs a recently
-  prepared matching clipboard.
+  writes or reuses the clipboard and sends the paste shortcut to the focused
+  field. A successful clipboard operation and paste dispatch are sufficient;
+  it does not read the field back or fall back to device typing. The foreground
+  shell still attaches its normal final screenshot. If dispatch fails and the
+  text may already be present, inspect the screen before retrying. On iOS
+  without PiP, this command needs a recently prepared matching clipboard.
 
 Prefer `device-cli app type` for text entry when `app_connected`,
 `app_pip_enabled`, or `app_fgs_enabled` is true. For multiline text, use one
