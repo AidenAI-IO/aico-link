@@ -14,3 +14,17 @@ def validate_ios_text(text):
     # deadlines. Mirroring retains the shared 4096-unit limit.
     if len(text.encode("utf-16-le")) // 2 > MAX_TEXT_UTF16_UNITS:
         raise ValueError(f"direct iOS input accepts at most {MAX_TEXT_UTF16_UNITS} UTF-16 units per request; no text was sent")
+
+
+def text_insertion_matches(before, after, text):
+    """Recognize one insertion or selection replacement without trimming text."""
+    if before == after:
+        return False
+    start = after.find(text)
+    while start >= 0:
+        prefix, suffix = after[:start], after[start + len(text):]
+        if (len(prefix) + len(suffix) <= len(before)
+                and before.startswith(prefix) and before.endswith(suffix)):
+            return True
+        start = after.find(text, start + 1)
+    return False

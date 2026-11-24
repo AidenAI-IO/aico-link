@@ -28,6 +28,15 @@ class FakeWDA:
         self.reorder_selection = False
         self.fail_text = False
         self.fail_home = False
+        self.field = "focused-field"
+        self.field_type = "XCUIElementTypeTextField"
+        self.field_text = ""
+        self.placeholder = None
+        self.selection = None
+        self.drop_text = False
+        self.readback_error = False
+        self.readback_text = None
+        self.typed = False
 
     def request(self, method, path, payload=None):
         self.calls.append((method, path, payload))
@@ -38,9 +47,30 @@ class FakeWDA:
         if path.endswith("/window/size"):
             return {"value": {"width": 390, "height": 844}}
         if path.endswith("/element/active"):
-            return {"value": {"element-6066-11e4-a52e-4f735466cecf": "focused-field"}}
-        if path.endswith("/wda/keys") and self.fail_text:
-            raise IOSDeviceError("device_timeout", "delivery is ambiguous")
+            return {"value": {"element-6066-11e4-a52e-4f735466cecf": self.field}}
+        if "/element/" in path and path.endswith("/name"):
+            return {"value": self.field_type}
+        if path.endswith("/attribute/value"):
+            if self.typed and self.readback_error:
+                raise IOSDeviceError("stale_element", "The field disappeared")
+            if self.typed and self.readback_text is not None:
+                return {"value": self.readback_text}
+            return {"value": self.field_text or self.placeholder}
+        if path.endswith("/attribute/placeholderValue"):
+            return {"value": self.placeholder}
+        if path.endswith("/clear"):
+            self.field_text, self.selection = "", None
+            return {"value": None}
+        if path.endswith("/wda/keys"):
+            self.typed = True
+            if not self.drop_text:
+                text = "".join(payload["value"])
+                start, end = self.selection or (len(self.field_text), len(self.field_text))
+                self.field_text = self.field_text[:start] + text + self.field_text[end:]
+                self.selection = (start + len(text), start + len(text))
+            if self.fail_text:
+                raise IOSDeviceError("device_timeout", "delivery is ambiguous")
+            return {"value": None}
         if path == "/session/test-session/wda/pressButton":
             if self.fail_home:
                 raise IOSDeviceError("device_timeout", "delivery is ambiguous")
@@ -70,6 +100,11 @@ class FakeWDA:
 @pytest.fixture
 def device():
     return IOSDevice(FakeWDA())
+
+
+@pytest.fixture
+def tools(device):
+    return IOSServer(device, port=0, action_settle_sec=0).tools_api
 
 
 def signature():
@@ -110,6 +145,8 @@ def test_native_text_limit_rejects_before_clearing_or_typing(device, text):
     {"operation": "insert_text", "insert_text": {"text": "a" * 513, "replace": True}},
     {"operation": "insert_text", "insert_text": {"text": "🔋" * 257}},
     {"operation": "insert_text", "insert_text": {"text": "hello", "replace": "true"}},
+    {"operation": "insert_text", "insert_text": {"text": "hello", "unknown": True}},
+    {"operation": "insert_text", "insert_text": None},
     {"operation": "system_action"},
     {"operation": "system_action", "system_action": {"action": "power"}},
     {"operation": "click", "click": {"x": 1001, "y": 500}},
@@ -121,6 +158,98 @@ def test_invalid_requests_do_not_reach_the_device(payload):
     def unexpected(*_args):
         pytest.fail("invalid input reached WDA")
     assert execute_ios_mnk(payload, unexpected)[0] == 400
+
+
+@pytest.mark.parametrize("field,kind", [
+    (None, "XCUIElementTypeTextField"),
+    (123, "XCUIElementTypeTextField"),
+    ("focused-field", "XCUIElementTypeButton"),
+])
+@pytest.mark.parametrize("replace", [False, True])
+def test_native_input_requires_a_focused_editable_field(device, field, kind, replace):
+    device.transport.field, device.transport.field_type = field, kind
+    with pytest.raises(IOSDeviceError, match="Focus an accessible"):
+        device.insert_text("你好", replace)
+    assert not any(path.endswith(("/clear", "/wda/keys")) for _, path, _ in device.transport.calls)
+
+
+@pytest.mark.parametrize("before,selection,text", [
+    ("", None, "你好，Aico 😸 %s ' & $(literal)"),
+    ("prefix: ", None, "你好\n\t "),
+    ("abcdef", (3, 3), "中文🔋"),
+    ("abcOLDdef", (3, 6), "替换"),
+    ("", None, "\n"),
+    ("", None, "\t"),
+])
+def test_enter_text_verifies_exact_unicode_at_caret_or_selection(device, tools, before, selection, text):
+    device.transport.field_text, device.transport.selection = before, selection
+    result = tools.invoke("enter_text", {"text": text, "focus": {"x": 250, "y": 500}})
+    assert result["is_error"] is False
+    assert json.loads(result["output"]) == {"ok": True}
+    sent = [(path, payload) for method, path, payload in device.transport.calls if method == "POST"][1:]
+    assert sent == [
+        ("/session/test-session/wda/tap", {"x": 97.5, "y": 422.0}),
+        ("/session/test-session/wda/keys", {"value": [text], "frequency": 60}),
+    ]
+
+
+@pytest.mark.parametrize("data", [
+    {"text": "你好"},
+    {"text": "你好", "focus": {"x": True, "y": 500}},
+    {"text": "你好", "focus": {"x": 500, "y": 1001}},
+    {"text": "你好", "focus": {"x": 500, "y": 500, "extra": 1}},
+    {"text": "你好", "focus": {"x": 500, "y": 500}, "replace": True},
+    *({"text": text, "focus": {"x": 500, "y": 500}} for text in ("", "\x00", "\ud800", "a" * 513, "🔋" * 257)),
+])
+def test_enter_text_validates_before_focusing(device, tools, data):
+    before = list(device.transport.calls)
+    result = tools.invoke("enter_text", data)
+    assert result["is_error"] is False
+    assert json.loads(result["output"])["ok"] is False
+    assert device.transport.calls == before
+
+
+@pytest.mark.parametrize("failure", ["fail_text", "readback_error", "drop_text"])
+def test_enter_text_never_replays_uncertain_or_unverified_delivery(device, tools, failure):
+    setattr(device.transport, failure, True)
+    result = tools.invoke("enter_text", {"text": "中文🔋", "focus": {"x": 500, "y": 500}})
+    output = json.loads(result["output"])
+    assert result["is_error"] is False
+    assert output["ok"] is False
+    assert "Text may already be present" in output["suggestion"]
+    assert sum(path.endswith("/wda/keys") for _, path, _ in device.transport.calls) == 1
+    assert not any(path.endswith("/clear") for _, path, _ in device.transport.calls)
+
+
+@pytest.mark.parametrize("text,observed", [("Hello", "hello"), ("你好\n", "你好"), ("你好\t", "你好"), ("Hello", "Hello trailing")])
+def test_enter_text_rejects_altered_readback(device, tools, text, observed):
+    device.transport.readback_text = observed
+    output = json.loads(tools.invoke("enter_text", {"text": text, "focus": {"x": 500, "y": 500}})["output"])
+    assert output["ok"] is False
+
+
+@pytest.mark.parametrize("placeholder", [False, True])
+def test_enter_text_does_not_verify_existing_text_or_placeholder(device, tools, placeholder):
+    if placeholder:
+        device.transport.placeholder = "目标"
+    else:
+        device.transport.field_text = "目标"
+    device.transport.drop_text = True
+    output = json.loads(tools.invoke("enter_text", {"text": "目标", "focus": {"x": 500, "y": 500}})["output"])
+    assert output["ok"] is False
+
+
+def test_enter_text_handles_empty_placeholder_and_masked_fields(device, tools):
+    device.transport.placeholder = "Search"
+    output = json.loads(tools.invoke("enter_text", {"text": "中文🔋", "focus": {"x": 500, "y": 500}})["output"])
+    assert output["ok"] is True
+    device.transport.calls.clear()
+    device.transport.field_type = "XCUIElementTypeSecureTextField"
+    output = json.loads(tools.invoke("enter_text", {"text": "secret", "focus": {"x": 500, "y": 500}})["output"])
+    assert output["ok"] is False
+    assert not any(path.endswith("/wda/keys") for _, path, _ in device.transport.calls)
+    device.insert_text("secret")
+    assert device.transport.calls[-1][1].endswith("/wda/keys")
 
 
 def test_policy_requires_an_unambiguous_prompt_and_complete_button_set(device):
@@ -316,6 +445,21 @@ def test_http_alert_selection_obeys_task_lease_and_rejects_stale_prompts(device)
         assert (frame["meta"]["width"], frame["meta"]["height"]) == (117, 253)
         assert request("/api/providers/mnk")[1]["capabilities"]["insert_text"]
         assert request("/api/providers/mnk")[1]["capabilities"]["system_actions"] == ["home"]
+        assert request("/api/providers/mnk", task="other")[0] == 429
+        text = "你好，Aico 😸 %s\n第二行\t"
+        insertion = {"operation": "insert_text", "insert_text": {"text": text, "replace": True}}
+        assert request("/api/providers/mnk", insertion, task="other")[0] == 429
+        assert request("/api/providers/mnk", insertion) == (200, {"success": True})
+        assert device.transport.field_text == text
+        assert device.transport.calls[-1][2] == {"value": [text], "frequency": 60}
+        device.transport.fail_text = True
+        before = len(device.transport.calls)
+        assert request("/api/providers/mnk", insertion)[0] == 500
+        assert sum(path.endswith("/wda/keys") for _, path, _ in device.transport.calls[before:]) == 1
+        device.transport.fail_text = False
+        status, response = request("/api/tools/enter_text", {"input": {"text": "追加", "focus": {"x": 500, "y": 500}}})
+        assert status == 200 and not response["is_error"]
+        assert json.loads(response["output"]) == {"ok": True}
         home = {"operation": "system_action", "system_action": {"action": "home"}}
         assert request("/api/providers/mnk", home, task="other")[0] == 429
         assert request("/api/providers/mnk", home)[1]["success"]
