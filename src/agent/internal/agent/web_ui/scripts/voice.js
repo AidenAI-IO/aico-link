@@ -515,7 +515,9 @@ async function endRealtimeVoice() {
     voiceStopping = true;
     renderRealtimeVoice();
     try {
-        await fetch('/api/realtime/voice/stop', {method: 'POST'});
+        // Ending voice from this button stops the work it started too: the
+        // user sees one assistant, and a stop should stop all of it.
+        await fetch('/api/realtime/voice/stop?tasks=1', {method: 'POST'});
     } catch (err) {
         setComposerHint('Could not end the voice session', true);
     } finally {

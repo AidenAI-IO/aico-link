@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"image/color"
 	"image/jpeg"
 	"strconv"
@@ -135,5 +136,24 @@ func TestPostActionTouchGestureDoesNotMarkSwipe(t *testing.T) {
 	}
 	if result.Data != rawData {
 		t.Fatalf("swipe screenshot was marked: %q", result.Data)
+	}
+}
+
+// A task stopped while the baseline screenshot is captured must not go on to
+// send the action.
+func TestPostActionSendsNoActionAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	action := &stubTool{name: "touch_gesture", output: "ok"}
+	screenshot := &stubTool{name: "screenshot", callFn: func(context.Context, string) (string, error) {
+		cancel()
+		return `{"width":1,"height":1}`, nil
+	}}
+	tool := newPostActionScreenshotTool(action, screenshot, 0)
+
+	if _, err := tool.Call(ctx, `{"type":"tap","point":{"x":250,"y":750}}`); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Call() error = %v, want context.Canceled", err)
+	}
+	if len(action.inputs) != 0 {
+		t.Fatalf("action ran after cancel: %v", action.inputs)
 	}
 }

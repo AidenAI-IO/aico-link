@@ -994,6 +994,40 @@ func TestManagerCancelAllStopsWorkSilently(t *testing.T) {
 		t.Fatalf("queued task ran after stop: %q", prompt)
 	case <-time.After(20 * time.Millisecond):
 	}
+	select {
+	case <-manager.WakeNotifications():
+		t.Fatal("stopped tasks woke the voice session")
+	default:
+	}
+}
+
+// Work the user stops from a screen is not announced or woken for either.
+func TestManagerCancelUnfinishedStopsTaskSilently(t *testing.T) {
+	runner := &fakeRunner{started: make(chan string, 1), release: make(chan struct{})}
+	manager := newManager(runner, 4, time.Now)
+	defer manager.Close()
+
+	task, err := manager.Create("running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("task did not start")
+	}
+	if _, err := manager.CancelUnfinished(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, manager, task.ID, StatusCancelled)
+	if pending, _ := manager.TerminalState(); len(pending) != 0 {
+		t.Fatalf("stopped task would be announced: %+v", pending)
+	}
+	select {
+	case <-manager.WakeNotifications():
+		t.Fatal("stopped task woke the voice session")
+	default:
+	}
 }
 
 // A stop that arrives after the run asked for the user but before it returned

@@ -197,6 +197,12 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		baselineOutput, baselineImage = t.captureBaseline(ctx)
 	}
 	timing.mark(&timing.baselineMs)
+	// Each stage below takes up to seconds and some ignore cancellation, so a
+	// stopped task is checked between stages. Above all, an action must not be
+	// sent once the task was stopped.
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if seenOK && baselineImage != nil && !releasesHeldContact(t.inner.Name(), input) {
 		bounds := baselineImage.Bounds()
 		if (seenWidth > seenHeight) != (bounds.Dx() > bounds.Dy()) {
@@ -292,6 +298,9 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		return postActionErrorResultf(ctx, postActionErrorCode(err), "%s completed with output %q, but post-action delay failed: %v", t.inner.Name(), actionOutput, err), nil
 	}
 
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	touchscreenRCALogf("post_action screenshot start inner=%q", t.inner.Name())
 	reportToolProgress(ctx, ToolProgress{
 		Status:  "verifying",
@@ -341,6 +350,9 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		}
 	}
 	timing.mark(&timing.compareMs)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	// Ground after the comparison, which needs the plain image, and before
 	// the touch markers, so they are drawn on top and not detected.
 	if grounder, ok := t.screenshot.(screenshotResultGrounder); ok && t.groundingEnabled() && !turnPending {

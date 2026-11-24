@@ -712,6 +712,9 @@ func (m *Manager) CancelUnfinished(taskID string) (Task, error) {
 		m.mu.Unlock()
 		return Task{}, errors.New("no unfinished agent task")
 	}
+	// The user stopped this work from a screen and sees it stop there, so
+	// the cancellation is not also announced by voice.
+	item.silent = true
 	cancel := m.cancelLocked(item)
 	task := item.task
 	m.mu.Unlock()
@@ -1289,7 +1292,9 @@ func (m *Manager) finishLocked(item *entry, status Status, result, taskError str
 	}
 	m.observeLocked(item, "terminal")
 	m.signalTerminalLocked()
-	m.signalWakeLocked()
+	if !item.silent {
+		m.signalWakeLocked()
+	}
 }
 
 func (m *Manager) pendingSteerMessage(taskID string) (SteerMessage, bool) {
