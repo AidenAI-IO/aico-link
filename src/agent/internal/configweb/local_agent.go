@@ -52,12 +52,18 @@ func (s *Server) localSettingsFields() map[string]map[string]bool {
 	fields["agent"]["input_mode"] = true
 	fields["voice_model"] = jsonFields(configupdate.VoiceModel{})
 	fields["voice_model_providers"] = jsonFields(configupdate.VoiceModelProvider{})
+	fields["stt"] = jsonFields(configupdate.STT{})
+	fields["stt_providers"] = jsonFields(configupdate.STTProvider{})
+	fields["tts"] = jsonFields(configupdate.TTS{})
+	fields["tts_providers"] = jsonFields(configupdate.TTSProvider{})
+	fields["quick_capture"] = map[string]bool{"screen_memory_ttl": true}
+	fields["voice_notifications"] = map[string]bool{"retention_days": true}
 	return fields
 }
 
-func isContainerVoiceRoute(path string) bool {
+func isContainerSettingsRoute(path string) bool {
 	switch strings.TrimRight(path, "/") {
-	case "/voice", "/voice/providers", "/voice/providers/edit", "/voice/model", "/voice/extra":
+	case "/voice", "/voice/providers", "/voice/providers/edit", "/voice/model", "/voice/extra", "/memory":
 		return true
 	}
 	return false
@@ -109,12 +115,14 @@ func (s *Server) allowLocalRequest(w http.ResponseWriter, r *http.Request) bool 
 	return true
 }
 
-func localAgentEndpoint(endpoint apiEndpoint) bool {
+func (s *Server) localAgentEndpoint(endpoint apiEndpoint) bool {
 	switch endpoint {
 	case apiMCPServers, apiMCPServersChange, apiIPhoneMirroring, apiIPhoneMirroringReconnect, apiDeviceSnapshot, apiDeviceStatus, apiConfigGet, apiConfigSchema, apiConfigUpdate,
 		apiConfigPlan, apiConfigLocale, apiConfigApplication, apiConfigTest, apiModels,
 		apiConversationReset, apiAgentLogs, apiLLMLogs, apiLLMLogExport, apiLLMLogImport:
 		return true
+	case apiMemoryReset, apiSupportArchive:
+		return s.options.ContainerAgent
 	}
 	return false
 }
@@ -143,14 +151,6 @@ func (s *Server) validateLocalConfigPatch(raw json.RawMessage) error {
 		var fields map[string]json.RawMessage
 		if json.Unmarshal(data, &fields) != nil || fields == nil {
 			return fmt.Errorf("%s must be an object", section)
-		}
-		if s.options.ContainerAgent && section == "agent" {
-			if rawMode, exists := fields["input_mode"]; exists {
-				var mode string
-				if json.Unmarshal(rawMode, &mode) != nil || (mode != "" && mode != "realtime") {
-					return fmt.Errorf("only browser realtime voice is available for a container Agent")
-				}
-			}
 		}
 		if strings.HasSuffix(section, "_providers") {
 			for name, provider := range fields {
@@ -193,7 +193,7 @@ func (s *Server) projectConfig(config map[string]any) map[string]any {
 		if !ok {
 			continue
 		}
-		if section != "agent" {
+		if strings.HasSuffix(section, "_providers") {
 			result[section] = value
 			continue
 		}
@@ -245,6 +245,17 @@ func (s *Server) localAgentStatus() map[string]any {
 		}
 		status["public_port"] = port
 		status["url"] = fmt.Sprintf("http://127.0.0.1:%d", port)
+		switch os.Getenv("AICO_ENABLE_TERMINAL") {
+		case "1", "true", "TRUE", "True", "yes", "YES", "Yes", "on", "ON", "On":
+			status["terminal_url"] = fmt.Sprintf("http://127.0.0.1:%d/webtty/", port)
+		}
+		// Match the service helper's startup gate; provider settings remain editable.
+		switch os.Getenv("AICO_CLASSIC_VOICE") {
+		case "0", "false", "FALSE", "False", "no", "NO", "No", "off", "OFF", "Off":
+			status["classic_voice_enabled"] = false
+		default:
+			status["classic_voice_enabled"] = true
+		}
 	}
 	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Get(strings.TrimRight(s.options.AgentHTTPBaseURL, "/") + "/health")

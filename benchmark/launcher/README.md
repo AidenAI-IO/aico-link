@@ -251,16 +251,24 @@ guest address, and whether its SSH port answers.
 The image runs Config Web on container port 80 and the Agent Web UI on 8080,
 over plain HTTP. The launcher publishes them on `127.0.0.1` only.
 
-- **Classic voice is off in Docker.** Classic (speech-to-text) conversations need
-  on-device RKNN models that the image does not contain, so the image starts the
-  Agent with Classic voice disabled (`AICO_CLASSIC_VOICE=0`). Classic mode is
-  text-only.
+- **Classic settings remain available.** The PC Config Web shares the Realtime
+  and Classic pages, including STT/TTS provider credentials, models, and Extra
+  settings. The image starts the Agent with Classic voice disabled
+  (`AICO_CLASSIC_VOICE=0`) because it lacks the VAD helper and matching models.
+  Config Web reports that Classic is text-only; saving providers does not enable
+  its runtime. Supply those dependencies before enabling Classic at startup.
 - **Realtime voice works in the browser.** `localhost` and `127.0.0.1` are secure
   contexts, so the Agent Web UI can use the microphone without TLS.
 - **The browser terminal is off by default.** Turn on **Enable the web
   terminal** in an instance's advanced options to start `ttyd` behind
   `http://127.0.0.1:<agent port>/webtty/`. It is a root shell inside the
   container; leave it off unless you need it.
+- **Software memory and logs remain available.** Set screen/notification memory
+  retention, reset conversation and memory, and export Agent support logs from
+  the PC Config Web. The overview also links to an enabled container terminal
+  using the published Agent port. Board capture buttons, speaker enrollment,
+  device audio, Wi-Fi, GPIO, storage maintenance, and firmware controls are
+  excluded.
 
 See [Try Aico on PC](../../docs/01-getting-started/try-aico-on-pc.md) for the
 image's runtime variables and build arguments.

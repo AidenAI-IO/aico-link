@@ -58,14 +58,26 @@ TOML document, or an invalid file target.
 Native host Agents use `config-web --local-agent`, which binds to loopback and
 serves model providers, conversation, search, MCP servers, language, time zone,
 and logs without initializing board services. Launcher containers use
-`--container-agent`, adding browser Realtime voice settings to that profile.
-Classic voice, device audio, Wi-Fi, GPIO, storage maintenance, firmware, and
-system-service operations are unavailable through either profile's API.
+`--container-agent`, adding both Realtime and Classic voice provider settings,
+screen/notification memory retention, memory reset, and Agent support-log export.
+The shared voice pages retain STT/TTS credentials, models, and Extra settings.
+Device audio, board-microphone speaker enrollment, Wi-Fi, GPIO, storage
+maintenance, firmware, and system-service controls remain unavailable through
+the PC profile's pages and API. Full TOML editing and backup/restore remain
+outside the PC settings profile; edit the instance's persistent configuration
+file externally when those operations are needed.
 
 The Launcher sets `AICO_CONFIG_WEB_PROFILE=container` for its Agent containers.
 The image entrypoint selects the profile and listens on container port 80;
 the Launcher publishes it on host loopback only. The overview's Agent link uses
-the published Agent Web port rather than the internal container address.
+the published Agent Web port rather than the internal container address. A
+container-terminal link uses that same port and appears only when the Launcher
+has enabled the web terminal. Support-log export includes Agent, model-request,
+and episode logs without collecting board service logs or kernel diagnostics.
+The default image disables Classic voice at startup (`AICO_CLASSIC_VOICE=0`)
+because it lacks its VAD helper/models. The voice page reports this limitation:
+STT/TTS configuration remains editable, but Classic is text-only until the
+runtime dependencies are supplied and Classic voice is enabled at startup.
 Both profiles require same-origin browser requests on a loopback hostname and
 save through the existing configuration update and live-application flow.
 The image's default Compose profile continues to serve the board interface.

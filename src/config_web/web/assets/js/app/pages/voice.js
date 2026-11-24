@@ -105,7 +105,7 @@ export const effectiveMode = voiceMode;
 
 function kindFromQuery(context) {
   const kind = context.query && context.query.kind;
-  return KINDS[kind] && (!context.containerAgent || kind === 'realtime') ? kind : null;
+  return KINDS[kind] ? kind : null;
 }
 
 function typeLabel(schema, kind, type) {
@@ -172,10 +172,11 @@ export async function voicePage(context) {
   const saver = createSaver(context, {title: msg('ui.nav_voice', '语音'), back: '/', root: body, onSaved: adoptSaved(snapshot)});
   const saved = effectiveMode(snapshot);
   const requested = context.query && context.query.mode;
-  const modes = context.containerAgent ? MODES.filter(entry => entry.value === 'realtime') : MODES;
+  const modes = MODES;
   const shown = modes.some(entry => entry.value === requested) ? requested
     : modes.some(entry => entry.value === saved) ? saved : 'realtime';
   const pending = shown !== saved ? shown : '';
+  const classicDisabled = context.containerAgent && snapshot.agent_status?.classic_voice_enabled === false;
 
   async function switchMode(mode) {
     if (mode === saved) {
@@ -202,7 +203,7 @@ export async function voicePage(context) {
       lastShownMode = entry.value;
       replace(content, [modeContent(entry.value, true)]);
       replace(note, []);
-      switchMode(entry.value);
+      return switchMode(entry.value);
     }},
   }, [
     icon('check', {class: 'ds-segmented__check', size: 16}),
@@ -268,40 +269,28 @@ export async function voicePage(context) {
     if (mode === 'realtime') {
       return el('div', {class: animate ? 'ds-fade-in' : null}, [kindGroup('realtime', undefined, mode)]);
     }
-    const speakerHost = el('div', {data: {action: 'speaker-panel'}});
+    const speakerHost = context.containerAgent ? null : el('div', {data: {action: 'speaker-panel'}});
     const root = el('div', {class: animate ? 'ds-fade-in' : null}, [
       kindGroup('stt', KINDS.stt.title, mode),
       kindGroup('tts', KINDS.tts.title, mode),
       speakerHost,
     ]);
-    renderSpeakerPanel(speakerHost, saver, snapshot);
+    if (speakerHost) renderSpeakerPanel(speakerHost, saver, snapshot);
     return root;
   }
 
   // Filled once the save answers: whether the switch is pending is not known
   // at the tap, and a note that appears late reads better than one that flashes.
-  const note = el('div', {}, pending
+  const note = el('div', {}, pending && !(shown === 'stt' && classicDisabled)
     ? [text(saved
       ? msg('voice.mode_pending', '配置好以下提供商后才会切换到该模式')
       : msg('voice.mode_off', '语音尚未启用，配置好以下提供商后即可使用'), 'page__note')]
     : []);
   const content = el('div', {}, [modeContent(shown, changed)]);
-  const enableRealtime = context.containerAgent && pending && currentName(snapshot, 'realtime')
-    ? button({
-        label: msg('voice.enable_realtime', '启用 Realtime 语音'),
-        variant: 'accent', block: true, action: 'enable-realtime',
-        onPress: async () => {
-          setDisabled(enableRealtime, true);
-          try {
-            await switchMode('realtime');
-          } finally {
-            setDisabled(enableRealtime, false);
-          }
-        },
-      })
-    : null;
-  replace(body, [context.containerAgent ? null : tabs, note, content,
-    enableRealtime ? el('div', {class: 'ds-group'}, [enableRealtime]) : null]);
+  replace(body, [tabs,
+    classicDisabled
+      ? text(msg('voice.classic_disabled', '当前容器未启用 Classic 语音，Classic 模式仅支持文字对话。你仍可编辑 STT/TTS 配置；使用浏览器语音请选择 Realtime。'), 'page__note') : null,
+    note, content]);
   saver.refreshChrome();
   return screen([body]);
 }

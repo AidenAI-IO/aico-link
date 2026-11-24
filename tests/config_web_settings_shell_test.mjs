@@ -175,11 +175,13 @@ const localPaths = new Set(localRoutes.map(route => route.path));
 const containerPaths = new Set(containerRoutes.map(route => route.path));
 for (const [items, paths] of [[LOCAL_ITEMS, localPaths], [CONTAINER_ITEMS, containerPaths]]) {
   for (const item of items) assert.ok(paths.has(item.route));
-  for (const retired of ['/wifi', '/storage', '/firmware', '/memory', '/advanced', '/basic']) {
+  for (const retired of ['/wifi', '/storage', '/firmware', '/advanced', '/basic']) {
     assert.ok(!paths.has(retired), `PC route exposes ${retired}`);
   }
 }
 assert.ok(!localPaths.has('/voice'));
+assert.ok(!localPaths.has('/memory'));
+assert.ok(containerPaths.has('/memory'));
 assert.ok(containerPaths.has('/voice/model'));
 assert.ok(localPaths.has('/model/providers/edit'));
 assert.ok(localPaths.has('/advanced/logs/agent'));

@@ -685,10 +685,14 @@ process.stdout.write('config web UI component tests passed\n');
   }
 }
 
-/* --------------------------------------------- Container Realtime voice --- */
+/* ------------------------------------------------ Container voice/settings --- */
 
 {
+  const {t} = await import(pathToFileURL(path.join(uiRoot, '../app/data.js')).href);
   const {voicePage, voiceProvidersPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/voice.js')).href);
+  const {memoryPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/memory.js')).href);
+  const {localOverviewPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/local.js')).href);
+  const {logsPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/advanced.js')).href);
   const {dismiss} = await load('toast');
   const realFetch = globalThis.fetch;
   const realSetTimeout = globalThis.setTimeout;
@@ -703,25 +707,53 @@ process.stdout.write('config web UI component tests passed\n');
       const snapshot = {config: {
         agent: {input_mode: mode}, voice_model: {provider: 'browser'},
         voice_model_providers: {browser: {type: 'openai', has_api_key: true}},
-      }};
+        stt: {provider: 'speech'}, stt_providers: {speech: {type: 'openai-whisper', has_api_key: true}},
+        tts: {provider: 'voice'}, tts_providers: {voice: {type: 'minimax-cn', has_api_key: true}},
+      }, agent_status: {classic_voice_enabled: false}};
       const navigation = [];
       const context = {snapshot, localAgent: true, containerAgent: true, header() {}, navigate: path => navigation.push(path)};
-      const page = await voicePage({...context, query: {mode: 'stt'}});
-      assert.equal(page.querySelector('[data-action="voice-mode-stt"]'), null);
-      assert.equal(page.querySelector('[data-action="open-stt-providers"]'), null);
-      assert.ok(page.querySelector('[data-action="open-realtime-providers"]'));
-      const enable = page.querySelector('[data-action="enable-realtime"]');
-      if (mode === 'stt') {
-        assert.ok(enable, 'an existing Classic configuration can switch to browser voice');
-        await enable._listeners.get('click')[0]();
-        const save = requests.find(entry => entry.url === '/api/config');
-        assert.deepEqual(JSON.parse(save.options.body), {config: {agent: {input_mode: 'realtime'}}});
-        assert.equal(navigation.pop(), '/voice');
-      } else assert.equal(enable, null);
-      await voiceProvidersPage({...context, query: {kind: 'stt'}});
-      assert.equal(navigation.pop(), '/voice', 'a Classic deep link returns to browser voice');
+      const page = await voicePage(context);
+      assert.ok(page.querySelector(`[data-action="voice-mode-${mode}"]`));
+      assert.ok(page.querySelector(`[data-action="open-${mode}-providers"]`));
+      assert.ok(page.textContent.includes(t('voice.classic_disabled')));
+      assert.equal(page.querySelector('[data-action="speaker-panel"]'), null);
+      const next = mode === 'stt' ? 'realtime' : 'stt';
+      requests.length = 0;
+      await page.querySelector(`[data-action="voice-mode-${next}"]`)._listeners.get('click')[0]();
+      const save = requests.find(entry => entry.url === '/api/config');
+      assert.deepEqual(JSON.parse(save.options.body), {config: {agent: {input_mode: next}}});
+      assert.equal(navigation.pop(), '/voice');
+      for (const [kind, name] of [['stt', 'speech'], ['tts', 'voice']]) {
+        const providers = await voiceProvidersPage({...context, query: {kind}});
+        await providers.querySelector(`[data-action="edit-${kind}-provider-${name}"]`)._listeners.get('click')[0]();
+        assert.equal(navigation.pop(), `/voice/providers/edit?kind=${kind}&name=${name}`);
+      }
     }
     assert.ok(!requests.some(entry => entry.url.startsWith('/api/speaker/')));
+    const context = {snapshot: {config: {quick_capture: {screen_memory_ttl: '90d'}, voice_notifications: {retention_days: 7}}},
+      localAgent: true, containerAgent: true, header() {}, navigate() {}};
+    const memory = await memoryPage(context);
+    assert.equal(memory.querySelector('[role="switch"]'), null, 'PC memory has no board capture-button switch');
+    assert.ok(memory.querySelector('[data-action="reset-memory"]'));
+    for (const [action, choice, patch] of [
+      ['open-screen-memory-ttl', '30d', {quick_capture: {screen_memory_ttl: '30d'}}],
+      ['open-notification-retention', 14, {voice_notifications: {retention_days: 14}}],
+    ]) {
+      requests.length = 0;
+      memory.querySelector(`[data-action="${action}"]`).click();
+      body.querySelector(`[data-action="choose-${choice}"]`).click();
+      await new Promise(resolve => setImmediate(resolve));
+      const save = requests.find(entry => entry.url === '/api/config');
+      assert.deepEqual(JSON.parse(save.options.body), {config: patch});
+    }
+    for (const enabled of [false, true]) {
+      const status = {url: 'http://127.0.0.1:51278', ...(enabled ? {terminal_url: 'http://127.0.0.1:51278/webtty/'} : {})};
+      const page = await localOverviewPage({...context, snapshot: {config: {}, agent_status: status}});
+      const terminal = page.querySelector('[data-action="open-terminal"]');
+      if (enabled) assert.equal(terminal.getAttribute('href'), status.terminal_url);
+      else assert.equal(terminal, null);
+    }
+    assert.ok((await logsPage(context)).querySelector('[data-action="export-logs"]'));
   } finally {
     dismiss();
     globalThis.fetch = realFetch;

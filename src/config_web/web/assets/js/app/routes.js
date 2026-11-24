@@ -66,4 +66,4 @@ export const localRoutes = [
     route.path === '/basic/language' || route.path === '/advanced/mcp' || route.path.startsWith('/advanced/logs')),
 ];
 
-export const containerRoutes = [...localRoutes, ...routes.filter(route => route.path.startsWith('/voice'))];
+export const containerRoutes = [...localRoutes, ...routes.filter(route => route.path.startsWith('/voice') || route.path === '/memory')];

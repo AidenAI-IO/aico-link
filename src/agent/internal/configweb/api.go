@@ -237,7 +237,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		if !s.allowLocalRequest(w, r) {
 			return
 		}
-		if !localAgentEndpoint(match.endpoint) {
+		if !s.localAgentEndpoint(match.endpoint) {
 			writeJSONError(w, http.StatusNotFound, "not available for a local Agent")
 			return
 		}

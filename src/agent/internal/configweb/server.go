@@ -363,7 +363,7 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if s.options.LocalAgent && entry && relative == "index.html" {
-		if !isLocalSettingsRoute(r.URL.Path) && !(s.options.ContainerAgent && isContainerVoiceRoute(r.URL.Path)) {
+		if !isLocalSettingsRoute(r.URL.Path) && !(s.options.ContainerAgent && isContainerSettingsRoute(r.URL.Path)) {
 			return false
 		}
 		relative = "local.html"

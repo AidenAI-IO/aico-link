@@ -481,14 +481,16 @@ func (s *Server) handleSupportLogsExport(w http.ResponseWriter, _ *http.Request)
 	} else {
 		files = append(files, unavailableSupportFile(llmName, llm, err))
 	}
-	for _, service := range append(s.supportServiceLogs(), supportDiagnosticsLogTails()...) {
-		if data, err := tailFile(service.path, supportLogTailLimit); err == nil {
-			files = append(files, supportArchiveFile{name: service.name, data: data})
-		} else {
-			files = append(files, unavailableSupportFile(service.name, service.path, err))
+	if !s.options.LocalAgent {
+		for _, service := range append(s.supportServiceLogs(), supportDiagnosticsLogTails()...) {
+			if data, err := tailFile(service.path, supportLogTailLimit); err == nil {
+				files = append(files, supportArchiveFile{name: service.name, data: data})
+			} else {
+				files = append(files, unavailableSupportFile(service.name, service.path, err))
+			}
 		}
+		files = append(files, s.supportDmesg())
 	}
-	files = append(files, s.supportDmesg())
 	var output bytes.Buffer
 	gz := gzip.NewWriter(&output)
 	tw := tar.NewWriter(gz)
