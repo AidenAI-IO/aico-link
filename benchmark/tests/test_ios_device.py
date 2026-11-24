@@ -68,6 +68,10 @@ class FakeWDA:
                 start, end = self.selection or (len(self.field_text), len(self.field_text))
                 self.field_text = self.field_text[:start] + text + self.field_text[end:]
                 self.selection = (start + len(text), start + len(text))
+            elif self.selection is not None:
+                start, end = self.selection
+                self.field_text = self.field_text[:start] + self.field_text[end:]
+                self.selection = (start, start)
             if self.fail_text:
                 raise IOSDeviceError("device_timeout", "delivery is ambiguous")
             return {"value": None}
@@ -237,6 +241,23 @@ def test_enter_text_does_not_verify_existing_text_or_placeholder(device, tools, 
     device.transport.drop_text = True
     output = json.loads(tools.invoke("enter_text", {"text": "目标", "focus": {"x": 500, "y": 500}})["output"])
     assert output["ok"] is False
+
+
+@pytest.mark.parametrize("before,selection,text,drop,after", [
+    ("abcXYZ", (3, 6), "abc", True, "abc"),
+    ("XYZabc", (0, 3), "abc", True, "abc"),
+    ("abcXYZdef", (3, 6), "abc", True, "abcdef"),
+    ("abcXYZ", (3, 6), "abcXYZ", False, "abcabcXYZ"),
+])
+def test_enter_text_leaves_ambiguous_selection_replacement_unverified(device, tools, before, selection, text, drop, after):
+    device.transport.field_text = before
+    device.transport.selection = selection
+    device.transport.drop_text = drop
+    result = tools.invoke("enter_text", {"text": text, "focus": {"x": 500, "y": 500}})
+    output = json.loads(result["output"])
+    assert output["ok"] is False
+    assert device.transport.field_text == after
+    assert sum(path.endswith("/wda/keys") for _, path, _ in device.transport.calls) == 1
 
 
 def test_enter_text_handles_empty_placeholder_and_masked_fields(device, tools):

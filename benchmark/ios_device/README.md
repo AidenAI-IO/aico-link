@@ -195,7 +195,11 @@ applications' permissions.
   before and after typing. It returns `{"ok": true}` only when the value shows
   the exact insertion or selection replacement, preserving case, emoji,
   literal `%s`, and whitespace. Existing text and placeholder labels alone
-  cannot verify delivery. A timeout, mismatch, or unavailable readback returns
+  cannot verify delivery. WDA does not expose the caret/selection range, so
+  verification requires the changed span between the unchanged prefix and
+  suffix to match the entire requested text. Repeated text that makes this
+  range ambiguous remains unverified even if the input was delivered.
+  A timeout, mismatch, or unavailable readback returns
   `{"ok": false, "suggestion": "..."}` without clearing or replaying input;
   inspect the field before retrying. No additional Enter key is sent.
   Secure fields cannot be verified this way; native `insert_text` remains

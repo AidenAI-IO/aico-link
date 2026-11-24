@@ -17,14 +17,19 @@ def validate_ios_text(text):
 
 
 def text_insertion_matches(before, after, text):
-    """Recognize one insertion or selection replacement without trimming text."""
+    """Verify only an unambiguous changed span, without caret/selection metadata."""
     if before == after:
         return False
-    start = after.find(text)
-    while start >= 0:
-        prefix, suffix = after[:start], after[start + len(text):]
-        if (len(prefix) + len(suffix) <= len(before)
-                and before.startswith(prefix) and before.endswith(suffix)):
-            return True
-        start = after.find(text, start + 1)
-    return False
+    prefix = 0
+    while prefix < min(len(before), len(after)) and before[prefix] == after[prefix]:
+        prefix += 1
+
+    suffix = 0
+    while (suffix < len(before) - prefix and suffix < len(after) - prefix
+           and before[len(before) - suffix - 1] == after[len(after) - suffix - 1]):
+        suffix += 1
+
+    # A requested string already present in the unchanged prefix or suffix
+    # cannot prove delivery. If repeated text makes the range ambiguous, leave
+    # the result unverified rather than expanding the range to fit the request.
+    return after[prefix:len(after) - suffix] == text
