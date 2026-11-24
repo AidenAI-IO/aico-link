@@ -740,6 +740,11 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 			saveTool.SetRequestModel(models)
 		}
 	}
+	if tool, ok := tools.Get("recall_memory"); ok && models != nil {
+		if recallTool, ok := tool.(*RecallMemoryTool); ok {
+			recallTool.SetRerankModel(models)
+		}
+	}
 
 	rt := &Runtime{
 		config:        cfg,
