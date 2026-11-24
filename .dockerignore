@@ -6,6 +6,8 @@
 # Build artifacts
 build/
 build-*/
+**/node_modules/
+src/config_web/dist/
 output/
 # output/ only matches the context root, so the Buildroot build tree under
 # pico-sdk/output/ was still being shipped to the daemon.

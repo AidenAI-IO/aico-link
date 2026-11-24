@@ -10,8 +10,8 @@
  * "使用中" action instead, which explains itself when tapped.
  */
 
-import {el} from './dom.js';
-import {msg, text} from './text.js';
+import { el } from './dom.js';
+import { msg, text } from './text.js';
 
 const ACTION_WIDTH = 80;
 /** Horizontal travel before a press becomes a drag rather than a tap. */
@@ -30,18 +30,24 @@ let openRow = null;
  */
 export function swipeRow(content, options) {
   const locked = Boolean(options.lockedLabel);
-  const action = el('button', {
-    class: locked ? 'ds-swipe__action ds-swipe__action--locked' : 'ds-swipe__action',
-    attrs: {type: 'button', tabindex: '-1'},
-    data: {action: options.action || 'swipe-delete'},
-    on: {click: () => {
-      close();
-      if (locked) options.onLocked && options.onLocked();
-      else options.onDelete();
-    }},
-  }, [text(locked ? options.lockedLabel : msg('action.delete', '删除'))]);
+  const action = el(
+    'button',
+    {
+      class: locked ? 'ds-swipe__action ds-swipe__action--locked' : 'ds-swipe__action',
+      attrs: { type: 'button', tabindex: '-1' },
+      data: { action: options.action || 'swipe-delete' },
+      on: {
+        click: () => {
+          close();
+          if (locked) options.onLocked && options.onLocked();
+          else options.onDelete();
+        },
+      },
+    },
+    [text(locked ? options.lockedLabel : msg('action.delete', '删除'))],
+  );
   content.classList.add('ds-swipe__content');
-  const root = el('div', {class: 'ds-swipe'}, [action, content]);
+  const root = el('div', { class: 'ds-swipe' }, [action, content]);
 
   let offset = 0;
   let drag = null;
@@ -66,11 +72,17 @@ export function swipeRow(content, options) {
     if (openRow === api) openRow = null;
   }
 
-  content.addEventListener('pointerdown', event => {
+  content.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return;
-    drag = {x: event.clientX, y: event.clientY, start: offset, active: false, id: event.pointerId};
+    drag = {
+      x: event.clientX,
+      y: event.clientY,
+      start: offset,
+      active: false,
+      id: event.pointerId,
+    };
   });
-  content.addEventListener('pointermove', event => {
+  content.addEventListener('pointermove', (event) => {
     if (!drag || event.pointerId !== drag.id) return;
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
@@ -87,31 +99,37 @@ export function swipeRow(content, options) {
     }
     place(Math.max(-ACTION_WIDTH, Math.min(0, drag.start + dx)), false);
   });
-  const end = event => {
+  const end = (event) => {
     if (!drag || (event && event.pointerId !== drag.id)) return;
     const wasDrag = drag.active;
     drag = null;
     content.classList.remove('ds-swipe__content--dragging');
     if (!wasDrag) return;
     suppressClick = true;
-    setTimeout(() => { suppressClick = false; }, 0);
+    setTimeout(() => {
+      suppressClick = false;
+    }, 0);
     if (offset < -ACTION_WIDTH / 2) open();
     else close();
   };
   content.addEventListener('pointerup', end);
   content.addEventListener('pointercancel', end);
   // Capture phase, so the row's own onPress never sees a drag or a close-tap.
-  content.addEventListener('click', event => {
-    if (!suppressClick && offset === 0) return;
-    event.stopImmediatePropagation();
-    event.preventDefault();
-    // The click that ends a drag only needs swallowing; a later tap on an
-    // open row closes it.
-    if (suppressClick) suppressClick = false;
-    else close();
-  }, true);
+  content.addEventListener(
+    'click',
+    (event) => {
+      if (!suppressClick && offset === 0) return;
+      event.stopImmediatePropagation();
+      event.preventDefault();
+      // The click that ends a drag only needs swallowing; a later tap on an
+      // open row closes it.
+      if (suppressClick) suppressClick = false;
+      else close();
+    },
+    true,
+  );
 
   place(0, false);
-  const api = {el: root, open, close};
+  const api = { el: root, open, close };
   return root;
 }

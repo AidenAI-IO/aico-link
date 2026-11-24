@@ -9,8 +9,8 @@
  *   src/config_web/web/assets/css/tokens.css    CSS custom properties for the web UI
  *   src/config_web/design/tokens.native.js      React Native values for the companion app
  *
- * Both outputs are committed so the Debian packaging step can keep rsyncing
- * `src/config_web/web/` without running Node. `tests/config_web_tokens_test.mjs`
+ * Both outputs are committed and consumed by the frontend build and companion
+ * app. `tests/config_web_tokens_test.mjs`
  * fails when a generated file drifts from `design/tokens.mjs`.
  */
 

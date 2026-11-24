@@ -6,13 +6,13 @@
  * one, matching the design.
  */
 
-import {el, append} from './dom.js';
-import {icon} from './icon.js';
-import {text} from './text.js';
+import { el, append } from './dom.js';
+import { icon } from './icon.js';
+import { text } from './text.js';
 
 /** A hairline between two rows, inset to the label's left edge. */
 export function separator() {
-  return el('div', {class: 'ds-separator'});
+  return el('div', { class: 'ds-separator' });
 }
 
 /**
@@ -21,8 +21,13 @@ export function separator() {
  */
 export function caption(label, marker) {
   const children = [text(label)];
-  if (marker) children.unshift(el('span', {class: `ds-group__marker ds-group__marker--${marker}`}));
-  return el('div', {class: marker ? 'ds-group__caption ds-group__caption--marked' : 'ds-group__caption'}, children);
+  if (marker)
+    children.unshift(el('span', { class: `ds-group__marker ds-group__marker--${marker}` }));
+  return el(
+    'div',
+    { class: marker ? 'ds-group__caption ds-group__caption--marked' : 'ds-group__caption' },
+    children,
+  );
 }
 
 /**
@@ -56,7 +61,7 @@ export function row(props) {
     danger: 'ds-row__label--danger',
   }[props.labelTone];
   const labelClass = labelModifier ? `ds-row__label ${labelModifier}` : 'ds-row__label';
-  const body = el('div', {class: 'ds-row__body'}, [text(props.label, labelClass)]);
+  const body = el('div', { class: 'ds-row__body' }, [text(props.label, labelClass)]);
   if (props.description != null) {
     const tone = props.descriptionTone === 'code' ? ' ds-row__description--code' : '';
     body.appendChild(text(props.description, `ds-row__description${tone}`));
@@ -65,7 +70,10 @@ export function row(props) {
   const children = [];
   if (props.leading) children.push(props.leading);
   if (props.icon) {
-    const iconOptions = {class: props.iconClass || 'ds-row__icon', signalLevel: props.signalLevel};
+    const iconOptions = {
+      class: props.iconClass || 'ds-row__icon',
+      signalLevel: props.signalLevel,
+    };
     children.push(icon(props.icon, iconOptions));
   }
   children.push(body);
@@ -81,17 +89,17 @@ export function row(props) {
     accessory.push(text(props.value, toneClass ? `ds-row__value ${toneClass}` : 'ds-row__value'));
   }
   if (props.accessory) accessory.push(props.accessory);
-  if (props.chevron) accessory.push(icon('chevron', {class: 'ds-row__chevron'}));
+  if (props.chevron) accessory.push(icon('chevron', { class: 'ds-row__chevron' }));
   if (accessory.length) {
-    children.push(el('div', {class: 'ds-row__accessory'}, accessory));
+    children.push(el('div', { class: 'ds-row__accessory' }, accessory));
   }
 
-  const node = el('div', {class: classes.join(' '), data: {action: props.action}}, children);
+  const node = el('div', { class: classes.join(' '), data: { action: props.action } }, children);
   if (props.onPress) {
     node.setAttribute('role', 'button');
     node.setAttribute('tabindex', '0');
     node.addEventListener('click', props.onPress);
-    node.addEventListener('keydown', event => {
+    node.addEventListener('keydown', (event) => {
       // Only keys aimed at the row itself. A control inside it (the Wi-Fi ⓘ,
       // a switch) handles its own Enter/Space; letting it bubble here would
       // both run the row's action and cancel the control's own activation.
@@ -127,14 +135,14 @@ export function group(props) {
     inner.push(text(props.note, 'ds-group__note'));
   }
 
-  const card = el('div', {class: 'ds-group'}, inner);
+  const card = el('div', { class: 'ds-group' }, inner);
   if (props.caption == null) return card;
   return el('div', {}, [caption(props.caption, props.captionMarker), card]);
 }
 
 /** A stack of cards and captions, spaced by the caller. */
 export function screen(children, extraClass) {
-  return el('div', {class: extraClass ? `ds-screen ${extraClass}` : 'ds-screen'}, children);
+  return el('div', { class: extraClass ? `ds-screen ${extraClass}` : 'ds-screen' }, children);
 }
 
-export {append};
+export { append };

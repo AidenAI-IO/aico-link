@@ -18,29 +18,52 @@ export function sha256Fallback(bytes) {
   const view = new DataView(padded.buffer);
   view.setUint32(padded.length - 8, Math.floor(bytes.length / 0x20000000));
   view.setUint32(padded.length - 4, bytes.length * 8);
-  const state = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
+  const state = new Uint32Array([
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ]);
   const words = new Uint32Array(64);
   for (let offset = 0; offset < padded.length; offset += 64) {
     for (let index = 0; index < 16; index += 1) words[index] = view.getUint32(offset + index * 4);
     for (let index = 16; index < 64; index += 1) {
       const x = words[index - 15];
       const y = words[index - 2];
-      words[index] = words[index - 16] + (rotate(x, 7) ^ rotate(x, 18) ^ (x >>> 3)) + words[index - 7] + (rotate(y, 17) ^ rotate(y, 19) ^ (y >>> 10));
+      words[index] =
+        words[index - 16] +
+        (rotate(x, 7) ^ rotate(x, 18) ^ (x >>> 3)) +
+        words[index - 7] +
+        (rotate(y, 17) ^ rotate(y, 19) ^ (y >>> 10));
     }
     let [a, b, c, d, e, f, g, h] = state;
     for (let index = 0; index < 64; index += 1) {
-      const first = (h + (rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25)) + ((e & f) ^ (~e & g)) + K[index] + words[index]) >>> 0;
-      const second = ((rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
-      h = g; g = f; f = e; e = (d + first) >>> 0;
-      d = c; c = b; b = a; a = (first + second) >>> 0;
+      const first =
+        (h +
+          (rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25)) +
+          ((e & f) ^ (~e & g)) +
+          K[index] +
+          words[index]) >>>
+        0;
+      const second =
+        ((rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+      h = g;
+      g = f;
+      f = e;
+      e = (d + first) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (first + second) >>> 0;
     }
-    [a, b, c, d, e, f, g, h].forEach((value, index) => { state[index] += value; });
+    [a, b, c, d, e, f, g, h].forEach((value, index) => {
+      state[index] += value;
+    });
   }
-  return Array.from(state, value => value.toString(16).padStart(8, '0')).join('');
+  return Array.from(state, (value) => value.toString(16).padStart(8, '0')).join('');
 }
 
 export async function sha256Hex(bytes, cryptoAPI = globalThis.crypto) {
   if (!cryptoAPI?.subtle) return sha256Fallback(bytes);
   const digest = await cryptoAPI.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join(
+    '',
+  );
 }

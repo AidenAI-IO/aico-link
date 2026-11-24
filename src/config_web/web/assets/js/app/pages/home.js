@@ -7,8 +7,8 @@
  * until an entry is chosen.
  */
 
-import {settingsList, updateWiFiStatus} from '../settings-list.js';
-import {el} from '../../ui/dom.js';
+import { settingsList, updateWiFiStatus } from '../settings-list.js';
+import { el } from '../../ui/dom.js';
 
 /**
  * @param {{snapshot: object|null, navigate: Function}} context
@@ -16,6 +16,6 @@ import {el} from '../../ui/dom.js';
  */
 export function homePage(context) {
   const host = el('div', {}, [settingsList(context.snapshot || null, context.navigate)]);
-  context.onWiFiChange?.(snapshot => updateWiFiStatus(host, snapshot));
+  context.onWiFiChange?.((snapshot) => updateWiFiStatus(host, snapshot));
   return host;
 }

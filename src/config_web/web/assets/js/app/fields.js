@@ -2,10 +2,10 @@
  * Setting rows shared by the settings pages.
  */
 
-import {el} from '../ui/dom.js';
-import {row} from '../ui/list.js';
-import {msg, resolve, text} from '../ui/text.js';
-import {toast} from '../ui/toast.js';
+import { el } from '../ui/dom.js';
+import { row } from '../ui/list.js';
+import { msg, resolve, text } from '../ui/text.js';
+import { toast } from '../ui/toast.js';
 
 /**
  * A row whose trailing value is edited in place. It reads as plain value text
@@ -40,7 +40,7 @@ export function inlineValueRow(props) {
       autocorrect: 'off',
       spellcheck: 'false',
     },
-    data: {action: `edit-${props.key}`},
+    data: { action: `edit-${props.key}` },
   });
   let committing = false;
   async function commit() {
@@ -57,13 +57,18 @@ export function inlineValueRow(props) {
     committing = false;
     if (outcome === 'invalid' || outcome === 'failed') input.value = props.saved();
   }
-  input.addEventListener('keydown', event => {
+  input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') input.blur();
   });
   input.addEventListener('change', commit);
-  const node = row({label: props.label, description: props.description, accessory: input, extraClass: 'ds-row--editable'});
+  const node = row({
+    label: props.label,
+    description: props.description,
+    accessory: input,
+    extraClass: 'ds-row--editable',
+  });
   // Tapping anywhere on the row edits its value, like a native settings cell.
-  node.addEventListener('click', event => {
+  node.addEventListener('click', (event) => {
     if (event.target !== input) input.focus();
   });
   return node;
@@ -72,15 +77,16 @@ export function inlineValueRow(props) {
 /** Parsers for `inlineValueRow`. Each returns `undefined` for invalid text. */
 export const parse = {
   /** A whole number no smaller than `min`. */
-  integer: min => text => (/^-?\d+$/.test(text) && Number(text) >= min ? Number(text) : undefined),
+  integer: (min) => (text) =>
+    /^-?\d+$/.test(text) && Number(text) >= min ? Number(text) : undefined,
   /** 0, or a fraction in (0, 1). */
-  fraction: text => {
+  fraction: (text) => {
     if (!/^\d*\.?\d+$/.test(text)) return undefined;
     const number = Number(text);
     return number === 0 || (number > 0 && number < 1) ? number : undefined;
   },
   /** A number in [min, max]; empty clears the setting. */
-  optionalRange: (min, max) => text => {
+  optionalRange: (min, max) => (text) => {
     if (text === '') return null;
     if (!/^\d*\.?\d+$/.test(text)) return undefined;
     const number = Number(text);
@@ -102,17 +108,31 @@ export const parse = {
 export function customValueField(props) {
   const input = el('input', {
     class: 'ds-input ds-input--with-action',
-    attrs: {type: 'text', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'done',
-      placeholder: resolve(props.placeholder), 'aria-label': resolve(props.title)},
-    data: {action: props.action || 'edit-custom-value'},
+    attrs: {
+      type: 'text',
+      autocomplete: 'off',
+      autocapitalize: 'none',
+      spellcheck: 'false',
+      enterkeyhint: 'done',
+      placeholder: resolve(props.placeholder),
+      'aria-label': resolve(props.title),
+    },
+    data: { action: props.action || 'edit-custom-value' },
   });
-  const use = el('button', {class: 'ds-input__action', attrs: {type: 'button', disabled: 'disabled'}, data: {action: 'use-custom-value'}},
-    [text(msg('fields.use', '使用'))]);
+  const use = el(
+    'button',
+    {
+      class: 'ds-input__action',
+      attrs: { type: 'button', disabled: 'disabled' },
+      data: { action: 'use-custom-value' },
+    },
+    [text(msg('fields.use', '使用'))],
+  );
   // Using a value can take a moment (the model's capabilities are looked up
   // first), so the button stays disabled until it is done.
   const submit = async () => {
     const value = input.value.trim();
-    if (!value || use.disabled && use.dataset.busy) return;
+    if (!value || (use.disabled && use.dataset.busy)) return;
     use.disabled = true;
     use.dataset.busy = '1';
     try {
@@ -125,12 +145,12 @@ export function customValueField(props) {
   input.addEventListener('input', () => {
     use.disabled = !input.value.trim();
   });
-  input.addEventListener('keydown', event => {
+  input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') submit();
   });
   use.addEventListener('click', submit);
-  return el('div', {class: 'ds-form-card'}, [
+  return el('div', { class: 'ds-form-card' }, [
     text(props.title, 'ds-form-card__title'),
-    el('div', {class: 'ds-input-wrap'}, [input, use]),
+    el('div', { class: 'ds-input-wrap' }, [input, use]),
   ]);
 }

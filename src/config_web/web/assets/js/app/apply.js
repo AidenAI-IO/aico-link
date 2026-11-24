@@ -13,12 +13,12 @@
  * says which restart it is, because their cost to the user is very different.
  */
 
-import {request} from './data.js';
-import {postToHost} from './host.js';
-import {button} from '../ui/button.js';
-import {el} from '../ui/dom.js';
-import {msg, resolve, text} from '../ui/text.js';
-import {confirmSheet} from '../ui/confirm.js';
+import { request } from './data.js';
+import { postToHost } from './host.js';
+import { button } from '../ui/button.js';
+import { el } from '../ui/dom.js';
+import { msg, resolve, text } from '../ui/text.js';
+import { confirmSheet } from '../ui/confirm.js';
 
 export const APPLY_LIVE = 'live';
 export const APPLY_AGENT_RESTART = 'agent_restart';
@@ -59,8 +59,8 @@ export function saveLabel(level) {
 export async function planApply(patch) {
   const payload = await request('/api/config/plan', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({config: patch}),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: patch }),
   });
   return payload.apply || APPLY_LIVE;
 }
@@ -68,7 +68,10 @@ export async function planApply(patch) {
 const COPY = {
   [APPLY_REBOOT]: {
     title: msg('apply.reboot_title', '需要重启设备'),
-    body: msg('apply.reboot_body', '设备将重启以应用这项设置。重启期间与手机的连接会断开，大约 1 分钟后恢复。'),
+    body: msg(
+      'apply.reboot_body',
+      '设备将重启以应用这项设置。重启期间与手机的连接会断开，大约 1 分钟后恢复。',
+    ),
     progress: msg('apply.rebooting', '设备正在重启…'),
     progressBody: msg('apply.rebooting_body', '连接恢复后页面会自动刷新。'),
   },
@@ -89,7 +92,12 @@ const COPY = {
 export function confirmRestart(level) {
   const copy = COPY[level];
   if (!copy) return Promise.resolve(true);
-  return confirmSheet({title: copy.title, body: copy.body, confirmLabel: saveLabel(level), action: 'confirm-restart'});
+  return confirmSheet({
+    title: copy.title,
+    body: copy.body,
+    confirmLabel: saveLabel(level),
+    action: 'confirm-restart',
+  });
 }
 
 /** GET the probe URL, resolving to `{ok, body}` or null when unreachable. */
@@ -97,14 +105,14 @@ async function probe() {
   const controller = typeof AbortController === 'undefined' ? null : new AbortController();
   const timer = controller ? setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS) : null;
   try {
-    const response = await fetch(PROBE_URL, {cache: 'no-store', signal: controller?.signal});
+    const response = await fetch(PROBE_URL, { cache: 'no-store', signal: controller?.signal });
     let body = {};
     try {
       body = await response.json();
     } catch (_error) {
       // A non-JSON answer still proves the server is up.
     }
-    return {ok: response.ok, body: body || {}};
+    return { ok: response.ok, body: body || {} };
   } catch (_error) {
     return null;
   } finally {
@@ -112,7 +120,7 @@ async function probe() {
   }
 }
 
-const sleep = ms => new Promise(done => setTimeout(done, ms));
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /**
  * Wait for the device to go down and come back. Exported for the OTA page,
@@ -158,8 +166,16 @@ async function waitForAgentRestart(previousRuntime) {
 function progressOverlay(copy) {
   const title = text(copy.progress, 'ds-restart__title');
   const body = text(copy.progressBody, 'ds-restart__body');
-  const panel = el('div', {class: 'ds-restart__panel'}, [el('div', {class: 'ds-restart__spinner'}), title, body]);
-  const root = el('div', {class: 'ds-restart', attrs: {role: 'alertdialog', 'aria-live': 'polite'}}, [panel]);
+  const panel = el('div', { class: 'ds-restart__panel' }, [
+    el('div', { class: 'ds-restart__spinner' }),
+    title,
+    body,
+  ]);
+  const root = el(
+    'div',
+    { class: 'ds-restart', attrs: { role: 'alertdialog', 'aria-live': 'polite' } },
+    [panel],
+  );
   document.body.appendChild(root);
   const remove = () => root.parentNode && root.parentNode.removeChild(root);
   return {
@@ -167,8 +183,14 @@ function progressOverlay(copy) {
     fail(message) {
       panel.replaceChildren(
         text(msg('apply.restart_failed', '重启未完成'), 'ds-restart__title'),
-        el('span', {class: 'ds-restart__body', text: message}),
-        button({label: msg('action.close', '关闭'), variant: 'secondary', block: true, action: 'close-restart', onPress: remove}),
+        el('span', { class: 'ds-restart__body', text: message }),
+        button({
+          label: msg('action.close', '关闭'),
+          variant: 'secondary',
+          block: true,
+          action: 'close-restart',
+          onPress: remove,
+        }),
       );
     },
   };
@@ -186,25 +208,29 @@ function progressOverlay(copy) {
 export async function performRestart(level) {
   const copy = COPY[level];
   if (!copy) return true;
-  postToHost({type: 'aico_config_restart', apply: level, phase: 'started'});
+  postToHost({ type: 'aico_config_restart', apply: level, phase: 'started' });
   const overlay = progressOverlay(copy);
   try {
     if (level === APPLY_REBOOT) {
-      await request('/api/device/reboot', {method: 'POST'});
+      await request('/api/device/reboot', { method: 'POST' });
       await waitForReboot();
-      postToHost({type: 'aico_config_restart', apply: level, phase: 'finished'});
+      postToHost({ type: 'aico_config_restart', apply: level, phase: 'finished' });
       window.location.reload();
       return true;
     }
     const before = await probe();
-    await request('/api/agent/restart', {method: 'POST'});
+    await request('/api/agent/restart', { method: 'POST' });
     await waitForAgentRestart(before && before.ok ? before.body.runtime_id : '');
     overlay.remove();
-    postToHost({type: 'aico_config_restart', apply: level, phase: 'finished'});
+    postToHost({ type: 'aico_config_restart', apply: level, phase: 'finished' });
     return true;
   } catch (error) {
-    overlay.fail(error && error.message ? error.message : resolve(msg('apply.restart_timeout', '等待重启超时，请检查设备。')));
-    postToHost({type: 'aico_config_restart', apply: level, phase: 'failed'});
+    overlay.fail(
+      error && error.message
+        ? error.message
+        : resolve(msg('apply.restart_timeout', '等待重启超时，请检查设备。')),
+    );
+    postToHost({ type: 'aico_config_restart', apply: level, phase: 'failed' });
     return false;
   }
 }

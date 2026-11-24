@@ -100,6 +100,13 @@ while not Path(sys.argv[2]).exists(): time.sleep(.01)
                 time.sleep(.02)
 
 
+def test_frontend_build_uses_pinned_builder_and_returns_static_assets(monkeypatch):
+    calls = []
+    monkeypatch.setattr(launcher.subprocess, "run", lambda command, **options: calls.append((command, options)))
+    assert launcher.build_config_web() == launcher.ROOT / "src/config_web/dist"
+    assert calls == [(["bash", str(launcher.ROOT / "scripts/build-config-web.sh")], {"check": True})]
+
+
 @pytest.mark.parametrize("mode", ["android", "iphone-mirroring", "ios"])
 @pytest.mark.parametrize("outcome", ["ready", "bridge-fails", "cancel-after-health"])
 def test_launch_waits_for_first_config_and_cleans_up_owned_children(args, tmp_path, monkeypatch, mode, outcome):
@@ -144,6 +151,7 @@ HTTPServer(('127.0.0.1', port), Handler).serve_forever()
     monkeypatch.setenv("TEST_BRIDGE_TYPE", {"android": "adb_android", "iphone-mirroring": "iphone_mirroring", "ios": "ios_device"}[mode])
     monkeypatch.setenv("TEST_BRIDGE_FAIL", "1" if outcome == "bridge-fails" else "0")
     monkeypatch.setattr(launcher, "agent_binary", lambda _: str(fixture))
+    monkeypatch.setattr(launcher, "build_config_web", lambda: tmp_path / "web")
     monkeypatch.setattr(launcher, "bridge_python", lambda _: sys.executable)
     monkeypatch.setattr(launcher, "bridge_command", lambda args, _: [str(fixture), "bridge", "--port", str(args.bridge_port)])
     stopped = threading.Event()

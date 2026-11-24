@@ -28,21 +28,21 @@
  * dedicated decision APIs keep those overrides in the TOML file.
  */
 
-import {adoptSaved, ensureSnapshot, request, t} from '../data.js';
-import {getActiveLocale} from '../../config/i18n.js';
-import {customValueField, inlineValueRow, parse} from '../fields.js';
-import {createSaver} from '../saver.js';
-import {providerMark} from '../../ui/brand.js';
-import {button} from '../../ui/button.js';
-import {choiceSheet} from '../../ui/choice-sheet.js';
-import {confirmSheet} from '../../ui/confirm.js';
-import {swipeRow} from '../../ui/swipe.js';
-import {el, replace} from '../../ui/dom.js';
-import {icon} from '../../ui/icon.js';
-import {group, row, screen} from '../../ui/list.js';
-import {setChecked, switchControl} from '../../ui/switch.js';
-import {msg, resolve, text} from '../../ui/text.js';
-import {toast} from '../../ui/toast.js';
+import { adoptSaved, ensureSnapshot, request, t } from '../data.js';
+import { getActiveLocale } from '../../config/i18n.js';
+import { customValueField, inlineValueRow, parse } from '../fields.js';
+import { createSaver } from '../saver.js';
+import { providerMark } from '../../ui/brand.js';
+import { button } from '../../ui/button.js';
+import { choiceSheet } from '../../ui/choice-sheet.js';
+import { confirmSheet } from '../../ui/confirm.js';
+import { swipeRow } from '../../ui/swipe.js';
+import { el, replace } from '../../ui/dom.js';
+import { icon } from '../../ui/icon.js';
+import { group, row, screen } from '../../ui/list.js';
+import { setChecked, switchControl } from '../../ui/switch.js';
+import { msg, resolve, text } from '../../ui/text.js';
+import { toast } from '../../ui/toast.js';
 
 /**
  * Provider types offered by the Agent, in its registry order
@@ -50,15 +50,15 @@ import {toast} from '../../ui/toast.js';
  * Brand names are not translated.
  */
 export const PROVIDER_TYPES = [
-  {type: 'openai', label: 'OpenAI'},
-  {type: 'anthropic', label: 'Anthropic'},
-  {type: 'openrouter', label: 'OpenRouter'},
-  {type: 'kimi', label: msg('model.type_kimi', 'Kimi（国际）')},
-  {type: 'kimi-cn', label: msg('model.type_kimi_cn', 'Kimi（中国）')},
-  {type: 'volcengine', label: msg('model.type_volcengine', '火山引擎')},
-  {type: 'deepseek', label: 'DeepSeek'},
-  {type: 'ollama', label: 'Ollama'},
-  {type: 'gemini', label: 'Gemini'},
+  { type: 'openai', label: 'OpenAI' },
+  { type: 'anthropic', label: 'Anthropic' },
+  { type: 'openrouter', label: 'OpenRouter' },
+  { type: 'kimi', label: msg('model.type_kimi', 'Kimi（国际）') },
+  { type: 'kimi-cn', label: msg('model.type_kimi_cn', 'Kimi（中国）') },
+  { type: 'volcengine', label: msg('model.type_volcengine', '火山引擎') },
+  { type: 'deepseek', label: 'DeepSeek' },
+  { type: 'ollama', label: 'Ollama' },
+  { type: 'gemini', label: 'Gemini' },
 ];
 
 /** Types that accept a custom Base URL (`allowsCustomBaseURL` in the registry). */
@@ -71,12 +71,12 @@ export const CUSTOM_BASE_URL_TYPES = ['openai', 'anthropic', 'ollama', 'gemini']
  * relays do not implement; both stay editable from their own entries.
  */
 export const RELAY_TYPES = [
-  {type: 'openai', label: msg('model.relay_openai', 'OpenAI 兼容')},
-  {type: 'anthropic', label: msg('model.relay_anthropic', 'Anthropic 兼容')},
+  { type: 'openai', label: msg('model.relay_openai', 'OpenAI 兼容') },
+  { type: 'anthropic', label: msg('model.relay_anthropic', 'Anthropic 兼容') },
 ];
 
 function relayLabel(type) {
-  const entry = RELAY_TYPES.find(item => item.type === type);
+  const entry = RELAY_TYPES.find((item) => item.type === type);
   return entry ? entry.label : typeInfo(type).label;
 }
 
@@ -95,7 +95,7 @@ const EFFORT_LABELS = {
 };
 
 function typeInfo(type) {
-  return PROVIDER_TYPES.find(entry => entry.type === type) || {type, label: type || '—'};
+  return PROVIDER_TYPES.find((entry) => entry.type === type) || { type, label: type || '—' };
 }
 
 /** "OpenAI" for a record named after its type, "apibest (OpenAI)" otherwise. */
@@ -125,13 +125,17 @@ export function newRecordName(record, records) {
     const labels = hostOf(record.base_url).replace(/:\d+$/, '').split('.').filter(Boolean);
     if (labels.length > 1) {
       let end = labels.length - 1;
-      if (end > 1 && ['com', 'co', 'net', 'org', 'gov', 'edu', 'ac'].includes(labels[end - 1])) end -= 1;
+      if (end > 1 && ['com', 'co', 'net', 'org', 'gov', 'edu', 'ac'].includes(labels[end - 1]))
+        end -= 1;
       base = labels[end - 1];
     } else if (labels.length === 1) {
       base = labels[0];
     }
   }
-  base = String(base || 'provider').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'provider';
+  base =
+    String(base || 'provider')
+      .replace(/[^A-Za-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'provider';
   if (!Object.prototype.hasOwnProperty.call(records, base)) return base;
   for (let i = 2; i < 1000; i += 1) {
     if (!Object.prototype.hasOwnProperty.call(records, `${base}-${i}`)) return `${base}-${i}`;
@@ -139,37 +143,60 @@ export function newRecordName(record, records) {
   return base;
 }
 
-const modelConfig = snapshot => (snapshot && snapshot.config && snapshot.config.model) || {};
-const records = snapshot => (snapshot && snapshot.config && snapshot.config.model_providers) || {};
-const currentRecord = snapshot => records(snapshot)[modelConfig(snapshot).provider] || null;
-const decisionConfig = snapshot => (snapshot && snapshot.config && snapshot.config.decision) || {};
+const modelConfig = (snapshot) => (snapshot && snapshot.config && snapshot.config.model) || {};
+const records = (snapshot) =>
+  (snapshot && snapshot.config && snapshot.config.model_providers) || {};
+const currentRecord = (snapshot) => records(snapshot)[modelConfig(snapshot).provider] || null;
+const decisionConfig = (snapshot) =>
+  (snapshot && snapshot.config && snapshot.config.decision) || {};
 
 /** Decision model providers, as `decision.provider` accepts them. */
 export const DECISION_PROVIDERS = [
-  {value: 'typesafe', label: msg('model.decision_provider_typesafe', 'TypeSafe Jev'),
-    help: msg('model.decision_provider_typesafe_help', '在 typesafe.ai 获取 API Key')},
-  {value: 'openai', label: msg('model.decision_provider_openai', 'OpenAI Luna'),
-    help: msg('model.decision_provider_openai_help', '使用 OpenAI 的 Decisions API；它不能定位点击位置，这类判断仍交给主模型')},
-  {value: 'gemini', label: msg('model.decision_provider_gemini', 'Gemini Decision 1'),
-    help: msg('model.decision_provider_gemini_help', '使用 Google Gemini Decisions API；它不能定位点击位置，这类判断仍交给主模型。在 aistudio.google.com/apikey 获取 API Key')},
-  {value: 'openrouter', label: 'OpenRouter',
-    help: msg('model.decision_provider_openrouter_help', '在 openrouter.ai/keys 获取 API Key；使用原生 Decisions 模型，默认 Jev')},
+  {
+    value: 'typesafe',
+    label: msg('model.decision_provider_typesafe', 'TypeSafe Jev'),
+    help: msg('model.decision_provider_typesafe_help', '在 typesafe.ai 获取 API Key'),
+  },
+  {
+    value: 'openai',
+    label: msg('model.decision_provider_openai', 'OpenAI Luna'),
+    help: msg(
+      'model.decision_provider_openai_help',
+      '使用 OpenAI 的 Decisions API；它不能定位点击位置，这类判断仍交给主模型',
+    ),
+  },
+  {
+    value: 'gemini',
+    label: msg('model.decision_provider_gemini', 'Gemini Decision 1'),
+    help: msg(
+      'model.decision_provider_gemini_help',
+      '使用 Google Gemini Decisions API；它不能定位点击位置，这类判断仍交给主模型。在 aistudio.google.com/apikey 获取 API Key',
+    ),
+  },
+  {
+    value: 'openrouter',
+    label: 'OpenRouter',
+    help: msg(
+      'model.decision_provider_openrouter_help',
+      '在 openrouter.ai/keys 获取 API Key；使用原生 Decisions 模型，默认 Jev',
+    ),
+  },
 ];
 
 function decisionProvider(value) {
-  return DECISION_PROVIDERS.find(entry => entry.value === value) || DECISION_PROVIDERS[0];
+  return DECISION_PROVIDERS.find((entry) => entry.value === value) || DECISION_PROVIDERS[0];
 }
 
 /** The catalogue for a provider type; one model, when given, adds its `spec`. */
 async function catalogue(type, model) {
-  if (!type) return {models: []};
-  const query = new URLSearchParams({provider: type, locale: getActiveLocale() || 'zh-CN'});
+  if (!type) return { models: [] };
+  const query = new URLSearchParams({ provider: type, locale: getActiveLocale() || 'zh-CN' });
   if (model) query.set('model', model);
   try {
     return await request(`/api/models?${query}`);
   } catch (error) {
     console.warn('[model] catalogue unavailable:', error && error.message);
-    return {models: []};
+    return { models: [] };
   }
 }
 
@@ -177,10 +204,11 @@ async function catalogue(type, model) {
 function effortChoices(spec) {
   const reasoning = spec && spec.reasoning;
   if (reasoning && reasoning.supported === false) return null;
-  const efforts = reasoning && Array.isArray(reasoning.efforts) && reasoning.efforts.length
-    ? reasoning.efforts
-    : ['low', 'medium', 'high'];
-  return ['', ...efforts.filter(effort => EFFORT_LABELS[effort])];
+  const efforts =
+    reasoning && Array.isArray(reasoning.efforts) && reasoning.efforts.length
+      ? reasoning.efforts
+      : ['low', 'medium', 'high'];
+  return ['', ...efforts.filter((effort) => EFFORT_LABELS[effort])];
 }
 
 /**
@@ -189,7 +217,7 @@ function effortChoices(spec) {
  * be rejected for it.
  */
 async function selectionPatch(snapshot, providerName, type, model) {
-  const patch = {model: {provider: providerName, model}};
+  const patch = { model: { provider: providerName, model } };
   const effort = modelConfig(snapshot).reasoning_effort || '';
   if (effort) {
     const spec = (await catalogue(type, model)).spec;
@@ -207,8 +235,10 @@ async function selectionPatch(snapshot, providerName, type, model) {
 async function selectProvider(snapshot, saver, name, record) {
   const models = (await catalogue(record.type)).models || [];
   const current = modelConfig(snapshot).model;
-  const keep = models.some(entry => entry.id === current);
-  const model = keep ? current : ((models.find(entry => entry.recommended) || models[0] || {}).id || current);
+  const keep = models.some((entry) => entry.id === current);
+  const model = keep
+    ? current
+    : (models.find((entry) => entry.recommended) || models[0] || {}).id || current;
   return saver.change('model.provider', await selectionPatch(snapshot, name, record.type, model));
 }
 
@@ -223,13 +253,15 @@ export async function modelPage(context) {
   const mainSummary = providerName
     ? [recordLabel(providerName, record), modelName].filter(Boolean).join(' · ')
     : resolve(msg('model.not_set', '未设置'));
-  const decisionOn = Boolean(decisionConfig(snapshot).enabled && decisionConfig(snapshot).has_api_key);
+  const decisionOn = Boolean(
+    decisionConfig(snapshot).enabled && decisionConfig(snapshot).has_api_key,
+  );
   return screen([
     group({
       rows: [
         row({
           label: msg('model.main', '主模型'),
-          accessory: el('span', {class: 'ds-row__value-with-mark'}, [
+          accessory: el('span', { class: 'ds-row__value-with-mark' }, [
             record ? providerMark(record.type) : null,
             text(mainSummary, 'ds-row__value'),
           ]),
@@ -244,7 +276,9 @@ export async function modelPage(context) {
       rows: [
         row({
           label: msg('model.decision', '决策模型'),
-          value: decisionOn ? msg('model.decision_on', '已开启') : msg('model.decision_off', '未开启'),
+          value: decisionOn
+            ? msg('model.decision_on', '已开启')
+            : msg('model.decision_off', '未开启'),
           tone: decisionOn ? 'success' : undefined,
           chevron: true,
           action: 'open-decision-model',
@@ -264,7 +298,7 @@ export async function mainModelPage(context) {
     title: msg('model.main', '主模型'),
     back: '/model',
     root: body,
-    onSaved: payload => {
+    onSaved: (payload) => {
       adoptSaved(snapshot)(payload);
       render();
     },
@@ -273,33 +307,39 @@ export async function mainModelPage(context) {
   const type = () => (currentRecord(snapshot) || {}).type || '';
   let spec = (await catalogue(type(), model().model)).spec || null;
 
-  const numberRow = (key, label, description, parser, invalid, options = {}) => inlineValueRow({
-    key: `model.${key}`,
-    label,
-    description,
-    parse: parser,
-    invalid,
-    saved: () => (model()[key] == null ? '' : String(model()[key])),
-    patch: value => ({model: {[key]: value}}),
-    saver,
-    ...options,
-  });
+  const numberRow = (key, label, description, parser, invalid, options = {}) =>
+    inlineValueRow({
+      key: `model.${key}`,
+      label,
+      description,
+      parse: parser,
+      invalid,
+      saved: () => (model()[key] == null ? '' : String(model()[key])),
+      patch: (value) => ({ model: { [key]: value } }),
+      saver,
+      ...options,
+    });
 
   function effortRow() {
     const choices = effortChoices(spec);
     const current = model().reasoning_effort || '';
     if (!choices) {
-      return row({label: msg('model.reasoning_effort', '推理强度'), value: msg('model.effort_unsupported', '不支持')});
+      return row({
+        label: msg('model.reasoning_effort', '推理强度'),
+        value: msg('model.effort_unsupported', '不支持'),
+      });
     }
     return row({
       label: msg('model.reasoning_effort', '推理强度'),
       value: EFFORT_LABELS[current] || current,
       action: 'open-reasoning-effort',
-      onPress: () => choiceSheet({
-        options: choices.map(value => ({value, label: EFFORT_LABELS[value]})),
-        selected: current,
-        onSelect: value => saver.change('model.reasoning_effort', {model: {reasoning_effort: value}}),
-      }),
+      onPress: () =>
+        choiceSheet({
+          options: choices.map((value) => ({ value, label: EFFORT_LABELS[value] })),
+          selected: current,
+          onSelect: (value) =>
+            saver.change('model.reasoning_effort', { model: { reasoning_effort: value } }),
+        }),
     });
   }
 
@@ -308,16 +348,21 @@ export async function mainModelPage(context) {
     try {
       const payload = await request('/api/config/test', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({section: 'model', values: model()}),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ section: 'model', values: model() }),
       });
-      const failed = (payload.results || []).find(result => !result.passed);
-      toast(payload.ok
-        ? msg('model.test_passed', '连接成功')
-        : `${resolve(msg('model.test_failed', '连接失败'))}${failed && failed.detail ? `：${failed.detail}` : ''}`,
-        {durationMs: payload.ok ? undefined : 5000});
+      const failed = (payload.results || []).find((result) => !result.passed);
+      toast(
+        payload.ok
+          ? msg('model.test_passed', '连接成功')
+          : `${resolve(msg('model.test_failed', '连接失败'))}${failed && failed.detail ? `：${failed.detail}` : ''}`,
+        { durationMs: payload.ok ? undefined : 5000 },
+      );
     } catch (error) {
-      toast(error && error.message ? error.message : resolve(msg('model.test_failed', '连接失败')), {durationMs: 5000});
+      toast(
+        error && error.message ? error.message : resolve(msg('model.test_failed', '连接失败')),
+        { durationMs: 5000 },
+      );
     } finally {
       action.disabled = false;
     }
@@ -326,20 +371,27 @@ export async function mainModelPage(context) {
   function render() {
     const providerName = model().provider || '';
     const record = currentRecord(snapshot);
-    const testButton = el('button', {
-      class: 'ds-card-action',
-      attrs: {type: 'button'},
-      data: {action: 'test-model-connection'},
-      on: {click: () => testConnection(testButton)},
-    }, [text(msg('model.test', '测试连接'))]);
+    const testButton = el(
+      'button',
+      {
+        class: 'ds-card-action',
+        attrs: { type: 'button' },
+        data: { action: 'test-model-connection' },
+        on: { click: () => testConnection(testButton) },
+      },
+      [text(msg('model.test', '测试连接'))],
+    );
     replace(body, [
       group({
         rows: [
           row({
             label: msg('model.provider', '主模型提供商'),
-            accessory: el('span', {class: 'ds-row__value-with-mark'}, [
+            accessory: el('span', { class: 'ds-row__value-with-mark' }, [
               record ? providerMark(record.type) : null,
-              text(providerName ? recordLabel(providerName, record) : msg('model.not_set', '未设置'), 'ds-row__value'),
+              text(
+                providerName ? recordLabel(providerName, record) : msg('model.not_set', '未设置'),
+                'ds-row__value',
+              ),
             ]),
             chevron: true,
             action: 'open-model-providers',
@@ -362,24 +414,50 @@ export async function mainModelPage(context) {
       group({
         caption: msg('model.section_parameters', '参数设置'),
         rows: [
-          numberRow('temperature', msg('model.temperature', '温度'), msg('model.temperature_help', '越高回答越发散；留空表示使用模型默认值'),
-            parse.optionalRange(0, 2), msg('model.temperature_invalid', '请输入 0 到 2 之间的数，或留空'),
-            {placeholder: msg('model.auto', '自动')}),
+          numberRow(
+            'temperature',
+            msg('model.temperature', '温度'),
+            msg('model.temperature_help', '越高回答越发散；留空表示使用模型默认值'),
+            parse.optionalRange(0, 2),
+            msg('model.temperature_invalid', '请输入 0 到 2 之间的数，或留空'),
+            { placeholder: msg('model.auto', '自动') },
+          ),
           effortRow(),
-          numberRow('max_response_tokens', msg('model.max_response_tokens', '最大响应 Token 数'), msg('model.max_response_tokens_help', '0 表示不设上限，使用提供商默认值（原生 Anthropic 使用模型输出上限，未知时为 8192）'),
-            parse.integer(0), msg('model.integer_invalid', '请输入 0 或正整数'), {inputmode: 'numeric'}),
+          numberRow(
+            'max_response_tokens',
+            msg('model.max_response_tokens', '最大响应 Token 数'),
+            msg(
+              'model.max_response_tokens_help',
+              '0 表示不设上限，使用提供商默认值（原生 Anthropic 使用模型输出上限，未知时为 8192）',
+            ),
+            parse.integer(0),
+            msg('model.integer_invalid', '请输入 0 或正整数'),
+            { inputmode: 'numeric' },
+          ),
         ],
       }),
       group({
         caption: msg('model.section_context', '上下文限制'),
         rows: [
-          numberRow('context_window', msg('model.context_window', '上下文窗口（Token）'), msg('model.auto_help', '0 表示自动，使用提供商公布的数值'),
-            parse.integer(0), msg('model.integer_invalid', '请输入 0 或正整数'), {inputmode: 'numeric'}),
-          numberRow('model_max_output_tokens', msg('model.max_output', '提供商输出上限（Token）'), msg('model.auto_help', '0 表示自动，使用提供商公布的数值'),
-            parse.integer(0), msg('model.integer_invalid', '请输入 0 或正整数'), {inputmode: 'numeric'}),
+          numberRow(
+            'context_window',
+            msg('model.context_window', '上下文窗口（Token）'),
+            msg('model.auto_help', '0 表示自动，使用提供商公布的数值'),
+            parse.integer(0),
+            msg('model.integer_invalid', '请输入 0 或正整数'),
+            { inputmode: 'numeric' },
+          ),
+          numberRow(
+            'model_max_output_tokens',
+            msg('model.max_output', '提供商输出上限（Token）'),
+            msg('model.auto_help', '0 表示自动，使用提供商公布的数值'),
+            parse.integer(0),
+            msg('model.integer_invalid', '请输入 0 或正整数'),
+            { inputmode: 'numeric' },
+          ),
         ],
       }),
-      el('div', {class: 'ds-group'}, [testButton]),
+      el('div', { class: 'ds-group' }, [testButton]),
     ]);
     saver.refreshChrome();
   }
@@ -397,15 +475,21 @@ export async function mainModelPage(context) {
  */
 async function deleteProvider(context, saver, name, record) {
   const confirmed = await confirmSheet({
-    title: t('model.delete_title', {name: recordLabel(name, record), defaultValue: '删除 {{name}} 的配置？'}),
+    title: t('model.delete_title', {
+      name: recordLabel(name, record),
+      defaultValue: '删除 {{name}} 的配置？',
+    }),
     body: msg('model.delete_body', '已保存的 API Key 等连接信息会一并删除，之后需要重新配置。'),
     confirmLabel: msg('action.delete', '删除'),
     danger: true,
     action: 'confirm-delete-provider',
   });
   if (!confirmed) return;
-  const outcome = await saver.change(`model_providers.${name}`, {model_providers: {[name]: null}});
-  if (outcome === 'saved' || outcome === 'staged') context.navigate('/model/providers', {replace: true});
+  const outcome = await saver.change(`model_providers.${name}`, {
+    model_providers: { [name]: null },
+  });
+  if (outcome === 'saved' || outcome === 'staged')
+    context.navigate('/model/providers', { replace: true });
 }
 
 export async function providersPage(context) {
@@ -420,49 +504,70 @@ export async function providersPage(context) {
 
   const all = records(snapshot);
   const names = Object.keys(all).sort();
-  const configuredTypes = new Set(names.map(name => all[name].type));
+  const configuredTypes = new Set(names.map((name) => all[name].type));
   const current = modelConfig(snapshot).provider;
 
   // A configured provider opens its credentials, as the design draws it; the
   // check marks the one the main model uses, and switching happens there.
   // Swiping left deletes its configuration, except the one in use.
-  const configuredRows = names.map(name => {
+  const configuredRows = names.map((name) => {
     const record = all[name];
-    return swipeRow(row({
-      label: recordLabel(name, record),
-      description: record.base_url ? hostOf(record.base_url) : null,
-      leading: providerMark(record.type),
-      action: `edit-provider-${name}`,
-      onPress: () => context.navigate(`/model/providers/edit?name=${encodeURIComponent(name)}`),
-      accessory: name === current ? icon('check', {class: 'ds-choice-row__check', size: 22}) : null,
-      chevron: true,
-    }), {
-      action: `delete-provider-${name}`,
-      onDelete: () => deleteProvider(context, saver, name, record),
-      lockedLabel: name === current ? msg('model.in_use', '使用中') : null,
-      onLocked: () => toast(msg('model.in_use_hint', '正在使用的配置不能删除，请先切换到其他提供商。')),
-    });
+    return swipeRow(
+      row({
+        label: recordLabel(name, record),
+        description: record.base_url ? hostOf(record.base_url) : null,
+        leading: providerMark(record.type),
+        action: `edit-provider-${name}`,
+        onPress: () => context.navigate(`/model/providers/edit?name=${encodeURIComponent(name)}`),
+        accessory:
+          name === current ? icon('check', { class: 'ds-choice-row__check', size: 22 }) : null,
+        chevron: true,
+      }),
+      {
+        action: `delete-provider-${name}`,
+        onDelete: () => deleteProvider(context, saver, name, record),
+        lockedLabel: name === current ? msg('model.in_use', '使用中') : null,
+        onLocked: () =>
+          toast(msg('model.in_use_hint', '正在使用的配置不能删除，请先切换到其他提供商。')),
+      },
+    );
   });
 
-  const unconfiguredRows = PROVIDER_TYPES.filter(entry => !configuredTypes.has(entry.type)).map(entry => row({
-    label: entry.label,
-    leading: providerMark(entry.type),
-    chevron: true,
-    extraClass: 'ds-row--muted',
-    action: `configure-provider-${entry.type}`,
-    onPress: () => context.navigate(`/model/providers/edit?type=${encodeURIComponent(entry.type)}`),
-  }));
-  unconfiguredRows.push(row({
-    label: msg('model.others', '其他'),
-    labelTone: 'accent',
-    leading: providerMark('custom'),
-    action: 'configure-provider-custom',
-    onPress: () => context.navigate('/model/providers/edit?type=custom'),
-  }));
+  const unconfiguredRows = PROVIDER_TYPES.filter((entry) => !configuredTypes.has(entry.type)).map(
+    (entry) =>
+      row({
+        label: entry.label,
+        leading: providerMark(entry.type),
+        chevron: true,
+        extraClass: 'ds-row--muted',
+        action: `configure-provider-${entry.type}`,
+        onPress: () =>
+          context.navigate(`/model/providers/edit?type=${encodeURIComponent(entry.type)}`),
+      }),
+  );
+  unconfiguredRows.push(
+    row({
+      label: msg('model.others', '其他'),
+      labelTone: 'accent',
+      leading: providerMark('custom'),
+      action: 'configure-provider-custom',
+      onPress: () => context.navigate('/model/providers/edit?type=custom'),
+    }),
+  );
 
   replace(body, [
-    names.length ? group({caption: msg('model.configured', '已配置'), captionMarker: 'success', rows: configuredRows}) : null,
-    group({caption: msg('model.unconfigured', '未配置'), captionMarker: 'muted', rows: unconfiguredRows}),
+    names.length
+      ? group({
+          caption: msg('model.configured', '已配置'),
+          captionMarker: 'success',
+          rows: configuredRows,
+        })
+      : null,
+    group({
+      caption: msg('model.unconfigured', '未配置'),
+      captionMarker: 'muted',
+      rows: unconfiguredRows,
+    }),
   ]);
   saver.refreshChrome();
   return screen([body], 'model-providers');
@@ -473,20 +578,34 @@ export async function providersPage(context) {
 function secretField(label, placeholder) {
   const input = el('input', {
     class: 'ds-input ds-input--with-toggle',
-    attrs: {type: 'password', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', placeholder: resolve(placeholder), 'aria-label': resolve(label)},
-    data: {action: 'edit-provider-api-key'},
+    attrs: {
+      type: 'password',
+      autocomplete: 'off',
+      autocapitalize: 'none',
+      spellcheck: 'false',
+      placeholder: resolve(placeholder),
+      'aria-label': resolve(label),
+    },
+    data: { action: 'edit-provider-api-key' },
   });
   const toggle = el('button', {
     class: 'ds-input__toggle',
-    attrs: {type: 'button', 'aria-label': resolve(msg('model.show_key', '显示密钥')), 'aria-pressed': 'false'},
-    data: {action: 'toggle-api-key'},
+    attrs: {
+      type: 'button',
+      'aria-label': resolve(msg('model.show_key', '显示密钥')),
+      'aria-pressed': 'false',
+    },
+    data: { action: 'toggle-api-key' },
   });
   // The glyph shows what a tap does next: an open eye reveals, a struck eye hides.
   const paint = () => {
     const revealed = input.type === 'text';
-    replace(toggle, [icon(revealed ? 'eyeOff' : 'eye', {size: 18})]);
+    replace(toggle, [icon(revealed ? 'eyeOff' : 'eye', { size: 18 })]);
     toggle.setAttribute('aria-pressed', revealed ? 'true' : 'false');
-    toggle.setAttribute('aria-label', resolve(revealed ? msg('model.hide_key', '隐藏密钥') : msg('model.show_key', '显示密钥')));
+    toggle.setAttribute(
+      'aria-label',
+      resolve(revealed ? msg('model.hide_key', '隐藏密钥') : msg('model.show_key', '显示密钥')),
+    );
   };
   toggle.addEventListener('click', () => {
     input.type = input.type === 'password' ? 'text' : 'password';
@@ -494,19 +613,34 @@ function secretField(label, placeholder) {
     input.focus();
   });
   paint();
-  return {input, node: el('div', {class: 'ds-form-card'}, [
-    text(label, 'ds-form-card__title'),
-    el('div', {class: 'ds-input-wrap'}, [input, toggle]),
-  ])};
+  return {
+    input,
+    node: el('div', { class: 'ds-form-card' }, [
+      text(label, 'ds-form-card__title'),
+      el('div', { class: 'ds-input-wrap' }, [input, toggle]),
+    ]),
+  };
 }
 
 function textField(label, value, placeholder, action) {
   const input = el('input', {
     class: 'ds-input',
-    attrs: {type: 'url', value: value || '', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', inputmode: 'url', placeholder: resolve(placeholder), 'aria-label': resolve(label)},
-    data: {action},
+    attrs: {
+      type: 'url',
+      value: value || '',
+      autocomplete: 'off',
+      autocapitalize: 'none',
+      spellcheck: 'false',
+      inputmode: 'url',
+      placeholder: resolve(placeholder),
+      'aria-label': resolve(label),
+    },
+    data: { action },
   });
-  return {input, node: el('div', {class: 'ds-form-card'}, [text(label, 'ds-form-card__title'), input])};
+  return {
+    input,
+    node: el('div', { class: 'ds-form-card' }, [text(label, 'ds-form-card__title'), input]),
+  };
 }
 
 /**
@@ -521,13 +655,17 @@ export async function providerEditPage(context) {
   const existing = existingName ? records(snapshot)[existingName] : null;
   const custom = !existing && query.type === 'custom';
   let type = existing ? existing.type : custom ? RELAY_TYPES[0].type : query.type;
-  if (!existing && !custom && !PROVIDER_TYPES.some(entry => entry.type === type)) {
-    context.navigate('/model/providers', {replace: true});
+  if (!existing && !custom && !PROVIDER_TYPES.some((entry) => entry.type === type)) {
+    context.navigate('/model/providers', { replace: true });
     return screen([]);
   }
 
   const body = el('div');
-  const title = existing ? msg('model.edit_provider_title', '编辑提供商') : custom ? msg('model.others', '其他') : typeInfo(type).label;
+  const title = existing
+    ? msg('model.edit_provider_title', '编辑提供商')
+    : custom
+      ? msg('model.others', '其他')
+      : typeInfo(type).label;
   let submitting = false;
   // Saved from the top bar (or the app's native bar) once there is something
   // complete to save.
@@ -536,37 +674,52 @@ export async function providerEditPage(context) {
     back: '/model/providers',
     root: body,
     onSaved: adoptSaved(snapshot),
-    form: {ready: () => !submitting && formReady(), submit},
+    form: { ready: () => !submitting && formReady(), submit },
   });
 
-  const apiKey = secretField(msg('model.api_key', 'API Key'), existing && existing.has_api_key
-    ? msg('model.api_key_saved', '已保存，留空保持不变')
-    : KEYLESS_TYPES.includes(type) ? msg('model.api_key_optional', '可选') : msg('model.api_key_placeholder', '请输入 API Key'));
-  const baseURL = textField(msg('model.base_url', 'Base URL'), existing && existing.base_url,
-    custom ? msg('model.base_url_placeholder', 'https://example.com/v1') : msg('model.base_url_optional', '可选，留空使用官方地址'), 'edit-provider-base-url');
+  const apiKey = secretField(
+    msg('model.api_key', 'API Key'),
+    existing && existing.has_api_key
+      ? msg('model.api_key_saved', '已保存，留空保持不变')
+      : KEYLESS_TYPES.includes(type)
+        ? msg('model.api_key_optional', '可选')
+        : msg('model.api_key_placeholder', '请输入 API Key'),
+  );
+  const baseURL = textField(
+    msg('model.base_url', 'Base URL'),
+    existing && existing.base_url,
+    custom
+      ? msg('model.base_url_placeholder', 'https://example.com/v1')
+      : msg('model.base_url_optional', '可选，留空使用官方地址'),
+    'edit-provider-base-url',
+  );
 
   // Switching the main model to this record lives here, because tapping a
   // configured provider in the list opens this page.
   const isCurrent = existingName && existingName === modelConfig(snapshot).provider;
-  const useAsMain = existing && !isCurrent
-    ? button({
-        label: msg('model.use_provider', '设为主模型提供商'),
-        variant: 'secondary',
-        block: true,
-        action: 'use-provider',
-        onPress: async () => {
-          useAsMain.disabled = true;
-          const outcome = await selectProvider(snapshot, saver, existingName, existing);
-          if (outcome === 'saved' || outcome === 'staged') context.navigate('/model/main', {replace: true});
-          else useAsMain.disabled = false;
-        },
-      })
-    : null;
+  const useAsMain =
+    existing && !isCurrent
+      ? button({
+          label: msg('model.use_provider', '设为主模型提供商'),
+          variant: 'secondary',
+          block: true,
+          action: 'use-provider',
+          onPress: async () => {
+            useAsMain.disabled = true;
+            const outcome = await selectProvider(snapshot, saver, existingName, existing);
+            if (outcome === 'saved' || outcome === 'staged')
+              context.navigate('/model/main', { replace: true });
+            else useAsMain.disabled = false;
+          },
+        })
+      : null;
   function formReady() {
     const key = apiKey.input.value.trim();
     const url = baseURL.input.value.trim();
     const changed = key !== '' || url !== ((existing && existing.base_url) || '');
-    const complete = (key !== '' || KEYLESS_TYPES.includes(type) || (existing && existing.has_api_key)) && (!custom || url !== '');
+    const complete =
+      (key !== '' || KEYLESS_TYPES.includes(type) || (existing && existing.has_api_key)) &&
+      (!custom || url !== '');
     return changed && complete;
   }
   const refreshSave = () => saver.refreshChrome();
@@ -575,7 +728,7 @@ export async function providerEditPage(context) {
 
   async function submit() {
     if (submitting || !formReady()) return;
-    const record = {type};
+    const record = { type };
     const key = apiKey.input.value.trim();
     const url = baseURL.input.value.trim();
     if (key) record.api_key = key;
@@ -583,56 +736,77 @@ export async function providerEditPage(context) {
     const name = existingName || newRecordName(record, records(snapshot));
     submitting = true;
     refreshSave();
-    const outcome = await saver.change(`model_providers.${name}`, {model_providers: {[name]: record}});
+    const outcome = await saver.change(`model_providers.${name}`, {
+      model_providers: { [name]: record },
+    });
     submitting = false;
-    if (outcome === 'saved' || outcome === 'staged') context.navigate('/model/providers', {replace: true});
+    if (outcome === 'saved' || outcome === 'staged')
+      context.navigate('/model/providers', { replace: true });
     else refreshSave();
   }
 
   function render() {
     const typeRow = custom
-      ? el('div', {class: 'ds-form-card'}, [
-        text(msg('model.interface_type', '接口类型'), 'ds-form-card__title'),
-        row({
-          label: relayLabel(type),
-          leading: providerMark(type),
-          chevron: true,
-          extraClass: 'ds-row--outlined',
-          action: 'open-interface-type',
-          onPress: () => choiceSheet({
-            layout: 'cards',
-            options: RELAY_TYPES.map(entry => ({value: entry.type, label: entry.label, leading: () => providerMark(entry.type)})),
-            selected: type,
-            onSelect: value => {
-              type = value;
-              render();
-            },
+      ? el('div', { class: 'ds-form-card' }, [
+          text(msg('model.interface_type', '接口类型'), 'ds-form-card__title'),
+          row({
+            label: relayLabel(type),
+            leading: providerMark(type),
+            chevron: true,
+            extraClass: 'ds-row--outlined',
+            action: 'open-interface-type',
+            onPress: () =>
+              choiceSheet({
+                layout: 'cards',
+                options: RELAY_TYPES.map((entry) => ({
+                  value: entry.type,
+                  label: entry.label,
+                  leading: () => providerMark(entry.type),
+                })),
+                selected: type,
+                onSelect: (value) => {
+                  type = value;
+                  render();
+                },
+              }),
           }),
-        }),
-      ])
+        ])
       : null;
     replace(body, [
       group({
         joined: true,
         rows: [
-          el('div', {class: 'page__intro page__intro--in-card'}, [
-            providerMark(custom ? 'custom' : type, {size: 'tile'}),
-            text(custom ? msg('model.others', '其他') : existing ? recordLabel(existingName, existing) : typeInfo(type).label, 'page__title'),
+          el('div', { class: 'page__intro page__intro--in-card' }, [
+            providerMark(custom ? 'custom' : type, { size: 'tile' }),
+            text(
+              custom
+                ? msg('model.others', '其他')
+                : existing
+                  ? recordLabel(existingName, existing)
+                  : typeInfo(type).label,
+              'page__title',
+            ),
           ]),
           typeRow,
           apiKey.node,
           CUSTOM_BASE_URL_TYPES.includes(type) ? baseURL.node : null,
         ],
       }),
-      useAsMain ? el('div', {class: 'page__footer page__footer--stack'}, [useAsMain]) : null,
+      useAsMain ? el('div', { class: 'page__footer page__footer--stack' }, [useAsMain]) : null,
       // The configuration in use cannot be deleted, so it gets no delete row.
-      existing && !isCurrent ? group({rows: [row({
-        label: msg('model.delete_config', '删除配置'),
-        labelTone: 'danger',
-        extraClass: 'ds-row--centered',
-        action: 'delete-provider',
-        onPress: () => deleteProvider(context, saver, existingName, existing),
-      })]}) : null,
+      existing && !isCurrent
+        ? group({
+            rows: [
+              row({
+                label: msg('model.delete_config', '删除配置'),
+                labelTone: 'danger',
+                extraClass: 'ds-row--centered',
+                action: 'delete-provider',
+                onPress: () => deleteProvider(context, saver, existingName, existing),
+              }),
+            ],
+          })
+        : null,
     ]);
     refreshSave();
   }
@@ -646,7 +820,12 @@ export async function providerEditPage(context) {
 export async function modelsPage(context) {
   const snapshot = await ensureSnapshot(context);
   const body = el('div');
-  const saver = createSaver(context, {title: msg('model.model', '模型'), back: '/model/main', root: body, onSaved: adoptSaved(snapshot)});
+  const saver = createSaver(context, {
+    title: msg('model.model', '模型'),
+    back: '/model/main',
+    root: body,
+    onSaved: adoptSaved(snapshot),
+  });
   const providerName = modelConfig(snapshot).provider;
   const record = currentRecord(snapshot);
   const type = record ? record.type : '';
@@ -655,36 +834,53 @@ export async function modelsPage(context) {
 
   async function choose(model) {
     if (model === current) {
-      context.navigate('/model/main', {replace: true});
+      context.navigate('/model/main', { replace: true });
       return;
     }
-    const outcome = await saver.change('model.model', await selectionPatch(snapshot, providerName, type, model));
-    if (outcome === 'saved' || outcome === 'staged') context.navigate('/model/main', {replace: true});
+    const outcome = await saver.change(
+      'model.model',
+      await selectionPatch(snapshot, providerName, type, model),
+    );
+    if (outcome === 'saved' || outcome === 'staged')
+      context.navigate('/model/main', { replace: true });
   }
 
-  const listed = models.map(entry => entry.id);
-  const rows = models.map(entry => row({
-    label: entry.id,
-    description: entry.description || null,
-    leading: providerMark(type),
-    action: `choose-model-${entry.id}`,
-    onPress: () => choose(entry.id),
-    accessory: entry.id === current ? icon('check', {class: 'ds-choice-row__check', size: 22}) : null,
-  }));
+  const listed = models.map((entry) => entry.id);
+  const rows = models.map((entry) =>
+    row({
+      label: entry.id,
+      description: entry.description || null,
+      leading: providerMark(type),
+      action: `choose-model-${entry.id}`,
+      onPress: () => choose(entry.id),
+      accessory:
+        entry.id === current ? icon('check', { class: 'ds-choice-row__check', size: 22 }) : null,
+    }),
+  );
   // A model the catalogue does not list (common behind a custom Base URL) is
   // still shown as selected, and any other name can be entered below.
   if (current && !listed.includes(current)) {
-    rows.unshift(row({label: current, leading: providerMark(type), accessory: icon('check', {class: 'ds-choice-row__check', size: 22})}));
+    rows.unshift(
+      row({
+        label: current,
+        leading: providerMark(type),
+        accessory: icon('check', { class: 'ds-choice-row__check', size: 22 }),
+      }),
+    );
   }
 
   replace(body, [
-    rows.length ? group({rows}) : null,
-    group({rows: [customValueField({
-      title: msg('model.custom_model', '其他模型'),
-      placeholder: msg('model.custom_model_placeholder', '输入列表中没有的模型名称'),
-      action: 'edit-custom-model',
-      onUse: choose,
-    })]}),
+    rows.length ? group({ rows }) : null,
+    group({
+      rows: [
+        customValueField({
+          title: msg('model.custom_model', '其他模型'),
+          placeholder: msg('model.custom_model_placeholder', '输入列表中没有的模型名称'),
+          action: 'edit-custom-model',
+          onUse: choose,
+        }),
+      ],
+    }),
   ]);
   saver.refreshChrome();
   return screen([body]);
@@ -708,7 +904,7 @@ export async function decisionPage(context) {
     title: msg('model.decision', '决策模型'),
     back: '/model',
     root: body,
-    onPersisted: payload => {
+    onPersisted: (payload) => {
       const provider = decision().provider;
       adoptSaved(snapshot)(payload);
       if (provider !== decision().provider) {
@@ -729,22 +925,25 @@ export async function decisionPage(context) {
         autocomplete: 'off',
         autocapitalize: 'none',
         spellcheck: 'false',
-        placeholder: resolve(decision().has_api_key
-          ? msg('model.api_key_saved', '已保存，留空保持不变')
-          : msg('model.api_key_placeholder', '请输入 API Key')),
+        placeholder: resolve(
+          decision().has_api_key
+            ? msg('model.api_key_saved', '已保存，留空保持不变')
+            : msg('model.api_key_placeholder', '请输入 API Key'),
+        ),
         'aria-label': resolve(msg('model.decision_api_key', '决策模型 API Key')),
       },
-      data: {action: 'edit-decision-api-key'},
+      data: { action: 'edit-decision-api-key' },
     });
-    input.addEventListener('keydown', event => {
+    input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') input.blur();
     });
     input.addEventListener('change', async () => {
       const key = input.value.trim();
       if (!key) return;
-      if (await saver.change('decision.api_key', {decision: {api_key: key}}) === 'saved') input.value = '';
+      if ((await saver.change('decision.api_key', { decision: { api_key: key } })) === 'saved')
+        input.value = '';
     });
-    return el('div', {class: 'ds-form-card'}, [
+    return el('div', { class: 'ds-form-card' }, [
       text(msg('model.decision_api_key', '决策模型 API Key'), 'ds-form-card__title'),
       text(decisionProvider(decision().provider).help, 'ds-form-card__help'),
       input,
@@ -758,11 +957,14 @@ export async function decisionPage(context) {
   async function chooseProvider(value) {
     const current = decision();
     if (value === decisionProvider(current.provider).value) return;
-    const patch = {decision: {provider: value, base_url: null, model: null}};
+    const patch = { decision: { provider: value, base_url: null, model: null } };
     if (current.has_api_key || current.enabled) {
       const confirmed = await confirmSheet({
         title: msg('model.decision_switch_title', '切换决策模型提供商？'),
-        body: msg('model.decision_switch_body', '已保存的 API Key 会被清除，决策模型会先关闭，填写新提供商的 API Key 后再开启。'),
+        body: msg(
+          'model.decision_switch_body',
+          '已保存的 API Key 会被清除，决策模型会先关闭，填写新提供商的 API Key 后再开启。',
+        ),
         confirmLabel: msg('model.decision_switch_confirm', '切换'),
         action: 'confirm-decision-provider',
       });
@@ -773,20 +975,31 @@ export async function decisionPage(context) {
     await saver.change('decision.provider', patch);
   }
 
-  function decisionValueField(key, label, placeholder, {type = 'text', help, suggestions = false} = {}) {
+  function decisionValueField(
+    key,
+    label,
+    placeholder,
+    { type = 'text', help, suggestions = false } = {},
+  ) {
     const listID = 'decision-model-suggestions';
     const input = el('input', {
       class: 'ds-input',
       attrs: {
-        type, value: drafts.has(key) ? drafts.get(key) : decision()[key] || '', inputmode: type === 'url' ? 'url' : 'text',
-        autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'done',
-        placeholder: resolve(placeholder), 'aria-label': resolve(label),
+        type,
+        value: drafts.has(key) ? drafts.get(key) : decision()[key] || '',
+        inputmode: type === 'url' ? 'url' : 'text',
+        autocomplete: 'off',
+        autocapitalize: 'none',
+        spellcheck: 'false',
+        enterkeyhint: 'done',
+        placeholder: resolve(placeholder),
+        'aria-label': resolve(label),
         role: suggestions ? 'combobox' : null,
         'aria-autocomplete': suggestions ? 'list' : null,
         'aria-controls': suggestions ? listID : null,
         'aria-expanded': suggestions ? 'false' : null,
       },
-      data: {action: `edit-decision.${key}`},
+      data: { action: `edit-decision.${key}` },
     });
     valueInputs.set(key, input);
     const commit = async () => {
@@ -795,23 +1008,28 @@ export async function decisionPage(context) {
       if (value === (submitted ? submitted.value : decision()[key] || '')) return;
       // Keep pending/staged values across renders, but never treat a failed
       // attempt as saved or let an older attempt roll back a newer one.
-      const attempt = {value};
+      const attempt = { value };
       submissions.set(key, attempt);
       const draft = input.value;
       drafts.set(key, draft);
-      const outcome = await saver.change(`decision.${key}`, {decision: {[key]: value || null}});
+      const outcome = await saver.change(`decision.${key}`, { decision: { [key]: value || null } });
       if (submissions.get(key) !== attempt) return;
       if (outcome !== 'staged') submissions.delete(key);
-      if (drafts.get(key) === draft && (outcome === 'saved' || outcome === 'invalid' || outcome === 'failed')) {
+      if (
+        drafts.get(key) === draft &&
+        (outcome === 'saved' || outcome === 'invalid' || outcome === 'failed')
+      ) {
         drafts.delete(key);
         if (outcome !== 'saved') valueInputs.get(key).value = decision()[key] || '';
       }
     };
     input.addEventListener('change', commit);
-    const list = suggestions ? el('div', {
-      class: 'ds-suggestions',
-      attrs: {id: listID, role: 'listbox', 'aria-label': resolve(label), hidden: 'hidden'},
-    }) : null;
+    const list = suggestions
+      ? el('div', {
+          class: 'ds-suggestions',
+          attrs: { id: listID, role: 'listbox', 'aria-label': resolve(label), hidden: 'hidden' },
+        })
+      : null;
     let active = -1;
     let matches = [];
     const close = () => {
@@ -832,10 +1050,10 @@ export async function decisionPage(context) {
         if (active < 0) input.removeAttribute('aria-activedescendant');
         else {
           input.setAttribute('aria-activedescendant', `${listID}-${active}`);
-          list.children[active].scrollIntoView({block: 'nearest'});
+          list.children[active].scrollIntoView({ block: 'nearest' });
         }
       };
-      const choose = entry => {
+      const choose = (entry) => {
         input.value = entry.id;
         drafts.set(key, input.value);
         show = false;
@@ -844,17 +1062,36 @@ export async function decisionPage(context) {
       };
       const showSuggestions = () => {
         const query = input.value.trim().toLowerCase();
-        matches = query ? models.filter(entry => `${entry.id} ${entry.name || ''}`.toLowerCase().includes(query)) : [];
+        matches = query
+          ? models.filter((entry) =>
+              `${entry.id} ${entry.name || ''}`.toLowerCase().includes(query),
+            )
+          : [];
         active = -1;
-        replace(list, matches.map((entry, index) => el('button', {
-          class: 'ds-suggestion',
-          attrs: {id: `${listID}-${index}`, type: 'button', role: 'option', tabindex: '-1', 'aria-selected': 'false'},
-          data: {action: 'choose-decision-model', value: entry.id},
-          on: {click: () => choose(entry)},
-        }, [
-          text(entry.name || entry.id, 'ds-suggestion__name'),
-          entry.name && entry.name !== entry.id ? text(entry.id, 'ds-suggestion__id') : null,
-        ])));
+        replace(
+          list,
+          matches.map((entry, index) =>
+            el(
+              'button',
+              {
+                class: 'ds-suggestion',
+                attrs: {
+                  id: `${listID}-${index}`,
+                  type: 'button',
+                  role: 'option',
+                  tabindex: '-1',
+                  'aria-selected': 'false',
+                },
+                data: { action: 'choose-decision-model', value: entry.id },
+                on: { click: () => choose(entry) },
+              },
+              [
+                text(entry.name || entry.id, 'ds-suggestion__name'),
+                entry.name && entry.name !== entry.id ? text(entry.id, 'ds-suggestion__id') : null,
+              ],
+            ),
+          ),
+        );
         if (!show || !matches.length) close();
         else {
           list.hidden = false;
@@ -864,20 +1101,36 @@ export async function decisionPage(context) {
       };
       const loadSuggestions = async () => {
         if (!decisionModels) {
-          decisionModels = request('/api/models?provider=openrouter&output_modalities=decisions&order=top-weekly')
-            .then(payload => payload.models || [])
-            .catch(() => { decisionModels = null; return []; });
+          decisionModels = request(
+            '/api/models?provider=openrouter&output_modalities=decisions&order=top-weekly',
+          )
+            .then((payload) => payload.models || [])
+            .catch(() => {
+              decisionModels = null;
+              return [];
+            });
         }
         models = await decisionModels;
         showSuggestions();
       };
       // The catalog only suggests IDs; network errors never prevent free input.
-      input.addEventListener('focus', () => { show = true; showSuggestions(); return loadSuggestions(); });
-      input.addEventListener('input', () => { drafts.set(key, input.value); show = true; showSuggestions(); });
-      input.addEventListener('blur', () => { show = false; close(); });
+      input.addEventListener('focus', () => {
+        show = true;
+        showSuggestions();
+        return loadSuggestions();
+      });
+      input.addEventListener('input', () => {
+        drafts.set(key, input.value);
+        show = true;
+        showSuggestions();
+      });
+      input.addEventListener('blur', () => {
+        show = false;
+        close();
+      });
       // Keep focus on the input until the option's click commits its full ID.
-      list.addEventListener('mousedown', event => event.preventDefault());
-      input.addEventListener('keydown', event => {
+      list.addEventListener('mousedown', (event) => event.preventDefault());
+      input.addEventListener('keydown', (event) => {
         if (event.isComposing) return;
         if (event.key === 'Escape') {
           event.preventDefault();
@@ -885,9 +1138,16 @@ export async function decisionPage(context) {
           close();
         } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && matches.length) {
           event.preventDefault();
-          if (list.hidden) { show = true; showSuggestions(); }
-          active = active < 0 ? (event.key === 'ArrowDown' ? 0 : matches.length - 1)
-            : (active + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+          if (list.hidden) {
+            show = true;
+            showSuggestions();
+          }
+          active =
+            active < 0
+              ? event.key === 'ArrowDown'
+                ? 0
+                : matches.length - 1
+              : (active + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
           highlight();
         } else if (event.key === 'Enter' && !list.hidden && active >= 0) {
           event.preventDefault();
@@ -897,14 +1157,15 @@ export async function decisionPage(context) {
       if (decisionModels) loadSuggestions();
     } else {
       input.addEventListener('input', () => drafts.set(key, input.value));
-      input.addEventListener('keydown', event => {
+      input.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' && !event.isComposing) input.blur();
       });
     }
-    return el('div', {class: 'ds-form-card'}, [
+    return el('div', { class: 'ds-form-card' }, [
       text(label, 'ds-form-card__title'),
       help ? text(help, 'ds-form-card__help') : null,
-      input, list,
+      input,
+      list,
     ]);
   }
 
@@ -914,16 +1175,21 @@ export async function decisionPage(context) {
     try {
       const payload = await request('/api/config/test', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({section: 'decision', values: decision()}),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ section: 'decision', values: decision() }),
       });
       const result = (payload.results || [])[0];
-      toast(payload.ok
-        ? msg('model.test_passed', '连接成功')
-        : `${resolve(msg('model.test_failed', '连接失败'))}${result && result.detail ? `：${result.detail}` : ''}`,
-        {durationMs: payload.ok ? undefined : 5000});
+      toast(
+        payload.ok
+          ? msg('model.test_passed', '连接成功')
+          : `${resolve(msg('model.test_failed', '连接失败'))}${result && result.detail ? `：${result.detail}` : ''}`,
+        { durationMs: payload.ok ? undefined : 5000 },
+      );
     } catch (error) {
-      toast(error && error.message ? error.message : resolve(msg('model.test_failed', '连接失败')), {durationMs: 5000});
+      toast(
+        error && error.message ? error.message : resolve(msg('model.test_failed', '连接失败')),
+        { durationMs: 5000 },
+      );
     } finally {
       action.disabled = false;
     }
@@ -935,64 +1201,106 @@ export async function decisionPage(context) {
     const toggle = switchControl({
       checked: Boolean(decision().enabled),
       label: msg('model.decision_enabled', '启用决策模型'),
-      onChange: async next => {
+      onChange: async (next) => {
         if (next && !decision().has_api_key) {
           setChecked(toggle, false);
           toast(msg('model.decision_key_required', '请先填写 API Key'));
           return;
         }
-        const outcome = await saver.change('decision.enabled', {decision: {enabled: next}});
+        const outcome = await saver.change('decision.enabled', { decision: { enabled: next } });
         if (outcome === 'invalid' || outcome === 'failed') setChecked(toggle, !next);
       },
     });
-    const testButton = el('button', {
-      class: 'ds-card-action',
-      attrs: {type: 'button'},
-      data: {action: 'test-decision-connection'},
-      on: {click: () => testConnection(testButton)},
-    }, [text(msg('model.test', '测试连接'))]);
+    const testButton = el(
+      'button',
+      {
+        class: 'ds-card-action',
+        attrs: { type: 'button' },
+        data: { action: 'test-decision-connection' },
+        on: { click: () => testConnection(testButton) },
+      },
+      [text(msg('model.test', '测试连接'))],
+    );
     replace(body, [
       group({
-        rows: [row({label: msg('model.decision_enabled', '启用决策模型'), accessory: toggle})],
-        note: msg('model.decision_enabled_help', '开启后，固定流程里的判断（如输入法状态、App 是否打开）同时问决策模型和主模型，决策模型有把握时直接采用，否则用主模型的结果。'),
+        rows: [row({ label: msg('model.decision_enabled', '启用决策模型'), accessory: toggle })],
+        note: msg(
+          'model.decision_enabled_help',
+          '开启后，固定流程里的判断（如输入法状态、App 是否打开）同时问决策模型和主模型，决策模型有把握时直接采用，否则用主模型的结果。',
+        ),
       }),
-      group({rows: [row({
-        label: msg('model.decision_provider', '提供商'),
-        value: provider.label,
-        chevron: true,
-        action: 'open-decision-provider',
-        onPress: () => choiceSheet({
-          options: DECISION_PROVIDERS.map(entry => ({value: entry.value, label: entry.label})),
-          selected: provider.value,
-          onSelect: chooseProvider,
-        }),
-      })]}),
-      group({rows: [apiKeyField()]}),
-      provider.value === 'openrouter' ? group({rows: [decisionValueField(
-        'model', msg('config.fields.decision.model.label', '决策模型'), '~typesafe/jev-latest', {
-          suggestions: true,
-          help: msg('model.decision_openrouter_model_help', '留空默认使用 Jev；输入时显示模型建议，也可填写其他模型 ID'),
-        },
-      )]}) : null,
-      provider.value === 'openrouter' ? group({rows: [decisionValueField(
-        'base_url', msg('config.fields.decision.base_url.label', '决策模型 Base URL'),
-        'https://openrouter.ai/api/alpha', {
-          type: 'url', help: msg('model.decision_base_url_help', '留空使用官方地址'),
-        },
-      )]}) : null,
       group({
-        rows: [inlineValueRow({
-          key: 'decision.min_confidence',
-          label: msg('model.decision_min_confidence', '最低置信度'),
-          description: msg('model.decision_min_confidence_help', '低于该值的判断交回主模型，默认 0.8'),
-          parse: parse.optionalRange(0, 1),
-          invalid: msg('model.decision_min_confidence_invalid', '请输入 0 到 1 之间的数'),
-          saved: () => (decision().min_confidence == null ? '' : String(decision().min_confidence)),
-          patch: value => ({decision: {min_confidence: value}}),
-          saver,
-        })],
+        rows: [
+          row({
+            label: msg('model.decision_provider', '提供商'),
+            value: provider.label,
+            chevron: true,
+            action: 'open-decision-provider',
+            onPress: () =>
+              choiceSheet({
+                options: DECISION_PROVIDERS.map((entry) => ({
+                  value: entry.value,
+                  label: entry.label,
+                })),
+                selected: provider.value,
+                onSelect: chooseProvider,
+              }),
+          }),
+        ],
       }),
-      decision().has_api_key ? el('div', {class: 'ds-group'}, [testButton]) : null,
+      group({ rows: [apiKeyField()] }),
+      provider.value === 'openrouter'
+        ? group({
+            rows: [
+              decisionValueField(
+                'model',
+                msg('config.fields.decision.model.label', '决策模型'),
+                '~typesafe/jev-latest',
+                {
+                  suggestions: true,
+                  help: msg(
+                    'model.decision_openrouter_model_help',
+                    '留空默认使用 Jev；输入时显示模型建议，也可填写其他模型 ID',
+                  ),
+                },
+              ),
+            ],
+          })
+        : null,
+      provider.value === 'openrouter'
+        ? group({
+            rows: [
+              decisionValueField(
+                'base_url',
+                msg('config.fields.decision.base_url.label', '决策模型 Base URL'),
+                'https://openrouter.ai/api/alpha',
+                {
+                  type: 'url',
+                  help: msg('model.decision_base_url_help', '留空使用官方地址'),
+                },
+              ),
+            ],
+          })
+        : null,
+      group({
+        rows: [
+          inlineValueRow({
+            key: 'decision.min_confidence',
+            label: msg('model.decision_min_confidence', '最低置信度'),
+            description: msg(
+              'model.decision_min_confidence_help',
+              '低于该值的判断交回主模型，默认 0.8',
+            ),
+            parse: parse.optionalRange(0, 1),
+            invalid: msg('model.decision_min_confidence_invalid', '请输入 0 到 1 之间的数'),
+            saved: () =>
+              decision().min_confidence == null ? '' : String(decision().min_confidence),
+            patch: (value) => ({ decision: { min_confidence: value } }),
+            saver,
+          }),
+        ],
+      }),
+      decision().has_api_key ? el('div', { class: 'ds-group' }, [testButton]) : null,
     ]);
     saver.refreshChrome();
   }
@@ -1001,4 +1309,4 @@ export async function decisionPage(context) {
   return screen([body]);
 }
 
-export {EFFORT_LABELS, effortChoices};
+export { EFFORT_LABELS, effortChoices };

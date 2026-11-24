@@ -17,6 +17,26 @@ device-management calls are served directly by Config Web on port `80`. The
 page does not construct cross-port Agent URLs, so Docker host-port overrides
 and USB-ECM access use the same API behavior.
 
+## Frontend Development
+
+The frontend uses React, TypeScript, Jotai and Vite. Build static assets with
+`bash scripts/build-config-web.sh` from the repository root, then serve
+`src/config_web/dist` with `agent config-web --web-root`. The Docker build pins
+Node and installs the npm lockfile; the device requires no frontend runtime.
+Debian packaging and development launchers build the assets automatically.
+See the [frontend guide](../../src/config_web/README.md) for local development,
+formatting, validation and the retained editor compatibility boundary.
+
+The shell, navigation and live views consume one shared store. Visible device
+tabs observe storage every three seconds, configuration application and OTA
+every two seconds, and device/firmware status every ten seconds. USB Internet,
+LAN/password and installed MCP status refresh every five seconds on their
+routes. Polling continues while OTA is idle, so externally started updates and
+new log lines appear without navigation. All pollers pause while the tab is
+hidden and refresh on return or browser network recovery. Saves invalidate
+older reads; external application revision changes refresh configuration
+summaries. Polling preserves open dialogs, focused controls and editor drafts.
+
 ## Default Parameters
 
 | Parameter | Default Value |

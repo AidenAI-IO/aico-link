@@ -22,7 +22,7 @@
  *     glyphs' 2px round-capped stroke; the design's own two were placeholders.
  */
 
-import {svg} from './dom.js';
+import { svg } from './dom.js';
 
 /** Wi-Fi radio arcs, from the supplied glyph (viewBox 0 0 18 14). */
 const WIFI_ARC_OUTER = 'M1.09961 4.14089C5.48114 0.0863368 12.4131 0.0863368 16.7947 4.14089';
@@ -43,17 +43,41 @@ const TILE_GLYPH_OFFSET = 'translate(9.5 14)';
 
 /** Globe mark used by Language & Time Zone. The plate follows the supplied 46px SVG. */
 const GLOBE_SHAPES = [
-  {tag: 'circle', attrs: {cx: 23, cy: 23, r: 14.5, class: 'ds-tile__globe-stroke'}},
-  {tag: 'path', attrs: {d: 'M8.5 23H37.5', class: 'ds-tile__globe-stroke'}},
-  {tag: 'path', attrs: {d: 'M23 8.5C18.4 12.4 16 17.2 16 23C16 28.8 18.4 33.6 23 37.5C27.6 33.6 30 28.8 30 23C30 17.2 27.6 12.4 23 8.5Z', class: 'ds-tile__globe-stroke'}},
-  {tag: 'path', attrs: {d: 'M11.5 15.5C14.8 18 18.7 19.2 23 19.2C27.3 19.2 31.2 18 34.5 15.5', class: 'ds-tile__globe-stroke'}},
-  {tag: 'path', attrs: {d: 'M11.5 30.5C14.8 28 18.7 26.8 23 26.8C27.3 26.8 31.2 28 34.5 30.5', class: 'ds-tile__globe-stroke'}},
+  { tag: 'circle', attrs: { cx: 23, cy: 23, r: 14.5, class: 'ds-tile__globe-stroke' } },
+  { tag: 'path', attrs: { d: 'M8.5 23H37.5', class: 'ds-tile__globe-stroke' } },
+  {
+    tag: 'path',
+    attrs: {
+      d: 'M23 8.5C18.4 12.4 16 17.2 16 23C16 28.8 18.4 33.6 23 37.5C27.6 33.6 30 28.8 30 23C30 17.2 27.6 12.4 23 8.5Z',
+      class: 'ds-tile__globe-stroke',
+    },
+  },
+  {
+    tag: 'path',
+    attrs: {
+      d: 'M11.5 15.5C14.8 18 18.7 19.2 23 19.2C27.3 19.2 31.2 18 34.5 15.5',
+      class: 'ds-tile__globe-stroke',
+    },
+  },
+  {
+    tag: 'path',
+    attrs: {
+      d: 'M11.5 30.5C14.8 28 18.7 26.8 23 26.8C27.3 26.8 31.2 28 34.5 30.5',
+      class: 'ds-tile__globe-stroke',
+    },
+  },
 ];
 
 /** A 2px round-capped outline path, the stroke style every device glyph shares. */
-const outline = d => ({
+const outline = (d) => ({
   tag: 'path',
-  attrs: {d, stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'},
+  attrs: {
+    d,
+    stroke: 'currentColor',
+    'stroke-width': 2,
+    'stroke-linecap': 'round',
+    'stroke-linejoin': 'round',
+  },
 });
 
 /** Glyph geometry, keyed by name. `box` is the viewBox. */
@@ -81,7 +105,7 @@ export const glyphs = {
           'stroke-linecap': 'round',
         },
       },
-      {tag: 'path', attrs: {d: WIFI_DOT, fill: 'currentColor'}},
+      { tag: 'path', attrs: { d: WIFI_DOT, fill: 'currentColor' } },
     ],
   },
 
@@ -125,9 +149,20 @@ export const glyphs = {
   info: {
     box: '0 0 24 24',
     shapes: [
-      {tag: 'circle', attrs: {cx: 12, cy: 12, r: 10, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6}},
-      {tag: 'circle', attrs: {cx: 12, cy: 7.6, r: 1.25, fill: 'currentColor'}},
-      {tag: 'path', attrs: {d: 'M12 11v6.2', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round'}},
+      {
+        tag: 'circle',
+        attrs: { cx: 12, cy: 12, r: 10, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6 },
+      },
+      { tag: 'circle', attrs: { cx: 12, cy: 7.6, r: 1.25, fill: 'currentColor' } },
+      {
+        tag: 'path',
+        attrs: {
+          d: 'M12 11v6.2',
+          stroke: 'currentColor',
+          'stroke-width': 2,
+          'stroke-linecap': 'round',
+        },
+      },
     ],
   },
 
@@ -135,7 +170,7 @@ export const glyphs = {
   checkCircle: {
     box: '0 0 24 24',
     shapes: [
-      {tag: 'circle', attrs: {cx: 12, cy: 12, r: 11, fill: 'currentColor'}},
+      { tag: 'circle', attrs: { cx: 12, cy: 12, r: 11, fill: 'currentColor' } },
       {
         tag: 'path',
         class: 'ds-glyph-on-accent',
@@ -153,7 +188,9 @@ export const glyphs = {
   apple: {
     box: '0 0 24 24',
     shapes: [
-      outline('M8.286 7.008c-3.216 0 -4.286 3.23 -4.286 5.92c0 3.229 2.143 8.072 4.286 8.072c1.165 -.05 1.799 -.538 3.214 -.538c1.406 0 1.607 .538 3.214 .538s4.286 -3.229 4.286 -5.381c-.03 -.011 -2.649 -.434 -2.679 -3.23c-.02 -2.335 2.589 -3.179 2.679 -3.228c-1.096 -1.606 -3.162 -2.113 -3.75 -2.153c-1.535 -.12 -3.032 1.077 -3.75 1.077c-.729 0 -2.036 -1.077 -3.214 -1.077'),
+      outline(
+        'M8.286 7.008c-3.216 0 -4.286 3.23 -4.286 5.92c0 3.229 2.143 8.072 4.286 8.072c1.165 -.05 1.799 -.538 3.214 -.538c1.406 0 1.607 .538 3.214 .538s4.286 -3.229 4.286 -5.381c-.03 -.011 -2.649 -.434 -2.679 -3.23c-.02 -2.335 2.589 -3.179 2.679 -3.228c-1.096 -1.606 -3.162 -2.113 -3.75 -2.153c-1.535 -.12 -3.032 1.077 -3.75 1.077c-.729 0 -2.036 -1.077 -3.214 -1.077',
+      ),
       outline('M12 4a2 2 0 0 0 2 -2a2 2 0 0 0 -2 2'),
     ],
   },
@@ -172,7 +209,9 @@ export const glyphs = {
   windows: {
     box: '0 0 24 24',
     shapes: [
-      outline('M17.8 20l-12 -1.5c-1 -.1 -1.8 -.9 -1.8 -1.9v-9.2c0 -1 .8 -1.8 1.8 -1.9l12 -1.5c1.2 -.1 2.2 .8 2.2 1.9v12.1c0 1.2 -1.1 2.1 -2.2 1.9l0 .1'),
+      outline(
+        'M17.8 20l-12 -1.5c-1 -.1 -1.8 -.9 -1.8 -1.9v-9.2c0 -1 .8 -1.8 1.8 -1.9l12 -1.5c1.2 -.1 2.2 .8 2.2 1.9v12.1c0 1.2 -1.1 2.1 -2.2 1.9l0 .1',
+      ),
       outline('M12 5l0 14'),
       outline('M4 12l16 0'),
     ],
@@ -180,7 +219,9 @@ export const glyphs = {
   monitor: {
     box: '0 0 18 18',
     shapes: [
-      outline('M6.00036 15.75H12.0008M9.0006 12.75V15.75M3.00012 2.25H15.0011C15.8296 2.25 16.5012 2.92157 16.5012 3.75V11.25C16.5012 12.0784 15.8296 12.75 15.0011 12.75H3.00012C2.17163 12.75 1.5 12.0784 1.5 11.25V3.75C1.5 2.92157 2.17163 2.25 3.00012 2.25Z'),
+      outline(
+        'M6.00036 15.75H12.0008M9.0006 12.75V15.75M3.00012 2.25H15.0011C15.8296 2.25 16.5012 2.92157 16.5012 3.75V11.25C16.5012 12.0784 15.8296 12.75 15.0011 12.75H3.00012C2.17163 12.75 1.5 12.0784 1.5 11.25V3.75C1.5 2.92157 2.17163 2.25 3.00012 2.25Z',
+      ),
     ],
   },
   terminal: {
@@ -192,12 +233,18 @@ export const glyphs = {
   gearBadge: {
     box: '0 0 17 17',
     shapes: [
-      {tag: 'circle', class: 'ds-badge__disc--accent', attrs: {cx: 8.5, cy: 8.5, r: 8.5}},
+      { tag: 'circle', class: 'ds-badge__disc--accent', attrs: { cx: 8.5, cy: 8.5, r: 8.5 } },
       {
         tag: 'g',
         class: 'ds-badge__glyph',
         // Tabler's 24px gear, scaled to 11px and centred on the disc.
-        attrs: {transform: 'translate(3 3) scale(0.4583)', 'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', fill: 'none'},
+        attrs: {
+          transform: 'translate(3 3) scale(0.4583)',
+          'stroke-width': 2.4,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          fill: 'none',
+        },
         children: [
           'M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065',
           'M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0',
@@ -212,9 +259,19 @@ export const glyphs = {
   alertBadge: {
     box: '0 0 18 18',
     shapes: [
-      {tag: 'path', class: 'ds-badge__disc--danger', attrs: {d: 'M9 18C13.9706 18 18 13.9706 18 9C18 4.02944 13.9706 0 9 0C4.02944 0 0 4.02944 0 9C0 13.9706 4.02944 18 9 18Z'}},
-      {tag: 'path', class: 'ds-badge__glyph', attrs: {d: 'M9 5.2V10.2', 'stroke-width': 2, 'stroke-linecap': 'round'}},
-      {tag: 'circle', class: 'ds-badge__glyph-fill', attrs: {cx: 9, cy: 12.8, r: 1.15}},
+      {
+        tag: 'path',
+        class: 'ds-badge__disc--danger',
+        attrs: {
+          d: 'M9 18C13.9706 18 18 13.9706 18 9C18 4.02944 13.9706 0 9 0C4.02944 0 0 4.02944 0 9C0 13.9706 4.02944 18 9 18Z',
+        },
+      },
+      {
+        tag: 'path',
+        class: 'ds-badge__glyph',
+        attrs: { d: 'M9 5.2V10.2', 'stroke-width': 2, 'stroke-linecap': 'round' },
+      },
+      { tag: 'circle', class: 'ds-badge__glyph-fill', attrs: { cx: 9, cy: 12.8, r: 1.15 } },
     ],
   },
 
@@ -222,8 +279,26 @@ export const glyphs = {
   eye: {
     box: '0 0 24 24',
     shapes: [
-      {tag: 'path', attrs: {d: 'M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}},
-      {tag: 'path', attrs: {d: 'M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}},
+      {
+        tag: 'path',
+        attrs: {
+          d: 'M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0',
+          stroke: 'currentColor',
+          'stroke-width': 2,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        },
+      },
+      {
+        tag: 'path',
+        attrs: {
+          d: 'M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6',
+          stroke: 'currentColor',
+          'stroke-width': 2,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        },
+      },
     ],
   },
 
@@ -231,9 +306,36 @@ export const glyphs = {
   eyeOff: {
     box: '0 0 24 24',
     shapes: [
-      {tag: 'path', attrs: {d: 'M10.585 10.587a2 2 0 0 0 2.829 2.828', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}},
-      {tag: 'path', attrs: {d: 'M16.681 16.673a8.717 8.717 0 0 1 -4.681 1.327c-3.6 0 -6.6 -2 -9 -6c1.272 -2.12 2.712 -3.678 4.32 -4.674m2.86 -1.146a9.055 9.055 0 0 1 1.82 -.18c3.6 0 6.6 2 9 6c-.666 1.11 -1.379 2.067 -2.138 2.87', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}},
-      {tag: 'path', attrs: {d: 'M3 3l18 18', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}},
+      {
+        tag: 'path',
+        attrs: {
+          d: 'M10.585 10.587a2 2 0 0 0 2.829 2.828',
+          stroke: 'currentColor',
+          'stroke-width': 2,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        },
+      },
+      {
+        tag: 'path',
+        attrs: {
+          d: 'M16.681 16.673a8.717 8.717 0 0 1 -4.681 1.327c-3.6 0 -6.6 -2 -9 -6c1.272 -2.12 2.712 -3.678 4.32 -4.674m2.86 -1.146a9.055 9.055 0 0 1 1.82 -.18c3.6 0 6.6 2 9 6c-.666 1.11 -1.379 2.067 -2.138 2.87',
+          stroke: 'currentColor',
+          'stroke-width': 2,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        },
+      },
+      {
+        tag: 'path',
+        attrs: {
+          d: 'M3 3l18 18',
+          stroke: 'currentColor',
+          'stroke-width': 2,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        },
+      },
     ],
   },
 
@@ -258,7 +360,19 @@ export const glyphs = {
   copy: {
     box: '0 0 24 24',
     shapes: [
-      {tag: 'rect', attrs: {x: 9, y: 9, width: 11, height: 11, rx: 2.5, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8}},
+      {
+        tag: 'rect',
+        attrs: {
+          x: 9,
+          y: 9,
+          width: 11,
+          height: 11,
+          rx: 2.5,
+          fill: 'none',
+          stroke: 'currentColor',
+          'stroke-width': 1.8,
+        },
+      },
       {
         tag: 'path',
         attrs: {
@@ -285,7 +399,7 @@ export const glyphs = {
           'stroke-linecap': 'round',
         },
       },
-      {tag: 'rect', attrs: {x: 5, y: 10, width: 14, height: 10, rx: 2.5, fill: 'currentColor'}},
+      { tag: 'rect', attrs: { x: 5, y: 10, width: 14, height: 10, rx: 2.5, fill: 'currentColor' } },
     ],
   },
 };
@@ -309,12 +423,12 @@ export function icon(name, options = {}) {
   let shapes = glyph.shapes;
   if (name === 'wifi' && Number.isInteger(options.signalLevel)) {
     const level = Math.max(0, Math.min(3, options.signalLevel));
-    shapes = glyph.shapes.map(shape => {
+    shapes = glyph.shapes.map((shape) => {
       if (level === 3 || !shape.class) return shape;
       const inactiveOuter = level < 3 && shape.class.includes('outer');
       const inactiveInner = level < 1 && shape.class.includes('inner');
       return inactiveOuter || inactiveInner
-        ? {...shape, attrs: {...shape.attrs, stroke: 'var(--color-ink-tertiary)'}}
+        ? { ...shape, attrs: { ...shape.attrs, stroke: 'var(--color-ink-tertiary)' } }
         : shape;
     });
   }
@@ -345,8 +459,12 @@ export function wifiTile(options = {}) {
     width: size,
     height: size,
     shapes: [
-      {tag: 'path', attrs: {d: TILE_PLATE, fill: 'currentColor'}},
-      {tag: 'path', class: 'ds-tile__glyph-fill', attrs: {d: WIFI_TILE_GLYPH, transform: TILE_GLYPH_OFFSET}},
+      { tag: 'path', attrs: { d: TILE_PLATE, fill: 'currentColor' } },
+      {
+        tag: 'path',
+        class: 'ds-tile__glyph-fill',
+        attrs: { d: WIFI_TILE_GLYPH, transform: TILE_GLYPH_OFFSET },
+      },
     ],
   });
 }
@@ -360,12 +478,18 @@ export function searchTile(options = {}) {
     width: size,
     height: size,
     shapes: [
-      {tag: 'path', attrs: {d: TILE_PLATE, fill: 'currentColor'}},
+      { tag: 'path', attrs: { d: TILE_PLATE, fill: 'currentColor' } },
       {
         tag: 'g',
         class: 'ds-tile__glyph-stroke',
         // The 24px glyph drawn at 22px, centred on the plate.
-        attrs: {transform: 'translate(12 12) scale(0.9167)', 'stroke-width': 2.2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', fill: 'none'},
+        attrs: {
+          transform: 'translate(12 12) scale(0.9167)',
+          'stroke-width': 2.2,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          fill: 'none',
+        },
         children: ['M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0', 'M21 21l-6 -6'],
       },
     ],
@@ -381,10 +505,16 @@ export function languageTile(options = {}) {
     width: size,
     height: size,
     shapes: [
-      {tag: 'path', attrs: {d: TILE_PLATE, fill: 'currentColor'}},
-      ...GLOBE_SHAPES.map(shape => ({
+      { tag: 'path', attrs: { d: TILE_PLATE, fill: 'currentColor' } },
+      ...GLOBE_SHAPES.map((shape) => ({
         ...shape,
-        attrs: {...shape.attrs, stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'},
+        attrs: {
+          ...shape.attrs,
+          stroke: 'currentColor',
+          'stroke-width': 1.5,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        },
         class: 'ds-tile__globe-stroke',
       })),
     ],

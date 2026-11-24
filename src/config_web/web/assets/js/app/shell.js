@@ -12,16 +12,16 @@
  * which one is visible, so resizing never needs a re-render.
  */
 
-import {applyServerLocale, initI18n, loadSnapshot} from './data.js';
-import {createHeader} from './header.js';
-import {ALL_ITEMS} from './nav-items.js';
-import {createRouter} from './router.js';
-import {localApplicationStatus} from './pages/local.js';
-import {localRoutes, routes} from './routes.js';
-import {settingsList, updateWiFiStatus} from './settings-list.js';
-import {watchWiFi} from './wifi-status.js';
-import {el, replace} from '../ui/dom.js';
-import {applyEnvironmentClass, isEmbedded} from '../ui/environment.js';
+import { applyServerLocale, initI18n, loadSnapshot } from './data.js';
+import { createHeader } from './header.js';
+import { ALL_ITEMS } from './nav-items.js';
+import { createRouter } from './router.js';
+import { localApplicationStatus } from './pages/local.js';
+import { localRoutes, routes } from './routes.js';
+import { settingsList, updateWiFiStatus } from './settings-list.js';
+import { watchWiFi } from './wifi-status.js';
+import { el, replace } from '../ui/dom.js';
+import { applyEnvironmentClass, isEmbedded } from '../ui/environment.js';
 
 /** The route one level up: `/basic/language` → `/basic`, `/wifi` → `/`. */
 export function parentPath(path) {
@@ -33,8 +33,8 @@ export function parentPath(path) {
 /** Default bar for a route; a page refines it through `context.header`. */
 export function defaultHeader(path, navigate) {
   if (path === '/') return null;
-  const item = ALL_ITEMS.find(entry => entry.route === path.replace(/\/+$/, ''));
-  return {title: item ? item.label : null, onBack: () => navigate(parentPath(path))};
+  const item = ALL_ITEMS.find((entry) => entry.route === path.replace(/\/+$/, ''));
+  return { title: item ? item.label : null, onBack: () => navigate(parentPath(path)) };
 }
 
 /** Both timestamps come from the device, before optional enrichment or delivery. */
@@ -57,7 +57,7 @@ export async function boot(rootId = 'app', options = {}) {
   applyEnvironmentClass();
   // The embedded case is wrapped by a native screen that already shows the
   // product chrome and the page's back/title/save, so no top bar is built.
-  const header = createHeader({embedded: isEmbedded(), localAgent: options.localAgent});
+  const header = createHeader({ embedded: isEmbedded(), localAgent: options.localAgent });
   /** Bumped per navigation, so a page that settles late cannot repaint the bar. */
   let generation = 0;
   let liveWiFi = null;
@@ -67,9 +67,9 @@ export async function boot(rootId = 'app', options = {}) {
   let wifiTaskRevision = 0;
   let liveWiFiSource = 'poll';
 
-  const view = el('div', {class: 'app__scroll', data: {region: 'content'}});
-  const railBody = el('div', {class: 'app__nav-body'});
-  const navHost = el('div', {class: 'app__nav'}, [railBody]);
+  const view = el('div', { class: 'app__scroll', data: { region: 'content' } });
+  const railBody = el('div', { class: 'app__nav-body' });
+  const navHost = el('div', { class: 'app__nav' }, [railBody]);
 
   let navigate = () => {};
   const renderRail = (snapshot, currentPath) =>
@@ -77,7 +77,7 @@ export async function boot(rootId = 'app', options = {}) {
 
   const router = createRouter({
     routes: options.localAgent ? localRoutes : routes,
-    render: async context => {
+    render: async (context) => {
       navigate = context.navigate;
       const current = ++generation;
       /*
@@ -88,7 +88,7 @@ export async function boot(rootId = 'app', options = {}) {
        */
       let pending = defaultHeader(context.path, context.navigate);
       let mounted = false;
-      const setHeader = spec => {
+      const setHeader = (spec) => {
         if (current !== generation) return;
         if (mounted) header.set(spec);
         else pending = spec;
@@ -98,14 +98,21 @@ export async function boot(rootId = 'app', options = {}) {
       const taskRevisionAtRead = wifiTaskRevision;
       let snapshot = await loadSnapshot();
       if (current !== generation) return;
-      if (snapshot?.wifi_status && taskRevisionAtRead === wifiTaskRevision && !olderWiFi(snapshot, liveWiFi)) {
+      if (
+        snapshot?.wifi_status &&
+        taskRevisionAtRead === wifiTaskRevision &&
+        !olderWiFi(snapshot, liveWiFi)
+      ) {
         // A navigation read wins over retained polling data, but a task that
         // finished after the read started, or a later radio observation, wins.
         // Invalidate in-flight polls too; the next one starts after this read.
-        liveWiFi = {wifi_status: snapshot.wifi_status, ...(snapshot.wifi ? {wifi: snapshot.wifi} : {})};
+        liveWiFi = {
+          wifi_status: snapshot.wifi_status,
+          ...(snapshot.wifi ? { wifi: snapshot.wifi } : {}),
+        };
         liveWiFiSource = 'snapshot';
         refreshWiFi();
-      } else if (liveWiFi) snapshot = {...snapshot, ...liveWiFi};
+      } else if (liveWiFi) snapshot = { ...snapshot, ...liveWiFi };
       const snapshotRevision = wifiRevision;
       const snapshotTaskRevision = wifiTaskRevision;
       const wifiListeners = [];
@@ -114,19 +121,24 @@ export async function boot(rootId = 'app', options = {}) {
 
       view.className = context.name === 'home' ? 'app__scroll route-home' : 'app__scroll';
       const content = await context.page({
-        ...context, snapshot, localAgent: options.localAgent, header: setHeader,
-        onWiFiChange: listener => wifiListeners.push(listener),
+        ...context,
+        snapshot,
+        localAgent: options.localAgent,
+        header: setHeader,
+        onWiFiChange: (listener) => wifiListeners.push(listener),
       });
       if (current !== generation) return;
-      updateWiFi = (value, {source = 'poll'} = {}) => {
+      updateWiFi = (value, { source = 'poll' } = {}) => {
         if (source === 'poll' && olderWiFi(value, snapshot)) return;
-        snapshot = {...snapshot, ...value};
+        snapshot = { ...snapshot, ...value };
         updateWiFiStatus(railBody, snapshot);
-        wifiListeners.forEach(listener => listener(snapshot));
+        wifiListeners.forEach((listener) => listener(snapshot));
       };
       // A status read can finish while an asynchronous page is being built.
       if (liveWiFi && wifiRevision > snapshotRevision) {
-        updateWiFi(liveWiFi, {source: wifiTaskRevision > snapshotTaskRevision ? 'task' : liveWiFiSource});
+        updateWiFi(liveWiFi, {
+          source: wifiTaskRevision > snapshotTaskRevision ? 'task' : liveWiFiSource,
+        });
       }
       replace(view, [content]);
       mounted = true;
@@ -146,27 +158,36 @@ export async function boot(rootId = 'app', options = {}) {
    * columns start at the same height.
    */
   root.appendChild(
-    el('div', {class: 'app'}, [
+    el('div', { class: 'app' }, [
       header.element,
-      el('div', {class: 'app__body'}, [navHost, el('div', {class: 'app__panel'}, [options.localAgent ? localApplicationStatus() : null, view])]),
+      el('div', { class: 'app__body' }, [
+        navHost,
+        el('div', { class: 'app__panel' }, [
+          options.localAgent ? localApplicationStatus() : null,
+          view,
+        ]),
+      ]),
     ]),
   );
 
   await router.start();
   if (!options.localAgent) {
-    const stopWiFi = watchWiFi((value, {source}) => {
-      if (source === 'poll' && olderWiFi(value, liveWiFi)) return;
-      updateWiFi(value, {source});
-    }, {
-      isActive: () => root.isConnected,
-      onObservation: (value, {source}) => {
+    const stopWiFi = watchWiFi(
+      (value, { source }) => {
         if (source === 'poll' && olderWiFi(value, liveWiFi)) return;
-        wifiRevision += 1;
-        if (source === 'task') wifiTaskRevision += 1;
-        liveWiFi = {...liveWiFi, ...value};
-        liveWiFiSource = source;
+        updateWiFi(value, { source });
       },
-    });
+      {
+        isActive: () => root.isConnected,
+        onObservation: (value, { source }) => {
+          if (source === 'poll' && olderWiFi(value, liveWiFi)) return;
+          wifiRevision += 1;
+          if (source === 'task') wifiTaskRevision += 1;
+          liveWiFi = { ...liveWiFi, ...value };
+          liveWiFiSource = source;
+        },
+      },
+    );
     refreshWiFi = stopWiFi.refresh;
   }
   return router;

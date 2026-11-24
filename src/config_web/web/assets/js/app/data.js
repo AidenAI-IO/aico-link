@@ -7,10 +7,10 @@
  * `fetch` calls.
  */
 
-import {request} from '../config/api.js';
-import {applyLocale, getActiveLocale, initI18n, t} from '../config/i18n.js';
+import { request } from '../config/api.js';
+import { applyLocale, getActiveLocale, initI18n, t } from '../config/i18n.js';
 
-export {applyLocale, request, t, initI18n};
+export { applyLocale, request, t, initI18n };
 
 /**
  * Adopt the language the device is configured with.
@@ -23,7 +23,8 @@ export {applyLocale, request, t, initI18n};
  * @returns {boolean} true when the active locale changed.
  */
 export function applyServerLocale(snapshot) {
-  const configured = snapshot && snapshot.config && snapshot.config.agent && snapshot.config.agent.locale;
+  const configured =
+    snapshot && snapshot.config && snapshot.config.agent && snapshot.config.agent.locale;
   if (!configured || configured === getActiveLocale()) return false;
   applyLocale(configured, false);
   return true;
@@ -39,7 +40,10 @@ export async function fetchSnapshot() {
  * read it still renders, with an empty config.
  */
 export async function ensureSnapshot(context) {
-  return context.snapshot || fetchSnapshot().catch(error => ({config: {}, snapshot_error: error, paths: error.paths}));
+  return (
+    context.snapshot ||
+    fetchSnapshot().catch((error) => ({ config: {}, snapshot_error: error, paths: error.paths }))
+  );
 }
 
 /**
@@ -47,7 +51,7 @@ export async function ensureSnapshot(context) {
  * runs `after` when given.
  */
 export function adoptSaved(snapshot, after) {
-  return payload => {
+  return (payload) => {
     if (payload && payload.config) snapshot.config = payload.config;
     if (after) after();
   };
@@ -84,7 +88,7 @@ export function connectedSsid(snapshot) {
 
 /** Look up one saved profile by SSID. */
 export function savedNetwork(snapshot, ssid) {
-  return savedNetworks(snapshot).find(network => network.ssid === ssid) || null;
+  return savedNetworks(snapshot).find((network) => network.ssid === ssid) || null;
 }
 
 /**

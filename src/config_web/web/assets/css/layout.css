@@ -278,7 +278,6 @@
 
 /* ---- Content rhythm shared by every route -------------------------------- */
 
-
 /*
  * A route whose primary action belongs at the bottom of the screen: the spacer
  * above it absorbs the slack, and once the content is taller than the viewport
@@ -372,6 +371,14 @@
   min-height: 0;
 }
 
+/* The React editor boundary preserves the fill layout of retained forms. */
+.editor-host {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 /* The host portal keeps application state visible on every settings page. */
 .local-application {
   padding: var(--space-sm) var(--layout-page-margin);
@@ -381,7 +388,9 @@
 }
 
 @media (min-width: 900px) {
-  .local-shortcuts { display: none; }
+  .local-shortcuts {
+    display: none;
+  }
 }
 
 .local-agent-link {

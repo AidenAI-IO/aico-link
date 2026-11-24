@@ -13,8 +13,8 @@
  * places without each one remembering to repaint it.
  */
 
-import {el} from './dom.js';
-import {resolve} from './text.js';
+import { el } from './dom.js';
+import { resolve } from './text.js';
 
 /** Painted state per switch node, so `setChecked` can also record it. */
 const state = new WeakMap();
@@ -33,7 +33,7 @@ function paint(node, knob, on) {
  * @returns {HTMLButtonElement}
  */
 export function switchControl(props) {
-  const knob = el('span', {class: 'ds-switch__knob'});
+  const knob = el('span', { class: 'ds-switch__knob' });
   const node = el(
     'button',
     {
@@ -43,12 +43,12 @@ export function switchControl(props) {
         role: 'switch',
         'aria-label': props.label ? resolve(props.label) : null,
       },
-      data: {action: 'toggle-switch'},
+      data: { action: 'toggle-switch' },
     },
     [knob],
   );
 
-  const entry = {checked: Boolean(props.checked)};
+  const entry = { checked: Boolean(props.checked) };
   state.set(node, entry);
   paint(node, knob, entry.checked);
 

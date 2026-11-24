@@ -14,10 +14,10 @@
  * `set()` without caring which environment they run in.
  */
 
-import {el, replace} from '../ui/dom.js';
-import {icon} from '../ui/icon.js';
-import {aicoLinkLogo} from '../ui/logo.js';
-import {msg, resolve, text} from '../ui/text.js';
+import { el, replace } from '../ui/dom.js';
+import { icon } from '../ui/icon.js';
+import { aicoLinkLogo } from '../ui/logo.js';
+import { msg, resolve, text } from '../ui/text.js';
 
 /**
  * @typedef {object} HeaderSpec
@@ -34,16 +34,30 @@ import {msg, resolve, text} from '../ui/text.js';
  * @returns {{element: HTMLElement|null, set: (spec: HeaderSpec|null) => void}}
  */
 export function createHeader(options = {}) {
-  if (options.embedded) return {element: null, set: () => {}};
+  if (options.embedded) return { element: null, set: () => {} };
 
-  const nav = el('div', {class: 'app__topbar-nav'});
-  const element = el('div', {class: 'app__topbar'}, [
-    el('div', {class: 'app__brand'}, [
-      el('a', {
-        class: 'app__brand-link',
-        attrs: {href: 'https://aico.link', target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Aico Link — aico.link'},
-      }, [aicoLinkLogo({width: 116})]),
-      text(options.localAgent ? msg('local.title', '本机 Agent') : {key: 'ui.app_title', fallback: '配置'}, 'app__brand-title'),
+  const nav = el('div', { class: 'app__topbar-nav' });
+  const element = el('div', { class: 'app__topbar' }, [
+    el('div', { class: 'app__brand' }, [
+      el(
+        'a',
+        {
+          class: 'app__brand-link',
+          attrs: {
+            href: 'https://aico.link',
+            target: '_blank',
+            rel: 'noopener noreferrer',
+            'aria-label': 'Aico Link — aico.link',
+          },
+        },
+        [aicoLinkLogo({ width: 116 })],
+      ),
+      text(
+        options.localAgent
+          ? msg('local.title', '本机 Agent')
+          : { key: 'ui.app_title', fallback: '配置' },
+        'app__brand-title',
+      ),
     ]),
     nav,
   ]);
@@ -56,24 +70,24 @@ export function createHeader(options = {}) {
       return;
     }
     replace(nav, [
-      el('div', {class: 'app__topbar-row'}, [
+      el('div', { class: 'app__topbar-row' }, [
         spec.onBack
           ? el(
               'button',
               {
                 class: 'app__back',
-                attrs: {type: 'button', 'aria-label': resolve(msg('action.back', '返回'))},
-                data: {action: 'back-settings'},
-                on: {click: spec.onBack},
+                attrs: { type: 'button', 'aria-label': resolve(msg('action.back', '返回')) },
+                data: { action: 'back-settings' },
+                on: { click: spec.onBack },
               },
-              [icon('chevron', {class: 'app__back-icon'})],
+              [icon('chevron', { class: 'app__back-icon' })],
             )
           : el('span'),
         spec.title ? text(spec.title, 'app__topbar-heading') : el('span'),
-        el('div', {class: 'app__topbar-action'}, spec.action ? [spec.action] : []),
+        el('div', { class: 'app__topbar-action' }, spec.action ? [spec.action] : []),
       ]),
     ]);
   }
 
-  return {element, set};
+  return { element, set };
 }

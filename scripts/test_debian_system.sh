@@ -444,7 +444,7 @@ if grep -Eq '^    (example_|hello$|trigger$|image_process$|audio_stream$)' \
     fail "diagnostic executable leaked into the production platform allowlist"
 fi
 grep -Fq 'src/agent/config/skills/' "${REPO_ROOT}/scripts/debian-package/container-build.sh"
-grep -Fq 'src/config_web/web/' "${REPO_ROOT}/scripts/debian-package/container-build.sh"
+grep -Fq '/config-web/' "${REPO_ROOT}/scripts/debian-package/container-build.sh"
 grep -Fq 'AGENT_CONFIG_PATH' "${SYSTEM_DIR}/build.sh"
 grep -Fq '${AGENT_CONFIG_PATH}:/run/secrets/agent.toml:ro' \
     "${SYSTEM_DIR}/build.sh"

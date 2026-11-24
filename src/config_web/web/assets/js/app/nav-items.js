@@ -8,23 +8,33 @@
  * `status` marks the entries that carry a live value on the right-hand side.
  */
 
-import {msg} from '../ui/text.js';
+import { msg } from '../ui/text.js';
 
 /** Entries shown in the first card group, per the design. */
 export const PRIMARY_ITEMS = [
-  {id: 'wifi', label: 'Wi-Fi', route: '/wifi', status: 'wifi'},
-  {id: 'basic', label: msg('ui.nav_basic', '基础设置'), route: '/basic'},
-  {id: 'conversation', label: msg('ui.nav_conversation', '对话与工具'), route: '/conversation'},
-  {id: 'model', label: msg('ui.nav_model', '模型设置'), route: '/model'},
-  {id: 'voice', label: msg('ui.nav_voice', '语音'), route: '/voice', status: 'voice'},
+  { id: 'wifi', label: 'Wi-Fi', route: '/wifi', status: 'wifi' },
+  { id: 'basic', label: msg('ui.nav_basic', '基础设置'), route: '/basic' },
+  { id: 'conversation', label: msg('ui.nav_conversation', '对话与工具'), route: '/conversation' },
+  { id: 'model', label: msg('ui.nav_model', '模型设置'), route: '/model' },
+  { id: 'voice', label: msg('ui.nav_voice', '语音'), route: '/voice', status: 'voice' },
 ];
 
 /** Entries shown in the second card group, per the design. */
 export const SECONDARY_ITEMS = [
-  {id: 'memory', label: msg('ui.nav_memory', '记忆'), route: '/memory'},
-  {id: 'storage', label: msg('ui.nav_storage', '存储与备份'), route: '/storage', status: 'storage'},
-  {id: 'advanced', label: msg('ui.nav_advanced', '高级设置'), route: '/advanced'},
-  {id: 'firmware', label: msg('ui.nav_firmware', '固件更新'), route: '/firmware', status: 'firmware'},
+  { id: 'memory', label: msg('ui.nav_memory', '记忆'), route: '/memory' },
+  {
+    id: 'storage',
+    label: msg('ui.nav_storage', '存储与备份'),
+    route: '/storage',
+    status: 'storage',
+  },
+  { id: 'advanced', label: msg('ui.nav_advanced', '高级设置'), route: '/advanced' },
+  {
+    id: 'firmware',
+    label: msg('ui.nav_firmware', '固件更新'),
+    route: '/firmware',
+    status: 'firmware',
+  },
 ];
 
 /** Every entry, in presentation order. */
@@ -32,10 +42,10 @@ export const ALL_ITEMS = [...PRIMARY_ITEMS, ...SECONDARY_ITEMS];
 
 /** Host mode has no board services or launch-time device controls. */
 export const LOCAL_ITEMS = [
-  {id: 'overview', label: msg('local.overview', '运行概览'), route: '/'},
-  {id: 'model', label: msg('ui.nav_model', '模型设置'), route: '/model'},
-  {id: 'conversation', label: msg('ui.nav_conversation', '对话与工具'), route: '/conversation'},
-  {id: 'mcp', label: 'MCP', route: '/advanced/mcp'},
-  {id: 'language', label: msg('basic.language_title', '语言与时区'), route: '/basic/language'},
-  {id: 'logs', label: msg('advanced.logs', '日志'), route: '/advanced/logs'},
+  { id: 'overview', label: msg('local.overview', '运行概览'), route: '/' },
+  { id: 'model', label: msg('ui.nav_model', '模型设置'), route: '/model' },
+  { id: 'conversation', label: msg('ui.nav_conversation', '对话与工具'), route: '/conversation' },
+  { id: 'mcp', label: 'MCP', route: '/advanced/mcp' },
+  { id: 'language', label: msg('basic.language_title', '语言与时区'), route: '/basic/language' },
+  { id: 'logs', label: msg('advanced.logs', '日志'), route: '/advanced/logs' },
 ];

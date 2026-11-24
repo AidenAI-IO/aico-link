@@ -3,7 +3,7 @@
  * The companion app supplies its own chrome when this page is embedded.
  */
 
-import {el} from './dom.js';
+import { el } from './dom.js';
 
 /**
  * @param {width?: number, class?: string} [options]
@@ -14,6 +14,6 @@ export function aicoLinkLogo(options = {}) {
   return el('span', {
     class: ['app__wordmark', options.class].filter(Boolean).join(' '),
     text: 'Aico Link',
-    attrs: {style: `font-size: ${(width * 22) / 116}px`},
+    attrs: { style: `font-size: ${(width * 22) / 116}px` },
   });
 }

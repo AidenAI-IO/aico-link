@@ -1,4 +1,4 @@
-import {appState, byId, registerRuntime, runtimeFunction} from './state.js';
+import { appState, byId, registerRuntime, runtimeFunction } from './state.js';
 
 const request = runtimeFunction('request');
 const setBanner = runtimeFunction('setBanner');
@@ -9,64 +9,84 @@ const DEFAULT_LOCALE = 'en-US';
 
 const messages = {
   'en-US': {
-    "mcp.install_title": "Install MCP for Agent",
-    "mcp.install_enabled": "Enabled",
-    "mcp.install_reconnect": "Reconnect",
-    "mcp.install_remove": "Uninstall",
-    "mcp.install_remove_title": "Uninstall MCP?",
-    "mcp.install_remove_help": "The Agent will stop using this server and remove its saved connection configuration.",
-    "mcp.install_add": "Install MCP",
-    "mcp.install_config": "MCP JSON configuration",
-    "mcp.install_connect": "Install and connect",
-    "mcp.install_paste": "Paste the provider’s mcpServers JSON configuration. Supports stdio and Streamable HTTP. Commands and their dependencies must already be installed on the Agent host.",
-    "mcp.install_trust": "Install only servers you trust. Stdio commands run on the device with the Agent’s permissions.",
-    "mcp.install_invalid": "Enter valid JSON configuration",
-    "mcp.install_done": "Installed. The Agent can use these tools on its next request.",
-    "mcp.install_connected": "Connected",
-    "mcp.install_disabled": "Disabled",
-    "mcp.install_error": "Connection failed",
-    "mcp.install_disconnected": "Disconnected",
-    "mcp.install_unavailable": "Cannot read MCP servers",
-    "mcp.install_refresh": "Refresh connection status",
-    "mcp.install_help": "The Agent can call installed server tools. Select a server to inspect tools, enable, disable, reconnect or uninstall it.",
-    "local.mirror_agent_unavailable": "Cannot reach the local Agent. Start it and retry.",
-    "local.mirror_bridge_unavailable": "Cannot reach the mirroring bridge. Start it and retry.",
-    "local.mirror_unavailable": "Open iPhone Mirroring on your Mac, connect the phone, and enable Screen Recording permission before retrying.",
-    "local.mirror_input_permission": "Grant the mirroring bridge Accessibility permission in macOS System Settings, then retry.",
-    "local.mirror_session_busy": "Another session is using iPhone Mirroring. End that session and retry.",
-    "local.mirror_busy": "Restoring connection…",
-    "local.mirror_wrong_mode": "The Agent is no longer using iPhone Mirroring. Refresh this page.",
-    "local.mirror_setup_failed": "Could not restore the connection. Check the mirroring bridge and retry.",
-    "local.mirror_capture_failed": "Could not capture a frame. Check iPhone Mirroring and Screen Recording permission, then retry.",
-    "local.mirror_restored": "Session restored and a mirroring frame captured.",
-    "local.mirror_help": "Connect iPhone Mirroring on your Mac first. Restore the connection here if control stops working after being idle.",
-    "local.mirror_title": "iPhone Mirroring",
-    "local.mirror_frame_ready": "Mirroring frame available",
-    "local.mirror_reconnect": "Restore iPhone Mirroring connection",
+    'storage.format_failed': 'Format failed',
+    'storage.format_in_progress': 'Formatting the card…',
+    'storage.format_warning': 'This operation erases all data on the storage card.',
+    'storage.used_space': 'Used space',
+    'wifi.scanning': 'Scanning…',
+    'mcp.install_title': 'Install MCP for Agent',
+    'mcp.install_enabled': 'Enabled',
+    'mcp.install_reconnect': 'Reconnect',
+    'mcp.install_remove': 'Uninstall',
+    'mcp.install_remove_title': 'Uninstall MCP?',
+    'mcp.install_remove_help':
+      'The Agent will stop using this server and remove its saved connection configuration.',
+    'mcp.install_add': 'Install MCP',
+    'mcp.install_config': 'MCP JSON configuration',
+    'mcp.install_connect': 'Install and connect',
+    'mcp.install_paste':
+      'Paste the provider’s mcpServers JSON configuration. Supports stdio and Streamable HTTP. Commands and their dependencies must already be installed on the Agent host.',
+    'mcp.install_trust':
+      'Install only servers you trust. Stdio commands run on the device with the Agent’s permissions.',
+    'mcp.install_invalid': 'Enter valid JSON configuration',
+    'mcp.install_done': 'Installed. The Agent can use these tools on its next request.',
+    'mcp.install_connected': 'Connected',
+    'mcp.install_disabled': 'Disabled',
+    'mcp.install_error': 'Connection failed',
+    'mcp.install_disconnected': 'Disconnected',
+    'mcp.install_unavailable': 'Cannot read MCP servers',
+    'mcp.install_refresh': 'Refresh connection status',
+    'mcp.install_help':
+      'The Agent can call installed server tools. Select a server to inspect tools, enable, disable, reconnect or uninstall it.',
+    'local.mirror_agent_unavailable': 'Cannot reach the local Agent. Start it and retry.',
+    'local.mirror_bridge_unavailable': 'Cannot reach the mirroring bridge. Start it and retry.',
+    'local.mirror_unavailable':
+      'Open iPhone Mirroring on your Mac, connect the phone, and enable Screen Recording permission before retrying.',
+    'local.mirror_input_permission':
+      'Grant the mirroring bridge Accessibility permission in macOS System Settings, then retry.',
+    'local.mirror_session_busy':
+      'Another session is using iPhone Mirroring. End that session and retry.',
+    'local.mirror_busy': 'Restoring connection…',
+    'local.mirror_wrong_mode': 'The Agent is no longer using iPhone Mirroring. Refresh this page.',
+    'local.mirror_setup_failed':
+      'Could not restore the connection. Check the mirroring bridge and retry.',
+    'local.mirror_capture_failed':
+      'Could not capture a frame. Check iPhone Mirroring and Screen Recording permission, then retry.',
+    'local.mirror_restored': 'Session restored and a mirroring frame captured.',
+    'local.mirror_help':
+      'Connect iPhone Mirroring on your Mac first. Restore the connection here if control stops working after being idle.',
+    'local.mirror_title': 'iPhone Mirroring',
+    'local.mirror_frame_ready': 'Mirroring frame available',
+    'local.mirror_reconnect': 'Restore iPhone Mirroring connection',
     'local.saved_unapplied': 'Saved locally; not yet applied to the Agent',
-    "local.overview": "Overview",
-    "local.title": "Local Agent",
-    "local.language_help": "Set the language of the Agent and settings, and the time zone used by tasks.",
-    "local.apply_unavailable": "Configuration status unavailable; the Agent will load saved settings when it starts.",
-    "local.apply_failed": "Configuration has not been applied. Check the Agent logs.",
-    "local.apply_pending": "Configuration saved; waiting for the Agent to apply it.",
-    "local.applied": "Configuration applied",
-    "local.restart_required": "Startup settings have changed. Restart the local Agent.",
-    "local.apply_unknown": "Configuration status pending confirmation",
-    "local.offline": "Unavailable",
-    "local.offline_help": "Settings can still be saved and will load when the Agent starts.",
-    "local.target": "Current target device",
-    "local.target_help": "Selected by Agent launch arguments. Check device connectivity in the Agent interface.",
-    "local.open_agent": "Open Agent",
-    "local.intro": "Manage models, conversations and runtime preferences. Settings are saved locally and applied to the running Agent.",
-    "local.config_invalid": "Configuration needs repair",
-    "local.config_read_failed": "Could not read configuration",
-    "local.config_read_help": "Repair the TOML configuration file outside Config Web, then reload this page.",
-    "local.config_read_unavailable": "Restore access to the configuration before saving settings.",
-    "local.main_model": "Current main model",
-    "local.key_ready": "Configured",
-    "local.key_missing": "Not configured",
-    "local.config_file": "Configuration file",
+    'local.overview': 'Overview',
+    'local.title': 'Local Agent',
+    'local.language_help':
+      'Set the language of the Agent and settings, and the time zone used by tasks.',
+    'local.apply_unavailable':
+      'Configuration status unavailable; the Agent will load saved settings when it starts.',
+    'local.apply_failed': 'Configuration has not been applied. Check the Agent logs.',
+    'local.apply_pending': 'Configuration saved; waiting for the Agent to apply it.',
+    'local.applied': 'Configuration applied',
+    'local.restart_required': 'Startup settings have changed. Restart the local Agent.',
+    'local.apply_unknown': 'Configuration status pending confirmation',
+    'local.offline': 'Unavailable',
+    'local.offline_help': 'Settings can still be saved and will load when the Agent starts.',
+    'local.target': 'Current target device',
+    'local.target_help':
+      'Selected by Agent launch arguments. Check device connectivity in the Agent interface.',
+    'local.open_agent': 'Open Agent',
+    'local.intro':
+      'Manage models, conversations and runtime preferences. Settings are saved locally and applied to the running Agent.',
+    'local.config_invalid': 'Configuration needs repair',
+    'local.config_read_failed': 'Could not read configuration',
+    'local.config_read_help':
+      'Repair the TOML configuration file outside Config Web, then reload this page.',
+    'local.config_read_unavailable': 'Restore access to the configuration before saving settings.',
+    'local.main_model': 'Current main model',
+    'local.key_ready': 'Configured',
+    'local.key_missing': 'Not configured',
+    'local.config_file': 'Configuration file',
     'document.title': 'Aico Link Setup',
     'page.title': 'Device Settings',
     'page.language': 'Language',
@@ -108,7 +128,8 @@ const messages = {
     'wifi.region.title': 'Wi-Fi region',
     'wifi.region.change': 'Set region',
     'wifi.region.confirm': 'Confirm region',
-    'wifi.region.intro': 'The region decides which channels and transmit power this device may use. Choose where the device actually is.',
+    'wifi.region.intro':
+      'The region decides which channels and transmit power this device may use. Choose where the device actually is.',
     'wifi.region.suggestion': 'Suggested: {{region}} ({{source}})',
     'wifi.region.saved': 'Region set to {{region}}',
     'wifi.region.save_failed': 'Could not set the region',
@@ -144,7 +165,8 @@ const messages = {
     'wifi.proxy_state_custom': 'Custom proxy',
     'wifi.connect_to': 'Connect to "{{ssid}}"',
     'wifi.connecting_to': 'Connecting to "{{ssid}}"...',
-    'wifi.connect_failed_detail': 'Failed to connect to "{{ssid}}", please check password and try again.',
+    'wifi.connect_failed_detail':
+      'Failed to connect to "{{ssid}}", please check password and try again.',
     'wifi.connected_to': 'Connected to "{{ssid}}".',
     'wifi.forget_confirm': 'Forget "{{ssid}}"?',
     'wifi.forgot': 'Forgot "{{ssid}}".',
@@ -155,7 +177,8 @@ const messages = {
     'wifi.connect_failed': 'Failed to connect to Wi-Fi.',
     'wifi.connect_not_confirmed': 'Connection not confirmed to target network.',
     'wifi.forget_failed': 'Failed to forget Wi-Fi.',
-    'wifi.forget_apply_failed_detail': 'Network removed from saved list, but runtime config update failed.',
+    'wifi.forget_apply_failed_detail':
+      'Network removed from saved list, but runtime config update failed.',
     'status.title': 'Agent Status',
     'status.process': 'Process',
     'status.port': 'Port',
@@ -217,12 +240,14 @@ const messages = {
     'groups.screen_memory': 'Screen Memory Retention',
     'groups.notification_memory': 'Notification Memory Retention',
     'groups.reset_conversation': 'Reset Conversation & Memory',
-	'memory.reset.help': 'Delete conversation history and all persisted memory, then restart the Agent with a fresh conversation.',
-	'memory.reset.action': 'Reset conversation and memory',
-	'memory.reset.confirm': 'Delete all conversation history and persisted memory? This cannot be undone.',
-	'memory.reset.running': 'Resetting conversation and memory…',
-	'memory.reset.done': 'Conversation and memory were reset. The Agent is restarting.',
-	'memory.reset.failed': 'Failed to reset conversation and memory.',
+    'memory.reset.help':
+      'Delete conversation history and all persisted memory, then restart the Agent with a fresh conversation.',
+    'memory.reset.action': 'Reset conversation and memory',
+    'memory.reset.confirm':
+      'Delete all conversation history and persisted memory? This cannot be undone.',
+    'memory.reset.running': 'Resetting conversation and memory…',
+    'memory.reset.done': 'Conversation and memory were reset. The Agent is restarting.',
+    'memory.reset.failed': 'Failed to reset conversation and memory.',
     'groups.storage_settings': 'Storage Settings',
     'groups.storage_status': 'Storage Status',
     'groups.microsd_settings': 'microSD Settings',
@@ -231,13 +256,15 @@ const messages = {
     'groups.logs': 'Logs',
     'groups.manual_config': 'Manual Configuration',
     'groups.about': 'About',
-    'manual_config.help': 'Edit the complete grouped Agent TOML. The file is validated before it is saved.',
+    'manual_config.help':
+      'Edit the complete grouped Agent TOML. The file is validated before it is saved.',
     'manual_config.aria_label': 'Agent TOML configuration',
     'manual_config.editing': 'Editing the Agent TOML configuration.',
     'manual_config.cancelled': 'Cancelled manual configuration changes.',
     'manual_config.saved': 'Agent TOML configuration saved.',
     'manual_config.saved_pending': 'Agent TOML configuration saved and is waiting to be applied.',
-    'manual_config.saved_not_applied': 'Agent TOML configuration was saved but could not be applied.',
+    'manual_config.saved_not_applied':
+      'Agent TOML configuration was saved but could not be applied.',
     'manual_config.load_failed': 'Failed to load the Agent TOML configuration.',
     'manual_config.save_failed': 'Failed to save the Agent TOML configuration.',
     'about.firmware_version': 'Firmware version',
@@ -273,37 +300,46 @@ const messages = {
     'storage.migration_failed': 'Storage migration failed: {{error}}',
     'storage.card_issue': 'Card issue: {{reason}}',
     'storage.unknown_error': 'unknown error',
-    'storage.auto_formatting': 'Blank card detected — auto-formatting as {{fs}}... Keep the card inserted.',
+    'storage.auto_formatting':
+      'Blank card detected — auto-formatting as {{fs}}... Keep the card inserted.',
     'storage.formatting': 'Formatting card as {{fs}}... Keep the card inserted.',
-    'storage.migrating': 'eMMC is filling up — migrating older recordings to SD ({{files}} files, {{size}} moved)...',
+    'storage.migrating':
+      'eMMC is filling up — migrating older recordings to SD ({{files}} files, {{size}} moved)...',
     'storage.last_format_failed': 'Last format failed: {{error}}',
     'storage.last_format_complete': 'Last format completed ({{fs}}).',
     'storage.refreshed': 'Storage status refreshed.',
     'storage.load_failed': 'Failed to load storage status: {{error}}',
-    'storage.format_confirm': 'Format the SD card as {{fs}}? ALL partitions and data on the card will be ERASED. This cannot be undone.',
+    'storage.format_confirm':
+      'Format the SD card as {{fs}}? ALL partitions and data on the card will be ERASED. This cannot be undone.',
     'storage.erase_confirm': 'Really erase the entire card?',
     'storage.format_started': 'Format started.',
     'storage.format_start_failed': 'Failed to start format.',
     'storage.eject_confirm': 'Sync and unmount the SD card so it can be safely removed?',
     'storage.ejected': 'Card ejected. Safe to remove.',
-    'storage.ejected_with_warning': 'Card ejected and can be removed. Some pending data may not have been saved.',
-    'storage.last_flush_warning': 'A previous card flush failed. Some pending data may not have been saved.',
+    'storage.ejected_with_warning':
+      'Card ejected and can be removed. Some pending data may not have been saved.',
+    'storage.last_flush_warning':
+      'A previous card flush failed. Some pending data may not have been saved.',
     'storage.eject_failed': 'Failed to eject card.',
-    'storage.backup_help': 'Back up Agent data and settings to this computer or phone, or restore a validated Aico Link backup.',
+    'storage.backup_help':
+      'Back up Agent data and settings to this computer or phone, or restore a validated Aico Link backup.',
     'storage.backup_exporting': 'Exporting configuration backup...',
     'storage.backup_exported': 'Configuration backup exported.',
     'storage.backup_export_failed': 'Failed to export configuration backup.',
     'storage.backup_file_required': 'Select a TOML configuration backup.',
-    'storage.backup_import_confirm': 'Replace the current Agent configuration with {{name}}? The imported file will be validated before it is saved.',
+    'storage.backup_import_confirm':
+      'Replace the current Agent configuration with {{name}}? The imported file will be validated before it is saved.',
     'storage.backup_importing': 'Validating and importing configuration backup...',
     'storage.backup_imported': 'Configuration backup imported.',
     'storage.backup_imported_pending': 'Configuration backup imported. The Agent is applying it.',
-    'storage.backup_imported_not_applied': 'Configuration backup was saved, but the Agent could not apply it.',
+    'storage.backup_imported_not_applied':
+      'Configuration backup was saved, but the Agent could not apply it.',
     'storage.backup_import_failed': 'Failed to import configuration backup.',
     'storage.export_config': 'Export Agent config (.toml)',
     'storage.import_config': 'Import Agent config (.toml)',
     'storage.config_backup_advanced': 'Agent configuration only (.toml)',
-    'storage.config_backup_help': 'Export or import only the Agent TOML configuration. Memory, sessions, identity and SD data are not included.',
+    'storage.config_backup_help':
+      'Export or import only the Agent TOML configuration. Memory, sessions, identity and SD data are not included.',
     'backup.create_button': 'Create backup',
     'backup.restore_button': 'Restore backup',
     'backup.create_title': 'Create backup',
@@ -312,13 +348,20 @@ const messages = {
     'backup.cancel': 'Cancel',
     'backup.create_start': 'Create backup',
     'backup.restore_start': 'Restore',
-    'backup.create_intro': 'All available data is backed up automatically, including SD user files, Python environments and diagnostics. Backups use same-device mode and include device identity. The device stops the Agent, audio and Bluetooth while streaming. The archive is saved to this computer or phone, never to the SD card. It is not encrypted and contains credentials and private data; store it securely.',
-    'backup.restore_intro': 'All backup data will be restored automatically. SD data uses the inserted SD card; differing internal and SD audio files are both preserved. No password is required. Restore uploads, verifies and applies the backup in one operation. Restore backups from trusted sources only.',
-    'backup.error.encrypted_archive_unsupported': 'This is an older encrypted backup. Use the original password-capable client to restore it.',
-    'backup.restore_confirm': 'Upload, verify and restore all data from this backup now? SD data uses the inserted SD card; differing internal and SD audio files are both preserved. Once started, the restore cannot be cancelled. The device may restart automatically after restoring its identity.',
-    'backup.restore_cannot_cancel': 'The restore has started and cannot be cancelled. Please wait for it to finish.',
-    'backup.progress_hint': 'Please keep this page open and the USB connection connected until the operation finishes.',
-    'backup.reconnect_notice': 'The device is restarting to finish identity provisioning. Reconnect the USB link and reload this page once it is back.',
+    'backup.create_intro':
+      'All available data is backed up automatically, including SD user files, Python environments and diagnostics. Backups use same-device mode and include device identity. The device stops the Agent, audio and Bluetooth while streaming. The archive is saved to this computer or phone, never to the SD card. It is not encrypted and contains credentials and private data; store it securely.',
+    'backup.restore_intro':
+      'All backup data will be restored automatically. SD data uses the inserted SD card; differing internal and SD audio files are both preserved. No password is required. Restore uploads, verifies and applies the backup in one operation. Restore backups from trusted sources only.',
+    'backup.error.encrypted_archive_unsupported':
+      'This is an older encrypted backup. Use the original password-capable client to restore it.',
+    'backup.restore_confirm':
+      'Upload, verify and restore all data from this backup now? SD data uses the inserted SD card; differing internal and SD audio files are both preserved. Once started, the restore cannot be cancelled. The device may restart automatically after restoring its identity.',
+    'backup.restore_cannot_cancel':
+      'The restore has started and cannot be cancelled. Please wait for it to finish.',
+    'backup.progress_hint':
+      'Please keep this page open and the USB connection connected until the operation finishes.',
+    'backup.reconnect_notice':
+      'The device is restarting to finish identity provisioning. Reconnect the USB link and reload this page once it is back.',
     'backup.reconnected': 'The device is back online. Reload this page to continue.',
     'backup.mode_label': 'Mode',
     'backup.mode.same_device': 'Same device (includes machine identity)',
@@ -331,34 +374,49 @@ const messages = {
     'backup.sd_strategy.allow_different': 'Use the inserted SD card',
     'backup.sd_strategy.emmc_fallback': 'Restore SD audio to internal storage',
     'backup.sd_strategy.skip': 'Skip SD data',
-    'backup.conflict_confirm': 'I understand that audio files differing between internal storage and SD are both restored',
-    'backup.identity_confirm': 'Restore the machine identity (machine-id, SSH host keys, Bluetooth pairings) even if the device cannot verify this backup belongs to it',
+    'backup.conflict_confirm':
+      'I understand that audio files differing between internal storage and SD are both restored',
+    'backup.identity_confirm':
+      'Restore the machine identity (machine-id, SSH host keys, Bluetooth pairings) even if the device cannot verify this backup belongs to it',
     'backup.loading_capabilities': 'Reading backup capabilities…',
-    'backup.sd_included': 'SD card {{device}} is mounted; SD audio and user files are included automatically.',
+    'backup.sd_included':
+      'SD card {{device}} is mounted; SD audio and user files are included automatically.',
     'backup.sd_absent': 'No SD card is mounted; SD components are unavailable.',
     'backup.passphrase_too_short': 'The recovery passphrase must be at least 8 characters.',
     'backup.passphrase_mismatch': 'The passphrases do not match.',
     'backup.no_components': 'Select at least one component.',
-    'backup.create_started': 'Backup started; the device is stopping its services and streaming the archive.',
-    'backup.restore_started': 'Restore started; the Agent is stopped while the archive is uploaded.',
-    'backup.create_completed': 'Backup completed on the device. Check the download in your browser or app.',
-    'backup.restore_completed': 'Restore completed. Services have been restarted with the restored data.',
-    'backup.restore_reboot_required': 'Restore completed; the device is restarting to finish identity provisioning.',
+    'backup.create_started':
+      'Backup started; the device is stopping its services and streaming the archive.',
+    'backup.restore_started':
+      'Restore started; the Agent is stopped while the archive is uploaded.',
+    'backup.create_completed':
+      'Backup completed on the device. Check the download in your browser or app.',
+    'backup.restore_completed':
+      'Restore completed. Services have been restarted with the restored data.',
+    'backup.restore_reboot_required':
+      'Restore completed; the device is restarting to finish identity provisioning.',
     'backup.cancelled': 'Operation cancelled. Services have been restarted.',
-    'backup.rollback_failed': 'Restore failed and rollback could not complete: {{error}}. The device retries at next boot; do not power off.',
+    'backup.rollback_failed':
+      'Restore failed and rollback could not complete: {{error}}. The device retries at next boot; do not power off.',
     'backup.create_failed': 'Backup failed: {{error}}',
     'backup.restore_failed': 'Restore failed: {{error}}',
-    'backup.cancel_confirm': 'Cancel the running operation? Services restart and any uploaded data is discarded.',
-    'backup.maintenance_backup': 'A backup is running. Storage, OTA and configuration changes are locked until it finishes.',
-    'backup.maintenance_restore': 'A restore is running. Storage, OTA and configuration changes are locked until it finishes.',
-    'backup.usb_required': 'Full data backup and restore need the USB connection (192.168.42.1), or LAN access with a device-password sign-in.',
+    'backup.cancel_confirm':
+      'Cancel the running operation? Services restart and any uploaded data is discarded.',
+    'backup.maintenance_backup':
+      'A backup is running. Storage, OTA and configuration changes are locked until it finishes.',
+    'backup.maintenance_restore':
+      'A restore is running. Storage, OTA and configuration changes are locked until it finishes.',
+    'backup.usb_required':
+      'Full data backup and restore need the USB connection (192.168.42.1), or LAN access with a device-password sign-in.',
     'backup.archive_created': 'Archive created {{created}}.',
     'backup.file_info': '{{name}} ({{size}})',
     'backup.unknown_date': 'unknown date',
-    'backup.manifest_summary': '{{name}} ({{size}}), created {{created}}, mode: {{mode}}. All backup data will be restored; SD data will use the inserted SD card.',
+    'backup.manifest_summary':
+      '{{name}} ({{size}}), created {{created}}, mode: {{mode}}. All backup data will be restored; SD data will use the inserted SD card.',
     'backup.manifest_firmware': 'Source firmware: {{version}}',
     'backup.manifest_sd': 'The backup includes SD card data (UUID {{uuid}}).',
-    'backup.manifest_conflicts': '{{count}} audio files differ between internal storage and SD; both copies are restored.',
+    'backup.manifest_conflicts':
+      '{{count}} audio files differ between internal storage and SD; both copies are restored.',
     'backup.progress_streaming': 'Streaming {{done}} of {{total}} ({{phase}})',
     'backup.progress_uploading': 'Uploading {{done}} of {{total}} ({{phase}})',
     'backup.progress_transfer': 'Transferring {{done}} of {{total}}',
@@ -405,25 +463,34 @@ const messages = {
     'backup.phase.cancelled': 'Cancelled',
     'backup.phase.reboot_required': 'Restarting device',
     'backup.error.maintenance_in_progress': 'Another backup or restore is already running.',
-    'backup.error.maintenance_session_required': 'The maintenance session expired. Reload the page and try again.',
-    'backup.error.maintenance_session_busy': 'Another client holds the maintenance session. Close it there or wait for it to expire.',
-    'backup.error.usb_required': 'Connect over USB, or sign in on the LAN, to use backup and restore.',
-    'backup.error.ota_pending_boot': 'An OTA update is awaiting its health check; identity restore is blocked until it completes.',
+    'backup.error.maintenance_session_required':
+      'The maintenance session expired. Reload the page and try again.',
+    'backup.error.maintenance_session_busy':
+      'Another client holds the maintenance session. Close it there or wait for it to expire.',
+    'backup.error.usb_required':
+      'Connect over USB, or sign in on the LAN, to use backup and restore.',
+    'backup.error.ota_pending_boot':
+      'An OTA update is awaiting its health check; identity restore is blocked until it completes.',
     'backup.error.sd_missing': 'The backup contains SD card data but no usable SD card is mounted.',
     'backup.error.sd_changed': 'The SD card changed during the operation.',
-    'backup.error.sd_uuid_mismatch': 'The inserted SD card is not the one the backup was taken from.',
+    'backup.error.sd_uuid_mismatch':
+      'The inserted SD card is not the one the backup was taken from.',
     'backup.error.service_quiesce_failed': 'The device could not stop its services safely.',
     'backup.error.stream_stalled': 'The transfer made no progress and was cancelled.',
     'backup.error.wrong_passphrase': 'Wrong recovery passphrase.',
-    'backup.error.upload_interrupted': 'The upload was interrupted. Start the restore again from the beginning.',
+    'backup.error.upload_interrupted':
+      'The upload was interrupted. Start the restore again from the beginning.',
     'backup.error.host_transfer_unavailable': 'The app could not transfer the file ({{error}}).',
     'backup.error.archive_truncated': 'The backup file is incomplete.',
-    'backup.error.archive_authentication_failed': 'The backup file failed integrity validation; it may be corrupted.',
+    'backup.error.archive_authentication_failed':
+      'The backup file failed integrity validation; it may be corrupted.',
     'backup.error.manifest_invalid': 'The backup manifest is invalid.',
     'backup.error.unsupported_format': 'This backup format is not supported by this firmware.',
     'backup.error.not_aico_backup': 'This file is not an Aico Link backup.',
-    'backup.error.source_device_mismatch': 'This backup belongs to a different device. Use portable mode or deselect the device identity.',
-    'backup.error.identity_confirmation_required': 'Confirm the identity restore explicitly before continuing.',
+    'backup.error.source_device_mismatch':
+      'This backup belongs to a different device. Use portable mode or deselect the device identity.',
+    'backup.error.identity_confirmation_required':
+      'Confirm the identity restore explicitly before continuing.',
     'backup.error.identity_not_portable': 'Portable backups cannot restore a device identity.',
     'backup.error.insufficient_space': 'Not enough free space on the device for this restore.',
     'backup.error.path_rejected': 'The backup contains an unsafe path and was rejected.',
@@ -435,17 +502,21 @@ const messages = {
     'backup.error.cancelled': 'Cancelled.',
     'backup.error.job_expired': 'The backup was not downloaded in time; create it again.',
     'backup.error.chunk_out_of_order': 'The upload got out of sync; start the restore again.',
-    'backup.error.restore_plan_required': 'Choose the components to restore before the upload can continue.',
+    'backup.error.restore_plan_required':
+      'Choose the components to restore before the upload can continue.',
     'config.save_failed': 'Save [{{section}}] failed.',
     'config.saved_not_applied': 'Saved [{{section}}], but the Agent has not applied it yet.',
     'config.saved_pending': 'Saved [{{section}}]. Waiting to apply configuration.',
-    'config.apply_pending': 'Settings saved. Waiting for the current task or voice session to finish.',
+    'config.apply_pending':
+      'Settings saved. Waiting for the current task or voice session to finish.',
     'config.apply_done': 'Settings applied.',
     'config.apply_failed': 'Settings saved, but application failed. Retry after fixing the error.',
-    'config.apply_unavailable': 'Cannot read application status. The saved settings have not been confirmed as applied.',
+    'config.apply_unavailable':
+      'Cannot read application status. The saved settings have not been confirmed as applied.',
     'config.apply_retry': 'Retry apply',
     'config.reboot_action': 'Restart device',
-    'config.apply_reboot': 'USB/HID settings need a device restart. Other settings can apply without restarting.',
+    'config.apply_reboot':
+      'USB/HID settings need a device restart. Other settings can apply without restarting.',
     'config.saved': '[{{section}}] saved.',
     'config.editing': 'Editing [{{section}}], click Save after changes.',
     'config.cancelled': 'Cancelled changes to [{{section}}].',
@@ -458,49 +529,65 @@ const messages = {
     'config.test_passed': '[{{section}}] test passed',
     'config.test_failed': '[{{section}}] test not passed',
     'config.test_request_failed': 'Test [{{section}}] failed',
-    'config.audio_archive_available': 'In STT mode, saves voice recordings after wake-up for history playback.',
-    'config.audio_archive_locked': 'Only effective when agent.input_mode = stt; switch to STT and Edit recording Save settings.',
-    'config.stt_test_help': 'Click Test will activate microphone to start recording, click again to end recording and display recognition result.',
+    'config.audio_archive_available':
+      'In STT mode, saves voice recordings after wake-up for history playback.',
+    'config.audio_archive_locked':
+      'Only effective when agent.input_mode = stt; switch to STT and Edit recording Save settings.',
+    'config.stt_test_help':
+      'Click Test will activate microphone to start recording, click again to end recording and display recognition result.',
     'config.secret_saved_placeholder': 'Saved; leave empty to keep unchanged',
     'config.secret_not_set_placeholder': 'Not set',
-    'config.metadata_load_failed': 'Failed to read configuration metadata: agent.toml editing disabled, Wi-Fi and logs still work normally.',
-    'config.invalid_recovery': 'Agent configuration is invalid. Fix the field named in the details to restore the Agent.',
+    'config.metadata_load_failed':
+      'Failed to read configuration metadata: agent.toml editing disabled, Wi-Fi and logs still work normally.',
+    'config.invalid_recovery':
+      'Agent configuration is invalid. Fix the field named in the details to restore the Agent.',
     'config.wifi_connected': 'Wi-Fi connected.',
     'config.ready_hint': 'Please select Wi-Fi, or edit agent.toml by section.',
     'config.rebooting': 'Rebooting...',
     'config.reboot_request_sent': 'Sent reboot request, device will reboot.',
-    'config.reboot_sent': 'reboot command sent. Please wait for USB disconnect and re-enumeration before refreshing page.',
+    'config.reboot_sent':
+      'reboot command sent. Please wait for USB disconnect and re-enumeration before refreshing page.',
     'config.reboot_failed': 'Reboot failed.',
     'config.hid_saved': 'USB HID configuration saved. Reboot the board for it to take effect.',
-    'config.hid_hot_restart_avoided': 'Will not hot-restart or re-enumerate USB HID to avoid an inconsistent host USB session.',
-    'config.hid_reboot_confirm': 'USB HID settings saved, requires reboot to take effect. Reboot now?',
-    'config.hid_reboot_cancelled': 'Cancelled immediate reboot. Please reboot manually later, then verify USB HID after reboot.',
+    'config.hid_hot_restart_avoided':
+      'Will not hot-restart or re-enumerate USB HID to avoid an inconsistent host USB session.',
+    'config.hid_reboot_confirm':
+      'USB HID settings saved, requires reboot to take effect. Reboot now?',
+    'config.hid_reboot_cancelled':
+      'Cancelled immediate reboot. Please reboot manually later, then verify USB HID after reboot.',
     'config.default_empty': 'Default: Empty',
     'config.default_value': 'Default: {{value}}',
     'config.fields.agent.input_mode.label': 'Voice mode',
-    'config.fields.agent.input_mode.help': 'Choose the device voice mode. Classic uses separate STT and TTS; Realtime uses a direct realtime voice provider.',
+    'config.fields.agent.input_mode.help':
+      'Choose the device voice mode. Classic uses separate STT and TTS; Realtime uses a direct realtime voice provider.',
     'config.fields.agent.input_mode.options.stt': 'Classic',
     'config.fields.agent.input_mode.options.realtime': 'Realtime',
     'config.fields.agent.tap_wakeup_enabled.label': 'Tap wakeup',
-    'config.fields.agent.tap_wakeup_enabled.help': 'When on, the MCU touch key can wake Aico. Turning it off leaves ASR and other activation paths available.',
+    'config.fields.agent.tap_wakeup_enabled.help':
+      'When on, the MCU touch key can wake Aico. Turning it off leaves ASR and other activation paths available.',
     'config.fields.agent.mcp_enabled.label': 'MCP',
     'config.fields.agent.mcp_enabled.help': 'When on, Agent tools can be used over MCP.',
     'config.fields.agent.ui_grounding_enabled.label': 'Mark tappable elements automatically',
-    'config.fields.agent.ui_grounding_enabled.help': 'Helps Aico tap buttons and fields on screen more accurately.',
+    'config.fields.agent.ui_grounding_enabled.help':
+      'Helps Aico tap buttons and fields on screen more accurately.',
     'config.fields.agent.locale.label': 'Locale',
     'config.fields.agent.timezone.label': 'Time zone',
-    'config.fields.agent.timezone.help': "Time zone used for the Agent's date context and controller shell commands.",
+    'config.fields.agent.timezone.help':
+      "Time zone used for the Agent's date context and controller shell commands.",
     'config.fields.agent.prompt.label': 'Prompt',
-    'config.fields.agent.prompt.help': 'Appended after the built-in Agent instruction. Use it for device, project, or environment-specific requirements.',
+    'config.fields.agent.prompt.help':
+      'Appended after the built-in Agent instruction. Use it for device, project, or environment-specific requirements.',
     'config.fields.agent.max_iterations.label': 'Maximum tool-call iterations',
-    'config.fields.agent.max_iterations.help': 'Maximum number of model and tool loops for one task. -1 allows unlimited iterations.',
+    'config.fields.agent.max_iterations.help':
+      'Maximum number of model and tool loops for one task. -1 allows unlimited iterations.',
     'config.fields.device.device_type.label': 'Device type',
     'config.fields.device.device_type.options.ios': 'iOS',
     'config.fields.device.device_type.options.android': 'Android',
     'config.fields.device.device_type.options.macos': 'macOS',
     'config.fields.device.device_type.options.windows': 'Windows',
     'config.fields.device.device_type.options.linux': 'Linux',
-    'config.fields.device.device_type.help': 'Android uses HID touchscreen mode. iOS, macOS, windows, and linux use absolute pointer mode.',
+    'config.fields.device.device_type.help':
+      'Android uses HID touchscreen mode. iOS, macOS, windows, and linux use absolute pointer mode.',
     'config.fields.hid.keyboard_layout.label': 'Keyboard layout',
     'config.fields.hid.keyboard_layout.options.qwerty': 'QWERTY',
     'config.fields.hid.keyboard_layout.options.azerty': 'AZERTY',
@@ -509,61 +596,80 @@ const messages = {
     'config.fields.hid.input_backend.options.hid': 'USB HID',
     'config.fields.hid.input_backend.options.adb': 'ADB',
     'config.fields.model.api_mode.label': 'Conversation API',
-    'config.fields.model.api_mode.help': 'Local modes submit the transcript. Provider modes store context and continue from the previous provider interaction.',
+    'config.fields.model.api_mode.help':
+      'Local modes submit the transcript. Provider modes store context and continue from the previous provider interaction.',
     'config.fields.model.api_mode.options.default': 'Chat Completions (compatible)',
     'config.fields.model.api_mode.options.responses': 'Responses (local context)',
     'config.fields.model.api_mode.options.responses_stateful': 'Responses (provider context)',
     'config.fields.model.api_mode.options.interactions': 'Interactions (local context)',
     'config.fields.model.api_mode.options.interactions_stateful': 'Interactions (provider context)',
     'config.fields.model.provider.label': 'Model provider',
-    'config.fields.model.provider.help': 'Select the configured provider record used for the main model.',
+    'config.fields.model.provider.help':
+      'Select the configured provider record used for the main model.',
     'config.fields.model.model.label': 'Model',
-    'config.fields.model.model.help': 'Select or enter the model name exposed by the configured provider.',
+    'config.fields.model.model.help':
+      'Select or enter the model name exposed by the configured provider.',
     'config.fields.model.responses_context_management.label': 'Provider compaction',
-    'config.fields.model.responses_context_management.help': 'Ask a compatible provider to compact context at the threshold. This does not change who manages the conversation context.',
+    'config.fields.model.responses_context_management.help':
+      'Ask a compatible provider to compact context at the threshold. This does not change who manages the conversation context.',
     'config.fields.model.responses_context_management.options.default': 'Off (recommended)',
     'config.fields.model.responses_context_management.options.compaction': 'Compact at threshold',
-    'config.fields.model.responses_context_management.options.ark_context_edit': 'Ark context edits',
+    'config.fields.model.responses_context_management.options.ark_context_edit':
+      'Ark context edits',
     'config.fields.model.responses_context_edit_trigger.label': 'Ark tool-call trigger',
-    'config.fields.model.responses_context_edit_trigger.help': 'After this many tool calls, Ark clears old tool inputs. 0 uses the recommended value 10.',
+    'config.fields.model.responses_context_edit_trigger.help':
+      'After this many tool calls, Ark clears old tool inputs. 0 uses the recommended value 10.',
     'config.fields.model.responses_context_edit_trigger.placeholder': '10 = recommended',
     'config.fields.model.responses_context_edit_keep.label': 'Ark tool calls to keep',
-    'config.fields.model.responses_context_edit_keep.help': 'Number of recent tool calls Ark keeps after cleanup. 0 uses the recommended value 3.',
+    'config.fields.model.responses_context_edit_keep.help':
+      'Number of recent tool calls Ark keeps after cleanup. 0 uses the recommended value 3.',
     'config.fields.model.responses_context_edit_keep.placeholder': '3 = recommended',
     'config.fields.model.responses_context_edit_clear_thinking.label': 'Clear old thinking',
-    'config.fields.model.responses_context_edit_clear_thinking.help': 'Ask Ark to remove previous thinking turns when it applies the context edit.',
+    'config.fields.model.responses_context_edit_clear_thinking.help':
+      'Ask Ark to remove previous thinking turns when it applies the context edit.',
     'config.fields.model.responses_compact_threshold.label': 'Compaction threshold (tokens)',
-    'config.fields.model.responses_compact_threshold.help': 'Token count that triggers provider compaction. 0 lets the provider choose.',
+    'config.fields.model.responses_compact_threshold.help':
+      'Token count that triggers provider compaction. 0 lets the provider choose.',
     'config.fields.model.responses_compact_threshold.placeholder': '0 = provider default',
     'config.fields.model.responses_truncation.label': 'Over-limit input',
-    'config.fields.model.responses_truncation.help': 'Fail when input is too long, or let a compatible provider discard the oldest input and continue.',
+    'config.fields.model.responses_truncation.help':
+      'Fail when input is too long, or let a compatible provider discard the oldest input and continue.',
     'config.fields.model.responses_truncation.options.default': 'Fail with an error (default)',
     'config.fields.model.responses_truncation.options.auto': 'Discard oldest input automatically',
     'config.fields.model.responses_include.label': 'Extra response fields',
-    'config.fields.model.responses_include.help': 'Usually leave empty. Add provider-supported include values only when needed, one per line.',
+    'config.fields.model.responses_include.help':
+      'Usually leave empty. Add provider-supported include values only when needed, one per line.',
     'config.fields.model.responses_include.placeholder': 'For example: reasoning.encrypted_content',
     'config.fields.model.temperature.label': 'Temperature',
-    'config.fields.model.temperature.help': 'Controls response randomness. Leave empty to use the Agent-selected default; some models defer to their provider default. 0 is sent as an explicit value.',
+    'config.fields.model.temperature.help':
+      'Controls response randomness. Leave empty to use the Agent-selected default; some models defer to their provider default. 0 is sent as an explicit value.',
     'config.fields.model.max_response_tokens.label': 'Maximum response tokens',
     'config.fields.model.max_response_tokens.placeholder': '0 = provider default',
-    'config.fields.model.max_response_tokens.help': 'Maximum number of tokens allowed in one model response. 0 sends no limit, so the provider default applies; native Anthropic, which requires a limit, uses the model output limit instead (8192 when unknown).',
+    'config.fields.model.max_response_tokens.help':
+      'Maximum number of tokens allowed in one model response. 0 sends no limit, so the provider default applies; native Anthropic, which requires a limit, uses the model output limit instead (8192 when unknown).',
     'config.fields.model.log_raw_http.label': 'Record detailed model requests',
-    'config.fields.model.log_raw_http.help': 'Write raw model HTTP requests and responses to the Agent log directory. Enable only while troubleshooting.',
+    'config.fields.model.log_raw_http.help':
+      'Write raw model HTTP requests and responses to the Agent log directory. Enable only while troubleshooting.',
     'config.fields.model.reasoning_effort.label': 'Reasoning effort',
-    'config.fields.model.reasoning_effort.help': 'Empty = auto. Options follow the selected model capability; none is shown only when the model supports disabling reasoning.',
+    'config.fields.model.reasoning_effort.help':
+      'Empty = auto. Options follow the selected model capability; none is shown only when the model supports disabling reasoning.',
     'config.fields.model.reasoning_budget_tokens.label': 'Reasoning budget (tokens)',
-    'config.fields.model.reasoning_budget_tokens.help': 'Optional exact reasoning budget for budget-based models. 0 uses the model default or effort preset. Reasoning tokens count against Max response tokens, so this must be at least 1,024 and smaller than that limit.',
+    'config.fields.model.reasoning_budget_tokens.help':
+      'Optional exact reasoning budget for budget-based models. 0 uses the model default or effort preset. Reasoning tokens count against Max response tokens, so this must be at least 1,024 and smaller than that limit.',
     'config.fields.model.reasoning_budget_tokens.placeholder': '0 = auto',
     'config.fields.model.context_window.placeholder': '0 = auto',
     'config.fields.model.context_window.help': '0 = auto: use provider metadata when available.',
     'config.fields.model.model_max_output_tokens.placeholder': '0 = auto',
-    'config.fields.model.model_max_output_tokens.help': '0 = auto: use provider metadata when available.',
+    'config.fields.model.model_max_output_tokens.help':
+      '0 = auto: use provider metadata when available.',
     'config.fields.model.context_window.label': 'Context window (tokens)',
     'config.fields.model.model_max_output_tokens.label': 'Provider output limit (tokens)',
     'config.fields.voice_model.use_backend_agent.label': 'Use Backend Agent',
-    'config.fields.voice_model.use_backend_agent.help': 'Enabled by default when the backend model has a credential. Uses the backend agent and exposes its communication tools. When disabled, the realtime model gets the runtime tools that the backend agent would otherwise use. Provider reasoning is unaffected. Hidden for Moss Live, which always runs without the backend agent without rewriting this stored value.',
+    'config.fields.voice_model.use_backend_agent.help':
+      'Enabled by default when the backend model has a credential. Uses the backend agent and exposes its communication tools. When disabled, the realtime model gets the runtime tools that the backend agent would otherwise use. Provider reasoning is unaffected. Hidden for Moss Live, which always runs without the backend agent without rewriting this stored value.',
     'config.fields.voice_model.provider.label': 'Realtime provider record',
-    'config.fields.voice_model.provider.help': 'Select the configured provider record used for realtime voice mode.',
+    'config.fields.voice_model.provider.help':
+      'Select the configured provider record used for realtime voice mode.',
     'config.fields.voice_model.model.label': 'Realtime model',
     'config.fields.stt.provider.label': 'Speech-to-text provider',
     'config.fields.stt.language.label': 'Recognition language',
@@ -577,22 +683,27 @@ const messages = {
     'config.fields.search.provider.help': 'Provider used by the web search tool.',
     'config.fields.search.api_key.label': 'Search API key',
     'config.fields.decision.enabled.label': 'Enable decision model',
-    'config.fields.decision.enabled.help': 'Fixed workflow checks ask the decision model and the main model at once; confident decision-model answers are used. Requires an API key.',
+    'config.fields.decision.enabled.help':
+      'Fixed workflow checks ask the decision model and the main model at once; confident decision-model answers are used. Requires an API key.',
     'config.fields.decision.provider.label': 'Decision model provider',
-    'config.fields.decision.provider.help': 'TypeSafe Jev, OpenAI Luna, Gemini Decision 1, or OpenRouter. Luna and Gemini have no box answers, so tap targets stay with the main model.',
+    'config.fields.decision.provider.help':
+      'TypeSafe Jev, OpenAI Luna, Gemini Decision 1, or OpenRouter. Luna and Gemini have no box answers, so tap targets stay with the main model.',
     'config.fields.decision.api_key.label': 'Decision model API key',
     'config.fields.decision.base_url.label': 'Decision model Base URL',
     'config.fields.decision.model.label': 'Decision model',
     'config.fields.decision.min_confidence.label': 'Minimum confidence',
-    'config.fields.decision.min_confidence.help': 'Answers below this confidence (0 to 1) are handed back to the main model.',
+    'config.fields.decision.min_confidence.help':
+      'Answers below this confidence (0 to 1) are handed back to the main model.',
     'config.fields.log.level.label': 'Log level',
-    'config.fields.log.level.help': 'Only messages at this severity or higher are written to the Agent log.',
+    'config.fields.log.level.help':
+      'Only messages at this severity or higher are written to the Agent log.',
     'config.fields.log.level.options.debug': 'Debug',
     'config.fields.log.level.options.info': 'Info',
     'config.fields.log.level.options.warn': 'Warning',
     'config.fields.log.level.options.error': 'Error',
     'config.fields.log.llm_http_retention_days.label': 'Log retention (days)',
-    'config.fields.log.llm_http_retention_days.help': 'Number of days to keep detailed model request logs before automatic cleanup.',
+    'config.fields.log.llm_http_retention_days.help':
+      'Number of days to keep detailed model request logs before automatic cleanup.',
     'config.fields.model_providers.type.label': 'Provider type',
     'config.fields.model_providers.api_key.label': 'API key',
     'config.fields.model_providers.base_url.label': 'Provider base URL',
@@ -639,7 +750,8 @@ const messages = {
     'config.fields.voice_model_providers.thinking_level.options.medium': 'MEDIUM',
     'config.fields.voice_model_providers.thinking_level.options.high': 'HIGH',
     'config.fields.voice_model_providers.realtime_protocol.options.default': 'OpenAI GA (default)',
-    'config.fields.voice_model_providers.realtime_protocol.options.legacy': 'Legacy / Beta-compatible',
+    'config.fields.voice_model_providers.realtime_protocol.options.legacy':
+      'Legacy / Beta-compatible',
     'config.fields.voice_model_providers.base_url.label': 'Provider Base URL',
     'config.fields.voice_model_providers.region.label': 'Region',
     'config.fields.voice_model_providers.region.options.default': 'Automatic',
@@ -648,36 +760,53 @@ const messages = {
     'config.fields.voice_model_providers.turn_detection.label': 'Turn detection',
     'config.fields.voice_model_providers.turn_detection.options.server_vad': 'Server VAD',
     'config.fields.voice_model_providers.turn_detection.options.smart_turn': 'Smart Turn',
-    'config.fields.voice_model_providers.turn_detection_threshold.label': 'Turn detection threshold',
+    'config.fields.voice_model_providers.turn_detection_threshold.label':
+      'Turn detection threshold',
     'config.fields.voice_model_providers.turn_detection_threshold.placeholder': 'Default: 0.5',
-    'config.fields.voice_model_providers.turn_detection_threshold.help': 'Optional Qwen server_vad threshold. Leave empty to use the provider default.',
-    'config.fields.voice_model_providers.turn_detection_silence_ms.label': 'Turn detection silence (ms)',
+    'config.fields.voice_model_providers.turn_detection_threshold.help':
+      'Optional Qwen server_vad threshold. Leave empty to use the provider default.',
+    'config.fields.voice_model_providers.turn_detection_silence_ms.label':
+      'Turn detection silence (ms)',
     'config.fields.voice_model_providers.turn_detection_silence_ms.placeholder': 'Default: 800',
-    'config.fields.voice_model_providers.turn_detection_silence_ms.help': 'Optional Qwen server_vad silence duration before completing a turn. Leave empty to use the provider default.',
+    'config.fields.voice_model_providers.turn_detection_silence_ms.help':
+      'Optional Qwen server_vad silence duration before completing a turn. Leave empty to use the provider default.',
     'config.fields.voice_model_providers.voice.label': 'Voice',
-    'config.fields.audio_archive.enabled.help': 'After enabling, save STT voice recording WAV for Web UI playback; Automatically delete old files when exceeding quantity or capacity limit.',
+    'config.fields.audio_archive.enabled.help':
+      'After enabling, save STT voice recording WAV for Web UI playback; Automatically delete old files when exceeding quantity or capacity limit.',
     'config.fields.frame_service.keep_streamon.label': 'Keep STREAMON',
-    'config.fields.frame_service.keep_streamon.help': 'Keep the RK628 CSI capture stream enabled between screenshots. This reduces screenshot latency but increases idle power consumption.',
+    'config.fields.frame_service.keep_streamon.help':
+      'Keep the RK628 CSI capture stream enabled between screenshots. This reduces screenshot latency but increases idle power consumption.',
     'config.fields.quick_capture.enabled.label': 'Enabled',
-    'config.fields.quick_capture.enabled.help': 'Enable GPIO-triggered Screen Memory capture. MCU touch-key and ASR wakeup remain independent.',
+    'config.fields.quick_capture.enabled.help':
+      'Enable GPIO-triggered Screen Memory capture. MCU touch-key and ASR wakeup remain independent.',
     'config.fields.quick_capture.gpio_pin.label': 'GPIO Pin',
-    'config.fields.quick_capture.gpio_pin.help': 'Falling-edge trigger pin. 0 disables the trigger; GPIO3 is physical pin 38 on Luckfox Pico Zero. GPIO32 and GPIO33 control HDMI power and reset.',
+    'config.fields.quick_capture.gpio_pin.help':
+      'Falling-edge trigger pin. 0 disables the trigger; GPIO3 is physical pin 38 on Luckfox Pico Zero. GPIO32 and GPIO33 control HDMI power and reset.',
     'config.fields.quick_capture.screen_memory_ttl.label': 'Screen Memory TTL',
-    'config.fields.quick_capture.screen_memory_ttl.help': 'Retention period for captured Screen Memory entries, such as 90d, or forever.',
-	'config.fields.voice_notifications.retention_days.label': 'Notification memory retention (days)',
-	'config.fields.voice_notifications.retention_days.help': 'Number of days to keep processed notification memory during normal cleanup. Storage pressure may use shorter fallback windows.',
+    'config.fields.quick_capture.screen_memory_ttl.help':
+      'Retention period for captured Screen Memory entries, such as 90d, or forever.',
+    'config.fields.voice_notifications.retention_days.label':
+      'Notification memory retention (days)',
+    'config.fields.voice_notifications.retention_days.help':
+      'Number of days to keep processed notification memory during normal cleanup. Storage pressure may use shorter fallback windows.',
     'config.fields.ota.github_proxy_url.label': 'GitHub Proxy URL',
     'config.fields.ota.github_proxy_url.placeholder': 'Leave empty to disable',
-    'config.fields.ota.github_proxy_url.help': 'Optional proxy to accelerate GitHub downloads (e.g., https://gh-proxy.com/ or https://ghfast.top/)',
-    'config.fields.hid.keyboard_layout.help': 'How the phone interprets the USB keyboard. Keep qwerty unless typed text comes out transposed; then switch the phone input language to match, save, and reboot the board.',
+    'config.fields.ota.github_proxy_url.help':
+      'Optional proxy to accelerate GitHub downloads (e.g., https://gh-proxy.com/ or https://ghfast.top/)',
+    'config.fields.hid.keyboard_layout.help':
+      'How the phone interprets the USB keyboard. Keep qwerty unless typed text comes out transposed; then switch the phone input language to match, save, and reboot the board.',
     'config.fields.agent.context_prune_threshold.label': 'Historical prune threshold (fraction)',
-    'config.fields.agent.context_prune_threshold.help': 'Fraction of the usable model input budget that triggers cleanup of expired state and historical tool results, cleaning down to 6/7 of the trigger. Must be 0 or greater than 0 and less than 1; 0 uses 0.5. Capped at context_compaction_threshold so this cheap pass runs before the conversation summary.',
+    'config.fields.agent.context_prune_threshold.help':
+      'Fraction of the usable model input budget that triggers cleanup of expired state and historical tool results, cleaning down to 6/7 of the trigger. Must be 0 or greater than 0 and less than 1; 0 uses 0.5. Capped at context_compaction_threshold so this cheap pass runs before the conversation summary.',
     'config.fields.agent.context_prune_threshold.placeholder': '0 = automatic (0.5)',
     'config.fields.agent.context_prune_state_limit.label': 'Screenshot state limit',
-    'config.fields.agent.context_prune_state_limit.help': 'Runs the same stale-state cleanup once the context holds more <state> messages with a screenshot than this, keeping the latest state of the current turn. It does not compact tool results. 0 uses 6.',
+    'config.fields.agent.context_prune_state_limit.help':
+      'Runs the same stale-state cleanup once the context holds more <state> messages with a screenshot than this, keeping the latest state of the current turn. It does not compact tool results. 0 uses 6.',
     'config.fields.agent.context_prune_state_limit.placeholder': '0 = automatic (6)',
-    'config.fields.agent.context_compaction_threshold.label': 'Context compaction threshold (fraction)',
-    'config.fields.agent.context_compaction_threshold.help': 'Fraction of the usable model input budget at which the conversation is summarized. Must be 0 or greater than 0 and less than 1; 0 uses 0.8.',
+    'config.fields.agent.context_compaction_threshold.label':
+      'Context compaction threshold (fraction)',
+    'config.fields.agent.context_compaction_threshold.help':
+      'Fraction of the usable model input budget at which the conversation is summarized. Must be 0 or greater than 0 and less than 1; 0 uses 0.8.',
     'config.fields.agent.context_compaction_threshold.placeholder': '0 = automatic (0.8)',
     'locale.saved': 'Language saved. Application status is shown below.',
     'locale.save_failed': 'Failed to save language.',
@@ -698,7 +827,8 @@ const messages = {
     'provider.saved': 'Providers saved.',
     'provider.saved_pending': 'Providers saved; waiting for application.',
     'provider.saved_not_applied': 'Providers saved, but not applied. See the application error.',
-    'provider.save_not_applied': 'The device did not apply the provider changes. Reload and try again.',
+    'provider.save_not_applied':
+      'The device did not apply the provider changes. Reload and try again.',
     'provider.save_failed': 'Failed to save providers.',
     'provider.choose_model': 'Choose a model',
     'provider.current_model': 'Current model',
@@ -712,7 +842,8 @@ const messages = {
     'provider.recommended': 'Recommended',
     'provider.type_required': 'Provider type is required',
     'provider.in_use': 'Provider is in use. Add or select another provider before deleting it.',
-    'provider.delete_in_use_confirm': 'This provider is in use. Delete it and switch to another configured provider?',
+    'provider.delete_in_use_confirm':
+      'This provider is in use. Delete it and switch to another configured provider?',
     'provider.type': 'Provider',
     'provider.type_short': 'Type',
     'provider.api_key': 'API Key',
@@ -721,14 +852,19 @@ const messages = {
     'provider.name': 'Name',
     'provider.select': '-- Select --',
     'provider.api_key_placeholder': 'sk-... or $OPENAI_API_KEY',
-    'provider.anthropic_api_key_placeholder': 'sk-ant-... or $ANTHROPIC_API_KEY / $ANTHROPIC_AUTH_TOKEN',
+    'provider.anthropic_api_key_placeholder':
+      'sk-ant-... or $ANTHROPIC_API_KEY / $ANTHROPIC_AUTH_TOKEN',
     'provider.credential_placeholder': 'Enter a new value',
     'provider.credential_saved_placeholder': 'Saved; leave empty to keep unchanged',
     'provider.credential_configured': 'Configured',
-    'provider.api_key_help': 'Leave empty to keep the saved value. Starts with $ = read from that environment variable.',
-    'provider.anthropic_api_key_help': 'Leave empty to keep the saved value. ANTHROPIC_AUTH_TOKEN uses Bearer auth; ANTHROPIC_API_KEY and literal keys use x-api-key.',
-    'provider.name_help_model': 'Identifies this entry in the model provider list. Auto-filled; edit to override.',
-    'provider.name_help': 'Identifies this entry in the provider list. Auto-filled; edit to override.',
+    'provider.api_key_help':
+      'Leave empty to keep the saved value. Starts with $ = read from that environment variable.',
+    'provider.anthropic_api_key_help':
+      'Leave empty to keep the saved value. ANTHROPIC_AUTH_TOKEN uses Bearer auth; ANTHROPIC_API_KEY and literal keys use x-api-key.',
+    'provider.name_help_model':
+      'Identifies this entry in the model provider list. Auto-filled; edit to override.',
+    'provider.name_help':
+      'Identifies this entry in the provider list. Auto-filled; edit to override.',
     'provider.advanced': 'Advanced',
     'provider.save_changes': 'Save Changes',
     'provider.auto': 'auto',
@@ -768,7 +904,8 @@ const messages = {
     'stt.failed': '[stt] test failed',
     'stt.start_failed': 'Failed to start [stt] test',
     'stt.stop_failed': 'Failed to end [stt] test',
-    'stt.start_speaking': 'Please start speaking, click "End Recording" again to submit for recognition.',
+    'stt.start_speaking':
+      'Please start speaking, click "End Recording" again to submit for recognition.',
     'stt.keep_speaking': 'Please speak, click Test button again after ending.',
     'stt.waiting_result': 'Recording ended, waiting for recognition result...',
     'stt.result': 'Recognition result:',
@@ -802,7 +939,8 @@ const messages = {
     'ui.network_name_placeholder': 'Enter network name',
     'ui.connect_failed': 'Could not connect',
     'ui.wifi_join_failed': 'Could not join this network. Check the name and password.',
-    'ui.wifi_intro': 'Once connected, Aico can push messages, capture information and learn how you operate your devices, so automation can take over repetitive work.',
+    'ui.wifi_intro':
+      'Once connected, Aico can push messages, capture information and learn how you operate your devices, so automation can take over repetitive work.',
     'ui.not_connected': 'Not connected',
     'ui.voice_unset': 'Off',
     'ui.other_networks_more': 'Others…',
@@ -811,7 +949,8 @@ const messages = {
     'ui.load_failed': 'Failed to load',
     'ui.retry': 'Retry',
     'basic.language_title': 'Language & Time Zone',
-    'basic.language_description': 'Connect Aico Link to receive messages, capture information, and simplify repetitive tasks with automation that learns how you work.',
+    'basic.language_description':
+      'Connect Aico Link to receive messages, capture information, and simplify repetitive tasks with automation that learns how you work.',
     'basic.timezone': 'Time zone',
     'basic.device_type': 'Device type',
     'basic.keyboard_layout': 'Keyboard layout',
@@ -822,23 +961,30 @@ const messages = {
     'storage.full_backup_confirm_title': 'Create a full backup?',
     'storage.create_backup': 'Create backup',
     'storage.full_restore_confirm_title': 'Restore this backup?',
-    'storage.full_restore_confirm_body': '{{name}} (created {{created}}) replaces the data and settings on the device. Services pause while it runs and the device may need to restart. Only restore backups from a source you trust.',
+    'storage.full_restore_confirm_body':
+      '{{name}} (created {{created}}) replaces the data and settings on the device. Services pause while it runs and the device may need to restart. Only restore backups from a source you trust.',
     'storage.restore_backup': 'Restore backup',
-    'storage.backup_app_hint': 'Backups can be restored in the app; to create one, open this page in a computer browser.',
-    'storage.full_backup_intro': 'Back up all Agent data and settings (memory, sessions, device identity and more) to this computer or phone, or restore an Aico Link backup.',
+    'storage.backup_app_hint':
+      'Backups can be restored in the app; to create one, open this page in a computer browser.',
+    'storage.full_backup_intro':
+      'Back up all Agent data and settings (memory, sessions, device identity and more) to this computer or phone, or restore an Aico Link backup.',
     'storage.config_backup_caption': 'Agent configuration only (.toml)',
     'memory.screen_enabled': 'Screen memory',
-    'memory.screen_enabled_help': 'When on, pressing the capture button on the device saves what is on screen so Aico can recall it later.',
+    'memory.screen_enabled_help':
+      'When on, pressing the capture button on the device saves what is on screen so Aico can recall it later.',
     'advanced.terminal': 'Terminal',
     'lan.title': 'LAN access',
     'lan.on': 'On',
     'lan.off': 'Off',
-    'lan.help': 'When on, devices on the same local network can also reach the settings page (ports 80 and 443) and the Agent (ports 8080 and 8443), and SSH and the web terminal once a device password is set. When off, only the USB connection can. MCP uses its own tokens and is not affected.',
-    'lan.no_password_warning': 'No device password is set, so devices on the local network get in without signing in. Set one under Device password.',
+    'lan.help':
+      'When on, devices on the same local network can also reach the settings page (ports 80 and 443) and the Agent (ports 8080 and 8443), and SSH and the web terminal once a device password is set. When off, only the USB connection can. MCP uses its own tokens and is not affected.',
+    'lan.no_password_warning':
+      'No device password is set, so devices on the local network get in without signing in. Set one under Device password.',
     'lan.password': 'Device password',
     'lan.password_set': 'Set',
     'lan.password_unset': 'Not set',
-    'lan.password_help': 'Once set, every device signs in first: LAN devices enter this password and the Aico app signs in over USB automatically. It is also the password of the aico account, used by the web terminal and SSH; without one neither can log in. Changing or clearing it signs every device out.',
+    'lan.password_help':
+      'Once set, every device signs in first: LAN devices enter this password and the Aico app signs in over USB automatically. It is also the password of the aico account, used by the web terminal and SSH; without one neither can log in. Changing or clearing it signs every device out.',
     'lan.sign_out': 'Sign out',
     'lan.password_title': 'Device password',
     'lan.password_placeholder': 'Enter a new password',
@@ -856,15 +1002,20 @@ const messages = {
     'lan.password_saved': 'Device password updated',
     'lan.save_failed': 'Could not save',
     'lan.unavailable': 'Unavailable',
-    'lan.login_sync_failed': 'Saved. SSH and the terminal login follow it after the device restarts.',
+    'lan.login_sync_failed':
+      'Saved. SSH and the terminal login follow it after the device restarts.',
     'lan.clear_password': 'Clear password',
-    'lan.clear_help': 'Clearing signs every device out, and SSH and the web terminal cannot log in until a password is set again.',
-    'lan.clear_help_lan_on': 'Clearing signs every device out, and SSH and the web terminal cannot log in. LAN access stays on, so devices on the local network reach the settings page and the Agent without signing in.',
+    'lan.clear_help':
+      'Clearing signs every device out, and SSH and the web terminal cannot log in until a password is set again.',
+    'lan.clear_help_lan_on':
+      'Clearing signs every device out, and SSH and the web terminal cannot log in. LAN access stays on, so devices on the local network reach the settings page and the Agent without signing in.',
     'lan.password_cleared': 'Device password cleared',
     'lan.usb_only': 'Can only be changed over USB',
     'mcp.title': 'MCP access tokens',
-    'mcp.help': 'Works as soon as the computer and Aico Link are on the same Wi-Fi; LAN access can stay off. A token is good only for MCP, does not expire, and still works after a password change; revoke it here when you no longer use it.',
-    'mcp.direct_hint': 'Plugged straight into Aico Link with the cable? Replace the IP in the address with 192.168.42.1.',
+    'mcp.help':
+      'Works as soon as the computer and Aico Link are on the same Wi-Fi; LAN access can stay off. A token is good only for MCP, does not expire, and still works after a password change; revoke it here when you no longer use it.',
+    'mcp.direct_hint':
+      'Plugged straight into Aico Link with the cable? Replace the IP in the address with 192.168.42.1.',
     'mcp.create': 'Create token',
     'mcp.new_title': 'New token',
     'mcp.name': 'Name',
@@ -872,7 +1023,8 @@ const messages = {
     'mcp.name_help': 'Helps you tell computers and clients apart later',
     'mcp.name_required': 'Enter a name',
     'mcp.created_title': 'Token created',
-    'mcp.created_help': 'The token is shown only this once. Copy it now, then paste either configuration below into your MCP client.',
+    'mcp.created_help':
+      'The token is shown only this once. Copy it now, then paste either configuration below into your MCP client.',
     'mcp.claude_code': 'Claude Code',
     'mcp.json_config': 'Other clients (JSON configuration)',
     'mcp.copy': 'Copy',
@@ -880,23 +1032,29 @@ const messages = {
     'mcp.copy_failed': 'Could not copy; select the text instead',
     'mcp.revoke': 'Revoke',
     'mcp.revoke_title': 'Revoke this token?',
-    'mcp.revoke_body': 'MCP clients using this token disconnect immediately. This cannot be undone.',
+    'mcp.revoke_body':
+      'MCP clients using this token disconnect immediately. This cannot be undone.',
     'mcp.revoked': 'Revoked',
     'advanced.terminal_hint': 'Device command line',
     'model.delete_title': 'Delete the {{name}} configuration?',
-    'model.delete_body': 'Its saved API key and other connection details are removed too; you will need to set it up again.',
+    'model.delete_body':
+      'Its saved API key and other connection details are removed too; you will need to set it up again.',
     'model.in_use': 'In use',
-    'model.in_use_hint': 'The configuration in use cannot be deleted. Switch to another provider first.',
+    'model.in_use_hint':
+      'The configuration in use cannot be deleted. Switch to another provider first.',
     'model.delete_config': 'Delete configuration',
     'wifi.details': 'Network details',
     'wifi.joining': 'Joining…',
     'wifi.switch': 'Switch',
     'wifi.switch_confirm_title': 'Switch to "{{ssid}}"?',
-    'wifi.switch_confirm_body': 'This page reaches the device over its current Wi-Fi, so switching disconnects it. Reopen it over USB or at the device\'s address on the new network.',
+    'wifi.switch_confirm_body':
+      "This page reaches the device over its current Wi-Fi, so switching disconnects it. Reopen it over USB or at the device's address on the new network.",
     'wifi.switch_failed': 'Could not connect to "{{ssid}}"; the previous network was kept.',
     'wifi.join_failed': 'Could not connect to "{{ssid}}".',
-    'manual_config.load_failed_help': 'The current configuration could not be read, so editing is disabled to avoid overwriting it. Go back and try again.',
-    'backup.restore_interrupted': 'This restore was interrupted before the backup finished uploading (the page was reloaded or closed). Cancel it, then choose the backup file again.',
+    'manual_config.load_failed_help':
+      'The current configuration could not be read, so editing is disabled to avoid overwriting it. Go back and try again.',
+    'backup.restore_interrupted':
+      'This restore was interrupted before the backup finished uploading (the page was reloaded or closed). Cancel it, then choose the backup file again.',
     'ota.current_firmware': 'Current firmware',
     'ota.row_slot': 'Running slot',
     'ota.row_previous_version': 'Previous version',
@@ -904,7 +1062,8 @@ const messages = {
     'ota.no_log': 'No updates yet',
     'ota.build_time': 'Built',
     'ota.checked_at': 'Checked {{time}}: up to date',
-    'ota.confirm_body': 'Check GitHub firmware and aico-business updates. New firmware installs and restarts first; business packages are checked after boot health is confirmed. Package updates briefly restart affected services.',
+    'ota.confirm_body':
+      'Check GitHub firmware and aico-business updates. New firmware installs and restarts first; business packages are checked after boot health is confirmed. Package updates briefly restart affected services.',
     'ota.confirm_title': 'Check for and install updates?',
     'ota.health': 'Boot status',
     'ota.health_failed': 'Failed',
@@ -922,7 +1081,8 @@ const messages = {
     'ota.stage_package_install': 'Upgrading business package',
     'ota.stage_health': 'Confirming firmware boot health',
     'ota.pill_completed': 'Update complete',
-    'ota.completed': 'Business package upgraded. Restart later if the runtime configuration requires it.',
+    'ota.completed':
+      'Business package upgraded. Restart later if the runtime configuration requires it.',
     'ota.stage_download': 'Downloading',
     'ota.stage_install': 'Installing',
     'ota.stage_reboot': 'Restarting soon',
@@ -947,10 +1107,12 @@ const messages = {
     'advanced.agent_stopped': 'Not running',
     'advanced.llm_logs': 'Model request logs',
     'advanced.manual_config': 'Edit configuration',
-    'advanced.manual_config_help': 'Edit the complete grouped Agent TOML. The file is validated before it is saved.',
+    'advanced.manual_config_help':
+      'Edit the complete grouped Agent TOML. The file is validated before it is saved.',
     'advanced.manual_config_hint': 'Edit the Agent TOML file',
     'usb_internet.title': 'USB Internet',
-    'usb_internet.help': 'Android: open Aico App.\nMac: run scripts/usb-internet-macos.sh start\niOS: not supported.',
+    'usb_internet.help':
+      'Android: open Aico App.\nMac: run scripts/usb-internet-macos.sh start\niOS: not supported.',
     'usb_internet.off': 'Off',
     'usb_internet.waiting': 'Waiting for Internet sharing',
     'usb_internet.mac': 'Sharing through Mac',
@@ -958,30 +1120,37 @@ const messages = {
     'usb_internet.unavailable': 'Status unavailable',
     'usb_internet.save_failed': 'Failed to save',
     'advanced.mcp_enabled': 'MCP',
-    'advanced.mcp_enabled_help': 'Lets an AI assistant on your computer, such as Claude Code or Cursor, operate your phone through Aico Link: screenshots, taps, typing, and more.',
+    'advanced.mcp_enabled_help':
+      'Lets an AI assistant on your computer, such as Claude Code or Cursor, operate your phone through Aico Link: screenshots, taps, typing, and more.',
     'advanced.raw_http': 'Record detailed model requests',
-    'advanced.raw_http_help': 'Writes raw model HTTP requests and responses to the Agent log directory. Enable only while troubleshooting.',
+    'advanced.raw_http_help':
+      'Writes raw model HTTP requests and responses to the Agent log directory. Enable only while troubleshooting.',
     'advanced.retention': 'Log retention',
-    'advanced.retention_help': 'Days detailed model request logs are kept before automatic cleanup.',
+    'advanced.retention_help':
+      'Days detailed model request logs are kept before automatic cleanup.',
     'memory.days': '{{n}} days',
     'memory.forever': 'Forever',
     'memory.notification_days': 'Notification memory retention',
     'memory.reset': 'Reset conversation & memory',
-    'memory.reset_confirm_body': 'This deletes all conversation history and persisted memory, then restarts Agent. This cannot be undone.',
+    'memory.reset_confirm_body':
+      'This deletes all conversation history and persisted memory, then restarts Agent. This cannot be undone.',
     'memory.reset_confirm_title': 'Confirm reset',
     'memory.reset_done': 'Reset. Agent is restarting.',
     'memory.reset_failed': 'Reset failed.',
-    'memory.reset_help': 'Deletes conversation history and all persisted memory, then restarts Agent with a new conversation.',
+    'memory.reset_help':
+      'Deletes conversation history and all persisted memory, then restarts Agent with a new conversation.',
     'memory.screen_ttl': 'Screen memory retention',
     'storage.backup_caption': 'Backup & restore',
     'storage.card_state_mounted': 'SD card mounted',
     'storage.card_state_none': 'No SD card',
     'storage.card_state_unusable': 'SD card unusable',
-    'storage.config_backup_intro': 'Export the current Agent configuration, or restore it from a validated TOML backup.',
+    'storage.config_backup_intro':
+      'Export the current Agent configuration, or restore it from a validated TOML backup.',
     'storage.eject_confirm_title': 'Safely eject the card?',
     'storage.export': 'Export',
     'storage.format_action': 'Format',
-    'storage.format_confirm_body': 'This erases all data on the microSD card and formats it as {{fs}}. This cannot be undone.',
+    'storage.format_confirm_body':
+      'This erases all data on the microSD card and formats it as {{fs}}. This cannot be undone.',
     'storage.format_confirm_title': 'Format the card?',
     'storage.import': 'Import',
     'storage.import_confirm_title': 'Import configuration backup?',
@@ -1018,7 +1187,8 @@ const messages = {
     'voice.use_provider': 'Use this provider',
     'voice.speaker_caption': 'Speaker',
     'voice.speaker_gate': 'Speaker check',
-    'voice.speaker_gate_help': 'When on, Classic only accepts enrolled voices. Enroll first, then turn this on.',
+    'voice.speaker_gate_help':
+      'When on, Classic only accepts enrolled voices. Enroll first, then turn this on.',
     'voice.speaker_profiles': 'Current voice',
     'voice.speaker_empty': 'No voice enrolled yet',
     'voice.speaker_loading': 'Loading speaker profile…',
@@ -1026,8 +1196,10 @@ const messages = {
     'voice.speaker_enroll': 'Enroll on device',
     'voice.speaker_reenroll': 'Re-enroll',
     'voice.speaker_enroll_title': 'Speak near the device',
-    'voice.speaker_enroll_body': 'After confirm, speak normally into the Aico microphone for about 4 seconds. Any words are fine.',
-    'voice.speaker_reenroll_body': 'After confirm, speak normally into the Aico microphone for about 4 seconds. The new voice replaces the current one.',
+    'voice.speaker_enroll_body':
+      'After confirm, speak normally into the Aico microphone for about 4 seconds. Any words are fine.',
+    'voice.speaker_reenroll_body':
+      'After confirm, speak normally into the Aico microphone for about 4 seconds. The new voice replaces the current one.',
     'voice.speaker_enroll_confirm': 'Start enrollment',
     'voice.speaker_reenroll_confirm': 'Re-enroll',
     'voice.speaker_enrolling': 'Recording… please speak into Aico',
@@ -1067,7 +1239,8 @@ const messages = {
     'model.interface_type': 'Interface type',
     'model.max_output': 'Provider output limit (tokens)',
     'model.max_response_tokens': 'Max response tokens',
-    'model.max_response_tokens_help': '0 sends no limit, so the provider default applies (native Anthropic uses the model output limit, or 8192 when unknown)',
+    'model.max_response_tokens_help':
+      '0 sends no limit, so the provider default applies (native Anthropic uses the model output limit, or 8192 when unknown)',
     'model.model': 'Model',
     'model.not_set': 'Not set',
     'model.others': 'Others',
@@ -1082,20 +1255,27 @@ const messages = {
     'model.decision_provider_typesafe': 'TypeSafe Jev',
     'model.decision_provider_typesafe_help': 'Get an API key at typesafe.ai',
     'model.decision_provider_openai': 'OpenAI Luna',
-    'model.decision_provider_openai_help': 'Uses OpenAI\'s Decisions API; it cannot locate tap targets, so those checks stay with the main model',
+    'model.decision_provider_openai_help':
+      "Uses OpenAI's Decisions API; it cannot locate tap targets, so those checks stay with the main model",
     'model.decision_provider_gemini': 'Gemini Decision 1',
-    'model.decision_provider_gemini_help': 'Uses Google\'s Gemini Decisions API; it cannot locate tap targets, so those checks stay with the main model. Get an API key at aistudio.google.com/apikey',
-    'model.decision_provider_openrouter_help': 'Get an API key at openrouter.ai/keys; uses native Decisions models, with Jev as the default',
-    'model.decision_openrouter_model_help': 'Leave blank for Jev; type to see model suggestions or enter another model ID',
+    'model.decision_provider_gemini_help':
+      "Uses Google's Gemini Decisions API; it cannot locate tap targets, so those checks stay with the main model. Get an API key at aistudio.google.com/apikey",
+    'model.decision_provider_openrouter_help':
+      'Get an API key at openrouter.ai/keys; uses native Decisions models, with Jev as the default',
+    'model.decision_openrouter_model_help':
+      'Leave blank for Jev; type to see model suggestions or enter another model ID',
     'model.decision_base_url_help': 'Leave blank to use the official endpoint',
     'model.decision_switch_title': 'Switch decision model provider?',
-    'model.decision_switch_body': 'The saved API key is cleared and the decision model turns off; turn it on again after entering the new provider\'s key.',
+    'model.decision_switch_body':
+      "The saved API key is cleared and the decision model turns off; turn it on again after entering the new provider's key.",
     'model.decision_switch_confirm': 'Switch',
     'model.decision_enabled': 'Enable decision model',
-    'model.decision_enabled_help': 'When on, fixed workflow checks (such as the input method state or whether an app opened) go to both the decision model and the main model; a confident decision-model answer is used, otherwise the main model\'s answer is.',
+    'model.decision_enabled_help':
+      "When on, fixed workflow checks (such as the input method state or whether an app opened) go to both the decision model and the main model; a confident decision-model answer is used, otherwise the main model's answer is.",
     'model.decision_key_required': 'Enter an API key first',
     'model.decision_min_confidence': 'Minimum confidence',
-    'model.decision_min_confidence_help': 'Checks below this go back to the main model. Default 0.8',
+    'model.decision_min_confidence_help':
+      'Checks below this go back to the main model. Default 0.8',
     'model.decision_min_confidence_invalid': 'Enter a number from 0 to 1',
     'model.providers': 'Providers',
     'model.use_provider': 'Use as main model provider',
@@ -1122,40 +1302,51 @@ const messages = {
     'conversation.prompt_default': 'Default',
     'conversation.prompt_custom': 'Set',
     'conversation.prompt_extra': 'Additional instructions',
-    'conversation.prompt_extra_help': 'Appended after the built-in instruction. Use it for device, project, or environment-specific requirements.',
-    'conversation.prompt_placeholder': 'For example: keep answers short; check the current screen before acting',
+    'conversation.prompt_extra_help':
+      'Appended after the built-in instruction. Use it for device, project, or environment-specific requirements.',
+    'conversation.prompt_placeholder':
+      'For example: keep answers short; check the current screen before acting',
     'conversation.max_iterations': 'Max tool-call rounds',
-    'conversation.max_iterations_help': 'Maximum model and tool loops for one task; -1 means unlimited',
+    'conversation.max_iterations_help':
+      'Maximum model and tool loops for one task; -1 means unlimited',
     'conversation.max_iterations_invalid': 'Enter -1 or a positive whole number',
     'conversation.prune_threshold': 'History prune threshold',
-    'conversation.prune_threshold_help': 'Clears stale states and compacts older tool results once context use reaches this share; 0 = automatic (0.5)',
+    'conversation.prune_threshold_help':
+      'Clears stale states and compacts older tool results once context use reaches this share; 0 = automatic (0.5)',
     'conversation.prune_state_limit': 'Screenshot state limit',
-    'conversation.prune_state_limit_help': 'Clears stale states once more states than this carry a screenshot, keeping only the latest state of the current turn; 0 = automatic (6)',
+    'conversation.prune_state_limit_help':
+      'Clears stale states once more states than this carry a screenshot, keeping only the latest state of the current turn; 0 = automatic (6)',
     'conversation.prune_state_limit_invalid': 'Enter 0 or a positive whole number',
     'conversation.compaction_threshold': 'Context compaction threshold',
-    'conversation.compaction_threshold_help': 'Summarizes earlier conversation once context use reaches this share; 0 = automatic (0.8)',
+    'conversation.compaction_threshold_help':
+      'Summarizes earlier conversation once context use reaches this share; 0 = automatic (0.8)',
     'conversation.fraction_invalid': 'Enter 0 or a decimal between 0 and 1',
     'conversation.tools': 'Tool settings',
     'conversation.ui_grounding': 'Mark tappable elements automatically',
-    'conversation.ui_grounding_help': 'Helps Aico tap buttons and fields on screen more accurately.',
+    'conversation.ui_grounding_help':
+      'Helps Aico tap buttons and fields on screen more accurately.',
     'conversation.reset': 'Reset current conversation',
-    'conversation.reset_confirm': 'Reset the current conversation? Its history is cleared; memory is kept.',
+    'conversation.reset_confirm':
+      'Reset the current conversation? Its history is cleared; memory is kept.',
     'conversation.reset_action': 'Reset',
     'conversation.reset_done': 'Current conversation reset.',
     'conversation.reset_failed': 'Reset failed.',
     'websearch.title': 'Web search',
-    'websearch.description': 'Once connected, Aico can push messages, capture information and learn how you operate your devices, so automation can take over repetitive work.',
+    'websearch.description':
+      'Once connected, Aico can push messages, capture information and learn how you operate your devices, so automation can take over repetitive work.',
     'websearch.provider': 'Provider',
     'websearch.api_key': 'Search API key',
     'websearch.api_key_placeholder': 'Enter key',
     'websearch.api_key_saved': 'Saved; leave empty to keep',
     'websearch.api_key_required': 'The provider switches once an API key is entered',
     'apply.reboot_title': 'Restart required',
-    'apply.reboot_body': 'The device restarts to apply this setting. The connection to your phone drops while it restarts and comes back in about a minute.',
+    'apply.reboot_body':
+      'The device restarts to apply this setting. The connection to your phone drops while it restarts and comes back in about a minute.',
     'apply.rebooting': 'Restarting the device…',
     'apply.rebooting_body': 'This page reloads once the connection is back.',
     'apply.agent_restart_title': 'Agent restart required',
-    'apply.agent_restart_body': 'Agent restarts to apply this setting. The current conversation pauses for a few seconds.',
+    'apply.agent_restart_body':
+      'Agent restarts to apply this setting. The current conversation pauses for a few seconds.',
     'apply.agent_restarting': 'Restarting Agent…',
     'apply.agent_restarting_body': 'This usually takes a few seconds.',
     'apply.reboot_not_started': 'The device did not restart. Try again later.',
@@ -1164,64 +1355,72 @@ const messages = {
     'basic.save_failed': 'Failed to save.',
   },
   'zh-CN': {
-    "mcp.install_title": "给 Agent 安装 MCP",
-    "mcp.install_enabled": "启用",
-    "mcp.install_reconnect": "重新连接",
-    "mcp.install_remove": "卸载",
-    "mcp.install_remove_title": "卸载 MCP？",
-    "mcp.install_remove_help": "Agent 将停止使用此服务并删除保存的连接配置。",
-    "mcp.install_add": "安装 MCP",
-    "mcp.install_config": "MCP JSON 配置",
-    "mcp.install_connect": "安装并连接",
-    "mcp.install_paste": "粘贴服务提供方的 mcpServers JSON 配置。支持 stdio 和 Streamable HTTP；命令及其依赖须已安装在 Agent 所在设备。",
-    "mcp.install_trust": "仅安装你信任的服务。stdio 命令会以 Agent 的权限在设备上运行。",
-    "mcp.install_invalid": "请输入有效的 JSON 配置",
-    "mcp.install_done": "已安装，Agent 可在下次请求中使用这些工具",
-    "mcp.install_connected": "已连接",
-    "mcp.install_disabled": "已停用",
-    "mcp.install_error": "连接失败",
-    "mcp.install_disconnected": "待连接",
-    "mcp.install_unavailable": "无法读取 MCP 服务",
-    "mcp.install_refresh": "刷新连接状态",
-    "mcp.install_help": "安装后 Agent 可调用服务提供的工具。点击服务可查看工具、启停、重连或卸载。",
-    "local.mirror_agent_unavailable": "无法连接本机 Agent，请启动 Agent 后重试。",
-    "local.mirror_bridge_unavailable": "无法连接镜像桥，请启动 iPhone 镜像桥后重试。",
-    "local.mirror_unavailable": "请在 Mac 打开 iPhone 镜像并连接手机，确认录屏权限已开启，然后重试。",
-    "local.mirror_input_permission": "镜像桥缺少辅助功能权限，请在 macOS 系统设置中授权后重试。",
-    "local.mirror_session_busy": "iPhone 镜像正被其他会话使用，请结束该会话后重试。",
-    "local.mirror_busy": "正在恢复连接，请稍候。",
-    "local.mirror_wrong_mode": "当前 Agent 已不在 iPhone 镜像模式，请刷新页面。",
-    "local.mirror_setup_failed": "恢复连接失败，请检查镜像桥运行状态后重试。",
-    "local.mirror_capture_failed": "未能取得镜像截图，请确认 iPhone 镜像已连接、录屏权限已开启，然后重试。",
-    "local.mirror_restored": "会话已恢复，并已获取镜像画面。",
-    "local.mirror_help": "请先在 Mac 上连接 iPhone 镜像。空闲后无法操作时，可在这里恢复连接。",
-    "local.mirror_title": "iPhone 镜像",
-    "local.mirror_frame_ready": "镜像画面可用",
-    "local.mirror_reconnect": "恢复 iPhone 镜像连接",
+    'storage.format_failed': '格式化失败',
+    'storage.format_in_progress': '正在格式化存储卡…',
+    'storage.format_warning': '此操作会清除存储卡上的所有数据。',
+    'storage.used_space': '已用空间',
+    'wifi.scanning': '正在扫描…',
+    'mcp.install_title': '给 Agent 安装 MCP',
+    'mcp.install_enabled': '启用',
+    'mcp.install_reconnect': '重新连接',
+    'mcp.install_remove': '卸载',
+    'mcp.install_remove_title': '卸载 MCP？',
+    'mcp.install_remove_help': 'Agent 将停止使用此服务并删除保存的连接配置。',
+    'mcp.install_add': '安装 MCP',
+    'mcp.install_config': 'MCP JSON 配置',
+    'mcp.install_connect': '安装并连接',
+    'mcp.install_paste':
+      '粘贴服务提供方的 mcpServers JSON 配置。支持 stdio 和 Streamable HTTP；命令及其依赖须已安装在 Agent 所在设备。',
+    'mcp.install_trust': '仅安装你信任的服务。stdio 命令会以 Agent 的权限在设备上运行。',
+    'mcp.install_invalid': '请输入有效的 JSON 配置',
+    'mcp.install_done': '已安装，Agent 可在下次请求中使用这些工具',
+    'mcp.install_connected': '已连接',
+    'mcp.install_disabled': '已停用',
+    'mcp.install_error': '连接失败',
+    'mcp.install_disconnected': '待连接',
+    'mcp.install_unavailable': '无法读取 MCP 服务',
+    'mcp.install_refresh': '刷新连接状态',
+    'mcp.install_help': '安装后 Agent 可调用服务提供的工具。点击服务可查看工具、启停、重连或卸载。',
+    'local.mirror_agent_unavailable': '无法连接本机 Agent，请启动 Agent 后重试。',
+    'local.mirror_bridge_unavailable': '无法连接镜像桥，请启动 iPhone 镜像桥后重试。',
+    'local.mirror_unavailable':
+      '请在 Mac 打开 iPhone 镜像并连接手机，确认录屏权限已开启，然后重试。',
+    'local.mirror_input_permission': '镜像桥缺少辅助功能权限，请在 macOS 系统设置中授权后重试。',
+    'local.mirror_session_busy': 'iPhone 镜像正被其他会话使用，请结束该会话后重试。',
+    'local.mirror_busy': '正在恢复连接，请稍候。',
+    'local.mirror_wrong_mode': '当前 Agent 已不在 iPhone 镜像模式，请刷新页面。',
+    'local.mirror_setup_failed': '恢复连接失败，请检查镜像桥运行状态后重试。',
+    'local.mirror_capture_failed':
+      '未能取得镜像截图，请确认 iPhone 镜像已连接、录屏权限已开启，然后重试。',
+    'local.mirror_restored': '会话已恢复，并已获取镜像画面。',
+    'local.mirror_help': '请先在 Mac 上连接 iPhone 镜像。空闲后无法操作时，可在这里恢复连接。',
+    'local.mirror_title': 'iPhone 镜像',
+    'local.mirror_frame_ready': '镜像画面可用',
+    'local.mirror_reconnect': '恢复 iPhone 镜像连接',
     'local.saved_unapplied': '已保存到本机，尚未应用到 Agent',
-    "local.title": "本机 Agent",
-    "local.overview": "运行概览",
-    "local.apply_unavailable": "暂时无法确认配置状态；Agent 启动后会读取已保存的配置",
-    "local.apply_failed": "配置尚未生效，请检查 Agent 日志",
-    "local.apply_pending": "配置已保存，正在等待 Agent 应用",
-    "local.applied": "配置已生效",
-    "local.restart_required": "存在启动配置变更，请重新启动本机 Agent",
-    "local.apply_unknown": "配置状态待确认",
-    "local.offline": "无法连接",
-    "local.offline_help": "可以保存配置；Agent 启动后会加载它。",
-    "local.target": "当前目标设备",
-    "local.target_help": "由 Agent 启动参数决定；设备连接状态请在 Agent 界面查看。",
-    "local.open_agent": "打开 Agent 界面",
-    "local.intro": "管理模型、对话和运行偏好。设置会保存到本机，并自动应用到正在运行的 Agent。",
-    "local.config_invalid": "配置需要修复",
-    "local.config_read_failed": "无法读取配置",
-    "local.config_read_help": "请在配置界面之外修复 TOML 配置文件，然后刷新此页面。",
-    "local.config_read_unavailable": "请先恢复配置读取，再保存设置。",
-    "local.main_model": "当前主模型",
-    "local.key_ready": "已配置",
-    "local.key_missing": "未配置",
-    "local.config_file": "配置文件",
-    "local.language_help": "设置 Agent 和配置界面的语言，以及任务使用的时区。",
+    'local.title': '本机 Agent',
+    'local.overview': '运行概览',
+    'local.apply_unavailable': '暂时无法确认配置状态；Agent 启动后会读取已保存的配置',
+    'local.apply_failed': '配置尚未生效，请检查 Agent 日志',
+    'local.apply_pending': '配置已保存，正在等待 Agent 应用',
+    'local.applied': '配置已生效',
+    'local.restart_required': '存在启动配置变更，请重新启动本机 Agent',
+    'local.apply_unknown': '配置状态待确认',
+    'local.offline': '无法连接',
+    'local.offline_help': '可以保存配置；Agent 启动后会加载它。',
+    'local.target': '当前目标设备',
+    'local.target_help': '由 Agent 启动参数决定；设备连接状态请在 Agent 界面查看。',
+    'local.open_agent': '打开 Agent 界面',
+    'local.intro': '管理模型、对话和运行偏好。设置会保存到本机，并自动应用到正在运行的 Agent。',
+    'local.config_invalid': '配置需要修复',
+    'local.config_read_failed': '无法读取配置',
+    'local.config_read_help': '请在配置界面之外修复 TOML 配置文件，然后刷新此页面。',
+    'local.config_read_unavailable': '请先恢复配置读取，再保存设置。',
+    'local.main_model': '当前主模型',
+    'local.key_ready': '已配置',
+    'local.key_missing': '未配置',
+    'local.config_file': '配置文件',
+    'local.language_help': '设置 Agent 和配置界面的语言，以及任务使用的时区。',
     'document.title': 'Aico Link 设置',
     'page.title': '设备设置',
     'page.language': '语言',
@@ -1372,12 +1571,12 @@ const messages = {
     'groups.screen_memory': '屏幕记忆保留',
     'groups.notification_memory': '通知记忆保留',
     'groups.reset_conversation': '重置对话与记忆',
-	'memory.reset.help': '删除对话历史和所有持久化记忆，然后重启 Agent 并开始新的对话。',
-	'memory.reset.action': '重置对话与记忆',
-	'memory.reset.confirm': '确定删除全部对话历史和持久化记忆吗？此操作无法撤销。',
-	'memory.reset.running': '正在重置对话与记忆…',
-	'memory.reset.done': '对话与记忆已重置，Agent 正在重启。',
-	'memory.reset.failed': '重置对话与记忆失败。',
+    'memory.reset.help': '删除对话历史和所有持久化记忆，然后重启 Agent 并开始新的对话。',
+    'memory.reset.action': '重置对话与记忆',
+    'memory.reset.confirm': '确定删除全部对话历史和持久化记忆吗？此操作无法撤销。',
+    'memory.reset.running': '正在重置对话与记忆…',
+    'memory.reset.done': '对话与记忆已重置，Agent 正在重启。',
+    'memory.reset.failed': '重置对话与记忆失败。',
     'groups.storage_settings': '存储设置',
     'groups.storage_status': '存储状态',
     'groups.microsd_settings': 'microSD 设置',
@@ -1430,12 +1629,14 @@ const messages = {
     'storage.unknown_error': '未知错误',
     'storage.auto_formatting': '检测到空卡，正在自动格式化为 {{fs}}…请保持存储卡插入。',
     'storage.formatting': '正在将存储卡格式化为 {{fs}}…请保持存储卡插入。',
-    'storage.migrating': 'eMMC 空间不足，正在迁移旧录音到 SD 卡（{{files}} 个文件，已迁移 {{size}}）…',
+    'storage.migrating':
+      'eMMC 空间不足，正在迁移旧录音到 SD 卡（{{files}} 个文件，已迁移 {{size}}）…',
     'storage.last_format_failed': '上次格式化失败：{{error}}',
     'storage.last_format_complete': '上次格式化已完成（{{fs}}）。',
     'storage.refreshed': '存储状态已刷新。',
     'storage.load_failed': '加载存储状态失败：{{error}}',
-    'storage.format_confirm': '确定将 SD 卡格式化为 {{fs}} 吗？卡上的所有分区和数据都会被删除，且无法撤销。',
+    'storage.format_confirm':
+      '确定将 SD 卡格式化为 {{fs}} 吗？卡上的所有分区和数据都会被删除，且无法撤销。',
     'storage.erase_confirm': '确定要擦除整张存储卡吗？',
     'storage.format_started': '已开始格式化。',
     'storage.format_start_failed': '启动格式化失败。',
@@ -1444,12 +1645,14 @@ const messages = {
     'storage.ejected_with_warning': '存储卡已弹出，可以取出；部分待写入数据可能未保存。',
     'storage.last_flush_warning': '此前存储卡同步失败，部分待写入数据可能未保存。',
     'storage.eject_failed': '弹出存储卡失败。',
-    'storage.backup_help': '将 Agent 数据和设置备份到当前电脑或手机，或恢复经过验证的 Aico Link 备份。',
+    'storage.backup_help':
+      '将 Agent 数据和设置备份到当前电脑或手机，或恢复经过验证的 Aico Link 备份。',
     'storage.backup_exporting': '正在导出配置备份…',
     'storage.backup_exported': '配置备份已导出。',
     'storage.backup_export_failed': '导出配置备份失败。',
     'storage.backup_file_required': '请选择 TOML 配置备份。',
-    'storage.backup_import_confirm': '确定使用 {{name}} 替换当前 Agent 配置吗？文件会在保存前完成校验。',
+    'storage.backup_import_confirm':
+      '确定使用 {{name}} 替换当前 Agent 配置吗？文件会在保存前完成校验。',
     'storage.backup_importing': '正在校验并导入配置备份…',
     'storage.backup_imported': '配置备份已导入。',
     'storage.backup_imported_pending': '配置备份已导入，Agent 正在应用。',
@@ -1458,7 +1661,8 @@ const messages = {
     'storage.export_config': '导出 Agent 配置（.toml）',
     'storage.import_config': '导入 Agent 配置（.toml）',
     'storage.config_backup_advanced': '仅 Agent 配置（.toml）',
-    'storage.config_backup_help': '仅导出或导入 Agent 的 TOML 配置，不包含记忆、会话、设备身份和 SD 卡数据。',
+    'storage.config_backup_help':
+      '仅导出或导入 Agent 的 TOML 配置，不包含记忆、会话、设备身份和 SD 卡数据。',
     'backup.create_button': '创建备份',
     'backup.restore_button': '恢复备份',
     'backup.create_title': '创建备份',
@@ -1467,10 +1671,14 @@ const messages = {
     'backup.cancel': '取消',
     'backup.create_start': '创建备份',
     'backup.restore_start': '恢复',
-    'backup.create_intro': '自动备份全部可用数据，包括 SD 用户文件、Python 环境和诊断日志，固定使用同设备模式并包含设备身份。备份期间设备会停止 Agent、音频和蓝牙服务，将归档直接传输到当前电脑或手机，不会写入 SD 卡。归档未加密，包含凭据和个人数据，请安全保存。',
-    'backup.restore_intro': '自动恢复备份中的全部数据。SD 数据使用当前插入的 SD 卡，内部存储与 SD 卡中存在差异的音频文件均会保留。无需密码，点击恢复后连续执行上传、校验和恢复。请仅恢复来自可信来源的备份。',
-    'backup.error.encrypted_archive_unsupported': '这是旧版加密备份，请使用原先支持密码的客户端恢复。',
-    'backup.restore_confirm': '确定立即上传、校验并恢复该备份中的全部数据吗？SD 数据使用当前插入的 SD 卡，内部存储与 SD 卡中存在差异的音频文件均会保留。开始后无法取消。恢复设备身份后，设备可能自动重启。',
+    'backup.create_intro':
+      '自动备份全部可用数据，包括 SD 用户文件、Python 环境和诊断日志，固定使用同设备模式并包含设备身份。备份期间设备会停止 Agent、音频和蓝牙服务，将归档直接传输到当前电脑或手机，不会写入 SD 卡。归档未加密，包含凭据和个人数据，请安全保存。',
+    'backup.restore_intro':
+      '自动恢复备份中的全部数据。SD 数据使用当前插入的 SD 卡，内部存储与 SD 卡中存在差异的音频文件均会保留。无需密码，点击恢复后连续执行上传、校验和恢复。请仅恢复来自可信来源的备份。',
+    'backup.error.encrypted_archive_unsupported':
+      '这是旧版加密备份，请使用原先支持密码的客户端恢复。',
+    'backup.restore_confirm':
+      '确定立即上传、校验并恢复该备份中的全部数据吗？SD 数据使用当前插入的 SD 卡，内部存储与 SD 卡中存在差异的音频文件均会保留。开始后无法取消。恢复设备身份后，设备可能自动重启。',
     'backup.restore_cannot_cancel': '恢复已经开始，无法取消。请等待恢复完成。',
     'backup.progress_hint': '操作完成前，请保持页面打开和 USB 连接。',
     'backup.reconnect_notice': '设备正在重启以完成身份恢复。待设备恢复后重新连接 USB 并刷新本页。',
@@ -1487,7 +1695,8 @@ const messages = {
     'backup.sd_strategy.emmc_fallback': '把 SD 音频恢复到内部存储',
     'backup.sd_strategy.skip': '跳过 SD 卡数据',
     'backup.conflict_confirm': '我了解内部存储与 SD 卡中内容不同的同名音频文件会被同时恢复',
-    'backup.identity_confirm': '即使设备无法确认该备份来自本机，也恢复设备身份（machine-id、SSH 主机密钥、蓝牙配对）',
+    'backup.identity_confirm':
+      '即使设备无法确认该备份来自本机，也恢复设备身份（machine-id、SSH 主机密钥、蓝牙配对）',
     'backup.loading_capabilities': '正在读取备份能力…',
     'backup.sd_included': '已挂载 SD 卡 {{device}}，自动包含 SD 音频和用户文件。',
     'backup.sd_absent': '未挂载 SD 卡，SD 组件不可用。',
@@ -1506,11 +1715,13 @@ const messages = {
     'backup.cancel_confirm': '取消正在进行的操作？服务会重新启动，已上传的数据将被丢弃。',
     'backup.maintenance_backup': '备份进行中，完成前存储、OTA 和配置修改被锁定。',
     'backup.maintenance_restore': '恢复进行中，完成前存储、OTA 和配置修改被锁定。',
-    'backup.usb_required': '完整数据备份与恢复需要通过 USB 连接（192.168.42.1），或开启局域网访问并登录设备密码后使用。',
+    'backup.usb_required':
+      '完整数据备份与恢复需要通过 USB 连接（192.168.42.1），或开启局域网访问并登录设备密码后使用。',
     'backup.archive_created': '归档创建于 {{created}}。',
     'backup.file_info': '{{name}}（{{size}}）',
     'backup.unknown_date': '未知时间',
-    'backup.manifest_summary': '{{name}}（{{size}}），创建于 {{created}}，模式：{{mode}}。将恢复全部备份数据，SD 数据写入当前插入的 SD 卡。',
+    'backup.manifest_summary':
+      '{{name}}（{{size}}），创建于 {{created}}，模式：{{mode}}。将恢复全部备份数据，SD 数据写入当前插入的 SD 卡。',
     'backup.manifest_firmware': '来源固件：{{version}}',
     'backup.manifest_sd': '备份包含 SD 卡数据（UUID {{uuid}}）。',
     'backup.manifest_conflicts': '{{count}} 个音频文件在内部存储与 SD 卡中内容不同，两份都会恢复。',
@@ -1561,7 +1772,8 @@ const messages = {
     'backup.phase.reboot_required': '设备重启中',
     'backup.error.maintenance_in_progress': '已有备份或恢复正在进行。',
     'backup.error.maintenance_session_required': '维护会话已过期，请刷新页面后重试。',
-    'backup.error.maintenance_session_busy': '其他客户端持有维护会话，请在该客户端关闭或等待其过期。',
+    'backup.error.maintenance_session_busy':
+      '其他客户端持有维护会话，请在该客户端关闭或等待其过期。',
     'backup.error.usb_required': '请通过 USB 连接，或在局域网中登录后使用备份与恢复。',
     'backup.error.ota_pending_boot': '有 OTA 更新等待健康确认，完成前不能恢复设备身份。',
     'backup.error.sd_missing': '备份包含 SD 卡数据，但当前没有可用的 SD 卡。',
@@ -1577,7 +1789,8 @@ const messages = {
     'backup.error.manifest_invalid': '备份清单无效。',
     'backup.error.unsupported_format': '当前固件不支持此备份格式。',
     'backup.error.not_aico_backup': '该文件不是 Aico Link 备份。',
-    'backup.error.source_device_mismatch': '该备份来自其他设备。请使用可移植模式或取消勾选设备身份。',
+    'backup.error.source_device_mismatch':
+      '该备份来自其他设备。请使用可移植模式或取消勾选设备身份。',
     'backup.error.identity_confirmation_required': '请先明确确认恢复设备身份。',
     'backup.error.identity_not_portable': '可移植备份不能恢复设备身份。',
     'backup.error.insufficient_space': '设备剩余空间不足，无法恢复。',
@@ -1614,11 +1827,13 @@ const messages = {
     'config.test_failed': '[{{section}}] 测试未通过',
     'config.test_request_failed': '测试 [{{section}}] 失败',
     'config.audio_archive_available': '在 STT 模式下，唤醒后的语音录音会保存以供历史回放。',
-    'config.audio_archive_locked': '仅在 agent.input_mode = stt 时生效；请切换到 STT 后编辑并保存录音设置。',
+    'config.audio_archive_locked':
+      '仅在 agent.input_mode = stt 时生效；请切换到 STT 后编辑并保存录音设置。',
     'config.stt_test_help': '点击测试会启动麦克风录音，再次点击可结束录音并显示识别结果。',
     'config.secret_saved_placeholder': '已保存；留空保持不变',
     'config.secret_not_set_placeholder': '未设置',
-    'config.metadata_load_failed': '读取配置元数据失败：agent.toml 编辑已禁用，Wi-Fi 和日志仍可正常使用。',
+    'config.metadata_load_failed':
+      '读取配置元数据失败：agent.toml 编辑已禁用，Wi-Fi 和日志仍可正常使用。',
     'config.invalid_recovery': 'Agent 配置无效。请修复详情中提示的字段以恢复 Agent。',
     'config.wifi_connected': 'Wi-Fi 已连接。',
     'config.ready_hint': '请选择 Wi-Fi，或按分区编辑 agent.toml。',
@@ -1627,25 +1842,31 @@ const messages = {
     'config.reboot_sent': 'reboot 命令已发送。请等待 USB 断开并重新枚举后再刷新页面。',
     'config.reboot_failed': '重启失败。',
     'config.hid_saved': 'USB HID 配置已保存，需要重启板子后生效。',
-    'config.hid_hot_restart_avoided': '为避免主机 USB 会话状态不一致，不会热重启或重新枚举 USB HID。',
+    'config.hid_hot_restart_avoided':
+      '为避免主机 USB 会话状态不一致，不会热重启或重新枚举 USB HID。',
     'config.hid_reboot_confirm': 'USB HID 设置已保存，需要重启后生效。现在重启吗？',
-    'config.hid_reboot_cancelled': '已取消立即重启。请稍后手动执行 reboot，并在重启后验证 USB HID。',
+    'config.hid_reboot_cancelled':
+      '已取消立即重启。请稍后手动执行 reboot，并在重启后验证 USB HID。',
     'config.default_empty': '默认值：空',
     'config.default_value': '默认值：{{value}}',
     'config.fields.agent.input_mode.label': '语音模式',
-    'config.fields.agent.input_mode.help': '选择设备语音模式。Classic 使用独立 STT 和 TTS；Realtime 使用直接实时语音服务。',
+    'config.fields.agent.input_mode.help':
+      '选择设备语音模式。Classic 使用独立 STT 和 TTS；Realtime 使用直接实时语音服务。',
     'config.fields.agent.input_mode.options.stt': '经典模式',
     'config.fields.agent.input_mode.options.realtime': '实时模式',
     'config.fields.agent.tap_wakeup_enabled.label': '轻触唤醒',
-    'config.fields.agent.tap_wakeup_enabled.help': '开启后，MCU 轻触按键可唤醒 Aico。关闭后不影响 ASR 等其它唤醒方式。',
+    'config.fields.agent.tap_wakeup_enabled.help':
+      '开启后，MCU 轻触按键可唤醒 Aico。关闭后不影响 ASR 等其它唤醒方式。',
     'config.fields.agent.mcp_enabled.label': 'MCP',
     'config.fields.agent.mcp_enabled.help': '开启后可通过 MCP 调用 Agent 工具。',
     'config.fields.agent.ui_grounding_enabled.label': '自动标注可点击元素',
     'config.fields.agent.ui_grounding_enabled.help': '帮助 Aico 更准确地点击屏幕上的按钮和输入框。',
     'config.fields.agent.prompt.label': '提示词',
-    'config.fields.agent.prompt.help': '追加在 Agent 内置指令之后，适合填写设备、项目或环境专用要求。',
+    'config.fields.agent.prompt.help':
+      '追加在 Agent 内置指令之后，适合填写设备、项目或环境专用要求。',
     'config.fields.agent.max_iterations.label': '最大工具调用轮数',
-    'config.fields.agent.max_iterations.help': '单个任务允许的模型与工具循环次数；设为 -1 表示不限制次数。',
+    'config.fields.agent.max_iterations.help':
+      '单个任务允许的模型与工具循环次数；设为 -1 表示不限制次数。',
     'config.fields.agent.locale.label': '语言区域',
     'config.fields.agent.timezone.label': '时区',
     'config.fields.agent.timezone.help': '用于 Agent 日期上下文和控制器 Shell 命令的时区。',
@@ -1655,7 +1876,8 @@ const messages = {
     'config.fields.device.device_type.options.macos': 'macOS',
     'config.fields.device.device_type.options.windows': 'Windows',
     'config.fields.device.device_type.options.linux': 'Linux',
-    'config.fields.device.device_type.help': 'Android 使用 HID touchscreen 模式。iOS、macOS、windows 和 linux 使用 absolute 指针模式。',
+    'config.fields.device.device_type.help':
+      'Android 使用 HID touchscreen 模式。iOS、macOS、windows 和 linux 使用 absolute 指针模式。',
     'config.fields.hid.keyboard_layout.label': '键盘布局',
     'config.fields.hid.keyboard_layout.options.qwerty': 'QWERTY',
     'config.fields.hid.keyboard_layout.options.azerty': 'AZERTY',
@@ -1664,7 +1886,8 @@ const messages = {
     'config.fields.hid.input_backend.options.hid': 'USB HID',
     'config.fields.hid.input_backend.options.adb': 'ADB',
     'config.fields.model.api_mode.label': '对话接口',
-    'config.fields.model.api_mode.help': '本地模式提交完整对话记录；服务端模式保存上下文并从上一次对话继续。',
+    'config.fields.model.api_mode.help':
+      '本地模式提交完整对话记录；服务端模式保存上下文并从上一次对话继续。',
     'config.fields.model.api_mode.options.default': 'Chat Completions（兼容模式）',
     'config.fields.model.api_mode.options.responses': 'Responses（本地上下文）',
     'config.fields.model.api_mode.options.responses_stateful': 'Responses（服务端上下文）',
@@ -1675,39 +1898,52 @@ const messages = {
     'config.fields.model.model.label': '模型',
     'config.fields.model.model.help': '选择或填写所选提供商提供的模型名称。',
     'config.fields.model.responses_context_management.label': '服务端自动压缩',
-    'config.fields.model.responses_context_management.help': '请求兼容服务端在达到阈值时压缩上下文；不会改变上面的上下文管理模式。',
+    'config.fields.model.responses_context_management.help':
+      '请求兼容服务端在达到阈值时压缩上下文；不会改变上面的上下文管理模式。',
     'config.fields.model.responses_context_management.options.default': '关闭（推荐）',
     'config.fields.model.responses_context_management.options.compaction': '达到阈值时压缩',
-    'config.fields.model.responses_context_management.options.ark_context_edit': '火山方舟上下文编辑',
+    'config.fields.model.responses_context_management.options.ark_context_edit':
+      '火山方舟上下文编辑',
     'config.fields.model.responses_context_edit_trigger.label': '方舟工具调用触发次数',
-    'config.fields.model.responses_context_edit_trigger.help': '达到该工具调用次数后，方舟清理旧工具输入；填 0 使用推荐值 10。',
+    'config.fields.model.responses_context_edit_trigger.help':
+      '达到该工具调用次数后，方舟清理旧工具输入；填 0 使用推荐值 10。',
     'config.fields.model.responses_context_edit_trigger.placeholder': '10 = 推荐值',
     'config.fields.model.responses_context_edit_keep.label': '方舟保留工具调用数',
-    'config.fields.model.responses_context_edit_keep.help': '清理后方舟保留最近的工具调用次数；填 0 使用推荐值 3。',
+    'config.fields.model.responses_context_edit_keep.help':
+      '清理后方舟保留最近的工具调用次数；填 0 使用推荐值 3。',
     'config.fields.model.responses_context_edit_keep.placeholder': '3 = 推荐值',
     'config.fields.model.responses_context_edit_clear_thinking.label': '清理旧思维链',
-    'config.fields.model.responses_context_edit_clear_thinking.help': '请求方舟在执行上下文编辑时移除旧的思维链轮次。',
+    'config.fields.model.responses_context_edit_clear_thinking.help':
+      '请求方舟在执行上下文编辑时移除旧的思维链轮次。',
     'config.fields.model.responses_compact_threshold.label': '压缩阈值（token）',
-    'config.fields.model.responses_compact_threshold.help': '达到该 token 数时请求服务端压缩；0 表示由服务端决定。',
+    'config.fields.model.responses_compact_threshold.help':
+      '达到该 token 数时请求服务端压缩；0 表示由服务端决定。',
     'config.fields.model.responses_compact_threshold.placeholder': '0 = 服务端默认值',
     'config.fields.model.responses_truncation.label': '超长输入处理',
-    'config.fields.model.responses_truncation.help': '输入过长时直接报错，或允许兼容服务端丢弃最早输入后继续。',
+    'config.fields.model.responses_truncation.help':
+      '输入过长时直接报错，或允许兼容服务端丢弃最早输入后继续。',
     'config.fields.model.responses_truncation.options.default': '直接报错（默认）',
     'config.fields.model.responses_truncation.options.auto': '自动丢弃最早输入',
     'config.fields.model.responses_include.label': '额外返回字段',
-    'config.fields.model.responses_include.help': '通常留空。仅在需要时填写服务端支持的 include 值，每行一项。',
+    'config.fields.model.responses_include.help':
+      '通常留空。仅在需要时填写服务端支持的 include 值，每行一项。',
     'config.fields.model.responses_include.placeholder': '例如：reasoning.encrypted_content',
     'config.fields.model.temperature.label': '温度',
-    'config.fields.model.temperature.help': '控制响应随机性。留空则使用 Agent 选择的默认值；部分模型会使用提供商默认值。0 会作为显式值发送。',
+    'config.fields.model.temperature.help':
+      '控制响应随机性。留空则使用 Agent 选择的默认值；部分模型会使用提供商默认值。0 会作为显式值发送。',
     'config.fields.model.max_response_tokens.label': '最大响应 token 数',
     'config.fields.model.max_response_tokens.placeholder': '0 = 提供商默认',
-    'config.fields.model.max_response_tokens.help': '单次模型响应允许生成的最大 token 数。0 表示不设上限，使用提供商默认值；原生 Anthropic 必须设置上限，会改用模型的输出上限（未知时为 8192）。',
+    'config.fields.model.max_response_tokens.help':
+      '单次模型响应允许生成的最大 token 数。0 表示不设上限，使用提供商默认值；原生 Anthropic 必须设置上限，会改用模型的输出上限（未知时为 8192）。',
     'config.fields.model.log_raw_http.label': '记录详细模型请求',
-    'config.fields.model.log_raw_http.help': '将模型原始 HTTP 请求和响应写入 Agent 日志目录，仅建议排查问题时启用。',
+    'config.fields.model.log_raw_http.help':
+      '将模型原始 HTTP 请求和响应写入 Agent 日志目录，仅建议排查问题时启用。',
     'config.fields.model.reasoning_effort.label': '推理强度',
-    'config.fields.model.reasoning_effort.help': '留空 = 自动。选项根据当前模型能力动态提供；仅支持关闭推理的模型显示 none。',
+    'config.fields.model.reasoning_effort.help':
+      '留空 = 自动。选项根据当前模型能力动态提供；仅支持关闭推理的模型显示 none。',
     'config.fields.model.reasoning_budget_tokens.label': '推理预算（token）',
-    'config.fields.model.reasoning_budget_tokens.help': '仅预算型模型可用的精确推理预算。0 表示使用模型默认值或档位预设。推理 token 计入「最大响应 token」，因此该值需不小于 1024 且小于该上限。',
+    'config.fields.model.reasoning_budget_tokens.help':
+      '仅预算型模型可用的精确推理预算。0 表示使用模型默认值或档位预设。推理 token 计入「最大响应 token」，因此该值需不小于 1024 且小于该上限。',
     'config.fields.model.reasoning_budget_tokens.placeholder': '0 = 自动',
     'config.fields.model.context_window.placeholder': '0 = 自动',
     'config.fields.model.context_window.help': '0 = 自动：可用时使用提供商元数据。',
@@ -1716,7 +1952,8 @@ const messages = {
     'config.fields.model.context_window.label': '上下文窗口（token）',
     'config.fields.model.model_max_output_tokens.label': '提供商输出上限（token）',
     'config.fields.voice_model.use_backend_agent.label': '使用后端代理',
-    'config.fields.voice_model.use_backend_agent.help': '后端模型已配置凭据时默认开启。开启时启用后端 Agent，并向实时模型提供 Agent 通信工具；关闭时禁用 Agent 通信工具，并将后端 Agent 原本使用的运行时工具直接交给实时模型。此开关不影响模型推理能力。Moss Live 不显示此开关，始终以前台工具运行，且不改写已保存的配置值。',
+    'config.fields.voice_model.use_backend_agent.help':
+      '后端模型已配置凭据时默认开启。开启时启用后端 Agent，并向实时模型提供 Agent 通信工具；关闭时禁用 Agent 通信工具，并将后端 Agent 原本使用的运行时工具直接交给实时模型。此开关不影响模型推理能力。Moss Live 不显示此开关，始终以前台工具运行，且不改写已保存的配置值。',
     'config.fields.voice_model.provider.label': '实时语音 Provider 配置',
     'config.fields.voice_model.provider.help': '选择实时语音模式使用的已配置提供商记录。',
     'config.fields.voice_model.model.label': '实时模型',
@@ -1732,9 +1969,11 @@ const messages = {
     'config.fields.search.provider.help': 'Web 搜索工具使用的提供商。',
     'config.fields.search.api_key.label': '搜索 API 密钥',
     'config.fields.decision.enabled.label': '启用决策模型',
-    'config.fields.decision.enabled.help': '固定流程里的判断同时问决策模型和主模型，决策模型有把握时直接采用；需要先填写 API Key。',
+    'config.fields.decision.enabled.help':
+      '固定流程里的判断同时问决策模型和主模型，决策模型有把握时直接采用；需要先填写 API Key。',
     'config.fields.decision.provider.label': '决策模型提供商',
-    'config.fields.decision.provider.help': 'TypeSafe Jev、OpenAI Luna、Gemini Decision 1 或 OpenRouter。Luna 与 Gemini 不能定位点击位置，这类判断仍交给主模型。',
+    'config.fields.decision.provider.help':
+      'TypeSafe Jev、OpenAI Luna、Gemini Decision 1 或 OpenRouter。Luna 与 Gemini 不能定位点击位置，这类判断仍交给主模型。',
     'config.fields.decision.api_key.label': '决策模型 API Key',
     'config.fields.decision.base_url.label': '决策模型 Base URL',
     'config.fields.decision.model.label': '决策模型',
@@ -1805,34 +2044,47 @@ const messages = {
     'config.fields.voice_model_providers.turn_detection.options.smart_turn': '智能回合检测',
     'config.fields.voice_model_providers.turn_detection_threshold.label': '回合检测阈值',
     'config.fields.voice_model_providers.turn_detection_threshold.placeholder': '默认值：0.5',
-    'config.fields.voice_model_providers.turn_detection_threshold.help': 'Qwen server_vad 的可选阈值；留空则使用服务端默认值。',
+    'config.fields.voice_model_providers.turn_detection_threshold.help':
+      'Qwen server_vad 的可选阈值；留空则使用服务端默认值。',
     'config.fields.voice_model_providers.turn_detection_silence_ms.label': '回合静音时长（毫秒）',
     'config.fields.voice_model_providers.turn_detection_silence_ms.placeholder': '默认值：800',
-    'config.fields.voice_model_providers.turn_detection_silence_ms.help': 'Qwen server_vad 判断回合结束前的可选静音时长；留空则使用服务端默认值。',
+    'config.fields.voice_model_providers.turn_detection_silence_ms.help':
+      'Qwen server_vad 判断回合结束前的可选静音时长；留空则使用服务端默认值。',
     'config.fields.voice_model_providers.voice.label': '音色',
-    'config.fields.audio_archive.enabled.help': '启用后保存 STT 语音录音 WAV，供 Web UI 回放；超过数量或容量限制时自动删除旧文件。',
+    'config.fields.audio_archive.enabled.help':
+      '启用后保存 STT 语音录音 WAV，供 Web UI 回放；超过数量或容量限制时自动删除旧文件。',
     'config.fields.frame_service.keep_streamon.label': '永久保持 STREAMON',
-    'config.fields.frame_service.keep_streamon.help': '在两次截图之间保持 RK628 CSI 采集流开启。可降低截图延迟，但会增加空闲功耗。',
+    'config.fields.frame_service.keep_streamon.help':
+      '在两次截图之间保持 RK628 CSI 采集流开启。可降低截图延迟，但会增加空闲功耗。',
     'config.fields.quick_capture.enabled.label': '启用',
-    'config.fields.quick_capture.enabled.help': '启用 GPIO 触发的屏幕记忆抓取，不影响 MCU 轻触按键和 ASR 唤醒。',
+    'config.fields.quick_capture.enabled.help':
+      '启用 GPIO 触发的屏幕记忆抓取，不影响 MCU 轻触按键和 ASR 唤醒。',
     'config.fields.quick_capture.gpio_pin.label': 'GPIO 引脚',
-    'config.fields.quick_capture.gpio_pin.help': '下降沿触发引脚。0 表示禁用；Luckfox Pico Zero 的 GPIO3 对应物理引脚 38。GPIO32 和 GPIO33 用于 HDMI 电源与复位。',
+    'config.fields.quick_capture.gpio_pin.help':
+      '下降沿触发引脚。0 表示禁用；Luckfox Pico Zero 的 GPIO3 对应物理引脚 38。GPIO32 和 GPIO33 用于 HDMI 电源与复位。',
     'config.fields.quick_capture.screen_memory_ttl.label': '屏幕记忆保留期',
-    'config.fields.quick_capture.screen_memory_ttl.help': '抓取的屏幕记忆保留时间，例如 90d；填写 forever 表示永久保留。',
-	'config.fields.voice_notifications.retention_days.label': '通知记忆保留天数',
-	'config.fields.voice_notifications.retention_days.help': '正常清理时，已处理的通知记忆保留天数；存储空间不足时会使用更短的分级清理周期。',
+    'config.fields.quick_capture.screen_memory_ttl.help':
+      '抓取的屏幕记忆保留时间，例如 90d；填写 forever 表示永久保留。',
+    'config.fields.voice_notifications.retention_days.label': '通知记忆保留天数',
+    'config.fields.voice_notifications.retention_days.help':
+      '正常清理时，已处理的通知记忆保留天数；存储空间不足时会使用更短的分级清理周期。',
     'config.fields.ota.github_proxy_url.label': 'GitHub 代理 URL',
     'config.fields.ota.github_proxy_url.placeholder': '留空则禁用',
-    'config.fields.ota.github_proxy_url.help': '用于加速 GitHub 下载的可选代理（例如 https://gh-proxy.com/ 或 https://ghfast.top/）',
-    'config.fields.hid.keyboard_layout.help': '手机如何解释 USB 键盘。除非输入的文本出现错位，否则保持 qwerty；如出现错位，请先将手机输入语言切换为匹配的语言，再保存并重启板子。',
+    'config.fields.ota.github_proxy_url.help':
+      '用于加速 GitHub 下载的可选代理（例如 https://gh-proxy.com/ 或 https://ghfast.top/）',
+    'config.fields.hid.keyboard_layout.help':
+      '手机如何解释 USB 键盘。除非输入的文本出现错位，否则保持 qwerty；如出现错位，请先将手机输入语言切换为匹配的语言，再保存并重启板子。',
     'config.fields.agent.context_prune_threshold.label': '历史上下文清理阈值（比例）',
-    'config.fields.agent.context_prune_threshold.help': '上下文 token 数达到模型可用输入预算的该比例时，清理过期 state 和历史工具结果，并清理至触发值的 6/7。取值需为 0，或大于 0 且小于 1；设为 0 时使用 0.5。该值不会超过 context_compaction_threshold，以保证这个低成本清理先于对话压缩执行。',
+    'config.fields.agent.context_prune_threshold.help':
+      '上下文 token 数达到模型可用输入预算的该比例时，清理过期 state 和历史工具结果，并清理至触发值的 6/7。取值需为 0，或大于 0 且小于 1；设为 0 时使用 0.5。该值不会超过 context_compaction_threshold，以保证这个低成本清理先于对话压缩执行。',
     'config.fields.agent.context_prune_threshold.placeholder': '0 = 自动（0.5）',
     'config.fields.agent.context_prune_state_limit.label': '截图状态上限',
-    'config.fields.agent.context_prune_state_limit.help': '带截图的 state 超过该数量时，执行同样的过期 state 清理，只保留当前这一轮的最新 state；不会压缩工具结果。设为 0 时使用 6。',
+    'config.fields.agent.context_prune_state_limit.help':
+      '带截图的 state 超过该数量时，执行同样的过期 state 清理，只保留当前这一轮的最新 state；不会压缩工具结果。设为 0 时使用 6。',
     'config.fields.agent.context_prune_state_limit.placeholder': '0 = 自动（6）',
     'config.fields.agent.context_compaction_threshold.label': '上下文压缩阈值（比例）',
-    'config.fields.agent.context_compaction_threshold.help': '上下文 token 数达到模型可用输入预算的该比例时，将对话总结为压缩消息。取值需为 0，或大于 0 且小于 1；设为 0 时使用 0.8。',
+    'config.fields.agent.context_compaction_threshold.help':
+      '上下文 token 数达到模型可用输入预算的该比例时，将对话总结为压缩消息。取值需为 0，或大于 0 且小于 1；设为 0 时使用 0.8。',
     'config.fields.agent.context_compaction_threshold.placeholder': '0 = 自动（0.8）',
     'locale.saved': '语言已保存，生效进度见配置状态。',
     'locale.save_failed': '保存语言失败。',
@@ -1876,12 +2128,14 @@ const messages = {
     'provider.name': '名称',
     'provider.select': '-- 选择 --',
     'provider.api_key_placeholder': 'sk-... 或 $OPENAI_API_KEY',
-    'provider.anthropic_api_key_placeholder': 'sk-ant-... 或 $ANTHROPIC_API_KEY / $ANTHROPIC_AUTH_TOKEN',
+    'provider.anthropic_api_key_placeholder':
+      'sk-ant-... 或 $ANTHROPIC_API_KEY / $ANTHROPIC_AUTH_TOKEN',
     'provider.credential_placeholder': '输入新值',
     'provider.credential_saved_placeholder': '已保存；留空保持不变',
     'provider.credential_configured': '已配置',
     'provider.api_key_help': '留空保持已保存的值不变；以 $ 开头表示从该环境变量读取。',
-    'provider.anthropic_api_key_help': '留空保持已保存的值不变；ANTHROPIC_AUTH_TOKEN 使用 Bearer 鉴权，ANTHROPIC_API_KEY 和直接填写的密钥使用 x-api-key。',
+    'provider.anthropic_api_key_help':
+      '留空保持已保存的值不变；ANTHROPIC_AUTH_TOKEN 使用 Bearer 鉴权，ANTHROPIC_API_KEY 和直接填写的密钥使用 x-api-key。',
     'provider.name_help_model': '用于在模型提供商列表中标识此项。自动填充，可自行修改。',
     'provider.name_help': '用于在提供商列表中标识此项。自动填充，可自行修改。',
     'provider.advanced': '高级设置',
@@ -1957,7 +2211,8 @@ const messages = {
     'ui.network_name_placeholder': '输入网络名称',
     'ui.connect_failed': '连接失败',
     'ui.wifi_join_failed': '无法加入该网络，请检查名称与密码',
-    'ui.wifi_intro': '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
+    'ui.wifi_intro':
+      '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
     'ui.not_connected': '未连接',
     'ui.voice_unset': '未启用',
     'ui.other_networks_more': '其他…',
@@ -1966,7 +2221,8 @@ const messages = {
     'ui.load_failed': '加载失败',
     'ui.retry': '重试',
     'basic.language_title': '语言与时区',
-    'basic.language_description': '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
+    'basic.language_description':
+      '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
     'basic.timezone': '时区',
     'basic.device_type': '设备类型',
     'basic.keyboard_layout': '键盘布局',
@@ -1977,23 +2233,29 @@ const messages = {
     'storage.full_backup_confirm_title': '创建完整备份？',
     'storage.create_backup': '创建备份',
     'storage.full_restore_confirm_title': '恢复这个备份？',
-    'storage.full_restore_confirm_body': '{{name}}（创建于 {{created}}）会替换设备上现有的数据和设置，过程中服务会暂停，完成后可能需要重启。请只恢复来自可信来源的备份。',
+    'storage.full_restore_confirm_body':
+      '{{name}}（创建于 {{created}}）会替换设备上现有的数据和设置，过程中服务会暂停，完成后可能需要重启。请只恢复来自可信来源的备份。',
     'storage.restore_backup': '恢复备份',
     'storage.backup_app_hint': '在 App 中可以恢复备份；创建备份需要在电脑浏览器中打开本页。',
-    'storage.full_backup_intro': '将 Agent 数据和设置（记忆、会话、设备身份等）完整备份到当前电脑或手机，或从 Aico Link 备份恢复。',
+    'storage.full_backup_intro':
+      '将 Agent 数据和设置（记忆、会话、设备身份等）完整备份到当前电脑或手机，或从 Aico Link 备份恢复。',
     'storage.config_backup_caption': '仅 Agent 配置（.toml）',
     'memory.screen_enabled': '屏幕记忆',
-    'memory.screen_enabled_help': '开启后，按下设备上的截屏按键会保存当前屏幕内容，供 Aico 之后回忆。',
+    'memory.screen_enabled_help':
+      '开启后，按下设备上的截屏按键会保存当前屏幕内容，供 Aico 之后回忆。',
     'advanced.terminal': '终端',
     'lan.title': '局域网访问',
     'lan.on': '已开启',
     'lan.off': '已关闭',
-    'lan.help': '开启后，同一局域网内的设备也能访问设置页（80 和 443 端口）和 Agent（8080 和 8443 端口）；设置了设备密码时还能用 SSH 和网页终端。关闭时只有 USB 连接可以访问。MCP 使用单独的令牌，不受这个开关影响。',
-    'lan.no_password_warning': '未设置设备密码：同一局域网内的设备无需登录即可访问。可在“设备密码”中设置。',
+    'lan.help':
+      '开启后，同一局域网内的设备也能访问设置页（80 和 443 端口）和 Agent（8080 和 8443 端口）；设置了设备密码时还能用 SSH 和网页终端。关闭时只有 USB 连接可以访问。MCP 使用单独的令牌，不受这个开关影响。',
+    'lan.no_password_warning':
+      '未设置设备密码：同一局域网内的设备无需登录即可访问。可在“设备密码”中设置。',
     'lan.password': '设备密码',
     'lan.password_set': '已设置',
     'lan.password_unset': '未设置',
-    'lan.password_help': '设置后，所有设备都要先登录：局域网设备输入这个密码，Aico App 通过 USB 自动完成。它同时是 aico 账号的密码，用于网页终端和 SSH；没有设置时这两者无法登录。修改或清除密码会让所有设备退出登录。',
+    'lan.password_help':
+      '设置后，所有设备都要先登录：局域网设备输入这个密码，Aico App 通过 USB 自动完成。它同时是 aico 账号的密码，用于网页终端和 SSH；没有设置时这两者无法登录。修改或清除密码会让所有设备退出登录。',
     'lan.sign_out': '退出登录',
     'lan.password_title': '设备密码',
     'lan.password_placeholder': '输入新密码',
@@ -2014,11 +2276,13 @@ const messages = {
     'lan.login_sync_failed': '已保存，SSH 和终端登录将在设备重启后生效',
     'lan.clear_password': '清除密码',
     'lan.clear_help': '清除后所有设备退出登录，SSH 和网页终端无法登录，直到重新设置密码。',
-    'lan.clear_help_lan_on': '清除后所有设备退出登录，SSH 和网页终端无法登录。局域网访问仍开启，同一局域网内的设备无需登录即可访问设置页和 Agent。',
+    'lan.clear_help_lan_on':
+      '清除后所有设备退出登录，SSH 和网页终端无法登录。局域网访问仍开启，同一局域网内的设备无需登录即可访问设置页和 Agent。',
     'lan.password_cleared': '已清除设备密码',
     'lan.usb_only': '只能通过 USB 连接修改',
     'mcp.title': 'MCP 访问令牌',
-    'mcp.help': '电脑和 Aico Link 连同一个 Wi-Fi 就能用，不需要开启局域网访问。令牌只能用于 MCP，不会过期，修改设备密码后依然有效；不再使用时在这里撤销。',
+    'mcp.help':
+      '电脑和 Aico Link 连同一个 Wi-Fi 就能用，不需要开启局域网访问。令牌只能用于 MCP，不会过期，修改设备密码后依然有效；不再使用时在这里撤销。',
     'mcp.direct_hint': '用数据线直连 Aico Link 时，把地址里的 IP 换成 192.168.42.1。',
     'mcp.create': '创建令牌',
     'mcp.new_title': '新建令牌',
@@ -2047,11 +2311,14 @@ const messages = {
     'wifi.joining': '正在连接…',
     'wifi.switch': '切换',
     'wifi.switch_confirm_title': '切换到“{{ssid}}”？',
-    'wifi.switch_confirm_body': '本页面正通过当前 Wi-Fi 访问设备，切换后连接会断开。请通过 USB 或新网络中的设备地址重新打开。',
+    'wifi.switch_confirm_body':
+      '本页面正通过当前 Wi-Fi 访问设备，切换后连接会断开。请通过 USB 或新网络中的设备地址重新打开。',
     'wifi.switch_failed': '无法连接到“{{ssid}}”，已保持原来的网络。',
     'wifi.join_failed': '无法连接到“{{ssid}}”。',
-    'manual_config.load_failed_help': '当前配置未能读取，为避免覆盖现有配置，此处不可编辑。请返回后重试。',
-    'backup.restore_interrupted': '备份还没上传完，恢复就被中断了（页面被刷新或关闭）。请取消后重新选择备份文件。',
+    'manual_config.load_failed_help':
+      '当前配置未能读取，为避免覆盖现有配置，此处不可编辑。请返回后重试。',
+    'backup.restore_interrupted':
+      '备份还没上传完，恢复就被中断了（页面被刷新或关闭）。请取消后重新选择备份文件。',
     'ota.current_firmware': '当前固件',
     'ota.row_slot': '运行分区',
     'ota.row_previous_version': '上一版本',
@@ -2059,7 +2326,8 @@ const messages = {
     'ota.no_log': '还没有更新记录',
     'ota.build_time': '构建时间',
     'ota.checked_at': '{{time}} 检查过，已是最新版本',
-    'ota.confirm_body': '检查 GitHub 固件和 aico-business 业务包更新。有新固件时先安装并重启，启动确认后继续检查业务包；仅业务包更新时会短暂重启相关服务。',
+    'ota.confirm_body':
+      '检查 GitHub 固件和 aico-business 业务包更新。有新固件时先安装并重启，启动确认后继续检查业务包；仅业务包更新时会短暂重启相关服务。',
     'ota.confirm_title': '检查并安装更新？',
     'ota.health': '启动状态',
     'ota.health_failed': '失败',
@@ -2105,7 +2373,8 @@ const messages = {
     'advanced.manual_config_help': '编辑完整的分组式 Agent TOML，保存前会先校验配置。',
     'advanced.manual_config_hint': '编辑 Agent TOML 配置文件',
     'usb_internet.title': 'USB 联网',
-    'usb_internet.help': 'Android：打开 Aico App。\nMac：运行 scripts/usb-internet-macos.sh start\niOS：暂不支持。',
+    'usb_internet.help':
+      'Android：打开 Aico App。\nMac：运行 scripts/usb-internet-macos.sh start\niOS：暂不支持。',
     'usb_internet.off': '已关闭',
     'usb_internet.waiting': '等待主机共享网络',
     'usb_internet.mac': '通过 Mac 联网',
@@ -2113,16 +2382,19 @@ const messages = {
     'usb_internet.unavailable': '无法读取状态',
     'usb_internet.save_failed': '保存失败',
     'advanced.mcp_enabled': 'MCP',
-    'advanced.mcp_enabled_help': '让电脑上的 AI 助手（如 Claude Code、Cursor）通过 Aico Link 操作手机，例如截屏、点击和输入文字。',
+    'advanced.mcp_enabled_help':
+      '让电脑上的 AI 助手（如 Claude Code、Cursor）通过 Aico Link 操作手机，例如截屏、点击和输入文字。',
     'advanced.raw_http': '记录详细模型请求',
-    'advanced.raw_http_help': '将模型原始 HTTP 请求和响应写入 Agent 日志目录，仅建议排查问题时启用。',
+    'advanced.raw_http_help':
+      '将模型原始 HTTP 请求和响应写入 Agent 日志目录，仅建议排查问题时启用。',
     'advanced.retention': '日志保留天数',
     'advanced.retention_help': '详细模型请求日志在自动清理前保留的天数。',
     'memory.days': '{{n}} 天',
     'memory.forever': '永久',
     'memory.notification_days': '通知记忆保留天数',
     'memory.reset': '重置对话与记忆',
-    'memory.reset_confirm_body': '此操作将删除所有对话历史和持久化记忆，并重启 Agent。此操作不可撤销。',
+    'memory.reset_confirm_body':
+      '此操作将删除所有对话历史和持久化记忆，并重启 Agent。此操作不可撤销。',
     'memory.reset_confirm_title': '确认重置',
     'memory.reset_done': '已重置，Agent 正在重启',
     'memory.reset_failed': '重置失败',
@@ -2136,7 +2408,8 @@ const messages = {
     'storage.eject_confirm_title': '安全弹出存储卡？',
     'storage.export': '导出',
     'storage.format_action': '格式化',
-    'storage.format_confirm_body': '此操作将清除 microSD 卡上的所有数据，格式化为 {{fs}}。此操作不可撤销。',
+    'storage.format_confirm_body':
+      '此操作将清除 microSD 卡上的所有数据，格式化为 {{fs}}。此操作不可撤销。',
     'storage.format_confirm_title': '格式化存储卡？',
     'storage.import': '导入',
     'storage.import_confirm_title': '导入配置备份？',
@@ -2222,7 +2495,8 @@ const messages = {
     'model.interface_type': '接口类型',
     'model.max_output': '提供商输出上限（Token）',
     'model.max_response_tokens': '最大响应 Token 数',
-    'model.max_response_tokens_help': '0 表示不设上限，使用提供商默认值（原生 Anthropic 使用模型输出上限，未知时为 8192）',
+    'model.max_response_tokens_help':
+      '0 表示不设上限，使用提供商默认值（原生 Anthropic 使用模型输出上限，未知时为 8192）',
     'model.model': '模型',
     'model.not_set': '未设置',
     'model.others': '其他',
@@ -2237,17 +2511,23 @@ const messages = {
     'model.decision_provider_typesafe': 'TypeSafe Jev',
     'model.decision_provider_typesafe_help': '在 typesafe.ai 获取 API Key',
     'model.decision_provider_openai': 'OpenAI Luna',
-    'model.decision_provider_openai_help': '使用 OpenAI 的 Decisions API；它不能定位点击位置，这类判断仍交给主模型',
+    'model.decision_provider_openai_help':
+      '使用 OpenAI 的 Decisions API；它不能定位点击位置，这类判断仍交给主模型',
     'model.decision_provider_gemini': 'Gemini Decision 1',
-    'model.decision_provider_gemini_help': '使用 Google Gemini Decisions API；它不能定位点击位置，这类判断仍交给主模型。在 aistudio.google.com/apikey 获取 API Key',
-    'model.decision_provider_openrouter_help': '在 openrouter.ai/keys 获取 API Key；使用原生 Decisions 模型，默认 Jev',
-    'model.decision_openrouter_model_help': '留空默认使用 Jev；输入时显示模型建议，也可填写其他模型 ID',
+    'model.decision_provider_gemini_help':
+      '使用 Google Gemini Decisions API；它不能定位点击位置，这类判断仍交给主模型。在 aistudio.google.com/apikey 获取 API Key',
+    'model.decision_provider_openrouter_help':
+      '在 openrouter.ai/keys 获取 API Key；使用原生 Decisions 模型，默认 Jev',
+    'model.decision_openrouter_model_help':
+      '留空默认使用 Jev；输入时显示模型建议，也可填写其他模型 ID',
     'model.decision_base_url_help': '留空使用官方地址',
     'model.decision_switch_title': '切换决策模型提供商？',
-    'model.decision_switch_body': '已保存的 API Key 会被清除，决策模型会先关闭，填写新提供商的 API Key 后再开启。',
+    'model.decision_switch_body':
+      '已保存的 API Key 会被清除，决策模型会先关闭，填写新提供商的 API Key 后再开启。',
     'model.decision_switch_confirm': '切换',
     'model.decision_enabled': '启用决策模型',
-    'model.decision_enabled_help': '开启后，固定流程里的判断（如输入法状态、App 是否打开）同时问决策模型和主模型，决策模型有把握时直接采用，否则用主模型的结果。',
+    'model.decision_enabled_help':
+      '开启后，固定流程里的判断（如输入法状态、App 是否打开）同时问决策模型和主模型，决策模型有把握时直接采用，否则用主模型的结果。',
     'model.decision_key_required': '请先填写 API Key',
     'model.decision_min_confidence': '最低置信度',
     'model.decision_min_confidence_help': '低于该值的判断交回主模型，默认 0.8',
@@ -2283,12 +2563,15 @@ const messages = {
     'conversation.max_iterations_help': '单个任务中模型与工具的最大循环次数，-1 表示不限',
     'conversation.max_iterations_invalid': '请输入 -1 或正整数',
     'conversation.prune_threshold': '历史消息裁剪阈值',
-    'conversation.prune_threshold_help': '上下文占用达到该比例时清理旧状态并压缩较早的工具结果，0 表示自动（0.5）',
+    'conversation.prune_threshold_help':
+      '上下文占用达到该比例时清理旧状态并压缩较早的工具结果，0 表示自动（0.5）',
     'conversation.prune_state_limit': '截图状态上限',
-    'conversation.prune_state_limit_help': '带截图的状态超过该数量时清理旧状态，只保留当前这一轮的最新状态，0 表示自动（6）',
+    'conversation.prune_state_limit_help':
+      '带截图的状态超过该数量时清理旧状态，只保留当前这一轮的最新状态，0 表示自动（6）',
     'conversation.prune_state_limit_invalid': '请输入 0 或正整数',
     'conversation.compaction_threshold': '上下文压缩阈值',
-    'conversation.compaction_threshold_help': '上下文占用达到该比例时总结较早的对话，0 表示自动（0.8）',
+    'conversation.compaction_threshold_help':
+      '上下文占用达到该比例时总结较早的对话，0 表示自动（0.8）',
     'conversation.fraction_invalid': '请输入 0，或 0 到 1 之间的小数',
     'conversation.tools': '工具设置',
     'conversation.ui_grounding': '自动标注可点击元素',
@@ -2299,14 +2582,16 @@ const messages = {
     'conversation.reset_done': '当前对话已重置',
     'conversation.reset_failed': '重置失败',
     'websearch.title': 'Web 搜索',
-    'websearch.description': '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
+    'websearch.description':
+      '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
     'websearch.provider': '服务商',
     'websearch.api_key': '搜索 API 密钥',
     'websearch.api_key_placeholder': '请输入',
     'websearch.api_key_saved': '已保存，留空保持不变',
     'websearch.api_key_required': '填写 API 密钥后才会切换到该服务商',
     'apply.reboot_title': '需要重启设备',
-    'apply.reboot_body': '设备将重启以应用这项设置。重启期间与手机的连接会断开，大约 1 分钟后恢复。',
+    'apply.reboot_body':
+      '设备将重启以应用这项设置。重启期间与手机的连接会断开，大约 1 分钟后恢复。',
     'apply.rebooting': '设备正在重启…',
     'apply.rebooting_body': '连接恢复后页面会自动刷新。',
     'apply.agent_restart_title': '需要重启 Agent',
@@ -2355,20 +2640,26 @@ function translateElements(attribute, targetAttribute) {
   document.querySelectorAll(`[${attribute}]`).forEach((element) => {
     const key = element.getAttribute(attribute);
     const defaultAttribute = `${attribute}-default`;
-    const translated = t(key, {defaultValue: element.getAttribute(defaultAttribute) ?? undefined});
+    const translated = t(key, {
+      defaultValue: element.getAttribute(defaultAttribute) ?? undefined,
+    });
     if (targetAttribute === 'textContent') element.textContent = translated;
     else element.setAttribute(targetAttribute, translated);
   });
 }
 
 function translatePage() {
-  document.title = t(document.documentElement?.dataset?.profile === 'local' ? 'local.title' : 'document.title');
+  document.title = t(
+    document.documentElement?.dataset?.profile === 'local' ? 'local.title' : 'document.title',
+  );
   translateElements('data-i18n', 'textContent');
   translateElements('data-i18n-placeholder', 'placeholder');
   translateElements('data-i18n-title', 'title');
   translateElements('data-i18n-aria-label', 'aria-label');
   if (document.dispatchEvent && typeof CustomEvent !== 'undefined') {
-    document.dispatchEvent(new CustomEvent('aico:locale-changed', {detail: {locale: activeLocale}}));
+    document.dispatchEvent(
+      new CustomEvent('aico:locale-changed', { detail: { locale: activeLocale } }),
+    );
   }
 }
 
@@ -2386,8 +2677,7 @@ function applyLocale(locale, remember) {
     persistedLocale = activeLocale;
     try {
       localStorage.setItem(LOCALE_STORAGE_KEY, activeLocale);
-    } catch (_err) {
-    }
+    } catch (_err) {}
   }
   translatePage();
 }
@@ -2405,8 +2695,8 @@ async function saveLocale(locale) {
   try {
     const payload = await request('/api/config/locale', {
       method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({locale: requested}),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locale: requested }),
     });
     if (saveId !== localeSaveId) return;
     applyLocale(payload.locale || requested, true);
@@ -2427,13 +2717,15 @@ async function saveLocale(locale) {
     }
     localeSavePending = false;
     localeRevision++;
-    setBanner(t(persisted && err.applied === false ? 'locale.saved_not_applied' : 'locale.save_failed'), true);
+    setBanner(
+      t(persisted && err.applied === false ? 'locale.saved_not_applied' : 'locale.save_failed'),
+      true,
+    );
     setDetails(err.message);
     if (!(persisted && err.applied === false)) {
       try {
         await loadAuthoritativeLocale();
-      } catch (_refreshErr) {
-      }
+      } catch (_refreshErr) {}
     }
   } finally {
     if (saveId === localeSaveId) {
@@ -2448,16 +2740,36 @@ function initI18n() {
   applyLocale(activeLocale, false);
 }
 
-function getActiveLocale() { return activeLocale; }
-function getPersistedLocale() { return persistedLocale; }
-function getLocaleRevision() { return localeRevision; }
-function isLocaleSavePending() { return localeSavePending; }
+function getActiveLocale() {
+  return activeLocale;
+}
+function getPersistedLocale() {
+  return persistedLocale;
+}
+function getLocaleRevision() {
+  return localeRevision;
+}
+function isLocaleSavePending() {
+  return localeSavePending;
+}
 
 export {
-  applyLocale, getActiveLocale, getLocaleRevision, getPersistedLocale, initI18n,
-  isLocaleSavePending, saveLocale, t,
+  applyLocale,
+  getActiveLocale,
+  getLocaleRevision,
+  getPersistedLocale,
+  initI18n,
+  isLocaleSavePending,
+  saveLocale,
+  t,
 };
 registerRuntime({
-  applyLocale, getActiveLocale, getLocaleRevision, getPersistedLocale, initI18n,
-  isLocaleSavePending, saveLocale, t,
+  applyLocale,
+  getActiveLocale,
+  getLocaleRevision,
+  getPersistedLocale,
+  initI18n,
+  isLocaleSavePending,
+  saveLocale,
+  t,
 });

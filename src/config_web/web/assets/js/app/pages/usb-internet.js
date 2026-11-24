@@ -1,9 +1,9 @@
-import {request} from '../data.js';
-import {el, replace} from '../../ui/dom.js';
-import {group, row} from '../../ui/list.js';
-import {switchControl} from '../../ui/switch.js';
-import {msg, resolve, text} from '../../ui/text.js';
-import {toast} from '../../ui/toast.js';
+import { request } from '../data.js';
+import { el, replace } from '../../ui/dom.js';
+import { group, row } from '../../ui/list.js';
+import { switchControl } from '../../ui/switch.js';
+import { msg, resolve, text } from '../../ui/text.js';
+import { toast } from '../../ui/toast.js';
 
 const endpoint = '/api/network/usb-internet';
 
@@ -14,20 +14,29 @@ export function usbInternetState(send, changed) {
   let busy = false;
   let version = 0;
   return {
-    get state() { return state; },
-    get busy() { return busy; },
+    get state() {
+      return state;
+    },
+    get busy() {
+      return busy;
+    },
     async load() {
       if (busy) return;
       const revision = version;
       try {
-        const result = await send(endpoint, {cache: 'no-store'});
+        const result = await send(endpoint, { cache: 'no-store' });
         if (revision === version) {
-          const different = state === null || ['enabled', 'active', 'host', 'via_usb'].some(key => state[key] !== result[key]);
+          const different =
+            state === null ||
+            ['enabled', 'active', 'host', 'via_usb'].some((key) => state[key] !== result[key]);
           state = result;
           if (different) changed();
         }
       } catch (error) {
-        if (revision === version && state !== null) { state = null; changed(); }
+        if (revision === version && state !== null) {
+          state = null;
+          changed();
+        }
         throw error;
       }
     },
@@ -37,7 +46,11 @@ export function usbInternetState(send, changed) {
       busy = true;
       changed();
       try {
-        state = await send(endpoint, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled})});
+        state = await send(endpoint, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        });
       } finally {
         busy = false;
         changed();
@@ -54,26 +67,48 @@ export function usbInternetSettings() {
     const control = switchControl({
       checked: state?.enabled === true,
       label: msg('usb_internet.title', 'USB 联网'),
-      onChange: enabled => model.save(enabled).catch(error => toast(error.message || resolve(msg('usb_internet.save_failed', '保存失败')))),
+      onChange: (enabled) =>
+        model
+          .save(enabled)
+          .catch((error) =>
+            toast(error.message || resolve(msg('usb_internet.save_failed', '保存失败'))),
+          ),
     });
     control.disabled = model.busy || !state?.via_usb;
-    const status = state == null ? msg('usb_internet.unavailable', '无法读取状态')
-      : !state.enabled ? msg('usb_internet.off', '已关闭')
-        : state.active ? (state.host === 'android' ? msg('usb_internet.android', '通过 Android 联网') : msg('usb_internet.mac', '通过 Mac 联网'))
-          : msg('usb_internet.waiting', '等待主机共享网络');
-    replace(root, [group({
-      joined: true,
-      rows: [
-        row({
-          label: msg('usb_internet.title', 'USB 联网'),
-          description: status,
-          accessory: control,
-          action: 'toggle-usb-internet',
-        }),
-        text(msg('usb_internet.help', 'Android：打开 Aico App。\nMac：运行 scripts/usb-internet-macos.sh start\niOS：暂不支持。'), 'ds-group__note ds-usb-internet-help'),
-      ],
-      note: state && !state.via_usb ? msg('lan.usb_only', '只能在通过 USB 连接时修改这些设置。') : null,
-    })]);
+    const status =
+      state == null
+        ? msg('usb_internet.unavailable', '无法读取状态')
+        : !state.enabled
+          ? msg('usb_internet.off', '已关闭')
+          : state.active
+            ? state.host === 'android'
+              ? msg('usb_internet.android', '通过 Android 联网')
+              : msg('usb_internet.mac', '通过 Mac 联网')
+            : msg('usb_internet.waiting', '等待主机共享网络');
+    replace(root, [
+      group({
+        joined: true,
+        rows: [
+          row({
+            label: msg('usb_internet.title', 'USB 联网'),
+            description: status,
+            accessory: control,
+            action: 'toggle-usb-internet',
+          }),
+          text(
+            msg(
+              'usb_internet.help',
+              'Android：打开 Aico App。\nMac：运行 scripts/usb-internet-macos.sh start\niOS：暂不支持。',
+            ),
+            'ds-group__note ds-usb-internet-help',
+          ),
+        ],
+        note:
+          state && !state.via_usb
+            ? msg('lan.usb_only', '只能在通过 USB 连接时修改这些设置。')
+            : null,
+      }),
+    ]);
   }
   function schedule() {
     setTimeout(async () => {

@@ -5,8 +5,8 @@
  * stacking, which is what the native side does with a single overlay.
  */
 
-import {el} from './dom.js';
-import {resolve} from './text.js';
+import { el } from './dom.js';
+import { resolve } from './text.js';
 
 const VISIBLE_MS = 2600;
 
@@ -23,7 +23,7 @@ let timer = null;
  */
 export function toast(message, options = {}) {
   dismiss();
-  const node = el('div', {class: 'ds-toast', attrs: {role: 'status'}, text: resolve(message)});
+  const node = el('div', { class: 'ds-toast', attrs: { role: 'status' }, text: resolve(message) });
   document.body.appendChild(node);
   currentNode = node;
   const duration = options.durationMs ?? VISIBLE_MS;

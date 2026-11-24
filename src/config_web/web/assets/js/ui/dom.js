@@ -82,7 +82,7 @@ function dash(name) {
  * @param {number} [spec.width]
  * @param {number} [spec.height]
  */
-export function svg({viewBox, shapes, class: className, width, height}) {
+export function svg({ viewBox, shapes, class: className, width, height }) {
   const namespace = 'http://www.w3.org/2000/svg';
   const node = document.createElementNS(namespace, 'svg');
   node.setAttribute('viewBox', viewBox);

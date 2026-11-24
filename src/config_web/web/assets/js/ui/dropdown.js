@@ -10,9 +10,9 @@
  * plain values the user scans for one item.
  */
 
-import {el} from './dom.js';
-import {icon} from './icon.js';
-import {resolve, text} from './text.js';
+import { el } from './dom.js';
+import { icon } from './icon.js';
+import { resolve, text } from './text.js';
 
 /**
  * @param {object} props
@@ -24,36 +24,54 @@ import {resolve, text} from './text.js';
  * @returns {HTMLElement}
  */
 export function dropdown(props) {
-  const current = props.options.find(option => option.value === props.selected);
-  const chevron = icon('chevron', {class: 'ds-dropdown__chevron'});
-  const trigger = el('button', {
-    class: 'ds-dropdown__trigger',
-    attrs: {type: 'button', 'aria-haspopup': 'listbox', 'aria-expanded': 'false'},
-    data: {action: props.action || 'open-dropdown'},
-  }, [
-    text(props.label, 'ds-dropdown__label'),
-    text(current ? current.label : props.selected || '', 'ds-dropdown__value'),
-    chevron,
-  ]);
+  const current = props.options.find((option) => option.value === props.selected);
+  const chevron = icon('chevron', { class: 'ds-dropdown__chevron' });
+  const trigger = el(
+    'button',
+    {
+      class: 'ds-dropdown__trigger',
+      attrs: { type: 'button', 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
+      data: { action: props.action || 'open-dropdown' },
+    },
+    [
+      text(props.label, 'ds-dropdown__label'),
+      text(current ? current.label : props.selected || '', 'ds-dropdown__value'),
+      chevron,
+    ],
+  );
 
-  const list = el('div', {class: 'ds-dropdown__list', attrs: {role: 'listbox', 'aria-label': resolve(props.label), hidden: 'hidden'}},
-    props.options.map(option => {
+  const list = el(
+    'div',
+    {
+      class: 'ds-dropdown__list',
+      attrs: { role: 'listbox', 'aria-label': resolve(props.label), hidden: 'hidden' },
+    },
+    props.options.map((option) => {
       const active = option.value === props.selected;
-      return el('button', {
-        class: active ? 'ds-dropdown__option ds-dropdown__option--selected' : 'ds-dropdown__option',
-        attrs: {type: 'button', role: 'option', 'aria-selected': active ? 'true' : 'false'},
-        data: {action: `choose-${option.value}`},
-        on: {click: () => {
-          close();
-          if (!active) props.onSelect(option.value);
-        }},
-      }, [
-        text(option.label, 'ds-dropdown__option-label'),
-        active ? icon('check', {class: 'ds-choice-row__check', size: 20}) : null,
-      ]);
-    }));
+      return el(
+        'button',
+        {
+          class: active
+            ? 'ds-dropdown__option ds-dropdown__option--selected'
+            : 'ds-dropdown__option',
+          attrs: { type: 'button', role: 'option', 'aria-selected': active ? 'true' : 'false' },
+          data: { action: `choose-${option.value}` },
+          on: {
+            click: () => {
+              close();
+              if (!active) props.onSelect(option.value);
+            },
+          },
+        },
+        [
+          text(option.label, 'ds-dropdown__option-label'),
+          active ? icon('check', { class: 'ds-choice-row__check', size: 20 }) : null,
+        ],
+      );
+    }),
+  );
 
-  const root = el('div', {class: 'ds-dropdown'}, [trigger, list]);
+  const root = el('div', { class: 'ds-dropdown' }, [trigger, list]);
 
   function onOutside(event) {
     if (!root.contains(event.target)) close();
@@ -73,7 +91,8 @@ export function dropdown(props) {
     document.addEventListener('keydown', onKeydown);
     // Start at the chosen item, as a native picker does.
     const selected = list.querySelector('.ds-dropdown__option--selected');
-    if (selected) list.scrollTop = selected.offsetTop - list.clientHeight / 2 + selected.offsetHeight / 2;
+    if (selected)
+      list.scrollTop = selected.offsetTop - list.clientHeight / 2 + selected.offsetHeight / 2;
   }
   function close() {
     list.hidden = true;

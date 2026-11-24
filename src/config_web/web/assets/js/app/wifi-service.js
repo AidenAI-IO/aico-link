@@ -7,42 +7,53 @@
  * renders state and never speaks to the network itself.
  */
 
-import {request} from '../config/api.js';
+import { request } from '../config/api.js';
 
 const CONNECTION_URL = '/api/network/wifi/connection';
 const SCAN_URL = '/api/network/wifi/scan';
 /** How often a running connection task is polled, in milliseconds. */
 const POLL_INTERVAL_MS = 1000;
 
-const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function publishWiFi(payload) {
-  if (payload?.wifi_status && typeof window !== 'undefined' && typeof window.CustomEvent === 'function') {
-    window.dispatchEvent(new window.CustomEvent('aico:wifi-changed', {detail: payload}));
+  if (
+    payload?.wifi_status &&
+    typeof window !== 'undefined' &&
+    typeof window.CustomEvent === 'function'
+  ) {
+    window.dispatchEvent(new window.CustomEvent('aico:wifi-changed', { detail: payload }));
   }
 }
 
 /** Trigger a scan and return the discovered networks in scan order. */
 export async function scan() {
-  const payload = await request(SCAN_URL, {method: 'POST'});
+  const payload = await request(SCAN_URL, { method: 'POST' });
   const details = Array.isArray(payload && payload.network_details)
     ? payload.network_details
-        .filter(network => network && typeof network.ssid === 'string' && network.ssid !== '')
-        .map(network => ({
+        .filter((network) => network && typeof network.ssid === 'string' && network.ssid !== '')
+        .map((network) => ({
           ssid: network.ssid,
           secured: network.secured === true,
-          signalDbm: network.signal_dbm != null && Number.isFinite(Number(network.signal_dbm))
-            ? Number(network.signal_dbm)
-            : null,
-          signalPercent: network.signal_percent != null && Number.isFinite(Number(network.signal_percent))
-            ? Math.max(0, Math.min(100, Number(network.signal_percent)))
-            : null,
+          signalDbm:
+            network.signal_dbm != null && Number.isFinite(Number(network.signal_dbm))
+              ? Number(network.signal_dbm)
+              : null,
+          signalPercent:
+            network.signal_percent != null && Number.isFinite(Number(network.signal_percent))
+              ? Math.max(0, Math.min(100, Number(network.signal_percent)))
+              : null,
         }))
     : [];
   if (details.length) return details;
   const names = Array.isArray(payload && payload.networks) ? payload.networks : [];
   const secured = parseSecuredSsids(payload && payload.output);
-  return names.map(ssid => ({ssid, secured: secured.has(ssid), signalDbm: null, signalPercent: null}));
+  return names.map((ssid) => ({
+    ssid,
+    secured: secured.has(ssid),
+    signalDbm: null,
+    signalPercent: null,
+  }));
 }
 
 /** Map a dBm/percentage observation to the three visible radio levels. */
@@ -111,7 +122,9 @@ export function parseSecuredSsids(output) {
  */
 export async function connect(profile) {
   // An absent proxy_mode tells the device to keep the saved proxy setting.
-  const body = profile.keepProxy ? {ssid: profile.ssid} : {ssid: profile.ssid, proxy_mode: profile.proxyMode || 'system'};
+  const body = profile.keepProxy
+    ? { ssid: profile.ssid }
+    : { ssid: profile.ssid, proxy_mode: profile.proxyMode || 'system' };
   if (profile.psk !== undefined) body.psk = profile.psk;
   if (body.proxy_mode === 'proxy') {
     if (profile.proxyUrl) body.proxy_url = profile.proxyUrl;
@@ -120,17 +133,19 @@ export async function connect(profile) {
 
   const started = await request(CONNECTION_URL, {
     method: 'PUT',
-    headers: {'Content-Type': 'application/json'},
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
   const payload = started && started.status === 'running' ? await waitForTask(started) : started;
   publishWiFi(payload);
   const status = (payload && payload.wifi_status) || {};
-  const ok = Boolean(payload && payload.ok) && status.connected === true && status.ssid === profile.ssid;
+  const ok =
+    Boolean(payload && payload.ok) && status.connected === true && status.ssid === profile.ssid;
   return {
     ok,
-    failureReason: payload && typeof payload.failure_reason === 'string' ? payload.failure_reason : '',
+    failureReason:
+      payload && typeof payload.failure_reason === 'string' ? payload.failure_reason : '',
     payload: payload || {},
   };
 }
@@ -141,7 +156,7 @@ export async function forget(ssid) {
     method: 'DELETE',
   });
   publishWiFi(payload);
-  return {ok: payload && payload.ok !== false, payload: payload || {}};
+  return { ok: payload && payload.ok !== false, payload: payload || {} };
 }
 
 /** Poll a running connection task until it stops, or its deadline passes. */
@@ -174,13 +189,13 @@ async function waitForTask(started) {
  * @param {string} [choice.savedUrl] - URL already stored for this profile.
  * @returns {{ok: true, proxyMode: string, proxyUrl: string} | {ok: false, reason: string}}
  */
-export function proxyChangeRequest({enabled, url, savedUrl = ''}) {
+export function proxyChangeRequest({ enabled, url, savedUrl = '' }) {
   const trimmed = (url || '').trim();
   const stored = (savedUrl || '').trim();
 
-  if (!enabled) return {ok: true, proxyMode: 'system', proxyUrl: ''};
-  if (!trimmed && !stored) return {ok: false, reason: 'proxy_url_required'};
-  return {ok: true, proxyMode: 'proxy', proxyUrl: trimmed || stored};
+  if (!enabled) return { ok: true, proxyMode: 'system', proxyUrl: '' };
+  if (!trimmed && !stored) return { ok: false, reason: 'proxy_url_required' };
+  return { ok: true, proxyMode: 'proxy', proxyUrl: trimmed || stored };
 }
 
 /**
@@ -212,7 +227,7 @@ export function currentNetworks(networks, connected) {
     (a, b) => Number(b.priority || 0) - Number(a.priority || 0),
   );
   if (!connected) return sorted;
-  const match = sorted.find(network => network.ssid === connected);
+  const match = sorted.find((network) => network.ssid === connected);
   if (!match) return sorted;
-  return [match, ...sorted.filter(network => network.ssid !== connected)];
+  return [match, ...sorted.filter((network) => network.ssid !== connected)];
 }

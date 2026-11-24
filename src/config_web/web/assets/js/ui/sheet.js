@@ -6,8 +6,8 @@
  * geometry and curve constants drive `Modal` + `Animated` in React Native.
  */
 
-import {el, append} from './dom.js';
-import {text} from './text.js';
+import { el, append } from './dom.js';
+import { text } from './text.js';
 
 /** Fraction of the panel height that must be dragged before release dismisses. */
 const DISMISS_RATIO = 0.28;
@@ -26,16 +26,16 @@ const INTERACTIVE = 'input, textarea, select, button, a, label, [role="button"],
  * @returns {{el: HTMLElement, open: () => void, close: () => void, isOpen: () => boolean, onAfterClose: (fn: () => void) => void}}
  */
 export function sheet(props) {
-  const panel = el('div', {class: 'ds-sheet__panel'}, [
-    el('div', {class: 'ds-sheet__grabber'}, [el('div', {class: 'ds-sheet__handle'})]),
+  const panel = el('div', { class: 'ds-sheet__panel' }, [
+    el('div', { class: 'ds-sheet__grabber' }, [el('div', { class: 'ds-sheet__handle' })]),
     props.title != null ? text(props.title, 'ds-sheet__title') : null,
-    el('div', {class: 'ds-sheet__body'}, props.body),
+    el('div', { class: 'ds-sheet__body' }, props.body),
   ]);
 
-  const scrim = el('div', {class: 'ds-sheet__scrim'});
+  const scrim = el('div', { class: 'ds-sheet__scrim' });
   const root = el('div', {
     class: 'ds-sheet',
-    attrs: {role: 'dialog', 'aria-modal': 'true', hidden: 'hidden'},
+    attrs: { role: 'dialog', 'aria-modal': 'true', hidden: 'hidden' },
   });
   root.appendChild(scrim);
   root.appendChild(panel);
@@ -69,7 +69,7 @@ export function sheet(props) {
         if (afterClose) afterClose();
       };
       // Prefer the transition end, but never hang if the event is missed.
-      panel.addEventListener('transitionend', finish, {once: true});
+      panel.addEventListener('transitionend', finish, { once: true });
       setTimeout(finish, 400);
     }
     if (props.onClose && !open) props.onClose();
@@ -79,12 +79,12 @@ export function sheet(props) {
 
   // Drag to dismiss, using pointer events so mouse and touch share one path.
   // Controls and tappable rows keep their taps: a drag never starts on them.
-  panel.addEventListener('pointerdown', event => {
+  panel.addEventListener('pointerdown', (event) => {
     if (!open || event.target.closest(INTERACTIVE)) return;
-    dragging = {startY: event.clientY, offset: 0, id: event.pointerId, captured: false};
+    dragging = { startY: event.clientY, offset: 0, id: event.pointerId, captured: false };
     panel.style.transition = 'none';
   });
-  panel.addEventListener('pointermove', event => {
+  panel.addEventListener('pointermove', (event) => {
     if (!dragging || event.pointerId !== dragging.id) return;
     dragging.offset = Math.max(0, event.clientY - dragging.startY);
     panel.style.transform = `translateY(${dragging.offset}px)`;
@@ -126,10 +126,10 @@ export function sheet(props) {
     open: () => setOpen(true),
     close: () => setOpen(false),
     isOpen: () => open,
-    onAfterClose: fn => {
+    onAfterClose: (fn) => {
       afterClose = fn;
     },
   };
 }
 
-export {append};
+export { append };

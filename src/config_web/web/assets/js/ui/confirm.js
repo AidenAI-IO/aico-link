@@ -16,8 +16,8 @@
  * on the sheet curve. Tapping the scrim or pressing Escape cancels.
  */
 
-import {el} from './dom.js';
-import {msg, text} from './text.js';
+import { el } from './dom.js';
+import { msg, text } from './text.js';
 
 /** Dismiss animation length; matches `--motion-sheet`. */
 const CLOSE_MS = 320;
@@ -32,31 +32,45 @@ const CLOSE_MS = 320;
  * @returns {Promise<boolean>} true when confirmed; dismissing counts as cancel.
  */
 export function confirmSheet(props) {
-  return new Promise(resolvePromise => {
+  return new Promise((resolvePromise) => {
     let settled = false;
-    const confirm = el('button', {
-      class: props.danger ? 'ds-action-sheet__button ds-action-sheet__button--danger' : 'ds-action-sheet__button',
-      attrs: {type: 'button'},
-      data: {action: props.action || 'confirm'},
-    }, [text(props.confirmLabel)]);
-    const cancel = el('button', {
-      class: 'ds-action-sheet__button ds-action-sheet__button--cancel',
-      attrs: {type: 'button'},
-      data: {action: 'cancel-confirm'},
-    }, [text(msg('action.cancel', '取消'))]);
+    const confirm = el(
+      'button',
+      {
+        class: props.danger
+          ? 'ds-action-sheet__button ds-action-sheet__button--danger'
+          : 'ds-action-sheet__button',
+        attrs: { type: 'button' },
+        data: { action: props.action || 'confirm' },
+      },
+      [text(props.confirmLabel)],
+    );
+    const cancel = el(
+      'button',
+      {
+        class: 'ds-action-sheet__button ds-action-sheet__button--cancel',
+        attrs: { type: 'button' },
+        data: { action: 'cancel-confirm' },
+      },
+      [text(msg('action.cancel', '取消'))],
+    );
 
-    const panel = el('div', {class: 'ds-action-sheet__panel'}, [
-      el('div', {class: 'ds-action-sheet__group'}, [
-        el('div', {class: 'ds-action-sheet__header'}, [
+    const panel = el('div', { class: 'ds-action-sheet__panel' }, [
+      el('div', { class: 'ds-action-sheet__group' }, [
+        el('div', { class: 'ds-action-sheet__header' }, [
           text(props.title, 'ds-action-sheet__title'),
           props.body ? text(props.body, 'ds-action-sheet__message') : null,
         ]),
         confirm,
       ]),
-      el('div', {class: 'ds-action-sheet__group ds-action-sheet__group--cancel'}, [cancel]),
+      el('div', { class: 'ds-action-sheet__group ds-action-sheet__group--cancel' }, [cancel]),
     ]);
-    const scrim = el('div', {class: 'ds-action-sheet__scrim'});
-    const root = el('div', {class: 'ds-action-sheet', attrs: {role: 'alertdialog', 'aria-modal': 'true'}}, [scrim, panel]);
+    const scrim = el('div', { class: 'ds-action-sheet__scrim' });
+    const root = el(
+      'div',
+      { class: 'ds-action-sheet', attrs: { role: 'alertdialog', 'aria-modal': 'true' } },
+      [scrim, panel],
+    );
 
     function close(result) {
       if (settled) return;

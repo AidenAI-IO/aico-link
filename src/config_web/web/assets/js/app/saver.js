@@ -19,13 +19,13 @@ import {
   planApply,
   saveLabel,
 } from './apply.js';
-import {request} from './data.js';
-import {postToHost} from './host.js';
-import {button} from '../ui/button.js';
-import {msg, resolve} from '../ui/text.js';
-import {toast} from '../ui/toast.js';
+import { request } from './data.js';
+import { postToHost } from './host.js';
+import { button } from '../ui/button.js';
+import { msg, resolve } from '../ui/text.js';
+import { toast } from '../ui/toast.js';
 
-const RANK = {live: 0, agent_restart: 1, reboot: 2};
+const RANK = { live: 0, agent_restart: 1, reboot: 2 };
 
 /**
  * The app's native "保存" arrives as one window event. A single listener hands
@@ -38,7 +38,9 @@ function handleSaveRequests(handler) {
   saveRequestHandler = handler;
   if (listening) return;
   listening = true;
-  const onSaveRequest = () => { if (saveRequestHandler) saveRequestHandler(); };
+  const onSaveRequest = () => {
+    if (saveRequestHandler) saveRequestHandler();
+  };
   window.addEventListener('aico:save-request', onSaveRequest);
 }
 
@@ -46,7 +48,10 @@ function handleSaveRequests(handler) {
 function mergePatch(target, source) {
   for (const [key, value] of Object.entries(source)) {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
-      target[key] = mergePatch(target[key] && typeof target[key] === 'object' ? target[key] : {}, value);
+      target[key] = mergePatch(
+        target[key] && typeof target[key] === 'object' ? target[key] : {},
+        value,
+      );
     } else {
       target[key] = value;
     }
@@ -57,8 +62,8 @@ function mergePatch(target, source) {
 async function patchConfig(patch) {
   return request('/api/config', {
     method: 'PATCH',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({config: patch}),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: patch }),
   });
 }
 
@@ -86,19 +91,39 @@ export function createSaver(context, options) {
   let confirming = false;
 
   const level = () =>
-    [...staged.values()].reduce((max, entry) => (RANK[entry.level] > RANK[max] ? entry.level : max), APPLY_LIVE);
+    [...staged.values()].reduce(
+      (max, entry) => (RANK[entry.level] > RANK[max] ? entry.level : max),
+      APPLY_LIVE,
+    );
 
-  const formReady = () => Boolean(options.form && staged.size === 0 && !committing && options.form.ready());
+  const formReady = () =>
+    Boolean(options.form && staged.size === 0 && !committing && options.form.ready());
 
   function refreshChrome() {
+    if (context.isCurrent && !context.isCurrent()) return;
     const pending = staged.size > 0 && !committing;
     const form = formReady();
     const action = pending
-      ? button({label: saveLabel(level()), variant: 'quiet', action: 'save-restart', onPress: commit})
+      ? button({
+          label: saveLabel(level()),
+          variant: 'quiet',
+          action: 'save-restart',
+          onPress: commit,
+        })
       : form
-        ? button({label: saveLabel(APPLY_LIVE), variant: 'quiet', action: 'save-form', onPress: () => options.form.submit()})
+        ? button({
+            label: saveLabel(APPLY_LIVE),
+            variant: 'quiet',
+            action: 'save-form',
+            onPress: () => options.form.submit(),
+          })
         : null;
-    if (context.header) context.header({title: options.title, onBack: () => context.navigate(options.back), action});
+    if (context.header)
+      context.header({
+        title: options.title,
+        onBack: () => context.navigate(options.back),
+        action,
+      });
     const apply = pending ? level() : APPLY_LIVE;
     postToHost({
       type: 'aico_config_save_state',
@@ -148,7 +173,7 @@ export function createSaver(context, options) {
     if (sequence.get(key) !== current) return 'superseded';
 
     if (needsRestart(planned)) {
-      staged.set(key, {patch, level: planned});
+      staged.set(key, { patch, level: planned });
       refreshChrome();
       return 'staged';
     }
@@ -206,7 +231,10 @@ export function createSaver(context, options) {
       refreshChrome();
       return;
     }
-    const patch = [...staged.values()].reduce((merged, entry) => mergePatch(merged, entry.patch), {});
+    const patch = [...staged.values()].reduce(
+      (merged, entry) => mergePatch(merged, entry.patch),
+      {},
+    );
     committing = true;
     refreshChrome();
     let restartLevel = null;
@@ -234,13 +262,13 @@ export function createSaver(context, options) {
     if (staged.size === 0 && formReady()) options.form.submit();
     else commit();
   };
-  handleSaveRequests(onSaveRequest);
+  if (!context.isCurrent || context.isCurrent()) handleSaveRequests(onSaveRequest);
 
   return {
     change,
     commit,
     /** True while `key` holds a change waiting for "保存并重启". */
-    isStaged: key => staged.has(key),
+    isStaged: (key) => staged.has(key),
     /** Describe the page to the top bar and the app. Call once per render. */
     refreshChrome,
   };

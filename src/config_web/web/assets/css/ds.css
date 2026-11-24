@@ -1008,7 +1008,9 @@
   color: var(--color-success);
   opacity: 0;
   transform: scale(0.6);
-  transition: opacity var(--motion-fast) ease, transform var(--motion-fast) ease;
+  transition:
+    opacity var(--motion-fast) ease,
+    transform var(--motion-fast) ease;
 }
 
 .ds-segmented__check--visible {
@@ -1202,7 +1204,8 @@
   width: 100%;
   max-width: 480px;
   margin: 0 auto;
-  padding: 0 var(--size-action-sheet-inset) calc(var(--size-action-sheet-inset) + env(safe-area-inset-bottom, 0px));
+  padding: 0 var(--size-action-sheet-inset)
+    calc(var(--size-action-sheet-inset) + env(safe-area-inset-bottom, 0px));
   transform: translateY(110%);
   transition: transform var(--motion-sheet) var(--motion-sheet-bezier);
 }

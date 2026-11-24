@@ -11,35 +11,35 @@
  * configuration.
  */
 
-import {adoptSaved, ensureSnapshot, request} from '../data.js';
-import {createSaver} from '../saver.js';
-import {button} from '../../ui/button.js';
-import {confirmSheet} from '../../ui/confirm.js';
-import {el, replace} from '../../ui/dom.js';
-import {icon} from '../../ui/icon.js';
-import {group, row, screen} from '../../ui/list.js';
-import {sheet} from '../../ui/sheet.js';
-import {setChecked, switchControl} from '../../ui/switch.js';
-import {msg, resolve, text} from '../../ui/text.js';
-import {toast} from '../../ui/toast.js';
-import {mcpServersCard} from './mcp-servers.js';
+import { adoptSaved, ensureSnapshot, request } from '../data.js';
+import { createSaver } from '../saver.js';
+import { button } from '../../ui/button.js';
+import { confirmSheet } from '../../ui/confirm.js';
+import { el, replace } from '../../ui/dom.js';
+import { icon } from '../../ui/icon.js';
+import { group, row, screen } from '../../ui/list.js';
+import { sheet } from '../../ui/sheet.js';
+import { setChecked, switchControl } from '../../ui/switch.js';
+import { msg, resolve, text } from '../../ui/text.js';
+import { toast } from '../../ui/toast.js';
+import { mcpServersCard } from './mcp-servers.js';
 
 const MCP_TOKENS_API = '/api/security/mcp-tokens';
 
 function fetchTokens() {
-  return request(MCP_TOKENS_API, {cache: 'no-store'});
+  return request(MCP_TOKENS_API, { cache: 'no-store' });
 }
 
 function createToken(name) {
   return request(MCP_TOKENS_API, {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name}),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
   });
 }
 
 function revokeToken(id) {
-  return request(`${MCP_TOKENS_API}/${encodeURIComponent(id)}`, {method: 'DELETE'});
+  return request(`${MCP_TOKENS_API}/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 /**
@@ -54,10 +54,10 @@ export function wifiEndpoint(location = window.location, wifiAddress = '') {
 
 /** Client configuration snippets for a new token. */
 export function mcpClientSnippets(endpoint, secret) {
-  const server = {type: 'http', url: endpoint, headers: {Authorization: `Bearer ${secret}`}};
+  const server = { type: 'http', url: endpoint, headers: { Authorization: `Bearer ${secret}` } };
   return {
     claudeCode: `claude mcp add --transport http aico ${endpoint} --header "Authorization: Bearer ${secret}"`,
-    json: JSON.stringify({mcpServers: {aico: server}}, null, 1),
+    json: JSON.stringify({ mcpServers: { aico: server } }, null, 1),
   };
 }
 
@@ -73,23 +73,34 @@ async function copy(value) {
 
 /** A code block with a small copy button in its top-right corner. */
 function codeBlock(value, action) {
-  const copyButton = el('button', {
-    class: 'ds-code__copy',
-    attrs: {type: 'button', 'aria-label': resolve(msg('mcp.copy', '复制')), title: resolve(msg('mcp.copy', '复制'))},
-    data: {action},
-  }, [icon('copy', {size: 16})]);
+  const copyButton = el(
+    'button',
+    {
+      class: 'ds-code__copy',
+      attrs: {
+        type: 'button',
+        'aria-label': resolve(msg('mcp.copy', '复制')),
+        title: resolve(msg('mcp.copy', '复制')),
+      },
+      data: { action },
+    },
+    [icon('copy', { size: 16 })],
+  );
   let reset = null;
   copyButton.addEventListener('click', async () => {
     if (!(await copy(value))) return;
-    replace(copyButton, [icon('check', {size: 14})]);
+    replace(copyButton, [icon('check', { size: 14 })]);
     copyButton.classList.add('ds-code__copy--done');
     clearTimeout(reset);
     reset = setTimeout(() => {
-      replace(copyButton, [icon('copy', {size: 16})]);
+      replace(copyButton, [icon('copy', { size: 16 })]);
       copyButton.classList.remove('ds-code__copy--done');
     }, 1500);
   });
-  return el('div', {class: 'ds-code'}, [el('pre', {class: 'ds-code__text', text: value}), copyButton]);
+  return el('div', { class: 'ds-code' }, [
+    el('pre', { class: 'ds-code__text', text: value }),
+    copyButton,
+  ]);
 }
 
 function nameInput() {
@@ -104,7 +115,7 @@ function nameInput() {
       spellcheck: 'false',
       'aria-label': resolve(msg('mcp.name', '名称')),
     },
-    data: {action: 'mcp-token-name'},
+    data: { action: 'mcp-token-name' },
   });
 }
 
@@ -112,22 +123,35 @@ function showSecret(secret, endpoint) {
   const snippets = mcpClientSnippets(endpoint, secret);
   sheet({
     title: msg('mcp.created_title', '令牌已创建'),
-    body: [el('div', {class: 'ds-code-sheet'}, [
-      text(msg('mcp.created_help', '令牌只显示这一次，请现在复制保存。把下面任一配置粘贴到 MCP 客户端即可。'), 'ds-code-sheet__intro'),
-      codeBlock(secret, 'copy-mcp-token'),
-      text(msg('mcp.claude_code', 'Claude Code'), 'ds-code-sheet__label'),
-      codeBlock(snippets.claudeCode, 'copy-mcp-claude'),
-      text(msg('mcp.json_config', '其他客户端（JSON 配置）'), 'ds-code-sheet__label'),
-      codeBlock(snippets.json, 'copy-mcp-json'),
-      text(msg('mcp.direct_hint', '用数据线直连 Aico Link 时，把地址里的 IP 换成 192.168.42.1。'), 'ds-code-sheet__label'),
-    ])],
+    body: [
+      el('div', { class: 'ds-code-sheet' }, [
+        text(
+          msg(
+            'mcp.created_help',
+            '令牌只显示这一次，请现在复制保存。把下面任一配置粘贴到 MCP 客户端即可。',
+          ),
+          'ds-code-sheet__intro',
+        ),
+        codeBlock(secret, 'copy-mcp-token'),
+        text(msg('mcp.claude_code', 'Claude Code'), 'ds-code-sheet__label'),
+        codeBlock(snippets.claudeCode, 'copy-mcp-claude'),
+        text(msg('mcp.json_config', '其他客户端（JSON 配置）'), 'ds-code-sheet__label'),
+        codeBlock(snippets.json, 'copy-mcp-json'),
+        text(
+          msg('mcp.direct_hint', '用数据线直连 Aico Link 时，把地址里的 IP 换成 192.168.42.1。'),
+          'ds-code-sheet__label',
+        ),
+      ]),
+    ],
   }).open();
 }
 
 export async function mcpPage(context) {
   const snapshot = await ensureSnapshot(context);
   const body = el('div');
-  const installed = mcpServersCard();
+  const installed = context.hideInstalled
+    ? { element: el('div'), refresh: async () => {} }
+    : mcpServersCard();
   const local = snapshot.profile === 'local';
   const saver = createSaver(context, {
     title: msg('advanced.mcp_enabled', 'MCP'),
@@ -159,7 +183,7 @@ export async function mcpPage(context) {
     mcpSaving = true;
     render();
     try {
-      const outcome = await saver.change('agent.mcp_enabled', {agent: {mcp_enabled: next}});
+      const outcome = await saver.change('agent.mcp_enabled', { agent: { mcp_enabled: next } });
       if (outcome === 'invalid' || outcome === 'failed') mcpDraft = previous;
       else mcpDraft = mcpSaved();
     } finally {
@@ -170,15 +194,26 @@ export async function mcpPage(context) {
 
   function askName() {
     const input = nameInput();
-    const error = el('div', {class: 'ds-field__error', attrs: {'aria-live': 'polite'}});
+    const error = el('div', { class: 'ds-field__error', attrs: { 'aria-live': 'polite' } });
     error.hidden = true;
-    const submit = button({label: msg('mcp.create', '创建令牌'), variant: 'primary', block: true, action: 'mcp-token-submit'});
+    const submit = button({
+      label: msg('mcp.create', '创建令牌'),
+      variant: 'primary',
+      block: true,
+      action: 'mcp-token-submit',
+    });
     const view = sheet({
       title: msg('mcp.new_title', '新建令牌'),
-      body: [el('div', {}, [
-        el('div', {class: 'ds-field'}, [input, text(msg('mcp.name_help', '方便以后认出是哪台电脑、哪个客户端'), 'ds-field__help'), error]),
-        el('div', {class: 'page__footer'}, [submit]),
-      ])],
+      body: [
+        el('div', {}, [
+          el('div', { class: 'ds-field' }, [
+            input,
+            text(msg('mcp.name_help', '方便以后认出是哪台电脑、哪个客户端'), 'ds-field__help'),
+            error,
+          ]),
+          el('div', { class: 'page__footer' }, [submit]),
+        ]),
+      ],
     });
     submit.addEventListener('click', async () => {
       const name = input.value.trim();
@@ -197,7 +232,10 @@ export async function mcpPage(context) {
         showSecret(created.secret, wifiEndpoint(window.location, wifiAddress));
       } catch (failure) {
         error.hidden = false;
-        error.textContent = failure && failure.message ? failure.message : resolve(msg('lan.save_failed', '保存失败'));
+        error.textContent =
+          failure && failure.message
+            ? failure.message
+            : resolve(msg('lan.save_failed', '保存失败'));
       } finally {
         submit.disabled = false;
       }
@@ -221,7 +259,9 @@ export async function mcpPage(context) {
       await revokeToken(token.id);
       toast(msg('mcp.revoked', '已撤销'));
     } catch (failure) {
-      toast(failure && failure.message ? failure.message : resolve(msg('lan.save_failed', '保存失败')));
+      toast(
+        failure && failure.message ? failure.message : resolve(msg('lan.save_failed', '保存失败')),
+      );
     } finally {
       busy = false;
       await load();
@@ -232,33 +272,44 @@ export async function mcpPage(context) {
   function tokenSection() {
     if (!state) {
       return group({
-        rows: [row({
-          label: msg('mcp.title', 'MCP 访问令牌'),
-          value: msg('lan.unavailable', '无法读取'),
-          tone: 'danger',
-          description: loadError && loadError.message ? loadError.message : null,
-        })],
+        rows: [
+          row({
+            label: msg('mcp.title', 'MCP 访问令牌'),
+            value: msg('lan.unavailable', '无法读取'),
+            tone: 'danger',
+            description: loadError && loadError.message ? loadError.message : null,
+          }),
+        ],
       });
     }
     const tokens = Array.isArray(state.tokens) ? state.tokens : [];
     const rows = [];
-    tokens.forEach(token => rows.push(row({
-      label: token.name,
-      description: new Date(token.created_at).toLocaleString(),
-      value: msg('mcp.revoke', '撤销'),
-      tone: 'danger',
-      action: 'revoke-mcp-token',
-      onPress: busy ? undefined : () => revoke(token),
-    })));
-    rows.push(row({
-      label: msg('mcp.create', '创建令牌'),
-      labelTone: 'accent',
-      action: 'create-mcp-token',
-      onPress: busy ? undefined : askName,
-    }));
+    tokens.forEach((token) =>
+      rows.push(
+        row({
+          label: token.name,
+          description: new Date(token.created_at).toLocaleString(),
+          value: msg('mcp.revoke', '撤销'),
+          tone: 'danger',
+          action: 'revoke-mcp-token',
+          onPress: busy ? undefined : () => revoke(token),
+        }),
+      ),
+    );
+    rows.push(
+      row({
+        label: msg('mcp.create', '创建令牌'),
+        labelTone: 'accent',
+        action: 'create-mcp-token',
+        onPress: busy ? undefined : askName,
+      }),
+    );
     return group({
       rows,
-      note: msg('mcp.help', '电脑和 Aico Link 连同一个 Wi-Fi 就能用，不需要开启局域网访问。令牌只能用于 MCP，不会过期，修改设备密码后依然有效；不再使用时在这里撤销。'),
+      note: msg(
+        'mcp.help',
+        '电脑和 Aico Link 连同一个 Wi-Fi 就能用，不需要开启局域网访问。令牌只能用于 MCP，不会过期，修改设备密码后依然有效；不再使用时在这里撤销。',
+      ),
     });
   }
 
@@ -266,7 +317,7 @@ export async function mcpPage(context) {
     const mcpToggle = switchControl({
       checked: mcpDraft,
       label: msg('advanced.mcp_enabled', 'MCP'),
-      onChange: next => {
+      onChange: (next) => {
         if (mcpSaving) {
           setChecked(mcpToggle, mcpDraft);
           return;
@@ -275,18 +326,28 @@ export async function mcpPage(context) {
       },
     });
     if (mcpSaving) mcpToggle.disabled = true;
-    replace(body, [
-      installed.element,
-      !local ? group({
-        rows: [row({
-          label: msg('advanced.mcp_enabled', 'MCP'),
-          description: msg('advanced.mcp_enabled_help', '让电脑上的 AI 助手（如 Claude Code、Cursor）通过 Aico Link 操作手机，例如截屏、点击和输入文字。'),
-          accessory: mcpToggle,
-          action: 'toggle-mcp-enabled',
-        })],
-      }) : null,
-      !local && mcpDraft ? tokenSection() : null,
-    ].filter(Boolean));
+    replace(
+      body,
+      [
+        installed.element,
+        !local
+          ? group({
+              rows: [
+                row({
+                  label: msg('advanced.mcp_enabled', 'MCP'),
+                  description: msg(
+                    'advanced.mcp_enabled_help',
+                    '让电脑上的 AI 助手（如 Claude Code、Cursor）通过 Aico Link 操作手机，例如截屏、点击和输入文字。',
+                  ),
+                  accessory: mcpToggle,
+                  action: 'toggle-mcp-enabled',
+                }),
+              ],
+            })
+          : null,
+        !local && mcpDraft ? tokenSection() : null,
+      ].filter(Boolean),
+    );
     saver.refreshChrome();
   }
 

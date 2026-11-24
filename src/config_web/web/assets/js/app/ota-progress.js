@@ -25,21 +25,35 @@ export function shortVersion(version) {
 
 /** Convert Debian's `0.0.78-1` package version to its displayed release. */
 export function businessReleaseVersion(version) {
-  return String(version || '').trim().replace(/^\d+:/, '').replace(/-\d+$/, '');
+  return String(version || '')
+    .trim()
+    .replace(/^\d+:/, '')
+    .replace(/-\d+$/, '');
 }
 
 /** Stages in the order the updater runs them. */
 export const STAGES = ['check', 'download', 'install', 'reboot'];
 
 const STAGE_OF = {
-  check: 'check', release: 'check', manifest: 'check', space: 'check', partition: 'check', asset: 'check',
-  download: 'download', verify: 'download',
-  write: 'install', readback: 'install', personalization: 'install', cleanup: 'install', misc: 'install',
+  check: 'check',
+  release: 'check',
+  manifest: 'check',
+  space: 'check',
+  partition: 'check',
+  asset: 'check',
+  download: 'download',
+  verify: 'download',
+  write: 'install',
+  readback: 'install',
+  personalization: 'install',
+  cleanup: 'install',
+  misc: 'install',
   reboot: 'reboot',
 };
 
 const MESSAGE = /message="(?:ota )?([a-z]+):\s*([^"]*)"/;
-const PROGRESS = /(\S+)(?:\s+->\s+\S+)?\s+(?:progress|complete)\s+([\d.]+\s*[KMG]iB)\/([\d.]+\s*[KMG]iB)(?:\s+\((\d+)%\))?/;
+const PROGRESS =
+  /(\S+)(?:\s+->\s+\S+)?\s+(?:progress|complete)\s+([\d.]+\s*[KMG]iB)\/([\d.]+\s*[KMG]iB)(?:\s+\((\d+)%\))?/;
 const EXIT = /update_exited exit_code=(-?\d+)/;
 
 /**
@@ -57,17 +71,29 @@ export function parseOtaLog(log) {
   let start = -1;
   let hybrid = false;
   lines.forEach((line, index) => {
-    if (/message="hybrid: start"/.test(line)) { start = index; hybrid = true; }
-    else if (!hybrid && /message="(?:ota )?check: start"/.test(line)) start = index;
+    if (/message="hybrid: start"/.test(line)) {
+      start = index;
+      hybrid = true;
+    } else if (!hybrid && /message="(?:ota )?check: start"/.test(line)) start = index;
   });
   if (start < 0) {
-    start = lines.findIndex(line => /message="hybrid:/.test(line));
+    start = lines.findIndex((line) => /message="hybrid:/.test(line));
     hybrid = start >= 0;
   }
-  const result = {state: 'idle', stage: null, percent: null, item: '', done: '', total: '', version: '', error: '', at: ''};
+  const result = {
+    state: 'idle',
+    stage: null,
+    percent: null,
+    item: '',
+    done: '',
+    total: '',
+    version: '',
+    error: '',
+    at: '',
+  };
   if (start < 0) {
     // A run can fail before its first step (for example a GitHub 403).
-    const exit = [...lines].reverse().find(line => EXIT.test(line));
+    const exit = [...lines].reverse().find((line) => EXIT.test(line));
     if (exit && Number(EXIT.exec(exit)[1]) !== 0) {
       result.state = 'failed';
       result.error = lastPlainLine(lines) || '';
@@ -84,9 +110,15 @@ export function parseOtaLog(log) {
     if (message) {
       if (message[1] === 'hybrid') {
         const phase = message[2];
-        const stages = {'start': 'check', 'ota-check': 'check', 'ota-install': 'install',
-          'waiting-reboot': 'reboot', 'ota-committed': 'package-check',
-          'package-check': 'package-check', 'package-install': 'package-install'};
+        const stages = {
+          start: 'check',
+          'ota-check': 'check',
+          'ota-install': 'install',
+          'waiting-reboot': 'reboot',
+          'ota-committed': 'package-check',
+          'package-check': 'package-check',
+          'package-install': 'package-install',
+        };
         if (stages[phase]) {
           result.stage = stages[phase];
           result.state = phase === 'waiting-reboot' ? 'rebooting' : 'running';
@@ -137,12 +169,18 @@ export function parseOtaLog(log) {
         result.state = 'failed';
         result.error = lastPlain;
       } else if (result.state === 'running' || result.state === 'rebooting') {
-        result.state = result.stage === 'reboot' ? 'updated' : result.state === 'rebooting' ? 'updated' : 'up_to_date';
+        result.state =
+          result.stage === 'reboot'
+            ? 'updated'
+            : result.state === 'rebooting'
+              ? 'updated'
+              : 'up_to_date';
       }
       continue;
     }
     if (trimmed && !/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) lastPlain = trimmed;
-    else if (/\[(ERROR|WARN)\]/.test(trimmed)) lastPlain = (/message="([^"]*)"/.exec(trimmed) || [])[1] || lastPlain;
+    else if (/\[(ERROR|WARN)\]/.test(trimmed))
+      lastPlain = (/message="([^"]*)"/.exec(trimmed) || [])[1] || lastPlain;
   }
   return result;
 }

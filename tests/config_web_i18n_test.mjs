@@ -252,14 +252,14 @@ assert.doesNotMatch(source, /const\s+zhText\s*=/);
 // catalogues; a missing one would silently show the Chinese fallback text to
 // an English reader (or the other way round). Keys built at runtime (schema
 // field labels, backup phases) fall back by design and are not listed here.
-const sourceRoots = ['assets/js/app', 'assets/js/ui'].map((dir) => path.join(webRoot, dir));
+const sourceRoots = ['assets/js/app', 'assets/js/ui', 'react'].map((dir) => path.join(webRoot, dir));
 async function sourceFiles(dir) {
   const entries = await fs.readdir(dir, {withFileTypes: true});
   const nested = await Promise.all(entries.map((entry) => {
     const full = path.join(dir, entry.name);
     return entry.isDirectory() ? sourceFiles(full) : [full];
   }));
-  return nested.flat().filter((file) => file.endsWith('.js'));
+  return nested.flat().filter((file) => /\.(?:js|ts|tsx)$/.test(file));
 }
 const usedKeys = new Set();
 for (const root of sourceRoots) {

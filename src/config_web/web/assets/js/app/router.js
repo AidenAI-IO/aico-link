@@ -12,7 +12,7 @@ function compile(pattern) {
   const keys = [];
   const source = pattern
     .split('/')
-    .map(segment => {
+    .map((segment) => {
       if (!segment.startsWith(':')) {
         return segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       }
@@ -20,7 +20,7 @@ function compile(pattern) {
       return '([^/]+)';
     })
     .join('/');
-  return {pattern, keys, regex: new RegExp(`^${source}/?$`)};
+  return { pattern, keys, regex: new RegExp(`^${source}/?$`) };
 }
 
 /**
@@ -31,7 +31,7 @@ function compile(pattern) {
 export function createRouter(options) {
   // Spread the declared route first: `compile()` only produces the matcher, so
   // any metadata on the entry (`name`, `page`) has to be carried over explicitly.
-  const compiled = options.routes.map(route => ({...route, ...compile(route.path)}));
+  const compiled = options.routes.map((route) => ({ ...route, ...compile(route.path) }));
   let active = null;
   /** Set while a popstate-driven render runs, to avoid pushing a second entry. */
   let suppressPush = false;
@@ -50,7 +50,7 @@ export function createRouter(options) {
         // falls back to the settings list instead of leaving the page blank.
         return null;
       }
-      return {route, params};
+      return { route, params };
     }
     return null;
   }
@@ -58,7 +58,7 @@ export function createRouter(options) {
   async function render(pathname, query) {
     const found = match(pathname);
     if (!found) return false;
-    active = {path: pathname, params: found.params, query};
+    active = { path: pathname, params: found.params, query };
     await options.render({
       path: pathname,
       params: found.params,
@@ -83,9 +83,9 @@ export function createRouter(options) {
     const url = new URL(path, window.location.origin);
     if (!opts.silent) {
       if (opts.replace) {
-        window.history.replaceState({path: url.pathname}, '', url.pathname + url.search);
+        window.history.replaceState({ path: url.pathname }, '', url.pathname + url.search);
       } else if (url.pathname !== window.location.pathname) {
-        window.history.pushState({path: url.pathname}, '', url.pathname + url.search);
+        window.history.pushState({ path: url.pathname }, '', url.pathname + url.search);
       }
     }
     const query = Object.fromEntries(url.searchParams.entries());
@@ -108,19 +108,25 @@ export function createRouter(options) {
     navigate(href);
   }
 
+  function onPopState() {
+    suppressPush = true;
+    navigate(window.location.pathname + window.location.search, { silent: true }).finally(() => {
+      suppressPush = false;
+    });
+  }
+
   return {
     /** Attach history and click handling, then render the current location. */
     async start() {
       document.addEventListener('click', onClick);
-      window.addEventListener('popstate', () => {
-        suppressPush = true;
-        navigate(window.location.pathname + window.location.search, {silent: true}).finally(() => {
-          suppressPush = false;
-        });
-      });
-      await navigate(window.location.pathname + window.location.search, {silent: true});
+      window.addEventListener('popstate', onPopState);
+      await navigate(window.location.pathname + window.location.search, { silent: true });
     },
     navigate,
+    stop() {
+      document.removeEventListener('click', onClick);
+      window.removeEventListener('popstate', onPopState);
+    },
     /** The route currently rendered. */
     current: () => active,
     /** True while a browser back/forward render is in flight. */

@@ -1,5 +1,5 @@
 // Browser transfer helpers for backup download and restore upload.
-import {sha256Hex} from './backup-checksum.js';
+import { sha256Hex } from './backup-checksum.js';
 
 // The browser's download manager receives the archive straight from the
 // device; the page never holds the archive in memory.
@@ -30,7 +30,9 @@ export async function readArchiveHeader(file) {
   if (view.getUint16(8) !== 1) throw new Error('unsupported_format');
   const headerLength = view.getUint32(10);
   if (!headerLength || headerLength > MAX_PUBLIC_HEADER) throw new Error('manifest_invalid');
-  const body = new Uint8Array(await file.slice(HEADER_PREFIX_LENGTH, HEADER_PREFIX_LENGTH + headerLength).arrayBuffer());
+  const body = new Uint8Array(
+    await file.slice(HEADER_PREFIX_LENGTH, HEADER_PREFIX_LENGTH + headerLength).arrayBuffer(),
+  );
   if (body.length !== headerLength) throw new Error('archive_truncated');
   return JSON.parse(new TextDecoder().decode(body));
 }

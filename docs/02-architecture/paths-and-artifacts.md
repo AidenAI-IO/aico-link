@@ -25,7 +25,8 @@ sidebar_position: 4
 | `src/frame_service_main.cpp` | Frame Service entry point |
 | `src/audio_service_main.cpp` | Audio Service entry point |
 | `src/agent/internal/configweb/` | Go Config Web implementation (served by `agent config-web`) |
-| `src/config_web/web/` | Config Web HTML, CSS, and JavaScript assets |
+| `src/config_web/web/` | Config Web React/TypeScript sources, retained editors, and shared assets |
+| `src/config_web/dist/` | Built Config Web static assets (generated; not committed) |
 | `src/system_env_*` | Strict persistent-to-runtime environment generation |
 | `src/agent/cmd/daemon` | Go Agent daemon |
 | `src/agent/cmd/ota` | OTA CLI |

@@ -7,20 +7,21 @@
  * diverge; CSS decides which one is visible at a given width.
  */
 
-import {connectedSsid, storageStatus, voiceMode} from './data.js';
-import {shortVersion} from './ota-progress.js';
-import {LOCAL_ITEMS, PRIMARY_ITEMS, SECONDARY_ITEMS} from './nav-items.js';
-import {group, row, screen} from '../ui/list.js';
-import {msg, resolve} from '../ui/text.js';
+import { connectedSsid, storageStatus, voiceMode } from './data.js';
+import { shortVersion } from './ota-progress.js';
+import { LOCAL_ITEMS, PRIMARY_ITEMS, SECONDARY_ITEMS } from './nav-items.js';
+import { group, row, screen } from '../ui/list.js';
+import { msg, resolve } from '../ui/text.js';
 
 /** Trailing value for an entry, or null when the design shows none. */
 function statusFor(item, snapshot) {
   if (!item.status) return null;
 
   if (item.status === 'wifi') {
-    if (!snapshot?.wifi_status || snapshot.wifi_status.state === 'UNKNOWN') return {value: msg('status.state.unknown', '未知'), tone: null};
-    if (connectedSsid(snapshot)) return {value: msg('wifi.connected', '已连接'), tone: 'success'};
-    return {value: msg('ui.not_connected', '未连接'), tone: null};
+    if (!snapshot?.wifi_status || snapshot.wifi_status.state === 'UNKNOWN')
+      return { value: msg('status.state.unknown', '未知'), tone: null };
+    if (connectedSsid(snapshot)) return { value: msg('wifi.connected', '已连接'), tone: 'success' };
+    return { value: msg('ui.not_connected', '未连接'), tone: null };
   }
 
   if (!snapshot) return null;
@@ -30,20 +31,27 @@ function statusFor(item, snapshot) {
     // The config has no `voice_mode`; the mode is `agent.input_mode`, or the
     // one the configured providers imply when it is unset.
     const mode = voiceMode(snapshot);
-    if (!mode) return {value: msg('ui.voice_unset', '未启用'), tone: null};
-    return {value: mode === 'realtime' ? msg('voice.mode_realtime', 'Realtime') : msg('voice.mode_classic', 'Classic'), tone: null};
+    if (!mode) return { value: msg('ui.voice_unset', '未启用'), tone: null };
+    return {
+      value:
+        mode === 'realtime'
+          ? msg('voice.mode_realtime', 'Realtime')
+          : msg('voice.mode_classic', 'Classic'),
+      tone: null,
+    };
   }
 
   if (item.status === 'firmware') {
     const firmware = snapshot.firmware || {};
-    if (firmware.health_status === 'failed') return {value: msg('ota.health_failed', '失败'), tone: 'danger'};
+    if (firmware.health_status === 'failed')
+      return { value: msg('ota.health_failed', '失败'), tone: 'danger' };
     const version = shortVersion(firmware.current_version || firmware.version);
-    return version ? {value: version, tone: null} : null;
+    return version ? { value: version, tone: null } : null;
   }
 
   if (item.status === 'storage') {
     if (storageStatus(snapshot) === 'mounted') {
-      return {value: msg('wifi.connected', '已连接'), tone: 'success'};
+      return { value: msg('wifi.connected', '已连接'), tone: 'success' };
     }
     return null;
   }
@@ -74,19 +82,21 @@ function entryRow(item, snapshot, navigate, currentPath) {
  * @returns {Node}
  */
 export function settingsList(snapshot, navigate, currentPath = '', localAgent = false) {
-  const build = item => entryRow(item, snapshot, navigate, currentPath);
-  if (localAgent) return screen([group({rows: LOCAL_ITEMS.map(build)})]);
+  const build = (item) => entryRow(item, snapshot, navigate, currentPath);
+  if (localAgent) return screen([group({ rows: LOCAL_ITEMS.map(build) })]);
   return screen([
-    group({rows: PRIMARY_ITEMS.map(build)}),
-    group({rows: SECONDARY_ITEMS.map(build)}),
+    group({ rows: PRIMARY_ITEMS.map(build) }),
+    group({ rows: SECONDARY_ITEMS.map(build) }),
   ]);
 }
 
 /** Repaint only the badge, keeping navigation controls and their focus intact. */
 export function updateWiFiStatus(host, snapshot) {
-  const valueNode = host.querySelector('[data-action="open-wifi"]')?.querySelector('.ds-row__value');
+  const valueNode = host
+    .querySelector('[data-action="open-wifi"]')
+    ?.querySelector('.ds-row__value');
   if (!valueNode) return;
-  const {value, tone} = statusFor({status: 'wifi'}, snapshot);
+  const { value, tone } = statusFor({ status: 'wifi' }, snapshot);
   valueNode.textContent = resolve(value);
   valueNode.setAttribute('data-i18n', value.key);
   valueNode.setAttribute('data-i18n-default', value.fallback);

@@ -6,8 +6,8 @@
  * confirms a destructive action and `danger-soft` offers one.
  */
 
-import {el} from './dom.js';
-import {text} from './text.js';
+import { el } from './dom.js';
+import { text } from './text.js';
 
 /**
  * @param {object} props
@@ -27,9 +27,9 @@ export function button(props) {
     'button',
     {
       class: classes.join(' '),
-      attrs: {type: 'button'},
-      data: {action: props.action},
-      on: props.onPress ? {click: props.onPress} : {},
+      attrs: { type: 'button' },
+      data: { action: props.action },
+      on: props.onPress ? { click: props.onPress } : {},
     },
     [text(props.label)],
   );

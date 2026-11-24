@@ -13,18 +13,34 @@
  * checksum code they share.
  */
 
-import {request, t} from './data.js';
-import {createMaintenanceRequestID} from '../config/backup-session.js';
-import {readArchiveHeader, triggerBrowserDownload, uploadBrowserChunks} from '../config/host-transfer.js';
+import { request, t } from './data.js';
+import { createMaintenanceRequestID } from '../config/backup-session.js';
+import {
+  readArchiveHeader,
+  triggerBrowserDownload,
+  uploadBrowserChunks,
+} from '../config/host-transfer.js';
 
-export const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'reboot_required', 'rollback_failed']);
+export const TERMINAL = new Set([
+  'completed',
+  'failed',
+  'cancelled',
+  'reboot_required',
+  'rollback_failed',
+]);
 const RESTORE_SD_STRATEGY = 'allow_different';
 /**
  * Restore states that wait for the archive bytes. After a refresh the chosen
  * file is gone, so a restore attached in one of these cannot go on; it can
  * only be cancelled and started again.
  */
-const NEEDS_UPLOAD = ['created', 'restore_ingest', 'reading_manifest', 'awaiting_plan', 'uploading_and_staging'];
+const NEEDS_UPLOAD = [
+  'created',
+  'restore_ingest',
+  'reading_manifest',
+  'awaiting_plan',
+  'uploading_and_staging',
+];
 /**
  * How long an attached restore must sit in `validating` before the page sends
  * /validate itself; a validation the previous page started finishes well
@@ -34,7 +50,7 @@ const RESUME_VALIDATE_AFTER_MS = 8000;
 /** Once restore reaches these, the device commits regardless; cancelling is refused. */
 const UNCANCELLABLE = ['committing', 'post_processing', 'resuming_services', 'rolling_back'];
 
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** `1536` → `1.5 KB`. */
 export function formatBytes(value) {
@@ -54,13 +70,17 @@ export function formatBytes(value) {
 export function errorText(error) {
   if (!error) return '';
   const code = error.error || error.code || error.message;
-  const known = t(`backup.error.${code}`, {defaultValue: ''});
+  const known = t(`backup.error.${code}`, { defaultValue: '' });
   return known || error.message || String(code || 'error');
 }
 
 function phaseText(payload) {
   const phase = payload.phase || payload.state || '';
-  return t(`backup.phase.${phase}`, {defaultValue: ''}) || t(`backup.component.${phase}`, {defaultValue: ''}) || phase;
+  return (
+    t(`backup.phase.${phase}`, { defaultValue: '' }) ||
+    t(`backup.component.${phase}`, { defaultValue: '' }) ||
+    phase
+  );
 }
 
 /**
@@ -73,17 +93,28 @@ export function createBackupEngine(onChange) {
   let job = null;
   let file = null;
   let identityConfirmed = false;
-  let view = {kind: null, running: false, stalled: false, phase: '', done: 0, total: 0, message: '', error: false, finished: false, rebootRequired: false};
+  let view = {
+    kind: null,
+    running: false,
+    stalled: false,
+    phase: '',
+    done: 0,
+    total: 0,
+    message: '',
+    error: false,
+    finished: false,
+    rebootRequired: false,
+  };
 
   // Leaving the page mid-job orphans a restore upload, so warn first, as
   // the classic page did.
-  const onBeforeUnload = event => {
+  const onBeforeUnload = (event) => {
     event.preventDefault();
     event.returnValue = '';
   };
   let guarding = false;
-  const emit = patch => {
-    view = {...view, ...patch};
+  const emit = (patch) => {
+    view = { ...view, ...patch };
     if (view.running !== guarding) {
       guarding = view.running;
       if (guarding) window.addEventListener('beforeunload', onBeforeUnload);
@@ -95,7 +126,9 @@ export function createBackupEngine(onChange) {
   async function openSession() {
     if (session && new Date(session.expires_at).getTime() > Date.now() + 30000) return session;
     session = await request('/api/maintenance/sessions', {
-      method: 'POST', credentials: 'same-origin', headers: {'X-Aico-Client': 'config-web/2.0'},
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-Aico-Client': 'config-web/2.0' },
     });
     return session;
   }
@@ -108,9 +141,13 @@ export function createBackupEngine(onChange) {
       headers.set('X-Aico-Request-ID', id);
       headers.set('X-Aico-CSRF-Token', current.csrf_token);
       try {
-        return await request(url, {...options, headers, credentials: 'same-origin'});
+        return await request(url, { ...options, headers, credentials: 'same-origin' });
       } catch (error) {
-        if (attempt === 0 && error.status === 401 && error.error === 'maintenance_session_required') {
+        if (
+          attempt === 0 &&
+          error.status === 401 &&
+          error.error === 'maintenance_session_required'
+        ) {
           session = null;
           continue;
         }
@@ -121,7 +158,9 @@ export function createBackupEngine(onChange) {
   }
 
   const jobRequest = (url, options = {}) =>
-    options.method && options.method !== 'GET' ? maintenance(url, options) : request(url, {...options, credentials: 'same-origin'});
+    options.method && options.method !== 'GET'
+      ? maintenance(url, options)
+      : request(url, { ...options, credentials: 'same-origin' });
   const jobPath = (kind, id, suffix = '') => `/api/${kind}/jobs/${encodeURIComponent(id)}${suffix}`;
 
   function progress(payload) {
@@ -129,36 +168,67 @@ export function createBackupEngine(onChange) {
     if (view.kind === 'backup') {
       const total = Number(payload.estimated_bytes || 0);
       const done = Number(payload.bytes_read || 0);
-      emit(state === 'streaming' && total > 0 ? {phase: phaseText(payload), done, total} : {phase: phaseText(payload), done: 0, total: 0});
+      emit(
+        state === 'streaming' && total > 0
+          ? { phase: phaseText(payload), done, total }
+          : { phase: phaseText(payload), done: 0, total: 0 },
+      );
     } else {
       const total = Number(payload.archive_size || (file && file.size) || 0);
       const done = Number(payload.received_bytes || 0);
-      const uploading = ['restore_ingest', 'reading_manifest', 'uploading_and_staging'].includes(state) && total > 0;
-      emit(uploading ? {phase: phaseText(payload), done, total} : {phase: phaseText(payload), done: 0, total: 0});
+      const uploading =
+        ['restore_ingest', 'reading_manifest', 'uploading_and_staging'].includes(state) &&
+        total > 0;
+      emit(
+        uploading
+          ? { phase: phaseText(payload), done, total }
+          : { phase: phaseText(payload), done: 0, total: 0 },
+      );
     }
   }
 
   function finish(payload) {
-    job = {...job, ...payload};
+    job = { ...job, ...payload };
     const error = payload.error ? errorText(payload.error) : '';
     const restore = view.kind === 'restore';
     const messages = {
       completed: t(restore ? 'backup.restore_completed' : 'backup.create_completed'),
       reboot_required: t('backup.restore_reboot_required'),
       cancelled: t('backup.cancelled'),
-      rollback_failed: t('backup.rollback_failed', {error}),
+      rollback_failed: t('backup.rollback_failed', { error }),
     };
     const failed = !['completed', 'reboot_required', 'cancelled'].includes(payload.state);
-    const message = messages[payload.state] || t(restore ? 'backup.restore_failed' : 'backup.create_failed', {error});
+    const message =
+      messages[payload.state] ||
+      t(restore ? 'backup.restore_failed' : 'backup.create_failed', { error });
     const warnings = (payload.warnings || []).join('\n');
-    emit({running: false, stalled: false, finished: true, error: failed, rebootRequired: payload.state === 'reboot_required',
-      message: warnings ? `${message}\n${warnings}` : message, phase: '', done: 0, total: 0});
+    emit({
+      running: false,
+      stalled: false,
+      finished: true,
+      error: failed,
+      rebootRequired: payload.state === 'reboot_required',
+      message: warnings ? `${message}\n${warnings}` : message,
+      phase: '',
+      done: 0,
+      total: 0,
+    });
   }
 
   function fail(error) {
     const restore = view.kind === 'restore';
-    emit({running: false, stalled: false, finished: true, error: true, phase: '', done: 0, total: 0,
-      message: t(restore ? 'backup.restore_failed' : 'backup.create_failed', {error: errorText(error)})});
+    emit({
+      running: false,
+      stalled: false,
+      finished: true,
+      error: true,
+      phase: '',
+      done: 0,
+      total: 0,
+      message: t(restore ? 'backup.restore_failed' : 'backup.create_failed', {
+        error: errorText(error),
+      }),
+    });
   }
 
   async function poll(kind, jobId) {
@@ -172,7 +242,7 @@ export function createBackupEngine(onChange) {
         await delay(2000);
         continue;
       }
-      job = {...job, ...payload};
+      job = { ...job, ...payload };
       progress(payload);
       if (TERMINAL.has(payload.state)) {
         finish(payload);
@@ -190,13 +260,25 @@ export function createBackupEngine(onChange) {
   }
 
   async function createBackup() {
-    emit({kind: 'backup', running: true, finished: false, error: false, message: '', phase: t('backup.phase.ready')});
+    emit({
+      kind: 'backup',
+      running: true,
+      finished: false,
+      error: false,
+      message: '',
+      phase: t('backup.phase.ready'),
+    });
     try {
       const response = await maintenance('/api/backup/jobs', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({format_version: 1, mode: 'same_device', protection: {mode: 'none'}}),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          format_version: 1,
+          mode: 'same_device',
+          protection: { mode: 'none' },
+        }),
       });
-      job = {kind: 'backup', ...response};
+      job = { kind: 'backup', ...response };
       // The device starts streaming only once the archive URL is requested.
       triggerBrowserDownload(response.archive_url, response.suggested_filename);
       await poll('backup', response.job_id);
@@ -210,40 +292,49 @@ export function createBackupEngine(onChange) {
     file = chosen;
     file.header = await readArchiveHeader(chosen);
     if (file.header.protection?.algorithm !== 'sha256-chunked') {
-      throw Object.assign(new Error(t('backup.error.encrypted_archive_unsupported')), {error: 'encrypted_archive_unsupported'});
+      throw Object.assign(new Error(t('backup.error.encrypted_archive_unsupported')), {
+        error: 'encrypted_archive_unsupported',
+      });
     }
     return file.header.created_at ? new Date(file.header.created_at).toLocaleString() : '';
   }
 
   async function submitPlan(payload) {
-    const manifest = payload.manifest || (await jobRequest(jobPath('restore', job.job_id))).manifest;
+    const manifest =
+      payload.manifest || (await jobRequest(jobPath('restore', job.job_id))).manifest;
     if (!manifest || !Array.isArray(manifest.components)) throw new Error('manifest_invalid');
     const response = await maintenance(jobPath('restore', job.job_id, '/plan'), {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        components: manifest.components.map(item => item.id),
+        components: manifest.components.map((item) => item.id),
         sd_strategy: RESTORE_SD_STRATEGY,
         confirm_conflicts: true,
         confirm_identity: identityConfirmed,
       }),
     });
-    job = {...job, ...response};
+    job = { ...job, ...response };
   }
 
   async function validateAndApply(jobId) {
-    emit({phase: t('backup.phase.validating'), done: 0, total: 0});
-    const validated = await maintenance(jobPath('restore', jobId, '/validate'), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
-    job = {...job, ...validated};
+    emit({ phase: t('backup.phase.validating'), done: 0, total: 0 });
+    const validated = await maintenance(jobPath('restore', jobId, '/validate'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    job = { ...job, ...validated };
     await applyRestore(jobId, validated.plan_digest);
   }
 
   async function applyRestore(jobId, planDigest) {
-    emit({phase: t('backup.phase.committing')});
+    emit({ phase: t('backup.phase.committing') });
     let applied;
     try {
       applied = await maintenance(jobPath('restore', jobId, '/apply'), {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({plan_digest: planDigest, confirm: 'RESTORE'}),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan_digest: planDigest, confirm: 'RESTORE' }),
       });
     } catch (error) {
       // A dropped apply response does not stop the commit on the device; only
@@ -252,37 +343,59 @@ export function createBackupEngine(onChange) {
       await poll('restore', jobId);
       return;
     }
-    job = {...job, ...applied};
+    job = { ...job, ...applied };
     if (TERMINAL.has(applied.state)) finish(applied);
     else await poll('restore', jobId);
   }
 
-  async function startRestore({confirmIdentity}) {
+  async function startRestore({ confirmIdentity }) {
     if (!file || !file.header) return;
     identityConfirmed = Boolean(confirmIdentity);
-    emit({kind: 'restore', running: true, finished: false, error: false, message: '', phase: t('backup.phase.ready')});
+    emit({
+      kind: 'restore',
+      running: true,
+      finished: false,
+      error: false,
+      message: '',
+      phase: t('backup.phase.ready'),
+    });
     try {
       const created = await maintenance('/api/restore/jobs', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({format_version: 1, archive_size: file.size, public_header: file.header, protection: {mode: 'none'}}),
-      });
-      job = {kind: 'restore', ...created, archive_size: file.size};
-      emit({phase: t('backup.phase.restore_ingest'), done: 0, total: file.size});
-      await uploadBrowserChunks(file, created.chunk_size,
-        (index, chunk, hash) => jobRequest(jobPath('restore', created.job_id, `/chunks/${index}`), {
-          method: 'PUT', headers: {'Content-Type': 'application/octet-stream', 'X-Aico-Chunk-SHA256': hash}, body: chunk,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          format_version: 1,
+          archive_size: file.size,
+          public_header: file.header,
+          protection: { mode: 'none' },
         }),
+      });
+      job = { kind: 'restore', ...created, archive_size: file.size };
+      emit({ phase: t('backup.phase.restore_ingest'), done: 0, total: file.size });
+      await uploadBrowserChunks(
+        file,
+        created.chunk_size,
+        (index, chunk, hash) =>
+          jobRequest(jobPath('restore', created.job_id, `/chunks/${index}`), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/octet-stream', 'X-Aico-Chunk-SHA256': hash },
+            body: chunk,
+          }),
         async (response, offset, total) => {
-          job = {...job, ...response};
-          if (response.error) throw Object.assign(new Error(response.error.message || response.error.code), {error: response.error.code});
-          progress({...response, received_bytes: offset, archive_size: total});
+          job = { ...job, ...response };
+          if (response.error)
+            throw Object.assign(new Error(response.error.message || response.error.code), {
+              error: response.error.code,
+            });
+          progress({ ...response, received_bytes: offset, archive_size: total });
           if (response.state === 'awaiting_plan') await submitPlan(response);
-        });
+        },
+      );
       await validateAndApply(created.job_id);
     } catch (error) {
       if (job?.job_id && !UNCANCELLABLE.includes(job.state) && !TERMINAL.has(job.state)) {
         try {
-          await maintenance(jobPath('restore', job.job_id), {method: 'DELETE'});
+          await maintenance(jobPath('restore', job.job_id), { method: 'DELETE' });
         } catch (_ignored) {
           // Already finished on the device.
         }
@@ -295,11 +408,11 @@ export function createBackupEngine(onChange) {
   async function cancel() {
     if (!job?.job_id || TERMINAL.has(job.state)) return false;
     if (view.kind === 'restore' && UNCANCELLABLE.includes(job.state)) {
-      emit({message: t('backup.restore_cannot_cancel'), error: true});
+      emit({ message: t('backup.restore_cannot_cancel'), error: true });
       return false;
     }
-    const payload = await maintenance(jobPath(view.kind, job.job_id), {method: 'DELETE'});
-    job = {...job, ...payload};
+    const payload = await maintenance(jobPath(view.kind, job.job_id), { method: 'DELETE' });
+    job = { ...job, ...payload };
     if (TERMINAL.has(payload.state)) finish(payload);
     return true;
   }
@@ -311,29 +424,42 @@ export function createBackupEngine(onChange) {
     } catch (_error) {
       // Another client may hold the session; status still reads without one.
     }
-    const current = await request('/api/maintenance/current', {credentials: 'same-origin'}).catch(() => null);
+    const current = await request('/api/maintenance/current', { credentials: 'same-origin' }).catch(
+      () => null,
+    );
     if (!current || !current.job_id || (job && job.job_id === current.job_id)) return false;
     const kind = current.operation === 'restore' ? 'restore' : 'backup';
-    job = {kind, job_id: current.job_id, ...(current.job || {})};
-    emit({kind, running: true, finished: false, error: false,
-      message: t(kind === 'restore' ? 'backup.restore_started' : 'backup.create_started')});
+    job = { kind, job_id: current.job_id, ...(current.job || {}) };
+    emit({
+      kind,
+      running: true,
+      finished: false,
+      error: false,
+      message: t(kind === 'restore' ? 'backup.restore_started' : 'backup.create_started'),
+    });
     const state = job.state || current.phase || '';
-    progress(current.job || {state});
+    progress(current.job || { state });
     if (kind === 'restore' && NEEDS_UPLOAD.includes(state)) {
       // Nothing on this page can send the rest of the archive. Say so and
       // leave Cancel as the way out, instead of showing progress that never
       // moves until the device's watchdog gives up.
-      emit({phase: '', done: 0, total: 0, stalled: true, message: t('backup.restore_interrupted')});
-      poll(kind, current.job_id).catch(error => fail(error));
+      emit({
+        phase: '',
+        done: 0,
+        total: 0,
+        stalled: true,
+        message: t('backup.restore_interrupted'),
+      });
+      poll(kind, current.job_id).catch((error) => fail(error));
       return true;
     }
     // The upload finished before the refresh; the device is waiting for the
     // same requests the uninterrupted flow would have sent next. The user
     // confirmed the restore before it started, so it simply goes on.
     if (kind === 'restore' && (state === 'validating' || state === 'prepared')) {
-      resumeRestore(current.job_id).catch(error => fail(error));
+      resumeRestore(current.job_id).catch((error) => fail(error));
     } else {
-      poll(kind, current.job_id).catch(error => fail(error));
+      poll(kind, current.job_id).catch((error) => fail(error));
     }
     return true;
   }
@@ -356,7 +482,7 @@ export function createBackupEngine(onChange) {
       for (;;) {
         if (!job || job.job_id !== jobId) return;
         const payload = await jobRequest(jobPath('restore', jobId));
-        job = {...job, ...payload};
+        job = { ...job, ...payload };
         if (payload.state === 'prepared' && payload.plan_digest) {
           await applyRestore(jobId, payload.plan_digest);
           return;
@@ -368,9 +494,13 @@ export function createBackupEngine(onChange) {
         }
         if (!validateSent && Date.now() - quietSince >= RESUME_VALIDATE_AFTER_MS) {
           validateSent = true;
-          emit({phase: t('backup.phase.validating'), done: 0, total: 0});
-          const validated = await maintenance(jobPath('restore', jobId, '/validate'), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
-          job = {...job, ...validated};
+          emit({ phase: t('backup.phase.validating'), done: 0, total: 0 });
+          const validated = await maintenance(jobPath('restore', jobId, '/validate'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          job = { ...job, ...validated };
           continue;
         }
         await delay(1000);
@@ -389,7 +519,7 @@ export function createBackupEngine(onChange) {
       fail(original);
       return;
     }
-    job = {...job, ...payload};
+    job = { ...job, ...payload };
     if (TERMINAL.has(payload.state)) {
       finish(payload);
       return;
@@ -407,12 +537,20 @@ export function createBackupEngine(onChange) {
       return;
     }
     try {
-      await maintenance(jobPath('restore', jobId), {method: 'DELETE'});
+      await maintenance(jobPath('restore', jobId), { method: 'DELETE' });
     } catch (_ignored) {
       // Already finished on the device.
     }
     fail(original);
   }
 
-  return {capabilities, createBackup, chooseRestore, startRestore, cancel, attach, fileName: () => (file ? file.name : '')};
+  return {
+    capabilities,
+    createBackup,
+    chooseRestore,
+    startRestore,
+    cancel,
+    attach,
+    fileName: () => (file ? file.name : ''),
+  };
 }

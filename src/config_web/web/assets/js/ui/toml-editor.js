@@ -13,9 +13,9 @@
  * to go; the Agent validates the file on save.
  */
 
-import {el} from './dom.js';
+import { el } from './dom.js';
 
-const escape = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escape = (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const span = (kind, value) => `<span class="ds-toml__${kind}">${escape(value)}</span>`;
 
 /** Tokens a value may contain, tried in order at each position. */
@@ -23,7 +23,10 @@ const VALUE_TOKENS = [
   ['comment', /#.*/y],
   ['string', /"""[^]*?(?:"""|$)|'''[^]*?(?:'''|$)|"(?:[^"\\]|\\.)*"?|'[^']*'?/y],
   ['date', /\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?/y],
-  ['number', /[+-]?(?:inf|nan|0x[\da-fA-F_]+|0o[0-7_]+|0b[01_]+|\d[\d_]*(?:\.[\d_]+)?(?:[eE][+-]?\d+)?)(?![\w.-])/y],
+  [
+    'number',
+    /[+-]?(?:inf|nan|0x[\da-fA-F_]+|0o[0-7_]+|0b[01_]+|\d[\d_]*(?:\.[\d_]+)?(?:[eE][+-]?\d+)?)(?![\w.-])/y,
+  ],
   ['boolean', /(?:true|false)(?![\w-])/y],
 ];
 
@@ -57,8 +60,14 @@ function highlightValue(text) {
 export function highlightLine(line) {
   const header = /^(\s*)(\[\[?[^\]#]*\]\]?)(.*)$/.exec(line);
   if (header) return escape(header[1]) + span('table', header[2]) + highlightValue(header[3]);
-  const pair = /^(\s*)((?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_.-]+)(?:\s*\.\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+))*)(\s*=)(.*)$/.exec(line);
-  if (pair) return escape(pair[1]) + span('key', pair[2]) + span('punct', pair[3]) + highlightValue(pair[4]);
+  const pair =
+    /^(\s*)((?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_.-]+)(?:\s*\.\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+))*)(\s*=)(.*)$/.exec(
+      line,
+    );
+  if (pair)
+    return (
+      escape(pair[1]) + span('key', pair[2]) + span('punct', pair[3]) + highlightValue(pair[4])
+    );
   return highlightValue(line);
 }
 
@@ -78,12 +87,21 @@ export function tomlEditor(props) {
   // `code` would take the browser's own `monospace` face unless told to
   // inherit; a face even slightly wider than the textarea's drifts the caret
   // further from the text with every character.
-  const code = el('code', {class: 'ds-toml__code'});
-  const highlight = el('pre', {class: 'ds-toml__highlight', attrs: {'aria-hidden': 'true'}}, [code]);
+  const code = el('code', { class: 'ds-toml__code' });
+  const highlight = el('pre', { class: 'ds-toml__highlight', attrs: { 'aria-hidden': 'true' } }, [
+    code,
+  ]);
   const textarea = el('textarea', {
     class: 'ds-toml__input',
-    attrs: {spellcheck: 'false', autocapitalize: 'none', autocomplete: 'off', autocorrect: 'off', wrap: 'off', 'aria-label': props.label || 'TOML'},
-    data: {action: 'edit-toml'},
+    attrs: {
+      spellcheck: 'false',
+      autocapitalize: 'none',
+      autocomplete: 'off',
+      autocorrect: 'off',
+      wrap: 'off',
+      'aria-label': props.label || 'TOML',
+    },
+    data: { action: 'edit-toml' },
   });
   textarea.value = props.value || '';
 
@@ -103,7 +121,7 @@ export function tomlEditor(props) {
   });
   textarea.addEventListener('scroll', sync);
   // Tab indents instead of leaving the field.
-  textarea.addEventListener('keydown', event => {
+  textarea.addEventListener('keydown', (event) => {
     if (event.key !== 'Tab' || event.shiftKey) return;
     event.preventDefault();
     textarea.setRangeText('  ', textarea.selectionStart, textarea.selectionEnd, 'end');
@@ -112,7 +130,7 @@ export function tomlEditor(props) {
   paint();
 
   return {
-    el: el('div', {class: 'ds-toml'}, [highlight, textarea]),
+    el: el('div', { class: 'ds-toml' }, [highlight, textarea]),
     textarea,
     setValue(value) {
       textarea.value = value;
