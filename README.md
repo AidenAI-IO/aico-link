@@ -95,7 +95,7 @@ At runtime, the Agent is intentionally decoupled from C++ service internals: Fra
 
 ## Quick Start
 
-The PC workflows below are a pre-release simulator, not an official product.
+The PC workflows below are a simulator, not an official product.
 To run the Agent directly on your computer with a real Android phone or an
 iPhone through USB/WDA or macOS iPhone Mirroring, start with
 [Local Agent with a Real Phone](docs/01-getting-started/local-agent-real-phone.md).

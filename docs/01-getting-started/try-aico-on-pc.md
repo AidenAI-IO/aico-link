@@ -1,12 +1,12 @@
 ---
 sidebar_position: 1
 title: Try Aico on PC
-description: Try a pre-release Aico simulator on your computer before Aico Link hardware ships.
+description: Try an Aico simulator on your computer before Aico Link hardware ships.
 ---
 
 # Try Aico on PC
 
-> **Preview, not a product.** Running Aico on a PC is a pre-release simulator
+> **Simulator, not a product.** Running Aico on a PC is a simulator
 > for trying Aico before Aico Link hardware ships. It is not an officially
 > released product, and it does not reproduce the hardware experience: it relies
 > on ADB or other software bridges instead of HDMI capture and USB HID, and has

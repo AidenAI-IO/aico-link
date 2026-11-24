@@ -5,7 +5,7 @@ click. It builds or selects an `aico-link` Docker image, starts an environment
 bridge for the device the Agent should control, and runs the image with
 Config Web and the Agent Web UI published on `127.0.0.1`.
 
-Like the rest of the PC workflow, it is a pre-release simulator for trying Aico
+Like the rest of the PC workflow, it is a simulator for trying Aico
 before Aico Link hardware ships, not an official product. The launcher is a
 developer tool that lives in this repository. It is not published as a package
 and is not part of the device firmware.
