@@ -11,7 +11,7 @@ export default [
     languageOptions: { globals: globals.node },
   },
   {
-    files: ['web/react/**/*.{ts,tsx}', 'vite.config.ts'],
+    files: ['src/**/*.{ts,tsx}', 'vite.config.ts'],
     languageOptions: {
       parser: tseslint.parser,
       ecmaVersion: 'latest',

@@ -1,23 +1,11 @@
-import { cpSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
-const root = fileURLToPath(new URL('./web', import.meta.url));
+const root = fileURLToPath(new URL('./', import.meta.url));
 export default defineConfig({
   root,
-  publicDir: false,
-  plugins: [
-    react(),
-    {
-      name: 'device-static-assets',
-      closeBundle() {
-        for (const path of ['assets/icons']) {
-          cpSync(`${root}/${path}`, `${root}/../dist/${path}`, { recursive: true });
-        }
-      },
-    },
-  ],
+  plugins: [react()],
   server: {
     proxy: {
       '/api': process.env.AICO_CONFIG_WEB_URL || 'http://192.168.42.1',
@@ -25,7 +13,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../dist',
+    outDir: 'dist',
     emptyOutDir: true,
     target: 'es2020',
     rolldownOptions: {
@@ -40,5 +28,5 @@ export default defineConfig({
       },
     },
   },
-  test: { include: ['react/**/*.test.{ts,tsx}'], environment: 'jsdom', restoreMocks: true },
+  test: { include: ['src/**/*.test.{ts,tsx}'], environment: 'jsdom', restoreMocks: true },
 });

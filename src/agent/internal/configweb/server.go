@@ -396,7 +396,7 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // settingsRouteSections are the first path segments of the client router's
-// routes (src/config_web/web/assets/js/app/routes.js).
+// routes (src/config_web/src/app/routes.ts).
 var settingsRouteSections = map[string]bool{
 	"wifi": true, "basic": true, "conversation": true, "model": true, "voice": true,
 	"memory": true, "storage": true, "advanced": true, "firmware": true,

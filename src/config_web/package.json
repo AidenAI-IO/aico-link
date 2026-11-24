@@ -11,7 +11,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
-    "lint": "eslint web/react vite.config.ts eslint.config.js",
+    "lint": "eslint src vite.config.ts eslint.config.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build",
