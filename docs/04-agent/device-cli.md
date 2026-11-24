@@ -14,7 +14,7 @@ starting the daemon to opt out of CLI mode.
 ```sh
 device-cli tap 500 650
 device-cli swipe 500 800 500 300
-device-cli tap 500 650 && device-cli type 'Hello'
+device-cli tap 500 650 && device-cli app type 'Hello'  # when a companion route is available
 ```
 
 Coordinates are normalized to 0–1000 on both axes. A foreground shell can
@@ -38,8 +38,13 @@ focus coordinates or chooses a field for you.
   or switching routes. On iOS without PiP, this command needs a recently
   prepared matching clipboard.
 
-Try `device-cli app` when `app_connected`, `app_fgs_enabled`, or
-`app_pip_enabled` is true. This permits an attempt; each operation still checks
+Prefer `device-cli app type` for text entry when `app_connected`,
+`app_pip_enabled`, or `app_fgs_enabled` is true. For multiline text, use one
+single-quoted shell argument with literal line breaks. In the shell tool's JSON,
+for example: `{"command":"device-cli app type 'First line\nSecond line'"}`.
+Do not use Bash-style `$'...'` quoting or send literal `\n` as part of the text.
+
+You can try other `device-cli app` commands under the same availability check. This permits an attempt; each operation still checks
 its own route, permissions, and prerequisites.
 Without an active shell scope, the executable accepts `--url` to target a
 daemon directly (default `http://127.0.0.1:8080`).
