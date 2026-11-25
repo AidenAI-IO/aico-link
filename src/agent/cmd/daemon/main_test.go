@@ -444,8 +444,9 @@ func TestRealtimeClientTurnEndpointDetectsSilenceAfterSpeech(t *testing.T) {
 }
 
 func TestRealtimeCurrentTimeTool(t *testing.T) {
-	want := time.Date(2026, time.August, 20, 14, 30, 0, 0, time.FixedZone("CST", 8*60*60))
-	executor := realtimeVoiceToolExecutor{now: func() time.Time { return want }}
+	// The process clock is UTC; the reply follows the configured zone.
+	utc := time.Date(2026, time.August, 20, 6, 30, 0, 0, time.UTC)
+	executor := realtimeVoiceToolExecutor{now: func() time.Time { return utc }, timezone: func() string { return "Asia/Shanghai" }}
 	output := executor.call(context.Background(), realtimeCurrentTimeTool, `{}`)
 	var got struct {
 		Datetime         string `json:"datetime"`

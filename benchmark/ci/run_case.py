@@ -174,6 +174,55 @@ def _environment_url(
     return value, None
 
 
+def android_serials(environment: Mapping[str, str]) -> list[str]:
+    """ADB devices the case may use: ANDROID_SERIAL is a comma-separated list."""
+    serials = (item.strip() for item in environment.get("ANDROID_SERIAL", "").split(","))
+    return list(dict.fromkeys(serial for serial in serials if serial))
+
+
+def _environment_urls(
+    case: SuiteCase,
+    *,
+    run_id: str,
+    environment: Mapping[str, str],
+    services: list[dict[str, Any]],
+    log_file: Any | None = None,
+    timeout_seconds: float | None = None,
+) -> list[str]:
+    """Start one bridge per leased ADB device; other environments have one URL.
+
+    Started services are appended to ``services`` as they come up, so the caller
+    can stop them even when a later device fails to start.
+    """
+    serials = android_serials(environment) if case.environment == "adb" else []
+    if len(serials) <= 1:
+        url, service = _environment_url(
+            case, run_id=run_id, environment=environment,
+            log_file=log_file, timeout_seconds=timeout_seconds,
+        )
+        if service:
+            services.append(service)
+        return [url] if url else []
+    deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+    urls = []
+    for index, serial in enumerate(serials):
+        url, service = _environment_url(
+            case,
+            # The first device keeps the plain run id so single-device service
+            # names are unchanged; the workflow reaps every <run id>* service.
+            run_id=run_id if index == 0 else f"{run_id}-d{index}",
+            environment={**environment, "ANDROID_SERIAL": serial},
+            log_file=log_file,
+            timeout_seconds=(
+                max(0.001, deadline - time.monotonic()) if deadline is not None else None
+            ),
+        )
+        if service:
+            services.append(service)
+        urls.append(url)
+    return urls
+
+
 def _stop_service(payload: dict[str, Any] | None) -> None:
     if not payload:
         return
@@ -395,8 +444,12 @@ def run_case(
 ) -> int:
     runtime_environment = _runtime_environment(environment)
     runtime_environment["BENCHMARK_EXECUTION_ENVIRONMENT"] = case.environment
-    environment_url = ""
-    service: dict[str, Any] | None = None
+    if case.environment == "adb":
+        # A case drives at most max_concurrency devices; a Phone Bridge case, one.
+        runtime_environment["ANDROID_SERIAL"] = ",".join(
+            android_serials(runtime_environment)[:case.max_concurrency]
+        )
+    services: list[dict[str, Any]] = []
     deadline = (
         time.monotonic() + timeout_seconds
         if timeout_seconds is not None
@@ -417,10 +470,11 @@ def run_case(
         log_file = log_path.open("w", encoding="utf-8")
     try:
         try:
-            environment_url, service = _environment_url(
+            environment_urls = _environment_urls(
                 case,
                 run_id=run_id,
                 environment=runtime_environment,
+                services=services,
                 log_file=log_file,
                 timeout_seconds=remaining_timeout(),
             )
@@ -463,8 +517,10 @@ def run_case(
                     f"got {repeats!r}"
                 )
             command.extend(["--repeats", str(repeat_count)])
-        if environment_url:
-            command.extend(["--environment-url", environment_url])
+        if environment_urls:
+            command.extend(["--environment-url", environment_urls[0]])
+        for url in environment_urls[1:]:
+            command.extend(["--additional-environment-url", url])
         if case.target_platform != "auto":
             command.extend(["--target-platform", case.target_platform])
         if case.android_phone_bridge:
@@ -517,8 +573,9 @@ def run_case(
             except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
                 print(f"Warning: failed to remove emulator board network: {exc}", file=sys.stderr)
         _stop_daemon_projects_by_run_id(run_id)
-        _stop_service(service)
-        if case.environment == "mobilegym" and service is None:
+        for service in services:
+            _stop_service(service)
+        if case.environment == "mobilegym" and not services:
             _stop_mobilegym_by_run_id(run_id)
         if log_file is not None:
             log_file.close()

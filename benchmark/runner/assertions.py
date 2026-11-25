@@ -4,8 +4,8 @@ import json
 import re
 from typing import Any
 from runner.models import HardAssertionFailure, HardAssertionResults, Trace
-from runner.matching import dict_contains
-from runner.suite import HardAssertions, TraceObservationSpec, is_range_assertion
+from runner.matching import dict_contains, value_matches
+from runner.suite import HardAssertions, TraceObservationSpec, is_list_assertion, is_range_assertion
 from runner.trace import trace_has_skill_read
 
 
@@ -76,6 +76,17 @@ def _range_assertion_matches(actual: Any, spec: dict[str, Any]) -> bool:
     return True
 
 
+def _list_assertion_matches(actual: Any, spec: dict[str, Any]) -> bool:
+    if not isinstance(actual, list):
+        return False
+    if "$length" in spec and len(actual) != spec["$length"]:
+        return False
+    return all(
+        sum(1 for item in actual if value_matches(item, matcher)) == 1
+        for matcher in spec.get("$exactly_once", [])
+    )
+
+
 def evaluate_environment_state_assertions(
     state: dict[str, Any],
     assertions: dict[str, Any],
@@ -95,6 +106,8 @@ def evaluate_environment_state_assertions(
             passed = False
         elif is_range_assertion(expected):
             passed = _range_assertion_matches(actual, expected)
+        elif is_list_assertion(expected):
+            passed = _list_assertion_matches(actual, expected)
         else:
             passed = actual == expected
         results.append(

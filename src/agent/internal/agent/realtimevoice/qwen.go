@@ -355,6 +355,9 @@ func translateQwenEvent(body []byte) (Event, bool) {
 		if isQwenResponseInProgressError(event.Error.Type, event.Error.Param, event.Error.Message) {
 			return Event{Kind: EventResponseRejected, Error: errors.New(event.Error.Message)}, true
 		}
+		if isQwenTurnResponseMissedError(event.Error.Message) {
+			return Event{Kind: EventTurnResponseMissed, Error: errors.New(event.Error.Message)}, true
+		}
 		return Event{Kind: EventError, Error: providerServerError(body, event.Error.Message)}, true
 	default:
 		return Event{}, false
@@ -383,6 +386,13 @@ func isQwenResponseInProgressError(errorType, param, message string) bool {
 	}
 	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(message)), ".")
 	return normalized == "cannot create response while another response is in progress"
+}
+
+// isQwenTurnResponseMissedError reports a user turn the server committed
+// without answering, because a response the client created was running.
+func isQwenTurnResponseMissedError(message string) bool {
+	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(message)), ".")
+	return normalized == "server vad turn committed but no response was created because a manual response is already in progress"
 }
 
 var _ Provider = QwenProvider{}

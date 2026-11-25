@@ -402,8 +402,8 @@ Common fields:
 | `app_ids` | Optional MobileGym app IDs to preload during environment setup; omitted tasks skip eager app data loading |
 | `foreground_app_id` | Optional exact MobileGym app ID to open after reset; independent of the `app_ids` preload list. Setup fails if it cannot be opened |
 | `aico_app` | Optional simulated Aico App for MobileGym tasks: connection, app state, permissions, and injected faults for Phone Bridge tools. Requires `environment_bridge_types: ["mobilegym"]`; see [Simulated Aico App](mobilegym/README.md#simulated-aico-app) |
-| `initial_state` | Optional MobileGym `window.__SIM__.setState` patch (`apps` and/or `os`) applied after reset, for seeding calendar events, contacts, notes, and other app data. Requires `environment_bridge_types: ["mobilegym"]` |
-| `environment_assertions` | Optional dotted-path checks against the environment's final state and route (for example `apps.scroll_lab.selectedItemId` or `route.path`). A scalar value must match exactly; an object whose keys are a subset of `min`/`max` is an inclusive numeric band (for example `{"min": 4, "max": 10}`) |
+| `initial_state` | Optional MobileGym data applied after reset: `apps` and/or `os` patches for `window.__SIM__.setState` (calendar events, contacts, notes, and other app data), and `files`, a list of `{path, content, mime_type}` text files written under `/sdcard/` (for example `/sdcard/Download/contacts.txt`). Requires `environment_bridge_types: ["mobilegym"]` |
+| `environment_assertions` | Optional dotted-path checks against the environment's final state and route (for example `apps.scroll_lab.selectedItemId` or `route.path`). A scalar value must match exactly; an object whose keys are a subset of `min`/`max` is an inclusive numeric band (for example `{"min": 4, "max": 10}`); an object whose keys are a subset of `$length`/`$exactly_once` checks a list in any order: `$length` is the exact item count and each `$exactly_once` matcher must match exactly one item, using the nested subset syntax of `required_tool_calls` plus `{"$digits": "14155550132"}`, which compares only the digits of a string such as a phone number |
 | `memory_assertions` | Optional post-task `recall_memory` observation with `query`, `expected_count`, `expected`, and/or `absent_ids`; uses the same checks as `assert_memory` setup |
 | `rubric` | The judge model's scoring items. An optional `scope: "precondition"` evaluates a starting-state check against the pre-screenshot separately from Agent outcomes. The default scope is `outcome`; at least one outcome check is required. |
 | `hard_assertions` | Deterministic checks, e.g. tool-call counts, timeout, required/forbidden tools |
@@ -829,6 +829,7 @@ Common parameters:
 | `--suite PATH` | Required, path to the suite JSON |
 | `--agent-url URL` | Agent daemon address; default `http://localhost:8080` or `AICO_AGENT_URL` |
 | `--environment-url URL` | Optional, environment bridge address; used for `/api/setup`, `/api/providers/screenshot`, `/api/release` |
+| `--additional-environment-url URL` | Optional and repeatable; another bridge of the same type and platform. With `--auto-agent-setup`, each worker holds one bridge slot per task, so one run can use several ADB devices |
 | `--target-platform PLATFORM` | Target device platform (`auto`, `ios`, or `android`); validated against the environment or agent |
 | `--benchmark-token-file PATH` | File containing the benchmark control token used for protected agent endpoints |
 | `--auto-agent-setup` | Ignore `--agent-url`; auto-start isolated agent daemons concurrently per `/api/concurrent` |
