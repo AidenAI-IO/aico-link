@@ -2,7 +2,6 @@
 package devicecli
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -21,13 +20,21 @@ const Usage = `device-cli [--url URL] COMMAND
   app calendar create --title TITLE --start-at TIME [--end-at TIME] [--all-day]
                       [--location TEXT] [--notes TEXT] [--alarm-minutes-before N]
   app calendar delete --event-id ID
-  app contacts query|create|update JSON
-  app notification send JSON
+  app contacts query [--query TEXT] [--limit N]
+  app contacts create --name NAME [--phone-number NUMBER] [--email ADDRESS]
+                      [--organization TEXT] [--notes TEXT]
+  app contacts update --contact-id ID [--name NAME] [--phone-number NUMBER]
+                      [--email ADDRESS] [--organization TEXT] [--notes TEXT]
+  app notification send --title TITLE [--body TEXT] [--schedule-at TIME]
+                        [--sound[=true|false]] [--badge N]
   open APP | url URL | quick ACTION | scroll DY | move X Y
-App type requires a connected, FGS, or PiP route. App data uses the supported companion routes for each action. Calendar times use RFC3339 with a timezone. Quote contacts and notification JSON as one argument.
+App type requires a connected, FGS, or PiP route. App data uses the supported companion routes for each action. Use RFC3339 times with a timezone. Repeat --phone-number or --email to supply multiple values.
 For chords, use key meta+a or key meta a. Use key '+' for a literal plus.
 Coordinates are integers from 0 to 1000. Quote text as one shell argument.
-look saves a JPEG (default: /tmp). wait pauses for 0–30000 ms (default: 2000 ms).`
+look prints the saved JPEG path. wait pauses for 0–30000 ms (default: 2000 ms).
+Exit status 0 means success; failures exit nonzero and report errors on stderr.
+Stdout is empty for acknowledgements, prints a single string verbatim or a single
+non-string value as JSON, and uses a JSON object for multiple result fields.`
 
 // TapSettleDelay gives the UI time to respond before the next CLI command.
 const TapSettleDelay = 50 * time.Millisecond
@@ -184,17 +191,7 @@ func ParseWaitDuration(args []string) (time.Duration, error) {
 	return 0, fmt.Errorf("usage: device-cli wait [milliseconds] (0–30000)")
 }
 
-// The underlying bridge decoders ignore unknown JSON fields. Reject them at
-// the CLI boundary so a typo cannot silently create incomplete data.
-var appDataFields = map[string]string{
-	"contacts query":    "query limit",
-	"contacts create":   "name phone_numbers emails organization notes",
-	"contacts update":   "contact_id name phone_numbers emails organization notes",
-	"notification send": "title body schedule_at sound badge",
-}
-
-// App data commands reuse the existing Bridge schemas. The verb is selected
-// by the CLI, never by a field in the JSON object.
+// App data commands reuse the existing Bridge schemas.
 func appDataCalls(args []string) ([]Call, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("expected app type, clipboard, calendar, contacts, or notification command")
@@ -210,27 +207,11 @@ func appDataCalls(args []string) ([]Call, error) {
 		default:
 			return nil, fmt.Errorf("usage: device-cli app clipboard read|write [TEXT]")
 		}
-	case "calendar":
+	case "calendar", "contacts", "notification":
 		var err error
-		fields, err = calendarFields(action, args[2:])
+		fields, err = appFlagFields(domain+" "+action, args[2:])
 		if err != nil {
 			return nil, err
-		}
-	case "contacts", "notification":
-		allowed, valid := appDataFields[domain+" "+action]
-		if !valid || len(args) != 3 {
-			return nil, fmt.Errorf("unsupported app command or missing JSON object: %s %s", domain, action)
-		}
-		if err := json.Unmarshal([]byte(args[2]), &fields); err != nil || fields == nil {
-			return nil, fmt.Errorf("app %s %s expects a JSON object", domain, action)
-		}
-		for key := range fields {
-			if strings.EqualFold(key, "action") {
-				return nil, fmt.Errorf("omit action from JSON; use the command verb")
-			}
-			if key == "" || strings.Contains(key, " ") || !strings.Contains(" "+allowed+" ", " "+key+" ") {
-				return nil, fmt.Errorf("unknown field %q for app %s %s; allowed fields: %s", key, domain, action, allowed)
-			}
 		}
 	default:
 		return nil, fmt.Errorf("unknown app command: %s", domain)
@@ -239,19 +220,28 @@ func appDataCalls(args []string) ([]Call, error) {
 	return []Call{{Tool: "bridge_" + domain, Input: fields, AppData: true}}, nil
 }
 
-// calendarFields maps CLI flags to the existing Phone Bridge payload.
-func calendarFields(action string, args []string) (map[string]any, error) {
+// appFlagFields maps named flags to the existing Phone Bridge payload.
+func appFlagFields(command string, args []string) (map[string]any, error) {
+	const contactFields = "phone-number email organization notes"
 	var required, optional string
-	switch action {
-	case "query":
+	switch command {
+	case "calendar query":
 		required = "from to"
-	case "create":
+	case "calendar create":
 		required = "title start-at"
 		optional = "end-at all-day location notes alarm-minutes-before"
-	case "delete":
+	case "calendar delete":
 		required = "event-id"
+	case "contacts query":
+		optional = "query limit"
+	case "contacts create":
+		required, optional = "name", contactFields
+	case "contacts update":
+		required, optional = "contact-id", "name "+contactFields
+	case "notification send":
+		required, optional = "title", "body schedule-at sound badge"
 	default:
-		return nil, fmt.Errorf("unknown calendar action %q; use query, create, or delete", action)
+		return nil, fmt.Errorf("unknown app command %q", command)
 	}
 	fields := make(map[string]any)
 	allowed := strings.Fields(required + " " + optional)
@@ -259,32 +249,46 @@ func calendarFields(action string, args []string) (map[string]any, error) {
 		flag, value, inline := strings.Cut(args[0], "=")
 		name := strings.TrimPrefix(flag, "--")
 		if name == flag || !slices.Contains(allowed, name) {
-			return nil, fmt.Errorf("invalid calendar %s option %q; use --%s", action, flag, strings.Join(allowed, ", --"))
+			return nil, fmt.Errorf("invalid app %s option %q; use --%s", command, flag, strings.Join(allowed, ", --"))
 		}
 		key := strings.ReplaceAll(name, "-", "_")
 		if _, exists := fields[key]; exists {
-			return nil, fmt.Errorf("duplicate calendar option %s", flag)
+			return nil, fmt.Errorf("duplicate app option %s", flag)
 		}
 		args = args[1:]
-		if !inline && name != "all-day" {
+		boolean := name == "all-day" || name == "sound"
+		if !inline && !boolean {
 			if len(args) == 0 || strings.HasPrefix(args[0], "--") {
 				return nil, fmt.Errorf("%s requires a value", flag)
 			}
 			value, args = args[0], args[1:]
 		}
 		switch name {
-		case "all-day":
+		case "all-day", "sound":
 			if inline && value != "true" && value != "false" {
 				return nil, fmt.Errorf("%s expects true or false", flag)
 			}
 			fields[key] = !inline || value == "true"
-		case "alarm-minutes-before":
-			minutes, err := strconv.Atoi(value)
-			if err != nil || minutes < 0 {
+		case "alarm-minutes-before", "limit", "badge":
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 || (name == "limit" && n == 0) {
+				if name == "limit" {
+					return nil, fmt.Errorf("%s expects a positive integer", flag)
+				}
 				return nil, fmt.Errorf("%s expects a non-negative integer", flag)
 			}
-			fields[key] = minutes
-		case "from", "to", "start-at", "end-at":
+			fields[key] = n
+		case "phone-number", "email":
+			if strings.TrimSpace(value) == "" {
+				return nil, fmt.Errorf("%s requires a nonempty value", flag)
+			}
+			key = "emails"
+			if name == "phone-number" {
+				key = "phone_numbers"
+			}
+			values, _ := fields[key].([]string)
+			fields[key] = append(values, value)
+		case "from", "to", "start-at", "end-at", "schedule-at":
 			if _, err := time.Parse(time.RFC3339, value); err != nil {
 				return nil, fmt.Errorf("%s expects an RFC3339 time with a timezone", flag)
 			}
@@ -296,7 +300,7 @@ func calendarFields(action string, args []string) (map[string]any, error) {
 	for _, name := range strings.Fields(required) {
 		value, _ := fields[strings.ReplaceAll(name, "-", "_")].(string)
 		if strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("calendar %s requires --%s", action, name)
+			return nil, fmt.Errorf("app %s requires --%s", command, name)
 		}
 	}
 	return fields, nil

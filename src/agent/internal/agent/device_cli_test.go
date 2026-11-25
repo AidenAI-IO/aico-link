@@ -447,7 +447,7 @@ func TestDeviceCLIAppDataRequiresTransportWithoutCapturingScreen(t *testing.T) {
 			s := &Server{runtime: &Runtime{tools: &ToolSet{phoneBridge: bridge, tools: map[string]langtools.Tool{
 				toolBridgeContacts: contacts, "screenshot": shot,
 			}}}}
-			args := []string{"app", "contacts", "query", `{"query":"Alice","limit":5}`}
+			args := []string{"app", "contacts", "query", "--query", "Alice", "--limit", "5"}
 			assertResult := func(result ToolInvokeResponse) {
 				t.Helper()
 				if tc.wantDispatch {

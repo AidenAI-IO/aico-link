@@ -358,3 +358,26 @@ def test_episode_evidence_recovers_calendar_flags_from_a_batch():
                             "alarm_minutes_before": 10, "all_day": True}
     assert delete.input == {"action": "delete", "event_id": "e1"}
     assert delete.is_error
+
+
+def test_episode_evidence_recovers_contact_and_notification_flags_from_a_batch():
+    from runner.trace import apply_episode_tool_evidence
+
+    command = ("device-cli app contacts update --contact-id c1 --phone-number +15550100 "
+               "--phone-number=+15550101 --email a@example.test --email=b@example.test "
+               "&& device-cli app notification send --title Reminder --sound=false --badge 0")
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+        {"type": "tool_result", "tool_name": "shell"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": "bridge_contacts", "input": {}, "is_error": False},
+            {"tool": "bridge_notification", "input": {}, "is_error": True},
+        ]},
+    }]})
+    contacts, notification = trace.tool_calls[0].device_cli_calls
+    assert contacts.input == {"action": "update", "contact_id": "c1", "phone_numbers": ["+15550100", "+15550101"],
+                              "emails": ["a@example.test", "b@example.test"]}
+    assert notification.input == {"action": "send", "title": "Reminder", "sound": False, "badge": 0}
+    assert notification.is_error

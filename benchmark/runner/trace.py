@@ -134,12 +134,18 @@ _CLI_TOOL_NAMES = {
 }
 
 
-def _calendar_flag_args(action: str, args: list[str]) -> dict[str, Any] | None:
+def _app_flag_args(domain: str, action: str, args: list[str]) -> dict[str, Any] | None:
     allowed = {
-        "query": {"from", "to"},
-        "create": {"title", "start-at", "end-at", "all-day", "location", "notes", "alarm-minutes-before"},
-        "delete": {"event-id"},
-    }.get(action, set())
+        ("calendar", "query"): {"from", "to"},
+        ("calendar", "create"): {"title", "start-at", "end-at", "all-day", "location", "notes", "alarm-minutes-before"},
+        ("calendar", "delete"): {"event-id"},
+        ("contacts", "query"): {"query", "limit"},
+        ("contacts", "create"): {"name", "phone-number", "email", "organization", "notes"},
+        ("contacts", "update"): {"contact-id", "name", "phone-number", "email", "organization", "notes"},
+        ("notification", "send"): {"title", "body", "schedule-at", "sound", "badge"},
+    }.get((domain, action), set())
+    if not allowed:
+        return None
     fields: dict[str, Any] = {}
     pos = 0
     while pos < len(args):
@@ -149,7 +155,7 @@ def _calendar_flag_args(action: str, args: list[str]) -> dict[str, Any] | None:
         key = name.replace("-", "_")
         if name == flag or name not in allowed or key in fields:
             return None
-        if name == "all-day":
+        if name in {"all-day", "sound"}:
             if inline and value not in {"true", "false"}:
                 return None
             fields[key] = not inline or value == "true"
@@ -159,10 +165,18 @@ def _calendar_flag_args(action: str, args: list[str]) -> dict[str, Any] | None:
                 return None
             value = args[pos]
             pos += 1
-        if name == "alarm-minutes-before":
+        if name in {"alarm-minutes-before", "limit", "badge"}:
             if not re.fullmatch(r"\+?[0-9]{1,19}", value):
                 return None
-            fields[key] = int(value)
+            n = int(value)
+            if name == "limit" and n == 0:
+                return None
+            fields[key] = n
+        elif name in {"phone-number", "email"}:
+            if not value.strip():
+                return None
+            key = "phone_numbers" if name == "phone-number" else "emails"
+            fields.setdefault(key, []).append(value)
         else:
             fields[key] = value
     return fields
@@ -183,11 +197,12 @@ def _restore_app_data_args(tc: ToolCall) -> None:
             parsed.append(("enter_text", {"route": "app", "text": args[2]}))
         elif args[0] in _CLI_TOOL_NAMES:
             parsed.append((_CLI_TOOL_NAMES[args[0]], {}))
-        elif args[:2] == ["app", "calendar"] and len(args) >= 4 and args[3].startswith("--"):
-            fields = _calendar_flag_args(args[2], args[3:])
+        elif (args[0] == "app" and len(args) >= 3 and args[1] in {"calendar", "contacts", "notification"}
+              and (len(args) == 3 or args[3].startswith("--"))):
+            fields = _app_flag_args(args[1], args[2], args[3:])
             if fields is None:
                 return
-            parsed.append(("bridge_calendar", {**fields, "action": args[2]}))
+            parsed.append(("bridge_" + args[1], {**fields, "action": args[2]}))
         elif args[0] == "app" and len(args) in (3, 4):
             domain, verb = args[1:3]
             if verb not in _APP_DATA_VERBS.get(domain, ()):

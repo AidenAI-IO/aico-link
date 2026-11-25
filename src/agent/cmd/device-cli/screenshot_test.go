@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/jpeg"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -51,7 +52,7 @@ func TestLookSavesScreenshotLocally(t *testing.T) {
 			}
 			t.Setenv("AICO_DEVICE_CLI_TOKEN", token)
 			dir := t.TempDir()
-			if err := run(server.URL, append([]string{"look", "--dir", dir}, tc.region...)); err != nil {
+			if err := run(server.URL, append([]string{"look", "--dir", dir}, tc.region...), io.Discard); err != nil {
 				t.Fatal(err)
 			}
 			files, err := filepath.Glob(filepath.Join(dir, "*.jpg"))
@@ -86,7 +87,7 @@ func TestRunRejectsNotDispatchedResponseWithScreenshot(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("AICO_DEVICE_CLI_TOKEN", "")
-	if err := run(server.URL, []string{"tap", "100", "250"}); err == nil || err.Error() != "not sent: screen turned" {
+	if err := run(server.URL, []string{"tap", "100", "250"}, io.Discard); err == nil || err.Error() != "not sent: screen turned" {
 		t.Fatalf("expected the rejected tap to fail even with a screenshot, got %v", err)
 	}
 }

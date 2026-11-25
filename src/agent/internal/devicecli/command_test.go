@@ -62,8 +62,8 @@ func TestAppDataCommandRestrictsAction(t *testing.T) {
 	}{
 		{[]string{"clipboard", "write", ""}, "bridge_clipboard", "write"},
 		{[]string{"calendar", "delete", "--event-id", "e1"}, "bridge_calendar", "delete"},
-		{[]string{"contacts", "create", `{"name":"Alice","emails":["alice@example.test"]}`}, "bridge_contacts", "create"},
-		{[]string{"notification", "send", `{"title":"Reminder","sound":false}`}, "bridge_notification", "send"},
+		{[]string{"contacts", "create", "--name", "Alice", "--email", "alice@example.test"}, "bridge_contacts", "create"},
+		{[]string{"notification", "send", "--title", "Reminder", "--sound=false"}, "bridge_notification", "send"},
 		{[]string{"notification", "query", `{}`}, "", ""},
 		{[]string{"notification", "send", `{"Action":"query"}`}, "", ""},
 		{[]string{"calendar", "query", `null`}, "", ""},
@@ -121,5 +121,31 @@ func TestCalendarCreateFlags(t *testing.T) {
 	in := calls[0].Input
 	if in["action"] != "create" || in["title"] != "Team sync" || in["start_at"] != "2026-11-23T09:00:00+08:00" || in["alarm_minutes_before"] != 10 || in["all_day"] != true {
 		t.Fatalf("unexpected bridge input: %+v", in)
+	}
+}
+
+func TestAppFlagsPreserveBridgeTypes(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want map[string]any
+	}{
+		{[]string{"contacts", "query", "--query", "Alice", "--limit=5"}, map[string]any{"action": "query", "query": "Alice", "limit": 5}},
+		{[]string{"contacts", "update", "--contact-id", "c1", "--phone-number", "+15550100", "--phone-number=+15550101", "--email", "a@example.test", "--email=b@example.test"}, map[string]any{"action": "update", "contact_id": "c1", "phone_numbers": []string{"+15550100", "+15550101"}, "emails": []string{"a@example.test", "b@example.test"}}},
+		{[]string{"notification", "send", "--title", "Reminder", "--body", "Check calendar", "--schedule-at", "2030-01-01T09:00:00+08:00", "--sound=false", "--badge", "0"}, map[string]any{"action": "send", "title": "Reminder", "body": "Check calendar", "schedule_at": "2030-01-01T09:00:00+08:00", "sound": false, "badge": 0}},
+		{[]string{"contacts", "query", "--limit", "0"}, nil},
+		{[]string{"contacts", "update", "--name", "Alice"}, nil},
+		{[]string{"notification", "send", "--title", "Reminder", "--sound=maybe"}, nil},
+		{[]string{"notification", "send", "--title", "Reminder", "--schedule-at", "tomorrow"}, nil},
+	} {
+		calls, err := Calls(append([]string{"app"}, tc.args...))
+		if tc.want == nil {
+			if err == nil {
+				t.Errorf("accepted invalid args %q", tc.args)
+			}
+			continue
+		}
+		if err != nil || len(calls) != 1 || !reflect.DeepEqual(calls[0].Input, tc.want) {
+			t.Errorf("args %q: got %+v, %v; want %v", tc.args, calls, err, tc.want)
+		}
 	}
 }

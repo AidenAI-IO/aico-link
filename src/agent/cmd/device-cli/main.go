@@ -22,13 +22,13 @@ func main() {
 	flag.StringVar(&base, "url", base, "Agent HTTP base URL")
 	flag.Usage = func() { fmt.Fprintln(os.Stderr, devicecli.Usage) }
 	flag.Parse()
-	if err := run(strings.TrimRight(base, "/"), flag.Args()); err != nil {
+	if err := run(strings.TrimRight(base, "/"), flag.Args(), os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(base string, args []string) error {
+func run(base string, args []string, stdout io.Writer) error {
 	client := &http.Client{Timeout: 5 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	scoped := base == strings.TrimRight(os.Getenv("AICO_DEVICE_CLI_URL"), "/") && os.Getenv("AICO_DEVICE_CLI_TOKEN") != ""
 	var look *devicecli.LookOptions
@@ -47,21 +47,28 @@ func run(base string, args []string) error {
 		time.Sleep(delay)
 		return nil
 	}
+	if len(args) == 3 && args[0] == "app" && args[1] == "clipboard" && args[2] == "read" {
+		path, token := "/api/device-cli/app", ""
+		if scoped {
+			path, token = "/command", os.Getenv("AICO_DEVICE_CLI_TOKEN")
+		}
+		return readClipboard(client, base+path, args, token, stdout)
+	}
 	if scoped {
-		return runCall(client, base+"/command", args, os.Getenv("AICO_DEVICE_CLI_TOKEN"), look)
+		return runCall(client, base+"/command", args, os.Getenv("AICO_DEVICE_CLI_TOKEN"), look, stdout)
 	}
 	calls, err := devicecli.Calls(args)
 	if err != nil {
 		return err
 	}
 	if calls[0].AppData {
-		return runCall(client, base+"/api/device-cli/app", args, "", nil)
+		return runCall(client, base+"/api/device-cli/app", args, "", nil, stdout)
 	}
 	if len(calls) > 1 || args[0] == "drag-start" {
-		return runCall(client, base+"/api/device-cli/drag", args, "", nil)
+		return runCall(client, base+"/api/device-cli/drag", args, "", nil, stdout)
 	}
 	for _, call := range calls {
-		if err := runCall(client, base+"/api/tools/"+call.Tool, map[string]any{"input": call.Input}, "", look); err != nil {
+		if err := runCall(client, base+"/api/tools/"+call.Tool, map[string]any{"input": call.Input}, "", look, stdout); err != nil {
 			return err
 		}
 	}
@@ -71,7 +78,25 @@ func run(base string, args []string) error {
 	return nil
 }
 
-func runCall(client *http.Client, url string, input any, token string, look *devicecli.LookOptions) error {
+// readClipboard writes the text verbatim, including empty values and trailing
+// newlines, without exposing the Bridge's JSON envelope on stdout.
+func readClipboard(client *http.Client, url string, args []string, token string, stdout io.Writer) error {
+	output, err := invoke(client, url, args, token)
+	if err != nil {
+		return err
+	}
+	var result struct {
+		OK   bool    `json:"ok"`
+		Text *string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil || !result.OK || result.Text == nil {
+		return fmt.Errorf("invalid clipboard read response")
+	}
+	_, err = io.WriteString(stdout, *result.Text)
+	return err
+}
+
+func runCall(client *http.Client, url string, input any, token string, look *devicecli.LookOptions, stdout io.Writer) error {
 	output, err := invoke(client, url, input, token)
 	if err != nil {
 		return err
@@ -90,8 +115,8 @@ func runCall(client *http.Client, url string, input any, token string, look *dev
 		if err != nil {
 			return err
 		}
-		fmt.Println(path)
-		return nil
+		_, err = fmt.Fprintln(stdout, path)
+		return err
 	}
 	if visualErr == nil && visual.Data != "" {
 		output = visual.ActionOutput
@@ -99,10 +124,51 @@ func runCall(client *http.Client, url string, input any, token string, look *dev
 			fmt.Fprintln(os.Stderr, "device-cli: no meaningful screen change")
 		}
 	}
-	if output != "" {
-		fmt.Println(output)
+	return writeResult(stdout, output)
+}
+
+// writeResult translates the Tools HTTP result to the CLI stdout contract.
+// Use RawMessage so arrays, objects and numbers retain their JSON types.
+func writeResult(stdout io.Writer, output string) error {
+	switch strings.TrimSpace(output) {
+	case "", "ok":
+		return nil
 	}
-	return nil
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(output), &fields); err != nil || fields == nil {
+		_, err := fmt.Fprintln(stdout, output)
+		return err
+	}
+	if status, exists := fields["ok"]; exists {
+		switch string(status) {
+		case "false":
+			var message string
+			if json.Unmarshal(fields["error"], &message) == nil && strings.TrimSpace(message) != "" {
+				return fmt.Errorf("%s", message)
+			}
+			return fmt.Errorf("device command failed: %s", output)
+		case "true":
+			delete(fields, "ok")
+		}
+	}
+	delete(fields, "restored_from_return_entry")
+	switch len(fields) {
+	case 0:
+		return nil
+	case 1:
+		for _, value := range fields {
+			if len(value) > 0 && value[0] == '"' {
+				var text string
+				if err := json.Unmarshal(value, &text); err != nil {
+					return err
+				}
+				_, err := io.WriteString(stdout, text)
+				return err
+			}
+			return json.NewEncoder(stdout).Encode(value)
+		}
+	}
+	return json.NewEncoder(stdout).Encode(fields)
 }
 
 func invoke(client *http.Client, url string, input any, token string) (string, error) {

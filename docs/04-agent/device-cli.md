@@ -57,11 +57,27 @@ started but did not release a contact attempts to release it at its origin.
 A successful `drag-start` intentionally leaves it held for a later
 `drag-release`. Direct HTTP drag retains its existing verification behavior.
 
+## Exit status and stdout
+
+Exit status `0` means the command succeeded. Failures exit nonzero and report
+an error on stderr. A successful action may still need visual verification.
+Stdout carries the result, not the success status:
+
+| Result | Stdout |
+| --- | --- |
+| No data, only an acknowledgement | Nothing (for example `wait`, successful taps, typing, and clipboard writes). |
+| One string field | The string itself, without JSON quotes or an added newline (for example clipboard text or a newly created event ID). |
+| One non-string field | The JSON value alone (for example the array from `app calendar query` or `app contacts query`, including `[]` for no matches). |
+| Multiple data fields | A JSON object (for example the route and action details from `quick`). |
+
+The CLI omits `ok` and the internal `restored_from_return_entry` flag from
+structured results. `look` prints the saved JPEG path on its own line. The
+Tools HTTP API retains its existing response format.
+
 ## Companion app data
 
 These commands check the available transport and permissions for the requested
-operation. They return
-structured data and do not attach a screenshot.
+operation and do not attach a screenshot.
 
 ```sh
 device-cli app clipboard read
@@ -69,14 +85,24 @@ device-cli app clipboard write 'Hello'
 device-cli app calendar query --from 2026-11-23T00:00:00+08:00 --to 2026-11-24T00:00:00+08:00
 device-cli app calendar create --title 'Team sync' --start-at 2026-11-23T09:00:00+08:00 --end-at 2026-11-23T09:30:00+08:00
 device-cli app calendar delete --event-id EVENT_ID
-device-cli app contacts query '{"query":"Alice","limit":5}'
-device-cli app notification send '{"title":"Reminder","body":"Check the calendar","sound":false}'
+device-cli app contacts query --query Alice --limit 5
+device-cli app contacts create --name Alice --phone-number '+15550100'
+device-cli app contacts update --contact-id CONTACT_ID --organization 'Example'
+device-cli app notification send --title Reminder --body 'Check the calendar' --sound=false
 ```
 
-Calendar uses flags and RFC3339 times with a timezone. Contacts also supports
-`create` and `update`. For contacts and notifications, use the existing Bridge
-JSON fields, omitting `action` because the CLI verb supplies it. Notification `send` accepts `schedule_at`
-for a scheduled send. Confirm event details before creating or deleting events.
+Clipboard reads write only the clipboard text to stdout, without adding a
+newline. An empty clipboard produces no output and exits successfully. A failed
+read exits nonzero and reports the error on stderr. To capture the result in a
+shell variable, check the assignment's exit status before using it, and pass
+the value back as a quoted argument. Shell command substitution itself removes
+trailing newlines, even though the CLI preserves them in stdout.
+
+Calendar, contacts, and notification sending use named flags, not JSON.
+Repeat `--phone-number` or `--email` to supply multiple contact values.
+Calendar times and notification `--schedule-at` use RFC3339 with a timezone.
+Omit `--schedule-at` to send immediately. Confirm event details before creating
+or deleting events.
 The model uses these commands instead of direct clipboard, calendar, contacts,
 and notification-send tools in Device CLI mode. The underlying Bridge handlers
 remain available to the CLI, Tools HTTP API, and legacy mode. Notification
