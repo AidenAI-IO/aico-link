@@ -23,23 +23,46 @@ func (s *Server) agentBaseURL() (*url.URL, error) {
 	if baseURL == "" {
 		// Share discovery across concurrent pollers, but periodically rediscover
 		// custom ports even if the old endpoint remains reachable.
-		s.agentEndpointMu.Lock()
-		defer s.agentEndpointMu.Unlock()
-		if s.agentEndpointURL != "" && time.Now().Before(s.agentEndpointExpires) {
-			return url.Parse(s.agentEndpointURL)
+		for {
+			s.agentEndpointMu.Lock()
+			if s.agentEndpointURL != "" && time.Now().Before(s.agentEndpointExpires) {
+				cached := s.agentEndpointURL
+				s.agentEndpointMu.Unlock()
+				return url.Parse(cached)
+			}
+			if discovery := s.agentEndpointDiscovery; discovery != nil {
+				s.agentEndpointMu.Unlock()
+				<-discovery
+				continue
+			}
+			discovery := make(chan struct{})
+			generation := s.agentEndpointGeneration
+			s.agentEndpointDiscovery = discovery
+			s.agentEndpointMu.Unlock()
+
+			status := s.queryAgentStatus()
+			host, _ := status["port_host"].(string)
+			port, _ := status["port"].(int)
+			if host == "" {
+				host = "127.0.0.1"
+			}
+			if port < 1 || port > 65535 {
+				port = 8080
+			}
+			baseURL = fmt.Sprintf("http://%s", net.JoinHostPort(host, strconv.Itoa(port)))
+
+			s.agentEndpointMu.Lock()
+			s.agentEndpointDiscovery = nil
+			close(discovery)
+			if generation != s.agentEndpointGeneration {
+				s.agentEndpointMu.Unlock()
+				continue
+			}
+			s.agentEndpointURL = baseURL
+			s.agentEndpointExpires = time.Now().Add(30 * time.Second)
+			s.agentEndpointMu.Unlock()
+			break
 		}
-		status := s.queryAgentStatus()
-		host, _ := status["port_host"].(string)
-		port, _ := status["port"].(int)
-		if host == "" {
-			host = "127.0.0.1"
-		}
-		if port < 1 || port > 65535 {
-			port = 8080
-		}
-		baseURL = fmt.Sprintf("http://%s", net.JoinHostPort(host, strconv.Itoa(port)))
-		s.agentEndpointURL = baseURL
-		s.agentEndpointExpires = time.Now().Add(30 * time.Second)
 	}
 	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
@@ -53,9 +76,14 @@ func (s *Server) agentBaseURL() (*url.URL, error) {
 func (s *Server) invalidateAgentEndpoint(base *url.URL) {
 	s.agentEndpointMu.Lock()
 	defer s.agentEndpointMu.Unlock()
+	if s.agentEndpointURL == "" && s.agentEndpointDiscovery != nil {
+		s.agentEndpointGeneration++
+		return
+	}
 	cached, err := url.Parse(s.agentEndpointURL)
 	if err == nil && cached.Host == base.Host {
 		s.agentEndpointURL = ""
+		s.agentEndpointGeneration++
 	}
 }
 

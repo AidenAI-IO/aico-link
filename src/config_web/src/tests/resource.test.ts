@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStore } from 'jotai/vanilla';
 import { createResource } from '../state/resource';
 import { createDeviceState } from '../state/device';
+import { applyLocale, getActiveLocale } from '../lib/i18n';
 
 const deferred = () => {
   let resolve!: (value: unknown) => void;
@@ -19,6 +20,21 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
+});
+
+it('applies the saved device locale before publishing the first config snapshot', async () => {
+  applyLocale('en-US', true);
+  const model = createDeviceState(
+    async () => ({ config: { agent: { locale: 'zh-CN' } } }) as never,
+  );
+  let localeAtPublish = '';
+  model.store.sub(model.config, () => {
+    localeAtPublish ||= getActiveLocale();
+  });
+  await model.start();
+  expect(localeAtPublish).toBe('zh-CN');
+  model.dispose();
+  applyLocale('en-US', true);
 });
 
 describe('resource lifecycle', () => {

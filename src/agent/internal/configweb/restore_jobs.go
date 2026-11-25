@@ -106,20 +106,21 @@ type restoreJobStore struct {
 type restoreJob struct {
 	mu sync.Mutex
 
-	id             string
-	createdAt      time.Time
-	startedAt      time.Time
-	finishedAt     time.Time
-	lastActivity   time.Time
-	state          string
-	phase          string
-	archiveSize    int64
-	expectedHash   string
-	archiveHash    hash.Hash
-	receivedBytes  int64
-	stagedBytes    int64
-	filesProcessed int
-	warnings       []string
+	id                string
+	createdAt         time.Time
+	startedAt         time.Time
+	finishedAt        time.Time
+	lastActivity      time.Time
+	state             string
+	phase             string
+	validationRunning bool
+	archiveSize       int64
+	expectedHash      string
+	archiveHash       hash.Hash
+	receivedBytes     int64
+	stagedBytes       int64
+	filesProcessed    int
+	warnings          []string
 
 	header   backup.PublicHeader
 	material *backup.KeyMaterial
@@ -343,7 +344,7 @@ func (j *restoreJob) publicMapLocked() map[string]any {
 		"staged_bytes": j.stagedBytes, "files_processed": j.filesProcessed,
 		"created_at": j.createdAt, "started_at": j.startedAt, "finished_at": j.finishedAt,
 		"plan_digest": j.planDigest, "cancelable": !isTerminalRestoreState(j.state) && !restoreCommitInProgress(j.state),
-		"reboot_required": j.identityRebootRequired,
+		"reboot_required": j.identityRebootRequired, "validation_running": j.validationRunning,
 	}
 	if len(j.warnings) > 0 {
 		result["warnings"] = append([]string(nil), j.warnings...)
@@ -1509,13 +1510,49 @@ func (s *Server) handleRestoreValidate(w http.ResponseWriter, r *http.Request, i
 			return
 		}
 	}
+	job.mu.Lock()
+	if job.state != restoreJobValidating {
+		state := job.state
+		payload := job.publicMapLocked()
+		job.mu.Unlock()
+		if state == restoreJobPrepared {
+			payload["ok"] = true
+			writeJSON(w, http.StatusOK, payload)
+		} else {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "restore_not_ready", "state": state})
+		}
+		return
+	}
+	if job.validationRunning {
+		payload := job.publicMapLocked()
+		payload["ok"] = true
+		job.mu.Unlock()
+		writeJSON(w, http.StatusAccepted, payload)
+		return
+	}
+	job.validationRunning = true
+	job.lastActivity = time.Now().UTC()
+	job.mu.Unlock()
 	if err := syncRestoreRoots(s, job); err != nil {
+		job.mu.Lock()
+		job.validationRunning = false
+		job.lastActivity = time.Now().UTC()
+		job.mu.Unlock()
+		s.restoreJobs.persist(job)
 		s.writeBackupError(w, &backupAPIError{Code: "staging_sync_failed", Status: http.StatusServiceUnavailable, Message: sanitizeBackupError(err)})
 		return
 	}
 	job.mu.Lock()
+	if job.state != restoreJobValidating {
+		state := job.state
+		job.validationRunning = false
+		job.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "restore_not_ready", "state": state})
+		return
+	}
 	job.state, job.phase = restoreJobPrepared, "prepared"
 	job.transactionState = backup.TransactionPrepared
+	job.validationRunning = false
 	job.mu.Unlock()
 	if err := s.persistRestoreTransaction(job); err != nil {
 		s.failRestore(job, "staging_sync_failed", err)

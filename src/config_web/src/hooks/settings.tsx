@@ -97,7 +97,7 @@ export function useSettings(props: PageProps, title: TextSpec, back?: string, he
     if (committing.current) return 'failed';
     const id = (sequence.current.get(key) || 0) + 1;
     sequence.current.set(key, id);
-    let apply = 'live';
+    let apply: string;
     try {
       apply =
         (
@@ -113,6 +113,8 @@ export function useSettings(props: PageProps, title: TextSpec, back?: string, he
         if (!quietInvalid) toast(error.message);
         return 'invalid';
       }
+      toast(error.message);
+      return 'failed';
     }
     if (sequence.current.get(key) !== id || !mounted.current) return 'superseded';
     if (committing.current) {

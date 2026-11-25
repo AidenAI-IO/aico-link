@@ -94,11 +94,15 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
 			writeJSONError(w, http.StatusServiceUnavailable, "agent config unavailable")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		response := map[string]any{
 			"ok": true, "config": s.projectConfig(config), "revision": revision,
 			"config_valid": valid, "config_errors": validationErrors,
 			"paths": map[string]string{"agent_config": s.options.AgentConfigPath},
-		})
+		}
+		if s.authority != nil && s.options.HTTPSPort > 0 {
+			response["https_port"] = s.options.HTTPSPort
+		}
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	writeJSONError(w, http.StatusServiceUnavailable, "agent config changed while reading; retry")

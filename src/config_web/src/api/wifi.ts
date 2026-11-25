@@ -197,12 +197,15 @@ async function waitForTask(started: WiFiTask) {
   if (!taskId) throw new Error('Missing Wi-Fi task ID');
   const deadline = Date.now() + ((Number(started.deadline_seconds) || 120) + 5) * 1000;
   while (Date.now() < deadline) {
-    await wait(POLL_INTERVAL_MS);
+    await wait(Math.min(POLL_INTERVAL_MS, deadline - Date.now()));
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
     const payload = await request<WiFiTask>(
       `${CONNECTION_URL}?task_id=${encodeURIComponent(taskId)}`,
       {
         method: 'GET',
       },
+      remaining,
     );
     if (payload.status !== 'running') return payload;
   }

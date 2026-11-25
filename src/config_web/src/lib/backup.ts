@@ -13,6 +13,7 @@ export interface BackupJob {
   suggested_filename?: string;
   chunk_size?: number;
   plan_digest?: string;
+  validation_running?: boolean;
   manifest?: { components: { id: string }[] };
   warnings?: string[];
   error?: { code?: string; message?: string };
@@ -127,6 +128,7 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
   let header: ArchiveHeader | null = null;
   let selectionID = 0;
   let operationID = 0;
+  let attachedDriver: { jobId: string; owner: number } | null = null;
   let identityConfirmed = false;
   let view: BackupView = {
     kind: null,
@@ -384,6 +386,10 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
     });
     if (owner !== operationID) return;
     job = { ...job, ...validated };
+    if (validated.state === 'validating') {
+      await resumeRestore(jobId, owner, 0);
+      return;
+    }
     await applyRestore(jobId, validated.plan_digest, owner);
   }
 
@@ -444,6 +450,7 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
     const selectedHeader = header;
     if (!selectedFile || !selectedHeader || selectionID !== selection) return;
     const owner = ++operationID;
+    let uploadComplete = false;
     identityConfirmed = Boolean(confirmIdentity);
     emit({
       kind: 'restore',
@@ -488,10 +495,19 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
         },
       );
       if (owner !== operationID) return;
+      uploadComplete = true;
       await validateAndApply(created.job_id, owner);
     } catch (caught) {
       if (owner !== operationID) return;
       const error = apiError(caught);
+      if (uploadComplete && job?.job_id) {
+        try {
+          await reconcileRestore(job.job_id, error, owner);
+        } catch (reconcileError) {
+          if (owner === operationID) fail(reconcileError);
+        }
+        return;
+      }
       if (job?.job_id && !UNCANCELLABLE.includes(job.state) && !TERMINAL.has(job.state)) {
         try {
           await maintenance(jobPath('restore', job.job_id), { method: 'DELETE' });
@@ -499,7 +515,7 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
           // Already finished on the device.
         }
       }
-      fail(error);
+      if (owner === operationID) fail(error);
     }
   }
 
@@ -512,19 +528,14 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
     }
     const current = job;
     const kind = view.kind;
-    const owner = ++operationID;
-    let payload: BackupJob;
-    try {
-      payload = await maintenance(jobPath(kind, current.job_id), { method: 'DELETE' });
-    } catch (error) {
-      if (owner === operationID && job?.job_id === current.job_id)
-        void poll(kind || 'restore', current.job_id, owner).catch((failure) => fail(failure));
-      throw error;
-    }
+    const owner = operationID;
+    const payload = await maintenance(jobPath(kind, current.job_id), { method: 'DELETE' });
     if (owner !== operationID || job?.job_id !== current.job_id) return false;
+    operationID += 1;
+    const nextOwner = operationID;
     job = { ...job, ...payload };
     if (TERMINAL.has(payload.state)) finish(payload);
-    else void poll(kind || 'restore', current.job_id, owner).catch((error) => fail(error));
+    else void poll(kind || 'restore', current.job_id, nextOwner).catch((error) => fail(error));
     return true;
   }
 
@@ -541,9 +552,25 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
       phase?: string;
       job?: BackupJob;
     }>('/api/maintenance/current', { credentials: 'same-origin' }).catch(() => null);
-    if (!current || !current.job_id || (job && job.job_id === current.job_id)) return false;
+    if (
+      !current ||
+      !current.job_id ||
+      (attachedDriver?.jobId === current.job_id && attachedDriver.owner === operationID)
+    )
+      return false;
     const owner = ++operationID;
     const kind = current.operation === 'restore' ? 'restore' : 'backup';
+    const driver = { jobId: current.job_id, owner };
+    attachedDriver = driver;
+    const runDriver = (run: () => Promise<unknown>) => {
+      void run()
+        .catch((error) => {
+          if (owner === operationID) fail(error);
+        })
+        .finally(() => {
+          if (attachedDriver === driver) attachedDriver = null;
+        });
+    };
     job = { kind, job_id: current.job_id, state: current.phase || '', ...(current.job || {}) };
     emit({
       kind,
@@ -565,22 +592,16 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
         stalled: true,
         message: t('backup.restore_interrupted'),
       });
-      poll(kind, current.job_id, owner).catch((error) => {
-        if (owner === operationID) fail(error);
-      });
+      runDriver(() => poll(kind, current.job_id!, owner));
       return true;
     }
     // The upload finished before the refresh; the device is waiting for the
     // same requests the uninterrupted flow would have sent next. The user
     // confirmed the restore before it started, so it simply goes on.
     if (kind === 'restore' && (state === 'validating' || state === 'prepared')) {
-      resumeRestore(current.job_id, owner).catch((error) => {
-        if (owner === operationID) fail(error);
-      });
+      runDriver(() => resumeRestore(current.job_id!, owner));
     } else {
-      poll(kind, current.job_id, owner).catch((error) => {
-        if (owner === operationID) fail(error);
-      });
+      runDriver(() => poll(kind, current.job_id!, owner));
     }
     return true;
   }
@@ -589,14 +610,14 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
    * Carry an attached, fully uploaded restore through validate and apply.
    *
    * `validating` means both "waiting for /validate" and "/validate running",
-   * and the server does not serialise a second call; the request the old page
-   * sent may still be in flight. So the job is watched first, and /validate is
-   * sent only once it has sat in `validating` long enough that nobody is
-   * running it. Any failure is reconciled against the job's real state before
+   * and the request the old page sent may still be in flight. Watch the job
+   * first and send /validate only when validation is not running. Older servers
+   * lack that flag, so keep the grace period before retrying. Any failure is
+   * reconciled against the job's real state before
    * it is reported, so a lost response does not abandon a job the device is
    * still holding.
    */
-  async function resumeRestore(jobId: string, owner: number) {
+  async function resumeRestore(jobId: string, owner: number, validationRetries = 1) {
     let validateSent = false;
     const quietSince = Date.now();
     let statusFailures = 0;
@@ -633,7 +654,11 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
           else await poll('restore', jobId, owner);
           return;
         }
-        if (!validateSent && Date.now() - quietSince >= RESUME_VALIDATE_AFTER_MS) {
+        if (
+          !validateSent &&
+          payload.validation_running !== true &&
+          Date.now() - quietSince >= RESUME_VALIDATE_AFTER_MS
+        ) {
           validateSent = true;
           emit({ phase: t('backup.phase.validating'), done: 0, total: 0 });
           const validated = await maintenance(jobPath('restore', jobId, '/validate'), {
@@ -650,12 +675,59 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
     } catch (caught) {
       if (owner !== operationID) return;
       const error = apiError(caught);
-      await reconcileRestore(jobId, error, owner);
+      await reconcileRestore(jobId, error, owner, validationRetries);
     }
   }
 
+  async function watchRestoreValidation(jobId: string, owner: number) {
+    let statusFailures = 0;
+    for (let attempt = 0; attempt < 4 * 60 * 60; attempt += 1) {
+      if (owner !== operationID || !job || job.job_id !== jobId) return;
+      let payload: BackupJob;
+      try {
+        payload = await jobRequest(jobPath('restore', jobId));
+        statusFailures = 0;
+      } catch (caught) {
+        if (owner !== operationID || !job || job.job_id !== jobId) return;
+        const error = apiError(caught);
+        if (error.status === 404 || ++statusFailures >= 5) {
+          fail(error);
+          return;
+        }
+        await delay(1000);
+        continue;
+      }
+      if (owner !== operationID || !job || job.job_id !== jobId) return;
+      job = { ...job, ...payload };
+      progress(payload);
+      if (TERMINAL.has(payload.state)) {
+        finish(payload);
+        return;
+      }
+      if (payload.state === 'prepared' && payload.plan_digest) {
+        await applyRestore(jobId, payload.plan_digest, owner);
+        return;
+      }
+      if (UNCANCELLABLE.includes(payload.state)) {
+        await poll('restore', jobId, owner);
+        return;
+      }
+      if (payload.state !== 'validating') {
+        await poll('restore', jobId, owner);
+        return;
+      }
+      await delay(1000);
+    }
+    if (owner === operationID) fail(t('backup.error.timeout'));
+  }
+
   /** After a failed resume step: continue, report the device's outcome, or cancel. */
-  async function reconcileRestore(jobId: string, original: unknown, owner: number) {
+  async function reconcileRestore(
+    jobId: string,
+    original: unknown,
+    owner: number,
+    validationRetries = 1,
+  ) {
     let payload;
     try {
       payload = await jobRequest(jobPath('restore', jobId));
@@ -682,7 +754,11 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
       return;
     } else if (payload.state === 'validating') {
       // A validation may still be running on the device after its response was lost.
-      await poll('restore', jobId, owner);
+      if (validationRetries > 0) {
+        await resumeRestore(jobId, owner, validationRetries - 1);
+        return;
+      }
+      await watchRestoreValidation(jobId, owner);
       return;
     }
     try {

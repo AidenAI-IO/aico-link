@@ -90,6 +90,7 @@ export async function performRequest<T>(
 export function request<T = Record<string, unknown>>(
   path: string,
   options?: RequestInit,
+  timeoutMs = 0,
 ): Promise<T> {
   if (
     ['/api/config', '/api/config/locale', '/api/config/backup'].includes(path) &&
@@ -100,7 +101,7 @@ export function request<T = Record<string, unknown>>(
     writes = next.catch(() => {});
     return next;
   }
-  return performRequest<T>(path, options);
+  return performRequest<T>(path, options, timeoutMs);
 }
 export const transport: Transport = request;
 export const json = (body: unknown): Pick<RequestInit, 'headers' | 'body'> => ({

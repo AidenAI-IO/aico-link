@@ -139,11 +139,11 @@ export async function waitForReboot(previousBoot = '') {
   while (Date.now() - started < REBOOT_TIMEOUT_MS) {
     await sleep(POLL_INTERVAL_MS);
     const result = await probe();
+    if (previousBoot && result?.body.boot_id && result.body.boot_id !== previousBoot) return;
     if (!result || !result.ok) {
       if (!downSince) downSince = Date.now();
       continue;
     }
-    if (previousBoot && result.body.boot_id && result.body.boot_id !== previousBoot) return;
     if (!previousBoot && downSince && Date.now() - downSince >= POLL_INTERVAL_MS * 2) return;
     if (!downSince && Date.now() - started > REBOOT_START_TIMEOUT_MS) {
       throw new Error(resolve(msg('apply.reboot_not_started', '设备没有重启，请稍后重试。')));
@@ -190,7 +190,7 @@ export async function performRestart(level: string) {
     if (level === APPLY_REBOOT) {
       const before = await probe();
       await request('/api/device/reboot', { method: 'POST' });
-      await waitForReboot(before?.ok ? before.body.boot_id : '');
+      await waitForReboot(before?.body.boot_id || '');
       postToHost({ type: 'aico_config_restart', apply: level, phase: 'finished' });
       window.location.reload();
       return true;

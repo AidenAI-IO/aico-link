@@ -52,6 +52,8 @@ type Server struct {
 	agentEndpointMu          sync.Mutex
 	agentEndpointURL         string
 	agentEndpointExpires     time.Time
+	agentEndpointDiscovery   chan struct{}
+	agentEndpointGeneration  uint64
 	systemEnvMu              sync.Mutex
 	configSavePending        bool
 	configApplyError         string
@@ -367,6 +369,7 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.FlushInterval = -1
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
+		s.invalidateAgentEndpoint(target)
 		writeJSONError(w, http.StatusBadGateway, "MCP service unavailable")
 	}
 	proxy.ServeHTTP(w, r)

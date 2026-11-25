@@ -106,7 +106,7 @@ export function App({ model }: { model: DeviceState }) {
   const [header, setHeader] = useState<HeaderSpec>({});
   const router = useRef<ReturnType<typeof createRouter> | null>(null);
   const locale = useAtomValue(model.configLocale);
-  useAtomValue(model.locale);
+  const localeRevision = useAtomValue(model.locale);
   const navigate = useCallback(
     (path: string, options?: { replace?: boolean; silent?: boolean }) =>
       router.current?.navigate(path, options),
@@ -153,7 +153,7 @@ export function App({ model }: { model: DeviceState }) {
   }, [locale]);
   useLayoutEffect(() => {
     if (route) announcePage(resolve(routeHeader(route, navigate).title));
-  }, [route, navigate]);
+  }, [route, navigate, localeRevision]);
   const setPageHeader = useCallback((value: HeaderSpec) => setHeader(value), []);
   const home = route?.path === '/' && !model.local;
   return (

@@ -1,7 +1,10 @@
 import type { TextSpec } from '../types';
 import { messages } from './messages';
 const KEY = 'aico.config.locale';
-let locale = 'en-US';
+let locale =
+  typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('zh')
+    ? 'zh-CN'
+    : 'en-US';
 try {
   locale = localStorage.getItem(KEY) || locale;
 } catch {

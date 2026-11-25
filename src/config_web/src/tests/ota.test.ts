@@ -91,6 +91,7 @@ it('parses updater progress, failures and resumed hybrid runs', () => {
     'completed',
     'package-only completion must not request a reboot',
   );
+  assert.equal(parseOtaLog(hybrid.join('\n')).at, '2026-09-30T01:00:00Z');
 
   const resumed = [
     line('2026-09-30T02:00:00Z', 'hybrid: start'),
@@ -117,4 +118,28 @@ it('parses updater progress, failures and resumed hybrid runs', () => {
     'completed',
     'truncated logs still show package completion',
   );
+
+  const hybridWithSummary = parseOtaLog(
+    [
+      line('2026-10-01T10:00:00Z', 'hybrid: start'),
+      line('2026-10-01T10:00:01Z', 'ota check: start'),
+      '{"Updated":true,"NoUpdate":false,"Version":"debian-20261001-100000"}',
+      line('2026-10-01T10:05:00Z', 'hybrid: ota-install'),
+      line('2026-10-01T10:20:00Z', 'hybrid: completed'),
+    ].join('\n'),
+  );
+  assert.equal(hybridWithSummary.at, '2026-10-01T10:00:00Z');
+  assert.equal(hybridWithSummary.version, 'debian-20261001-100000');
+
+  const afterFailedHybrid = parseOtaLog(
+    [
+      line('2026-10-01T11:00:00Z', 'hybrid: start'),
+      '2026-10-01T11:00:01Z [config_web][ota] update_exited exit_code=1',
+      line('2026-10-01T11:01:00Z', 'ota check: start'),
+      '{"Updated":false,"NoUpdate":true,"Version":"debian-2"}',
+      '2026-10-01T11:01:04Z [INFO][config_web][ota] update_exited exit_code=0',
+    ].join('\n'),
+  );
+  assert.equal(afterFailedHybrid.at, '2026-10-01T11:01:04Z');
+  assert.equal(afterFailedHybrid.state, 'up_to_date');
 });

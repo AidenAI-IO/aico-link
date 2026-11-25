@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"aico-agent/internal/agent"
+	"aico-agent/internal/localtls"
 	"aico-agent/internal/wifiproxy"
 	"aico-agent/internal/wifiregion"
 )
@@ -369,6 +370,49 @@ api_key = "do-not-expose"
 	server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/config", nil))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unreadable config status=%d", response.Code)
+	}
+}
+
+func TestConfigReadReportsHTTPSPortOnlyWhenAuthorityIsReady(t *testing.T) {
+	options := testOptions(t)
+	options.HTTPSPort = 443
+	server := &Server{options: options}
+	read := func() map[string]any {
+		t.Helper()
+		response := httptest.NewRecorder()
+		server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("config status=%d body=%s", response.Code, response.Body.String())
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload
+	}
+	if _, ok := read()["https_port"]; ok {
+		t.Fatal("HTTPS port reported without a ready authority")
+	}
+	server.authority = &localtls.Authority{}
+	if got := read()["https_port"]; got != float64(443) {
+		t.Fatalf("HTTPS port=%v, want 443", got)
+	}
+}
+
+func TestMCPProxyFailureInvalidatesDiscoveredEndpoint(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	endpoint := upstream.URL
+	upstream.Close()
+	server := &Server{agentEndpointURL: endpoint, agentEndpointExpires: time.Now().Add(time.Minute)}
+	req := httptest.NewRequest(http.MethodGet, "https://device/mcp", nil)
+	req.TLS = &tls.ConnectionState{}
+	response := httptest.NewRecorder()
+	server.serveMCP(response, req)
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("proxy status=%d body=%s", response.Code, response.Body.String())
+	}
+	if server.agentEndpointURL != "" {
+		t.Fatalf("failed endpoint remains cached: %s", server.agentEndpointURL)
 	}
 }
 

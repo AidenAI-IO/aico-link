@@ -74,12 +74,19 @@ export function parseOtaLog(log: string) {
   lines.forEach((line, index) => {
     const marker = MESSAGE.exec(line);
     if (marker?.[1] === 'hybrid') {
-      start = index;
-      hybrid = true;
-      activeHybrid = !['completed', 'up-to-date'].includes(marker[2]);
-    } else if (!activeHybrid && /message="(?:ota )?check: start"/.test(line)) {
-      start = index;
-      hybrid = false;
+      if (marker[2] === 'start' || start < 0 || !hybrid) {
+        start = index;
+        hybrid = true;
+        activeHybrid = true;
+      }
+      if (['completed', 'up-to-date'].includes(marker[2])) activeHybrid = false;
+    } else {
+      const exit = EXIT.exec(line);
+      if (activeHybrid && exit && Number(exit[1]) !== 0) activeHybrid = false;
+      if (!activeHybrid && /message="(?:ota )?check: start"/.test(line)) {
+        start = index;
+        hybrid = false;
+      }
     }
   });
   const result: {
@@ -176,7 +183,7 @@ export function parseOtaLog(log: string) {
     const exit = EXIT.exec(line);
     if (exit) {
       const code = Number(exit[1]);
-      result.at = timestamp(line) || result.at;
+      if (!hybrid) result.at = timestamp(line) || result.at;
       if (code !== 0) {
         result.state = 'failed';
         result.error = lastPlain;

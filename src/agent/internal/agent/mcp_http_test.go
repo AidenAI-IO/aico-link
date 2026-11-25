@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/mcp"
 )
 
@@ -59,7 +60,7 @@ func TestMCPEnabledInitialize(t *testing.T) {
 func TestMCPRejectsPlainHTTPFromWiFiClients(t *testing.T) {
 	enabled := true
 	runtime := &Runtime{config: Config{MCPEnabled: &enabled}}
-	server := &Server{runtime: runtime}
+	server := &Server{runtime: runtime, lanAccess: lanaccess.NewState(t.TempDir()+"/enabled", t.TempDir()+"/password", t.TempDir()+"/secret")}
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
 	req.RemoteAddr = "192.0.2.10:4321"
 	rec := httptest.NewRecorder()
@@ -75,6 +76,26 @@ func TestMCPRejectsPlainHTTPFromWiFiClients(t *testing.T) {
 	server.handleMCP(secureRec, secure)
 	if secureRec.Code == http.StatusUpgradeRequired {
 		t.Fatalf("TLS MCP request was rejected: %s", secureRec.Body.String())
+	}
+}
+
+func TestMCPAllowsPlainHTTPWhenLANGuardIsDisabled(t *testing.T) {
+	enabled := true
+	runtime := NewRuntimeWithDeps(Config{MCPEnabled: &enabled, MCPShellEnabled: boolPtr(false)}, nil, nil, nil, NewSkillIndex())
+	t.Cleanup(func() { runtime.Close() })
+	server := &Server{runtime: runtime}
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "0"}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+	req.RemoteAddr = "172.17.0.1:4321"
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.handleMCP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("plain HTTP MCP status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

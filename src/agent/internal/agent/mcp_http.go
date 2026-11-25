@@ -39,7 +39,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if r.TLS == nil && !lanaccess.IsUSB(r) && !isLoopbackMCPClient(r.RemoteAddr) {
+	if s.lanAccess != nil && r.TLS == nil && !lanaccess.IsUSB(r) && !isLoopbackMCPClient(r.RemoteAddr) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusUpgradeRequired)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "mcp_https_required"})

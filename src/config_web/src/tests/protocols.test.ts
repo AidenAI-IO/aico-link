@@ -6,6 +6,7 @@ import { createMaintenanceRequestID } from '../lib/maintenance';
 import { readArchiveHeader, uploadBrowserChunks } from '../lib/transfers';
 import { createBackupEngine } from '../lib/backup';
 import { request } from '../api/client';
+import { connect } from '../api/wifi';
 import { wifiEndpoint } from '../pages/MCP';
 import { createRouter } from '../app/router';
 import {
@@ -23,7 +24,10 @@ import {
   isValidLogFileName,
 } from '../lib/logs';
 import type { LogParser } from '../lib/logs';
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 it('produces HTTP-safe UUIDs and SHA-256 hashes at padding and chunk boundaries', async () => {
   for (let index = 0; index < 20; index++)
     expect(createMaintenanceRequestID({})).toMatch(
@@ -116,6 +120,33 @@ it('releases the config write queue when a response body stalls', async () => {
     await expect(second).resolves.toEqual({ ok: true });
     expect(signals[0].aborted).toBe(true);
     expect(call).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it('bounds Wi-Fi task polling by the task deadline when a status response stalls', async () => {
+  vi.useFakeTimers();
+  const signals: AbortSignal[] = [];
+  vi.stubGlobal('fetch', async (path: string, options?: RequestInit) => {
+    if (path === '/api/network/wifi/connection')
+      return new Response(
+        JSON.stringify({ status: 'running', task_id: 'task-1', deadline_seconds: 1 }),
+      );
+    signals.push(options?.signal as AbortSignal);
+    return {
+      ok: true,
+      status: 200,
+      statusText: '',
+      text: () => new Promise<string>(() => {}),
+    } as Response;
+  });
+  try {
+    const result = connect({ ssid: 'Aico' });
+    const failed = expect(result).rejects.toMatchObject({ code: 'request_timeout' });
+    await vi.advanceTimersByTimeAsync(6000);
+    await failed;
+    expect(signals).toHaveLength(1);
+    expect(signals[0].aborted).toBe(true);
   } finally {
     vi.useRealTimers();
   }
@@ -261,4 +292,201 @@ it('renews expired maintenance sessions using the same idempotency key', async (
   expect(sessions).toBe(2);
   expect(headers[0].get('X-Aico-Request-ID')).toBe(headers[1].get('X-Aico-Request-ID'));
   expect(headers.map((value) => value.get('X-Aico-CSRF-Token'))).toEqual(['csrf-1', 'csrf-2']);
+});
+
+function makeRestoreArchive() {
+  const header = new TextEncoder().encode(
+    JSON.stringify({ protection: { algorithm: 'sha256-chunked' } }),
+  );
+  const bytes = new Uint8Array(14 + header.length + 96);
+  bytes.set(new TextEncoder().encode('AICOBKP1'));
+  const view = new DataView(bytes.buffer);
+  view.setUint16(8, 1);
+  view.setUint32(10, header.length);
+  bytes.set(header, 14);
+  return new NodeBlob([bytes]) as unknown as File;
+}
+
+function maintenanceSession() {
+  return new Response(JSON.stringify({ expires_at: '2099-01-01T00:00:00Z', csrf_token: 'csrf' }));
+}
+
+it('continues restore upload when a cancellation request fails', async () => {
+  let releaseFirstChunk!: () => void;
+  let signalFirstChunk!: () => void;
+  const firstChunkStarted = new Promise<void>((resolve) => {
+    signalFirstChunk = resolve;
+  });
+  const chunkPaths: string[] = [];
+  vi.stubGlobal('fetch', async (path: string, options?: RequestInit) => {
+    if (path === '/api/maintenance/sessions') return maintenanceSession();
+    if (path === '/api/restore/jobs' && options?.method === 'POST')
+      return new Response(
+        JSON.stringify({ job_id: 'restore-1', state: 'restore_ingest', chunk_size: 32 }),
+      );
+    if (path.includes('/chunks/')) {
+      chunkPaths.push(path);
+      if (path.endsWith('/chunks/0')) {
+        signalFirstChunk();
+        await new Promise<void>((resolve) => {
+          releaseFirstChunk = resolve;
+        });
+      }
+      return new Response(
+        JSON.stringify({ state: 'uploading_and_staging', received_bytes: chunkPaths.length * 32 }),
+      );
+    }
+    if (path.endsWith('/restore-1') && options?.method === 'DELETE')
+      throw new Error('device unavailable');
+    if (path.endsWith('/validate'))
+      return new Response(
+        JSON.stringify({ job_id: 'restore-1', state: 'prepared', plan_digest: 'digest' }),
+      );
+    if (path.endsWith('/apply'))
+      return new Response(JSON.stringify({ job_id: 'restore-1', state: 'completed' }));
+    throw new Error(`unexpected request: ${path}`);
+  });
+  const engine = createBackupEngine(() => {});
+  const selection = await engine.chooseRestore(makeRestoreArchive());
+  const started = engine.startRestore({ confirmIdentity: false, selection: selection.id });
+  await firstChunkStarted;
+  await expect(engine.cancel()).rejects.toThrow('device unavailable');
+  releaseFirstChunk();
+  await started;
+  expect(chunkPaths.length).toBeGreaterThan(1);
+});
+
+it('ignores old upload cleanup after cancellation and a new restore starts', async () => {
+  let rejectOldChunk!: (error: Error) => void;
+  let releaseCancel!: (response: Response) => void;
+  let releaseCleanup!: (response: Response) => void;
+  let releaseNewChunk!: (response: Response) => void;
+  let created = 0;
+  let chunks = 0;
+  let deletes = 0;
+  vi.stubGlobal('fetch', async (path: string, options?: RequestInit) => {
+    if (path === '/api/maintenance/sessions') return maintenanceSession();
+    if (path === '/api/restore/jobs' && options?.method === 'POST')
+      return new Response(
+        JSON.stringify({
+          job_id: `restore-${++created}`,
+          state: 'restore_ingest',
+          chunk_size: 512,
+        }),
+      );
+    if (path.includes('/chunks/')) {
+      chunks++;
+      return new Promise<Response>((resolve, reject) => {
+        if (created === 1) rejectOldChunk = reject;
+        else releaseNewChunk = resolve;
+      });
+    }
+    if (options?.method === 'DELETE') {
+      deletes++;
+      return new Promise<Response>((resolve) => {
+        if (deletes === 1) releaseCancel = resolve;
+        else releaseCleanup = resolve;
+      });
+    }
+    if (path.endsWith('/validate'))
+      return new Response(JSON.stringify({ state: 'prepared', plan_digest: 'digest' }));
+    if (path.endsWith('/apply')) return new Response(JSON.stringify({ state: 'completed' }));
+    throw new Error(`unexpected request: ${path}`);
+  });
+  const changed = vi.fn();
+  const engine = createBackupEngine(changed);
+  const selection = await engine.chooseRestore(makeRestoreArchive());
+  const options = { confirmIdentity: false, selection: selection.id };
+  const oldRestore = engine.startRestore(options);
+  await vi.waitFor(() => expect(chunks).toBe(1));
+  const cancellation = engine.cancel();
+  await vi.waitFor(() => expect(deletes).toBe(1));
+  rejectOldChunk(new Error('old upload failed'));
+  await vi.waitFor(() => expect(deletes).toBe(2));
+  releaseCancel(new Response(JSON.stringify({ state: 'cancelled' })));
+  await expect(cancellation).resolves.toBe(true);
+  const nextRestore = engine.startRestore(options);
+  await vi.waitFor(() => expect(chunks).toBe(2));
+  releaseCleanup(new Response(JSON.stringify({ state: 'cancelled' })));
+  await oldRestore;
+  try {
+    expect(changed).toHaveBeenLastCalledWith(
+      expect.objectContaining({ running: true, error: false }),
+    );
+  } finally {
+    releaseNewChunk(new Response(JSON.stringify({ state: 'uploading_and_staging' })));
+    await nextRestore;
+  }
+});
+
+it('reconciles a lost validate response against the prepared restore job', async () => {
+  let validateCalls = 0;
+  const requests: string[] = [];
+  vi.stubGlobal('fetch', async (path: string, options?: RequestInit) => {
+    requests.push(`${options?.method || 'GET'} ${path}`);
+    if (path === '/api/maintenance/sessions') return maintenanceSession();
+    if (path === '/api/restore/jobs' && options?.method === 'POST')
+      return new Response(
+        JSON.stringify({ job_id: 'restore-2', state: 'restore_ingest', chunk_size: 512 }),
+      );
+    if (path.includes('/chunks/'))
+      return new Response(JSON.stringify({ state: 'uploading_and_staging', received_bytes: 128 }));
+    if (path.endsWith('/validate')) {
+      validateCalls++;
+      throw new Error('connection lost after validate');
+    }
+    if (path === '/api/restore/jobs/restore-2')
+      return new Response(
+        JSON.stringify({ job_id: 'restore-2', state: 'prepared', plan_digest: 'digest' }),
+      );
+    if (path.endsWith('/apply'))
+      return new Response(JSON.stringify({ job_id: 'restore-2', state: 'completed' }));
+    throw new Error(`unexpected request: ${path}`);
+  });
+  const engine = createBackupEngine(() => {});
+  const selection = await engine.chooseRestore(makeRestoreArchive());
+  await engine.startRestore({ confirmIdentity: false, selection: selection.id });
+  expect(validateCalls).toBe(1);
+  expect(requests).toContain('POST /api/restore/jobs/restore-2/apply');
+  expect(requests).not.toContain('DELETE /api/restore/jobs/restore-2');
+});
+
+it('allows reattachment after a stopped restore driver while suppressing active duplicates', async () => {
+  vi.useFakeTimers();
+  let statusCalls = 0;
+  let applyCalls = 0;
+  vi.stubGlobal('fetch', async (path: string, options?: RequestInit) => {
+    if (path === '/api/maintenance/sessions') return maintenanceSession();
+    if (path === '/api/maintenance/current')
+      return new Response(
+        JSON.stringify({
+          job_id: 'restore-3',
+          operation: 'restore',
+          phase: 'validating',
+          job: { job_id: 'restore-3', state: 'validating' },
+        }),
+      );
+    if (path === '/api/restore/jobs/restore-3') {
+      statusCalls++;
+      if (statusCalls <= 5)
+        return new Response(JSON.stringify({ error: 'offline' }), { status: 503 });
+      return new Response(
+        JSON.stringify({ job_id: 'restore-3', state: 'prepared', plan_digest: 'digest' }),
+      );
+    }
+    if (path.endsWith('/apply')) {
+      applyCalls++;
+      return new Response(JSON.stringify({ job_id: 'restore-3', state: 'completed' }));
+    }
+    throw new Error(`unexpected request: ${options?.method || 'GET'} ${path}`);
+  });
+  const engine = createBackupEngine(() => {});
+  await expect(engine.attach()).resolves.toBe(true);
+  await expect(engine.attach()).resolves.toBe(false);
+  await vi.advanceTimersByTimeAsync(5000);
+  for (let index = 0; index < 12; index++) await Promise.resolve();
+  await expect(engine.attach()).resolves.toBe(true);
+  for (let index = 0; index < 12; index++) await Promise.resolve();
+  expect(applyCalls).toBe(1);
+  vi.useRealTimers();
 });

@@ -17,6 +17,9 @@ Serve `src/config_web/dist` with `agent config-web --web-root` (add
 `--local-agent` for the native host profile or `--container-agent` for Launcher
 containers). Debian packaging, the development sandbox,
 and `scripts/local_agent.py` build and use these static assets automatically.
+The local Agent launcher reuses an existing `dist/index.html`; pass
+`--rebuild-web` after frontend changes to rebuild it. Docker and rsync are
+required for the first build or an explicit rebuild, but not for reusing assets.
 The device does not need Node.js. Deploy the generated `dist/` directory. Application sources live in `src/`;
 `public/` contains static icons copied unchanged by Vite.
 

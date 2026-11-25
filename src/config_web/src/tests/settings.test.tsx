@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { Provider } from 'jotai';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createDeviceState } from '../state/device';
@@ -523,4 +524,68 @@ it('traps dialog focus and restores its opener on close', () => {
   fireEvent.keyDown(input, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBe(null);
   expect(document.activeElement).toBe(opener);
+});
+it('restores app interactivity only after the last overlapping modal closes', () => {
+  const app = document.createElement('div');
+  app.id = 'app';
+  document.body.append(app);
+  let firstOpen = true;
+  let secondOpen = false;
+  const content = () => (
+    <>
+      {firstOpen && (
+        <Modal title="Progress" onClose={() => {}}>
+          <button>Progress action</button>
+        </Modal>
+      )}
+      {secondOpen && (
+        <Modal title="Confirm" onClose={() => {}}>
+          <button>Confirm action</button>
+        </Modal>
+      )}
+    </>
+  );
+  const view = render(content(), { container: app });
+  expect(app.inert).toBe(true);
+  secondOpen = true;
+  view.rerender(content());
+  firstOpen = false;
+  view.rerender(content());
+  expect(app.inert).toBe(true);
+  secondOpen = false;
+  view.rerender(content());
+  expect(app.inert).toBe(false);
+  app.remove();
+});
+it('does not save settings when apply planning is unavailable', async () => {
+  const send = vi.fn(async (path: string, _options?: RequestInit) => {
+    if (path === '/api/config/plan')
+      throw Object.assign(new Error('plan unavailable'), { status: 503 });
+    return { apply: 'reboot', config: {} };
+  });
+  const { model, props, mount } = setup(send);
+  function Form() {
+    const saver = useSettings(props, 'Settings');
+    const [result, setResult] = useState('');
+    return (
+      <>
+        <button
+          onClick={async () => setResult(await saver.change('wifi', { wifi: { enabled: true } }))}
+        >
+          Save setting
+        </button>
+        <output>{result}</output>
+      </>
+    );
+  }
+  mount(<Form />);
+  fireEvent.click(screen.getByText('Save setting'));
+  await act(flush);
+  expect(screen.getByText('failed')).toBeTruthy();
+  expect(
+    send.mock.calls.some(
+      ([path, options]) => path === '/api/config' && options?.method === 'PATCH',
+    ),
+  ).toBe(false);
+  model.dispose();
 });

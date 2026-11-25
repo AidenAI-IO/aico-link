@@ -39,6 +39,7 @@ def arguments(argv=None):
     parser.add_argument("--permission-policy", type=Path, help="Explicit permission rules for ios")
     parser.add_argument("--request-permissions", action="store_true", help="Request macOS Mirroring permissions and exit; approve them yourself")
     parser.add_argument("--agent-binary", type=Path, help="Use an existing native Agent instead of building")
+    parser.add_argument("--rebuild-web", action="store_true", help="Rebuild Config Web even when dist already exists")
     parser.add_argument("--python", type=Path, help="Prepared bridge Python; otherwise install isolated dependencies with uv")
     parser.add_argument("--agent-port", type=int)
     parser.add_argument("--config-port", type=int)
@@ -267,10 +268,12 @@ class Processes:
             child.wait()
 
 
-def build_config_web():
-    """Build the static frontend before starting the native Config Web process."""
-    subprocess.run(["bash", str(ROOT / "scripts/build-config-web.sh")], check=True)
-    return ROOT / "src/config_web/dist"
+def build_config_web(force=False):
+    """Reuse built Config Web unless missing or explicitly rebuilt."""
+    web_root = ROOT / "src/config_web/dist"
+    if force or not (web_root / "index.html").is_file():
+        subprocess.run(["bash", str(ROOT / "scripts/build-config-web.sh")], check=True)
+    return web_root
 
 
 def launch(args, stopped):
@@ -282,7 +285,7 @@ def launch(args, stopped):
             return
         check_ports(args)
         binary = agent_binary(args)
-        web_root = build_config_web()
+        web_root = build_config_web(args.rebuild_web)
         python = None if args.bridge_url else bridge_python(args)
         env = dict(os.environ, AICO_SHARE_DIR=str(directory / "shared"),
                    AICO_SHARE_ADDR=f"127.0.0.1:{args.share_port}", AICO_SYSTEM_ENV=str(directory / "system.env"))

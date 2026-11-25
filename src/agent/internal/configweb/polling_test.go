@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,6 +118,69 @@ func TestAgentEndpointSharesDiscoveryAndRecoversAfterFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	count(3)
+}
+
+func TestAgentEndpointInvalidationDoesNotWaitForDiscoveryScript(t *testing.T) {
+	o := testOptions(t)
+	o.AgentHTTPBaseURL = ""
+	root := t.TempDir()
+	started, release := filepath.Join(root, "started"), filepath.Join(root, "release")
+	address := filepath.Join(root, "address")
+	t.Setenv("POLL_TEST_STARTED", started)
+	t.Setenv("POLL_TEST_RELEASE", release)
+	t.Setenv("POLL_TEST_ADDRESS", address)
+	if err := os.WriteFile(address, []byte("127.0.0.1:8080"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	o.AgentInitScript = filepath.Join(root, "init")
+	script := "#!/bin/sh\naddress=$(cat \"$POLL_TEST_ADDRESS\")\nprintf started > \"$POLL_TEST_STARTED\"\nwhile [ ! -e \"$POLL_TEST_RELEASE\" ]; do sleep 0.01; done\nprintf 'agent=running pid=1 addr=%s\\n' \"$address\"\n"
+	if err := os.WriteFile(o.AgentInitScript, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{options: o}
+	discoveryDone := make(chan error, 1)
+	go func() {
+		base, err := s.agentBaseURL()
+		if err == nil && base.String() != "http://127.0.0.1:8081" {
+			err = fmt.Errorf("discovery reused an invalidated endpoint: %s", base)
+		}
+		discoveryDone <- err
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("discovery script did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	base, _ := url.Parse("http://127.0.0.1:8080")
+	invalidateDone := make(chan struct{})
+	go func() {
+		s.invalidateAgentEndpoint(base)
+		close(invalidateDone)
+	}()
+	invalidatedBeforeRelease := false
+	select {
+	case <-invalidateDone:
+		invalidatedBeforeRelease = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := os.WriteFile(address, []byte("127.0.0.1:8081"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(release, []byte("go"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-discoveryDone; err != nil {
+		t.Fatal(err)
+	}
+	<-invalidateDone
+	if !invalidatedBeforeRelease {
+		t.Fatal("endpoint invalidation waited for the discovery script")
+	}
 }
 
 func TestConfigSchemaWithoutAgentBinary(t *testing.T) {

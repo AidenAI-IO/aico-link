@@ -19,6 +19,26 @@ const notice = atom('');
 const progress = atom<{ title: TextSpec; body: TextSpec; failed?: boolean } | null>(null);
 let noticeID = 0;
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+let openModalCount = 0;
+let modalApp: HTMLElement | null = null;
+let modalAppWasInert = false;
+
+function acquireModalInert() {
+  if (openModalCount === 0) {
+    modalApp = document.getElementById('app');
+    modalAppWasInert = modalApp?.inert || false;
+    if (modalApp) modalApp.inert = true;
+  }
+  openModalCount += 1;
+  return () => {
+    openModalCount -= 1;
+    if (openModalCount === 0) {
+      if (modalApp) modalApp.inert = modalAppWasInert;
+      modalApp = null;
+    }
+  };
+}
+
 export function toast(value: TextSpec, { durationMs = 3500 }: { durationMs?: number } = {}) {
   const text = resolve(value);
   store.set(notice, text);
@@ -63,15 +83,13 @@ export function Modal({
   const titleID = useId();
   useEffect(() => {
     const previous = document.activeElement;
-    const app = document.getElementById('app');
-    const inert = app?.inert;
-    if (app) app.inert = true;
+    const releaseModalInert = acquireModalInert();
     const first = panel.current?.querySelector<HTMLElement>(
       'input:not(:disabled),button:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex="0"]',
     );
     (first || panel.current?.querySelector<HTMLElement>('h2') || panel.current)?.focus();
     return () => {
-      if (app) app.inert = !!inert;
+      releaseModalInert();
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
   }, []);

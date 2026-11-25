@@ -1,5 +1,6 @@
 import { atom, createStore } from 'jotai/vanilla';
 import { createResource } from './resource';
+import { applyLocale } from '../lib/i18n';
 import type { Schema } from '../lib/schema';
 import type {
   ApplicationData,
@@ -205,6 +206,7 @@ export function createDeviceState(
         resources.device.version === versions.device.version
       )
         resources.device.publish({ firmware: value.firmware, agent_status: value.agent_status });
+      if (value.config?.agent?.locale) applyLocale(value.config.agent.locale, true);
       store.set(config, value.config || null);
       return value;
     },
@@ -263,6 +265,8 @@ export function createDeviceState(
     snapshot.dispose();
     canonicalReadPending = true;
     store.set(snapshotFailure, undefined);
+    const savedLocale = value.locale || value.config?.agent?.locale;
+    if (savedLocale) applyLocale(savedLocale, true);
     if (value.config) store.set(config, value.config);
     if (value.locale)
       store.set(config, (previous) => ({

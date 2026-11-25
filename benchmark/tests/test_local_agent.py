@@ -100,11 +100,25 @@ while not Path(sys.argv[2]).exists(): time.sleep(.01)
                 time.sleep(.02)
 
 
-def test_frontend_build_uses_pinned_builder_and_returns_static_assets(monkeypatch):
+@pytest.mark.parametrize("existing,force,builds", [(True, False, 0), (False, False, 1), (True, True, 1)])
+def test_frontend_build_reuses_assets_unless_missing_or_forced(monkeypatch, tmp_path, existing, force, builds):
+    monkeypatch.setattr(launcher, "ROOT", tmp_path)
+    web_root = tmp_path / "src/config_web/dist"
+    if existing:
+        web_root.mkdir(parents=True)
+        (web_root / "index.html").write_text("existing frontend")
     calls = []
-    monkeypatch.setattr(launcher.subprocess, "run", lambda command, **options: calls.append((command, options)))
-    assert launcher.build_config_web() == launcher.ROOT / "src/config_web/dist"
-    assert calls == [(["bash", str(launcher.ROOT / "scripts/build-config-web.sh")], {"check": True})]
+
+    def build(*args, **kwargs):
+        calls.append(True)
+        web_root.mkdir(parents=True, exist_ok=True)
+        (web_root / "index.html").write_text("rebuilt frontend")
+
+    monkeypatch.setattr(launcher.subprocess, "run", build)
+    result = launcher.build_config_web(force=force)
+    assert result == web_root
+    assert len(calls) == builds
+    assert (result / "index.html").read_text() == ("rebuilt frontend" if builds else "existing frontend")
 
 
 @pytest.mark.parametrize("mode", ["android", "iphone-mirroring", "ios"])
@@ -151,7 +165,7 @@ HTTPServer(('127.0.0.1', port), Handler).serve_forever()
     monkeypatch.setenv("TEST_BRIDGE_TYPE", {"android": "adb_android", "iphone-mirroring": "iphone_mirroring", "ios": "ios_device"}[mode])
     monkeypatch.setenv("TEST_BRIDGE_FAIL", "1" if outcome == "bridge-fails" else "0")
     monkeypatch.setattr(launcher, "agent_binary", lambda _: str(fixture))
-    monkeypatch.setattr(launcher, "build_config_web", lambda: tmp_path / "web")
+    monkeypatch.setattr(launcher, "build_config_web", lambda force=False: tmp_path / "web")
     monkeypatch.setattr(launcher, "bridge_python", lambda _: sys.executable)
     monkeypatch.setattr(launcher, "bridge_command", lambda args, _: [str(fixture), "bridge", "--port", str(args.bridge_port)])
     stopped = threading.Event()
