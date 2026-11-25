@@ -1607,12 +1607,6 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 		}
 		recalled := recalledMemoriesText(turn().Recalled)
 		entries := r.stateManager.GetAllStates()
-		// If neither runtime state nor a screenshot is available, just skip.
-		if len(entries) == 0 && attachment == nil && recalled == "" {
-			return contextmanager.AppendMessageHookResult{
-				Message: &message,
-			}
-		}
 		// format state entries into a list
 		// example:
 		// key1: value1
@@ -1629,6 +1623,12 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 			formated.WriteString(caption + "\n")
 		}
 		formated.WriteString(recalled)
+		if hint := r.conactLandmarkHint(); hint != "" {
+			if formated.Len() != 0 {
+				formated.WriteByte('\n')
+			}
+			formated.WriteString(hint)
+		}
 		if formated.Len() == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
 				Message: &message,

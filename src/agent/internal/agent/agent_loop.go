@@ -186,9 +186,7 @@ func (l *AgentLoop) Run(ctx context.Context, input string, options ...chains.Cha
 	}
 	llmExecutor := executor.NewLLMExecutor(l.Model, l.contextManager, transforms...)
 	if l.conact != nil {
-		if err := l.conact.start(l.contextManager); err != nil {
-			return "", err
-		}
+		l.conact.rebase(l.contextManager)
 		agentTools = append(append([]langtools.Tool(nil), agentTools...), l.conact.tools(llmExecutor)...)
 	}
 	toolSpecs := NewToolSpecs(agentTools)

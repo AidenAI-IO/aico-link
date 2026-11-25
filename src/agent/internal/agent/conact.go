@@ -65,15 +65,7 @@ func skillUTGPath(cfg Config, platform string) string {
 
 func newConactRun(rt *Runtime) *conactRun {
 	c := &conactRun{runtime: rt, secretTerms: make(map[string]struct{}), evidenceTag: uuid.NewString()}
-	// One native target platform per local profile. Never mix bridge fixtures.
-	if path := skillUTGPath(rt.ConfigSnapshot(), rt.devicePlatformFromState()); path != "" {
-		graph, err := loadSkillUTG(path)
-		if err != nil {
-			logging.Warnf("agent", "conact", "UTG load failed: %v", err)
-		} else {
-			c.path, c.graph = path, graph
-		}
-	}
+	c.path, c.graph = rt.loadConactGraph(rt.ConfigSnapshot())
 	c.refreshFingerprint()
 	return c
 }
@@ -89,14 +81,30 @@ func (c *conactRun) currentFingerprint() (utgFingerprint, bool) {
 	return utgFingerprint{}, false
 }
 
-func (c *conactRun) start(m *contextmanager.ContextManager) error {
-	if labels := c.graph.landmarks("", 12); len(labels) > 0 {
-		if err := m.AppendMessage(messages.Message{Role: messages.MessageRoleState, Content: "Optional Skill-UTG landmarks (verify against the live screen): " + strings.Join(labels, ", ") + ". Use utg_search or utg_goto for advisory guidance only."}); err != nil {
-			return err
-		}
+// loadConactGraph reads the native target's graph, never a bridge fixture's.
+func (r *Runtime) loadConactGraph(cfg Config) (string, skillUTG) {
+	path := skillUTGPath(cfg, r.devicePlatformFromState())
+	if path == "" {
+		return "", skillUTG{}
 	}
-	c.rebase(m)
-	return nil
+	graph, err := loadSkillUTG(path)
+	if err != nil {
+		logging.Warnf("agent", "conact", "UTG load failed: %v", err)
+		return "", skillUTG{}
+	}
+	return path, graph
+}
+
+func (r *Runtime) conactLandmarkHint() string {
+	cfg := r.ConfigSnapshot()
+	if !r.conactEnabled(cfg) {
+		return ""
+	}
+	_, graph := r.loadConactGraph(cfg)
+	if labels := graph.landmarks("", 12); len(labels) > 0 {
+		return "Optional Skill-UTG landmarks (verify against the live screen): " + strings.Join(labels, ", ") + ". Use utg_search or utg_goto for advisory guidance only."
+	}
+	return ""
 }
 
 func (c *conactRun) rebase(m *contextmanager.ContextManager) {

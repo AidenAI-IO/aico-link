@@ -495,3 +495,57 @@ func TestRolePromptOmitsRuntimeAndMemoryContext(t *testing.T) {
 		}
 	}
 }
+
+func TestStateHookInjectsUTGLandmarksBeforeUserMessage(t *testing.T) {
+	t.Setenv("AICO_CONACT_UTG", "1")
+	cfg := Config{ConfigDir: t.TempDir()}
+	runtime := NewRuntimeWithDeps(cfg, nil, nil, &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
+	runtime.deviceCLI = true
+	path := skillUTGPath(cfg, runtime.devicePlatformFromState())
+	graph := skillUTG{Nodes: map[string]*utgNode{
+		"phone_home":      {Label: "phone_home", Summary: "Home screen with app icons"},
+		"settings_screen": {Label: "settings_screen", Summary: "System settings list"},
+	}}
+	if err := saveSkillUTG(path, graph); err != nil {
+		t.Fatal(err)
+	}
+	manager := newPromptTestContextManager(t)
+	runtime.contextManager = manager
+	manager.AddAppendMessageHook(runtime.getStateHook())
+	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "Open settings"}); err != nil {
+		t.Fatal(err)
+	}
+	list := manager.CloneMessageList()
+	if len(list) != 2 || list[0].Role != messages.MessageRoleState || list[1].Role != messages.MessageRoleUser {
+		t.Fatalf("turn messages order = %#v; want UTG/state before user", list)
+	}
+	if !strings.Contains(list[0].Content, "Optional Skill-UTG landmarks") || !strings.Contains(list[0].Content, "phone_home") || !strings.Contains(list[0].Content, "settings_screen") {
+		t.Fatalf("UTG landmarks missing from prefatory state: %q", list[0].Content)
+	}
+	if strings.Contains(list[1].Content, "Optional Skill-UTG landmarks") {
+		t.Fatalf("UTG banner leaked into user message: %q", list[1].Content)
+	}
+}
+
+func TestStateHookDoesNotInjectUTGLandmarksWhenDisabled(t *testing.T) {
+	t.Setenv("AICO_CONACT_UTG", "0")
+	cfg := Config{ConfigDir: t.TempDir()}
+	runtime := NewRuntimeWithDeps(cfg, nil, nil, &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
+	runtime.deviceCLI = true
+	if err := saveSkillUTG(skillUTGPath(cfg, runtime.devicePlatformFromState()), skillUTG{Nodes: map[string]*utgNode{
+		"phone_home": {Label: "phone_home", Summary: "Home screen"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	manager := newPromptTestContextManager(t)
+	runtime.contextManager = manager
+	manager.AddAppendMessageHook(runtime.getStateHook())
+	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "Hello"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range manager.CloneMessageList() {
+		if strings.Contains(msg.Content, "Optional Skill-UTG landmarks") {
+			t.Fatalf("disabled ConAct injected a UTG banner: %q", msg.Content)
+		}
+	}
+}

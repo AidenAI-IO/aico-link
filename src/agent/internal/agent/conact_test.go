@@ -35,9 +35,7 @@ func TestConactFoldPreservesFactsAndSourceRevision(t *testing.T) {
 		}
 	}
 	add(messages.Message{Role: messages.MessageRoleUser, Content: "original request", Attachments: []messages.Attachment{{FilePath: "user.jpg", MIMEType: "image/jpeg"}}})
-	if err := c.start(m); err != nil {
-		t.Fatal(err)
-	}
+	c.rebase(m)
 	const input = `{"subtask_name":"Read order","extracted_facts":["ID 00017 / 报告.pdf"],"next_goal":"Switch app"}`
 	if got, err := c.fold(ctx, m, input); err != nil || !strings.HasPrefix(got, "error:") || len(shot.inputs) != 0 {
 		t.Fatalf("empty fold: %q %v", got, err)
