@@ -2408,6 +2408,7 @@ def test_build_mobilegym_environment_command_starts_preview_and_bridge(tmp_path:
     assert "--bridge-port 9090" in script
     assert "--parallel-envs 3" in script
     assert "--headless" in script
+    assert "--default-aico-app" not in script
     assert webui.DEFAULT_MOBILEGYM_IMAGE in cmd
 
 

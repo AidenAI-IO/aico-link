@@ -164,11 +164,14 @@ class FakeEnv:
 
 
 class RunningBridge:
+    def __init__(self, **server_options):
+        self.server_options = server_options
+
     def __enter__(self):
         self.owner = OwnerLoop().__enter__()
         self.env = FakeEnv(self.owner.loop)
         self.state = BridgeEpisodeState(self.env, owner_loop=self.owner.loop)
-        self.server = BridgeServer(self.state, host="127.0.0.1", port=0)
+        self.server = BridgeServer(self.state, host="127.0.0.1", port=0, **self.server_options)
         self.server.start()
         self.base_url = self.server.base_url
         return self

@@ -157,9 +157,11 @@ transitions are rejected.
 Phone Bridge tools (`bridge_clipboard`, `bridge_calendar`, `bridge_contacts`,
 `bridge_notification`, `open_url`, and the bridge path of `open_app`) normally
 talk to the Aico App on a real phone. In environment-bridge mode the Agent
-proxies that protocol to this bridge. A task that sets `aico_app` gets a
-simulated Aico App that answers it; tasks without `aico_app` report a
-disconnected phone, so their tool set is unchanged.
+proxies that protocol to this bridge. Suite-runner tasks that set `aico_app`
+get a simulated Aico App; tasks without it report a disconnected phone. The
+Aico Launcher opts into a default active simulated App for its MobileGym
+bridge, so each launched Agent route reports a connected Android App unless
+the route setup explicitly overrides `aico_app`.
 
 The simulated app has no launcher icon or UI. It runs commands through
 MobileGym's own services, so results appear on screen and in `/state`:

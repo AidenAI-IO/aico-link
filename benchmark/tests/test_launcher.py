@@ -921,6 +921,16 @@ def test_an_errored_instance_keeps_its_device_and_bridge_until_its_bridge_stops(
     assert wait_settled(app, second["id"])["status"] == "running"
 
 
+def test_launcher_starts_mobilegym_with_the_simulated_app(app: Launcher, fake: FakeSystem, monkeypatch):
+    monkeypatch.setattr(fake, "ensure_mobilegym_image", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app.docker, "published_port", lambda name, port: ("127.0.0.1", port + 10000))
+    created = app.instances.create(body("Sim", "mobilegym"))
+    app.instances.start(created["id"])
+    instance = wait_settled(app, created["id"])
+    assert instance["status"] == "running", instance["error"]
+    assert "--default-aico-app" in docker_run(fake)[-1].split()
+
+
 def test_a_failed_cleanup_keeps_the_bridge_runtime_until_a_stop_removes_it(app: Launcher, fake: FakeSystem):
     fake.ensure_mobilegym_image = lambda *args, **kwargs: None
     run = fake.run

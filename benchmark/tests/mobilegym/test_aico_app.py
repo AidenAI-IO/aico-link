@@ -286,6 +286,20 @@ def websocket_exchange(base_url, message, headers=None):
         return json.loads(payload)
 
 
+def test_mobilegym_default_aico_app_is_opt_in_and_task_setup_can_override_it():
+    with AicoBridge(default_aico_app=True) as bridge:
+        assert request_json(bridge.base_url, "POST", "/api/setup", {})[0] == 200
+        status, body = request_json(bridge.base_url, "GET", "/api/phone-bridge/status")
+        assert (status, body["connected"], body["app_state"], body["fgs_bridge_enabled"]) == (200, True, "active", False)
+
+        assert request_json(bridge.base_url, "POST", "/api/setup", {"aico_app": None})[0] == 200
+        assert request_json(bridge.base_url, "GET", "/api/phone-bridge/status") == (200, {"connected": False})
+
+        assert request_json(bridge.base_url, "POST", "/api/setup", {})[0] == 200
+        status, body = request_json(bridge.base_url, "GET", "/api/phone-bridge/status")
+        assert (status, body["connected"], body["app_state"]) == (200, True, "active")
+
+
 def test_bridge_serves_the_phone_bridge_protocol_for_a_configured_task():
     with AicoBridge() as bridge:
         assert request_json(bridge.base_url, "GET", "/api/phone-bridge/status") == (200, {"connected": False})

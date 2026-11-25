@@ -124,6 +124,8 @@ class BridgeServer:
         port: int = 0,
         public_host: str | None = None,
         request_timeout_sec: float = DEFAULT_BRIDGE_REQUEST_TIMEOUT_SEC,
+        *,
+        default_aico_app: bool = False,
     ):
         self.router = BridgeTaskRouter.from_state(state)
         self.state = self.router.default_state
@@ -136,6 +138,7 @@ class BridgeServer:
         self.base_url = ""
         self.tools_api = ToolsAPIHandler(self.router, request_timeout_sec)
         self.setup_tokens = SetupTokenRegistry()
+        self.default_aico_app = default_aico_app
 
     def start(self) -> str:
         if self._httpd is not None:
@@ -321,7 +324,8 @@ def _handler_for(bridge: BridgeServer):
             setup_token = setup_token_from_payload(payload)
             app_ids = _setup_app_ids(payload)
             foreground_app_id = _foreground_app_id(payload)
-            aico_app = parse_aico_app_config(payload.get("aico_app"))
+            aico_app_payload = payload.get("aico_app", {} if bridge.default_aico_app else None)
+            aico_app = parse_aico_app_config(aico_app_payload)
             initial_state = parse_initial_state(payload.get("initial_state"))
 
             def setup() -> dict[str, Any]:
@@ -353,7 +357,7 @@ def _handler_for(bridge: BridgeServer):
                         setup_token,
                         tuple(app_ids),
                         foreground_app_id,
-                        json.dumps(payload.get("aico_app"), sort_keys=True),
+                        json.dumps(aico_app_payload, sort_keys=True),
                         json.dumps(initial_state, sort_keys=True),
                     ),
                     setup,

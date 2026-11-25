@@ -332,6 +332,7 @@ async def run_simulator(args: argparse.Namespace) -> int:
         port=args.bridge_port,
         public_host=args.bridge_public_host or None,
         request_timeout_sec=args.bridge_request_timeout_sec,
+        default_aico_app=args.default_aico_app,
     )
 
     bridge_url = bridge.start()
@@ -460,6 +461,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_BRIDGE_REQUEST_TIMEOUT_SEC,
         help=f"Bridge request timeout in seconds (default: {DEFAULT_BRIDGE_REQUEST_TIMEOUT_SEC})",
+    )
+    bridge.add_argument(
+        "--default-aico-app",
+        action="store_true",
+        help="Enable an active simulated Aico App in every episode unless task setup overrides it.",
     )
 
     return parser
