@@ -105,14 +105,13 @@ export function App({ model }: { model: DeviceState }) {
   const [route, setRoute] = useState<Route | null>(null);
   const [header, setHeader] = useState<HeaderSpec>({});
   const router = useRef<ReturnType<typeof createRouter> | null>(null);
-  const snapshot = useAtomValue(model.current);
+  const locale = useAtomValue(model.configLocale);
   useAtomValue(model.locale);
   const navigate = useCallback(
     (path: string, options?: { replace?: boolean; silent?: boolean }) =>
       router.current?.navigate(path, options),
     [],
   );
-  const locale = snapshot.config?.agent?.locale;
   useEffect(() => {
     applyEnvironmentClass();
     const onLocale = () => model.store.set(model.locale, (value) => value + 1);

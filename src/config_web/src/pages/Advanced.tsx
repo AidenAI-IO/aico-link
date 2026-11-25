@@ -6,8 +6,12 @@ import { useSettings, section, usePageHeader } from '../hooks/settings';
 import { useQuery } from '../hooks/query';
 import { isEmbedded } from '../lib/environment';
 import { postToHost } from '../lib/host';
-import { msg, resolve } from '../lib/i18n';
+import { msg, resolve, t } from '../lib/i18n';
+import { ChoiceRow } from '../components/choices';
+import { SelectedCheck } from '../components/marks';
 import { Button, Group, Row, Text } from '../components/ui';
+import { Loading } from '../components/Loading';
+import { isInitialLoading } from '../state/resource';
 import { ConfigField, QueryError } from '../components/fields';
 import { toast } from '../components/overlays';
 import { TomlEditor } from '../components/TomlEditor';
@@ -71,7 +75,7 @@ export function LogsPage(props: PageProps) {
         />
       </Group>
       <Group
-        note={msg(
+        footnote={msg(
           'advanced.raw_http_help',
           '将模型原始 HTTP 请求和响应写入 Agent 日志目录，仅建议排查问题时启用。',
         )}
@@ -83,24 +87,26 @@ export function LogsPage(props: PageProps) {
           save={(value) => saver.change('model.log_raw_http', { model: { log_raw_http: value } })}
         />
       </Group>
-      <Group>
+      <Group footnote={msg('advanced.log_level_help', '只记录该等级及以上的 Agent 日志。')}>
         <Row
           label={msg('advanced.log_level', '日志等级')}
-          value={String(log.level || 'info')}
+          value={msg(`advanced.level_${log.level || 'info'}`, String(log.level || 'info'))}
           chevron
           onPress={() => props.navigate('/advanced/logs/level')}
         />
-        <ConfigField
-          section="log"
-          field={{
-            key: 'llm_http_retention_days',
-            widget: 'select',
-            enum: [...new Set([Number(log.llm_http_retention_days || 7), 1, 3, 7, 14, 30])].map(
-              (value) => ({ value: String(value), label: String(value) }),
-            ),
-          }}
-          value={log.llm_http_retention_days}
-          save={(value) =>
+      </Group>
+      <Group footnote={msg('advanced.retention_help', '详细模型请求日志在自动清理前保留的天数。')}>
+        <ChoiceRow
+          label={msg('advanced.retention', '日志保留天数')}
+          selected={String(log.llm_http_retention_days ?? '')}
+          options={[...new Set([Number(log.llm_http_retention_days || 7), 1, 3, 7, 14, 30])].map(
+            (value) => ({
+              value: String(value),
+              label: t('memory.days', { n: value }),
+            }),
+          )}
+          chevron
+          onSelect={(value) =>
             saver.change('log.llm_http_retention_days', {
               log: { llm_http_retention_days: Number(value) },
             })
@@ -108,9 +114,16 @@ export function LogsPage(props: PageProps) {
         />
       </Group>
       {(!props.model.local || props.model.container) && (
-        <Button disabled={busy} action="export-logs" onClick={() => void exportLogs()}>
-          <Text value={msg('advanced.export_logs', '导出日志')} />
-        </Button>
+        <Group>
+          <Button
+            className="ds-card-action"
+            disabled={busy}
+            action="export-logs"
+            onClick={() => void exportLogs()}
+          >
+            <Text value={msg('advanced.export_logs', '导出日志')} />
+          </Button>
+        </Group>
       )}
     </div>
   );
@@ -123,12 +136,13 @@ export function LogLevelPage(props: PageProps) {
         <Row
           key={level}
           label={msg(`advanced.level_${level}`, level)}
-          value={section(saver.config, 'log').level === level ? '✓' : ''}
           onPress={async () => {
             if ((await saver.change('log.level', { log: { level } })) === 'saved')
               props.navigate('/advanced/logs');
           }}
-        />
+        >
+          {section(saver.config, 'log').level === level && <SelectedCheck />}
+        </Row>
       ))}
     </Group>
   );
@@ -144,7 +158,7 @@ export function agentLogLines(log: string) {
 }
 export function AgentLogsPage(props: PageProps) {
   usePageHeader(props, msg('advanced.agent_log', '实时 Agent 日志'));
-  const status = useAtomValue(props.model.resources.device.atom);
+  const status = useAtomValue(props.model.resources.device.view);
   const pre = useRef<HTMLPreElement>(null);
   const [shown, setShown] = useState('');
   const stick = useRef(true);
@@ -173,24 +187,29 @@ export function AgentLogsPage(props: PageProps) {
       <Group>
         <Row
           label={msg('advanced.agent_status', 'Agent 状态')}
+          loading={isInitialLoading(status)}
           value={
-            status.data?.agent_status?.process_running
-              ? msg('advanced.agent_running', '运行中')
-              : msg('advanced.agent_stopped', '未运行')
+            status.stale || typeof status.data?.agent_status?.process_running !== 'boolean'
+              ? msg('status.state.unknown', '未知')
+              : status.data.agent_status.process_running
+                ? msg('advanced.agent_running', '运行中')
+                : msg('advanced.agent_stopped', '未运行')
           }
         />
       </Group>
       <QueryError {...query} />
       <div className="ds-group">
         <pre ref={pre} className="ds-log" data-action="agent-log">
-          {shown ? (
+          {isInitialLoading(query) ? (
+            <Loading block />
+          ) : shown ? (
             agentLogLines(shown).map(({ line, severity }, index) => (
               <span key={index} className={`ds-log__line ds-log__line--${severity}`}>
                 {line}
               </span>
             ))
           ) : (
-            <Text value={msg('advanced.agent_log_empty', '暂无日志')} />
+            !query.error && <Text value={msg('advanced.agent_log_empty', '暂无日志')} />
           )}
         </pre>
       </div>
@@ -237,10 +256,16 @@ export function RawConfigPage(props: PageProps) {
   }
   usePageHeader(props, msg('advanced.manual_config', '手动编辑配置'), dirty && !busy, save);
   return (
-    <div className="ds-screen">
+    <div className="ds-screen ds-screen--sticky">
       <QueryError {...query} />
-      <div className="ds-field">
-        <Text value={msg('advanced.manual_config', '手动编辑配置')} />
+      <div className="ds-group ds-group--fill">
+        <Text
+          value={msg(
+            'advanced.manual_config_help',
+            '编辑完整的分组式 Agent TOML，保存前会先校验配置。',
+          )}
+          className="ds-group__intro"
+        />
         <TomlEditor
           value={text}
           label={resolve(msg('advanced.manual_config', '手动编辑配置'))}
@@ -248,9 +273,6 @@ export function RawConfigPage(props: PageProps) {
           onChange={setDraft}
         />
       </div>
-      <Button disabled={!dirty || busy} onClick={() => void save()}>
-        <Text value={msg('action.save', '保存')} />
-      </Button>
     </div>
   );
 }

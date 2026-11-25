@@ -196,6 +196,11 @@ func parseAgentAddr(addr string) (string, int) {
 	return host, port
 }
 
+// Firmware reads do not depend on the Agent process or its TCP readiness.
+func (s *Server) handleFirmwareStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "firmware": s.firmwareInfo()})
+}
+
 func (s *Server) handleAgentStatus(w http.ResponseWriter, _ *http.Request) {
 	status := s.queryAgentStatus()
 	if s.options.LocalAgent {

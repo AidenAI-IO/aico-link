@@ -14,6 +14,7 @@ import {
 import { msg, resolve } from '../lib/i18n';
 import { Button, Icon, Row, Switch, Text } from './ui';
 import { toast } from './overlays';
+import { ChoiceRow } from './choices';
 export function QueryError({ error, retry }: { error: string; retry: () => void }) {
   return error ? (
     <div role="alert" className="ds-field__error">
@@ -58,8 +59,8 @@ export function FieldInput({
     'data-action': action,
   };
   return (
-    <div className="ds-field">
-      <label className="ds-field__label" htmlFor={id}>
+    <div className="ds-form-card">
+      <label className="ds-form-card__title" htmlFor={id}>
         <Text value={label} />
       </label>
       <div className={secret ? 'ds-input-wrap' : undefined}>
@@ -82,7 +83,7 @@ export function FieldInput({
             )}
             aria-pressed={reveal}
           >
-            <Icon name={reveal ? 'eyeOff' : 'eye'} />
+            <Icon name={reveal ? 'eyeOff' : 'eye'} size={18} />
           </button>
         )}
       </div>
@@ -101,6 +102,9 @@ export function ValueField({
   placeholder = '',
   action,
   suggestions,
+  inline = false,
+  wide = false,
+  inputMode,
 }: {
   label: TextSpec;
   saved: unknown;
@@ -112,7 +116,12 @@ export function ValueField({
   placeholder?: string;
   action?: string;
   suggestions?: string[];
+  inline?: boolean;
+  wide?: boolean;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
 }) {
+  const id = useId();
+  const input = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState('');
   const sequence = useRef(0);
@@ -151,7 +160,12 @@ export function ValueField({
     }
   }
   const common = {
-    className: multiline ? 'ds-textarea' : 'ds-input',
+    id,
+    className: inline
+      ? `ds-row__input ${wide ? 'ds-row__input--wide' : ''}`
+      : multiline
+        ? 'ds-textarea'
+        : 'ds-input',
     value: text,
     onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       sequence.current++;
@@ -163,32 +177,52 @@ export function ValueField({
     spellCheck: false,
     'data-action': action,
   };
-  return (
-    <div className="ds-field">
-      <label>
-        <Text value={label} />
-        {multiline ? (
-          <textarea {...common} rows={8} />
-        ) : (
-          <input
-            {...common}
-            type={secret ? 'password' : 'text'}
-            list={suggestions ? `${action}-suggestions` : undefined}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.nativeEvent.isComposing)
-                event.currentTarget.blur();
-            }}
-          />
-        )}
-      </label>
-      {suggestions && (
-        <datalist id={`${action}-suggestions`}>
-          {suggestions.map((value) => (
-            <option key={value} value={value} />
-          ))}
-        </datalist>
+  const control = multiline ? (
+    <textarea {...common} rows={6} />
+  ) : (
+    <input
+      {...common}
+      ref={input}
+      aria-label={resolve(label)}
+      inputMode={inputMode}
+      type={secret ? 'password' : 'text'}
+      list={suggestions ? `${id}-suggestions` : undefined}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' && !event.nativeEvent.isComposing) event.currentTarget.blur();
+      }}
+    />
+  );
+  const options = suggestions && (
+    <datalist id={`${id}-suggestions`}>
+      {suggestions.map((value) => (
+        <option key={value} value={value} />
+      ))}
+    </datalist>
+  );
+  return inline ? (
+    <div
+      onClick={(event) => {
+        if (event.target !== input.current) input.current?.focus();
+      }}
+    >
+      <Row label={label} description={description} className="ds-row--editable">
+        {control}
+      </Row>
+      {options}
+      {error && (
+        <p role="alert" className="ds-field__error">
+          {error}
+        </p>
       )}
-      {description && <Text value={description} className="ds-group__note" />}
+    </div>
+  ) : (
+    <div className="ds-form-card">
+      <label htmlFor={id} className="ds-form-card__title">
+        <Text value={label} />
+      </label>
+      {description && <Text value={description} className="ds-form-card__help" />}
+      {control}
+      {options}
       {error && (
         <p role="alert" className="ds-field__error">
           {error}
@@ -197,6 +231,7 @@ export function ValueField({
     </div>
   );
 }
+
 export function ConfigField({
   section,
   field,
@@ -204,6 +239,8 @@ export function ConfigField({
   ctx = {},
   type = '',
   save,
+  label: labelOverride,
+  description,
 }: {
   section: string;
   field: Field;
@@ -211,11 +248,13 @@ export function ConfigField({
   ctx?: Record<string, unknown>;
   type?: string;
   save: (value: JsonValue) => Promise<SaveOutcome | void>;
+  label?: TextSpec;
+  description?: TextSpec;
 }) {
   const [draft, setDraft] = useState<JsonValue | undefined>(undefined);
   const [busy, setBusy] = useState(false);
-  const label = fieldLabel(section, field),
-    help = fieldHelp(section, field);
+  const label = labelOverride ?? fieldLabel(section, field),
+    help = description ?? fieldHelp(section, field);
   useEffect(
     () => setDraft((current) => (Object.is(current, value) ? undefined : current)),
     [value],
@@ -253,32 +292,28 @@ export function ConfigField({
     (field.selectWhen && matches(field.selectWhen, ctx))
   )
     return (
-      <label className="ds-field">
-        <Text value={label} />
-        <select
-          className="ds-input"
-          value={String(shown ?? '')}
-          disabled={busy}
-          onChange={(event) =>
-            void choose(field.widget === 'number' ? Number(event.target.value) : event.target.value)
-          }
-        >
-          {!options.some((option) => String(option.value) === String(shown ?? '')) && (
-            <option value={String(shown ?? '')}>{String(shown ?? '—')}</option>
-          )}
-          {options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {resolve(optionLabel(section, field.key, option))}
-            </option>
-          ))}
-        </select>
-        {help && <Text value={help} className="ds-group__note" />}
-      </label>
+      <ChoiceRow
+        label={label}
+        selected={String(shown ?? '')}
+        options={options.map((option) => ({
+          value: String(option.value),
+          label: optionLabel(section, field.key, option),
+        }))}
+        disabled={busy}
+        action={`open-${section}.${field.key}`}
+        onSelect={(next) =>
+          choose(
+            field.widget === 'number' || typeof field.default === 'number' ? Number(next) : next,
+          )
+        }
+      />
     );
   return (
     <ValueField
       label={label}
       description={help}
+      inline={!field.secret && !['textarea', 'list'].includes(field.widget || '')}
+      wide={field.widget !== 'number'}
       secret={field.secret}
       saved={value}
       multiline={field.widget === 'textarea' || field.widget === 'list'}

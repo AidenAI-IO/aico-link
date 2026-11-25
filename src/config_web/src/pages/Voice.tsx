@@ -1,16 +1,20 @@
 import { useState } from 'react';
-import { useAtomValue } from 'jotai';
-import type { PageProps } from '../types';
+import { useAtom, useAtomValue } from 'jotai';
+import type { Configuration, PageProps, VoiceMode } from '../types';
 import { useSettings, section } from '../hooks/settings';
 import type { Settings } from '../hooks/settings';
 import { useQuery, useSchema } from '../hooks/query';
-import { matches, sectionFields } from '../lib/schema';
-import { msg } from '../lib/i18n';
+import { matches, optionLabel, placeholderFor, sectionFields } from '../lib/schema';
+import { msg, resolve } from '../lib/i18n';
 import { apiError } from '../api/client';
 import { ConfigField, QueryError } from '../components/fields';
-import { Button, Group, Row, Text } from '../components/ui';
+import { ProviderMark, SelectedCheck } from '../components/marks';
+import { Button, Group, Icon, Row, Text } from '../components/ui';
 import { confirmSheet, toast } from '../components/overlays';
-import { CONNECTION_KEYS, ProviderForm, recordsOf } from './Models';
+import { CONNECTION_KEYS, ProviderForm, recordsOf, deleteProvider } from './Models';
+import { SwipeRow } from '../components/SwipeRow';
+import { Loading } from '../components/Loading';
+import { isInitialLoading } from '../state/resource';
 export const KINDS = {
   realtime: {
     records: 'voice_model_providers',
@@ -28,11 +32,18 @@ const kindOf = (props: PageProps): VoiceKind =>
     : props.route.query?.kind === 'realtime'
       ? 'realtime'
       : 'stt';
-const suffix = (props: PageProps) =>
-  props.route.query?.mode ? `&mode=${encodeURIComponent(props.route.query.mode)}` : '';
-async function chooseRecord(saver: Settings, kind: VoiceKind, name: string, mode?: string) {
+async function chooseRecord(
+  saver: Settings,
+  kind: VoiceKind,
+  name: string,
+  mode: VoiceMode,
+  config: Configuration,
+) {
   const ref = { provider: name };
-  if (mode) {
+  if (
+    mode === KINDS[kind].mode &&
+    hasModePrerequisites({ ...config, [KINDS[kind].ref]: ref }, mode)
+  ) {
     const result = await saver.apply(
       KINDS[kind].ref,
       { [KINDS[kind].ref]: ref, agent: { input_mode: mode } },
@@ -42,31 +53,66 @@ async function chooseRecord(saver: Settings, kind: VoiceKind, name: string, mode
   }
   return saver.apply(KINDS[kind].ref, { [KINDS[kind].ref]: ref });
 }
+function voiceLabel(
+  schema: import('../lib/schema').Schema | null | undefined,
+  kind: VoiceKind,
+  type: string,
+) {
+  const field = sectionFields(schema, KINDS[kind].records).find((field) => field.key === 'type');
+  const option = field?.enum?.find((option) => option.value === type);
+  const names: Record<string, import('../types').TextSpec> = {
+    'openai-whisper': 'OpenAI Whisper',
+    'tencent-asr': msg('voice.type_tencent_asr', '腾讯云 ASR'),
+    'qwen-asr': msg('voice.type_qwen_asr', '通义千问 ASR'),
+    'google-cloud': 'Google Cloud',
+    alicloud: msg('voice.type_alicloud', '阿里云'),
+    'fish-audio': 'Fish Audio',
+    minimax: 'MiniMax',
+    'minimax-cn': msg('voice.type_minimax_cn', 'MiniMax（中国）'),
+    volcengine: msg('model.type_volcengine', '火山引擎'),
+  };
+  return resolve(
+    optionLabel(KINDS[kind].records, 'type', {
+      value: type,
+      label: option?.label || resolve(names[type]) || type,
+    }),
+  );
+}
+function voiceRecordLabel(
+  schema: import('../lib/schema').Schema | null | undefined,
+  kind: VoiceKind,
+  name: string,
+  record: import('../types').ProviderRecord,
+) {
+  const label = voiceLabel(schema, kind, record.type);
+  return name === record.type ? label : `${name} (${label})`;
+}
+function hasModePrerequisites(config: Configuration, mode: string) {
+  if (mode === 'realtime') {
+    const ref = section(config, 'voice_model');
+    const record = recordsOf(config, 'voice_model_providers')[String(ref.provider || '')];
+    return ref.has_api_key === true || record?.has_api_key === true;
+  }
+  return !!section(config, 'stt').provider && !!section(config, 'tts').provider;
+}
 export function VoicePage(props: PageProps) {
   const saver = useSettings(props, msg('ui.nav_voice', '语音'));
   const snapshot = useAtomValue(props.model.current);
+  const schema = useSchema(props.model);
+  const [mode, setMode] = useAtom(props.model.voiceMode);
   const saved = saver.config.agent?.input_mode;
-  const mode =
-    props.route.query?.mode || (['stt', 'realtime'].includes(saved || '') ? saved : 'realtime');
   const disabled = props.model.container && snapshot.agent_status?.classic_voice_enabled === false;
   const kinds: VoiceKind[] = mode === 'realtime' ? ['realtime'] : ['stt', 'tts'];
-  async function changeMode(value: string) {
-    if (value === saved) {
-      props.navigate('/voice', { replace: true });
-      return;
-    }
-    const result = await saver.apply(
-      'agent.input_mode',
-      { agent: { input_mode: value } },
-      { quietInvalid: true },
-    );
-    if (result === 'saved') props.navigate('/voice', { replace: true });
-    else if (result === 'invalid') props.navigate(`/voice?mode=${value}`, { replace: true });
-  }
   return (
     <div className="ds-screen">
-      <div className="ds-segmented" role="tablist">
-        {['realtime', 'stt'].map((value) => (
+      <QueryError {...schema} />
+      <div
+        className="ds-segmented"
+        role="tablist"
+        style={{ '--segmented-index': mode === 'stt' ? 1 : 0 } as React.CSSProperties}
+      >
+        <div className="ds-segmented__thumb" aria-hidden="true" />
+        {(['realtime', 'stt'] as const).map((value) => (
           <button
             key={value}
             type="button"
@@ -74,12 +120,34 @@ export function VoicePage(props: PageProps) {
             aria-selected={mode === value}
             className={`ds-segmented__item ${mode === value ? 'ds-segmented__item--active' : ''}`}
             data-action={`voice-mode-${value}`}
-            onClick={() => void changeMode(value)}
+            onClick={() => setMode(value)}
           >
-            {value === 'stt' ? 'Classic' : 'Realtime'}
+            <span
+              className={`ds-segmented__check ${mode === value ? 'ds-segmented__check--visible' : ''}`}
+            >
+              <Icon name="check" size={16} />
+            </span>
+            <Text
+              value={
+                value === 'stt'
+                  ? msg('voice.mode_classic', '经典模式')
+                  : msg('voice.mode_realtime', '实时模式')
+              }
+              className="ds-segmented__label"
+            />
           </button>
         ))}
       </div>
+      {mode !== saved && (
+        <p className="ds-group__note" role="status">
+          <Text
+            value={msg(
+              'voice.configure_before_enable',
+              '此模式尚未启用。切换标签仅预览配置，保存提供商配置后才会应用此模式。',
+            )}
+          />
+        </p>
+      )}
       {disabled && (
         <p className="page__note">
           <Text
@@ -93,25 +161,64 @@ export function VoicePage(props: PageProps) {
       {kinds.map((kind) => {
         const reference = section(saver.config, KINDS[kind].ref),
           record = recordsOf(saver.config, KINDS[kind].records)[String(reference.provider || '')];
+        const ctx = { [`${KINDS[kind].records}.type`]: record?.type, 'agent.input_mode': mode };
+        const modelField = sectionFields(schema.data, KINDS[kind].records).find(
+          (field) => field.key === 'model' && matches(field.visibleWhen, ctx),
+        );
         return (
-          <Group key={kind} caption={kind === 'realtime' ? 'Realtime' : kind.toUpperCase()}>
+          <Group
+            key={kind}
+            caption={
+              kind === 'realtime'
+                ? undefined
+                : kind === 'stt'
+                  ? msg('voice.stt', 'STT（语音转文字）')
+                  : msg('voice.tts', 'TTS（文字转语音）')
+            }
+          >
             <Row
-              label={msg('model.provider', '提供商')}
-              value={String(reference.provider || '—')}
+              label={msg('voice.provider', '提供商')}
               action={`open-${kind}-providers`}
               chevron
-              onPress={() => props.navigate(`/voice/providers?kind=${kind}&mode=${mode}`)}
-            />
+              onPress={() => props.navigate(`/voice/providers?kind=${kind}`)}
+            >
+              <span className="ds-row__value-with-mark">
+                {record && <ProviderMark type={record.type} />}
+                <Text
+                  value={
+                    record
+                      ? voiceRecordLabel(schema.data, kind, String(reference.provider), record)
+                      : msg('voice.not_configured', '未配置')
+                  }
+                  className="ds-row__value"
+                />
+              </span>
+            </Row>
             <Row
-              label={msg('model.model', '模型')}
-              value={String(record?.model || '—')}
-              chevron
-              onPress={() => props.navigate(`/voice/model?kind=${kind}&mode=${mode}`)}
+              label={msg('voice.model', '模型')}
+              value={
+                !record
+                  ? msg('voice.not_configured', '未配置')
+                  : !schema.data
+                    ? String(record.model || '—')
+                    : modelField
+                      ? String(
+                          record.model ||
+                            placeholderFor(modelField, ctx) ||
+                            resolve(msg('voice.default', '默认')),
+                        )
+                      : msg('voice.model_fixed', '由提供商决定')
+              }
+              loading={!!record && !record.model && schema.loading}
+              chevron={!!record && !!modelField}
+              onPress={
+                record && modelField ? () => props.navigate(`/voice/model?kind=${kind}`) : undefined
+              }
             />
             <Row
               label={msg('voice.extra', 'Extra')}
               chevron
-              onPress={() => props.navigate(`/voice/extra?kind=${kind}&mode=${mode}`)}
+              onPress={() => props.navigate(`/voice/extra?kind=${kind}`)}
             />
           </Group>
         );
@@ -123,7 +230,7 @@ export function VoicePage(props: PageProps) {
 export function VoiceProviders(props: PageProps) {
   const kind = kindOf(props),
     spec = KINDS[kind];
-  const saver = useSettings(props, msg('model.provider', '提供商'), '/voice');
+  const saver = useSettings(props, msg('voice.providers', '提供商'), '/voice');
   const schema = useSchema(props.model);
   const records = recordsOf(saver.config, spec.records),
     current = String(section(saver.config, spec.ref).provider || '');
@@ -132,70 +239,61 @@ export function VoiceProviders(props: PageProps) {
   return (
     <div className="ds-screen">
       <QueryError {...schema} />
-      <Group>
-        {Object.entries(records).map(([name, record]) => (
-          <div key={name}>
+      {Object.keys(records).length > 0 && (
+        <Group caption={msg('model.configured', '已配置')} captionMarker="success">
+          {Object.entries(records)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([name, record]) => (
+              <SwipeRow
+                key={name}
+                action={`delete-${kind}-provider-${name}`}
+                onDelete={() => void deleteProvider(saver, spec.records, name)}
+                lockedLabel={current === name ? msg('model.in_use', '使用中') : undefined}
+                onLocked={() =>
+                  toast(msg('model.in_use_hint', '正在使用的配置不能删除，请先切换到其他提供商。'))
+                }
+              >
+                <Row
+                  label={voiceRecordLabel(schema.data, kind, name, record)}
+                  leading={<ProviderMark type={record.type} />}
+                  chevron
+                  onPress={() =>
+                    props.navigate(
+                      `/voice/providers/edit?kind=${kind}&name=${encodeURIComponent(name)}`,
+                    )
+                  }
+                >
+                  {current === name && <SelectedCheck />}
+                </Row>
+              </SwipeRow>
+            ))}
+        </Group>
+      )}
+      <Group caption={msg('model.unconfigured', '未配置')} captionMarker="muted">
+        {options
+          .filter(
+            (option) => !Object.values(records).some((record) => record.type === option.value),
+          )
+          .map((option) => (
             <Row
-              label={name}
-              value={name === current ? '✓' : record.type}
+              key={option.value}
+              label={voiceLabel(schema.data, kind, option.value)}
+              leading={<ProviderMark type={option.value} />}
+              className="ds-row--muted"
               chevron
               onPress={() =>
                 props.navigate(
-                  `/voice/providers/edit?kind=${kind}&name=${encodeURIComponent(name)}${suffix(props)}`,
+                  `/voice/providers/edit?kind=${kind}&type=${encodeURIComponent(option.value)}`,
                 )
               }
             />
-            <Button
-              variant="quiet"
-              onClick={async () => {
-                if ((await chooseRecord(saver, kind, name, props.route.query?.mode)) === 'saved')
-                  props.navigate(
-                    `/voice${props.route.query?.mode ? '?mode=' + props.route.query.mode : ''}`,
-                  );
-              }}
-            >
-              <Text value={msg('voice.use_provider', '设为当前提供商')} />
-            </Button>
-            {current !== name && (
-              <Button
-                variant="danger-soft"
-                onClick={async () => {
-                  if (
-                    await confirmSheet({
-                      title: msg('model.delete_config', '删除配置'),
-                      body: name,
-                      danger: true,
-                    })
-                  )
-                    await saver.change(`${spec.records}.${name}`, {
-                      [spec.records]: { [name]: null },
-                    });
-                }}
-              >
-                <Text value={msg('action.delete', '删除')} />
-              </Button>
-            )}
-          </div>
-        ))}
-      </Group>
-      <Group>
-        {options.map((option) => (
-          <Row
-            key={option.value}
-            label={option.label || option.value}
-            chevron
-            onPress={() =>
-              props.navigate(
-                `/voice/providers/edit?kind=${kind}&type=${encodeURIComponent(option.value)}${suffix(props)}`,
-              )
-            }
-          />
-        ))}
+          ))}
       </Group>
     </div>
   );
 }
 export function VoiceProviderEdit(props: PageProps) {
+  const mode = useAtomValue(props.model.voiceMode);
   const saver = useSettings(
     props,
     msg('model.edit_provider_title', '编辑提供商'),
@@ -213,17 +311,59 @@ export function VoiceProviderEdit(props: PageProps) {
       props={props}
       recordSection={spec.records}
       type={type}
+      mode={mode}
       existingName={existing}
-      back={`/voice/providers?kind=${kind}${suffix(props)}`}
+      back={`/voice/providers?kind=${kind}`}
+      actions={
+        existing &&
+        record &&
+        (section(config, spec.ref).provider !== existing || config.agent?.input_mode !== mode) ? (
+          <>
+            <div className="page__footer page__footer--stack">
+              <Button
+                variant="secondary"
+                block
+                onClick={async () => {
+                  if ((await chooseRecord(saver, kind, existing, mode, config)) === 'saved')
+                    props.navigate('/voice');
+                }}
+              >
+                <Text value={msg('voice.use_provider', '设为当前提供商')} />
+              </Button>
+            </div>
+            {section(config, spec.ref).provider !== existing && (
+              <Group>
+                <Row
+                  label={msg('model.delete_config', '删除配置')}
+                  labelTone="danger"
+                  className="ds-row--centered"
+                  action="delete-provider"
+                  onPress={async () => {
+                    await deleteProvider(saver, spec.records, existing);
+                    if (
+                      !recordsOf(props.model.store.get(props.model.config) || {}, spec.records)[
+                        existing
+                      ]
+                    )
+                      props.navigate(`/voice/providers?kind=${kind}`);
+                  }}
+                />
+              </Group>
+            )}
+          </>
+        ) : undefined
+      }
       onSaved={async (name) => {
-        if (!existing && !section(config, spec.ref).provider)
-          await chooseRecord(saver, kind, name, props.route.query?.mode);
+        const current = props.model.store.get(props.model.config) || {};
+        const selected = section(current, spec.ref).provider;
+        if (!selected || selected === name) await chooseRecord(saver, kind, name, mode, current);
       }}
     />
   );
 }
 
 export function VoiceOptions(props: PageProps) {
+  const mode = useAtomValue(props.model.voiceMode);
   const kind = kindOf(props),
     spec = KINDS[kind];
   const saver = useSettings(
@@ -240,7 +380,7 @@ export function VoiceOptions(props: PageProps) {
   const ctx = Object.fromEntries(
     Object.entries(record || {}).map(([key, value]) => [`${spec.records}.${key}`, value]),
   );
-  ctx['agent.input_mode'] = props.route.query?.mode || saver.config.agent?.input_mode;
+  ctx['agent.input_mode'] = mode;
   const modelOnly = props.route.path.endsWith('/model');
   const fields = sectionFields(schema.data, spec.records).filter(
     (field) =>
@@ -294,7 +434,7 @@ export function VoiceOptions(props: PageProps) {
         <Row
           label={msg('model.not_set', '未设置')}
           chevron
-          onPress={() => props.navigate(`/voice/providers?kind=${kind}${suffix(props)}`)}
+          onPress={() => props.navigate(`/voice/providers?kind=${kind}`)}
         />
       )}
     </div>
@@ -332,20 +472,52 @@ function SpeakerPanel({ props, saver }: { props: PageProps; saver: Settings }) {
       setBusy(false);
     }
   }
+  const gate = saver.config.agent?.voice_speaker_gate_enabled ?? query.data?.status.gate_enabled;
   return (
     <div data-action="speaker-panel">
       <QueryError {...query} />
       <Group caption={msg('voice.speaker_caption', '声纹')}>
-        <ConfigField
-          section="agent"
-          field={{ key: 'voice_speaker_gate_enabled', widget: 'boolean' }}
-          value={saver.config.agent?.voice_speaker_gate_enabled ?? query.data?.status.gate_enabled}
-          save={(value) =>
-            saver.change('agent.voice_speaker_gate_enabled', {
-              agent: { voice_speaker_gate_enabled: value },
-            })
-          }
-        />
+        {typeof gate === 'boolean' ? (
+          <ConfigField
+            section="agent"
+            label={msg('voice.speaker_gate', '声纹校验')}
+            description={msg(
+              'voice.speaker_gate_help',
+              '开启后，Classic 只接受已录入声纹的说话。建议先录入再打开。',
+            )}
+            field={{
+              key: 'voice_speaker_gate_enabled',
+              widget: 'boolean',
+              label: resolve(msg('voice.speaker_gate', '声纹校验')),
+              help: resolve(
+                msg(
+                  'voice.speaker_gate_help',
+                  '开启后，Classic 只接受已录入声纹的说话。建议先录入再打开。',
+                ),
+              ),
+            }}
+            value={gate}
+            save={(value) =>
+              saver.change('agent.voice_speaker_gate_enabled', {
+                agent: { voice_speaker_gate_enabled: value },
+              })
+            }
+          />
+        ) : (
+          <Row
+            label={msg('voice.speaker_gate', '声纹校验')}
+            value={msg('status.state.unknown', '未知')}
+            loading={isInitialLoading(query)}
+          />
+        )}
+        {isInitialLoading(query) && <Loading block />}
+        {query.data?.profiles.length === 0 && (
+          <Row
+            label={msg('voice.speaker_profiles', '当前声纹')}
+            value={msg('voice.speaker_empty', '还没有声纹')}
+            tone="muted"
+          />
+        )}
         {query.data?.profiles.map((profile) => (
           <Row
             key={profile.id}
@@ -371,9 +543,17 @@ function SpeakerPanel({ props, saver }: { props: PageProps; saver: Settings }) {
             }}
           />
         ))}
-        <Button action="speaker-enroll" disabled={busy} onClick={() => void enroll()}>
-          <Text value={msg('voice.speaker_enroll', '在设备上录入')} />
-        </Button>
+        <div className="ds-card__actions">
+          <Button
+            variant="accent"
+            block
+            action="speaker-enroll"
+            disabled={busy}
+            onClick={() => void enroll()}
+          >
+            <Text value={msg('voice.speaker_enroll', '在设备上录入')} />
+          </Button>
+        </div>
       </Group>
     </div>
   );

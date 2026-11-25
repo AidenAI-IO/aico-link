@@ -5,9 +5,11 @@ import { businessReleaseVersion, parseOtaLog, shortVersion } from '../lib/ota';
 import { waitForReboot } from '../lib/apply';
 import { postToHost } from '../lib/host';
 import { confirmSheet } from '../components/overlays';
-import { msg, resolve } from '../lib/i18n';
+import { msg, resolve, t } from '../lib/i18n';
 import { toast } from '../components/overlays';
-import { Button, Group, ResourceError, Row, Text } from '../components/ui';
+import { Button, Group, ResourceError, Row, Text, Icon } from '../components/ui';
+import { Loading } from '../components/Loading';
+import { isInitialLoading } from '../state/resource';
 
 const stages: Record<string, TextSpec> = {
   check: msg('ota.stage_check', '正在检查更新'),
@@ -32,11 +34,18 @@ const results: Record<string, TextSpec> = {
 };
 const localTime = (value?: string) => {
   const date = value ? new Date(value) : null;
-  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : '';
+  return date && !Number.isNaN(date.getTime())
+    ? `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+    : '';
 };
 
 export function OTAPage({ model, navigate, logOnly = false }: PageProps & { logOnly?: boolean }) {
-  const { data, stale, busy } = useAtomValue(model.resources.ota.atom);
+  // Keep progress and its running flag from the same observation. Mixing a
+  // new lightweight status with a previous update's log can imply a reboot.
+  const resource = useAtomValue(model.resources.otaLogs.view);
+  const status = useAtomValue(model.resources.ota.view);
+  const { data, stale, busy } = resource;
+  const device = useAtomValue(model.resources.firmware.view);
   const snapshot = useAtomValue(model.current);
   const firmware = snapshot.firmware || {};
   const pre = useRef<HTMLPreElement>(null);
@@ -103,7 +112,7 @@ export function OTAPage({ model, navigate, logOnly = false }: PageProps & { logO
       return;
     try {
       oldLog.current = log;
-      await model.resources.ota.mutate(
+      await model.resources.otaLogs.mutate(
         () => model.send('/api/ota/updates', { method: 'POST' }),
         () => ({ ...data, ota_update_running: true }),
       );
@@ -116,6 +125,7 @@ export function OTAPage({ model, navigate, logOnly = false }: PageProps & { logO
     return (
       <div className="ds-screen ds-screen--sticky">
         <ResourceError model={model} name="ota" />
+        <ResourceError model={model} name="otaLogs" />
         <div className="ds-group ds-group--fill">
           <div className="ds-log-frame">
             <pre
@@ -127,7 +137,14 @@ export function OTAPage({ model, navigate, logOnly = false }: PageProps & { logO
                 stick.current = node.scrollTop + node.clientHeight >= node.scrollHeight - 16;
               }}
             >
-              {log || resolve(msg('ota.no_log', '还没有更新记录'))}
+              {isInitialLoading(resource) ? (
+                <Loading block />
+              ) : (
+                log ||
+                resolve(
+                  data ? msg('ota.no_log', '还没有更新记录') : msg('status.state.unknown', '未知'),
+                )
+              )}
             </pre>
           </div>
         </div>
@@ -135,31 +152,45 @@ export function OTAPage({ model, navigate, logOnly = false }: PageProps & { logO
     );
   const running = data?.ota_update_running || busy || rebooting;
   const shown = rebooting ? 'rebooting' : running ? 'running' : progress.state;
+  const version = firmware.current_version || firmware.version;
+  const business = businessReleaseVersion(firmware.business_version);
+  const displayVersion = [shortVersion(version), business ? `aico-business-v${business}` : '']
+    .filter(Boolean)
+    .join(' + ');
   const versionRow = (label: TextSpec, value?: string) => (
     <Row
       label={label}
+      loading={isInitialLoading(device)}
       value={shortVersion(value) || '—'}
       description={value && value !== shortVersion(value) ? value : undefined}
+      descriptionTone="code"
     />
   );
   return (
     <div className="ds-screen">
-      <Group caption={msg('ota.current_firmware', '当前固件')}>
-        {versionRow(
-          msg('ota.row_firmware_version', '固件版本'),
-          firmware.current_version || firmware.version,
-        )}
-        <Row
-          label="aico-business"
-          value={businessReleaseVersion(firmware.business_version) || '—'}
-        />
-        {results[shown] && (
-          <p role="status">
-            <Text value={results[shown]} />
-          </p>
-        )}
+      <Group joined>
+        <div className="ds-product">
+          <span className="ds-product__tile" aria-hidden="true">
+            <Icon name="chip" size={22} />
+          </span>
+          <div className="ds-product__body">
+            <Text value={msg('ota.current_firmware', '当前固件')} className="ds-product__name" />
+            {isInitialLoading(device) ? (
+              <Loading />
+            ) : (
+              <Text value={displayVersion || '—'} className="ds-product__version" />
+            )}
+          </div>
+          {results[shown] && (
+            <Text
+              value={results[shown]}
+              className={`ds-pill ds-pill--${shown === 'failed' ? 'danger' : ['up_to_date', 'completed'].includes(shown) ? 'success' : 'accent'}`}
+            />
+          )}
+        </div>
         <ResourceError model={model} name="ota" />
-        <ResourceError model={model} name="device" />
+        <ResourceError model={model} name="otaLogs" />
+        <ResourceError model={model} name="firmware" />
         {running ? (
           <div role="status" className="ds-progress">
             <div className="ds-progress__head">
@@ -186,23 +217,34 @@ export function OTAPage({ model, navigate, logOnly = false }: PageProps & { logO
             )}
           </div>
         ) : progress.state === 'failed' ? (
-          <p role="alert" className="ds-field__error">
-            {progress.error}
-          </p>
+          <Text
+            value={t('ota.last_failed', { error: progress.error || '—' })}
+            className="ds-card__note ds-card__note--danger"
+          />
         ) : progress.state === 'completed' ? (
           <Text
             value={msg('ota.completed', '业务包升级完成；如运行配置要求重启，请稍后重启设备。')}
+            className="ds-card__note"
           />
         ) : progress.state === 'up_to_date' ? (
-          <p>{localTime(progress.at)}</p>
+          <Text
+            value={t('ota.checked_at', { time: localTime(progress.at) })}
+            className="ds-card__note"
+          />
         ) : null}
         <div className="ds-card__actions">
-          <Button block action="start-ota" disabled={stale || running} onClick={start}>
+          <Button
+            block
+            action="start-ota"
+            disabled={stale || running || status.data?.ota_update_running}
+            onClick={start}
+          >
             <Text value={msg('ota.update', '检查并安装更新')} />
           </Button>
         </div>
       </Group>
       <Group caption={msg('ota.versions', '版本信息')}>
+        {versionRow(msg('ota.row_firmware_version', '固件版本'), version)}
         {(firmware.current_build_time || firmware.build_time) && (
           <Row
             label={msg('ota.build_time', '构建时间')}
@@ -213,10 +255,12 @@ export function OTAPage({ model, navigate, logOnly = false }: PageProps & { logO
         {versionRow('RootFS', firmware.components?.rootfs)}
         <Row
           label={msg('ota.row_slot', '运行分区')}
+          loading={isInitialLoading(device)}
           value={firmware.running_slot?.toUpperCase() || '—'}
         />
         <Row
           label={msg('ota.health', '启动状态')}
+          loading={isInitialLoading(device)}
           value={health[firmware.health_status || ''] || firmware.health_status || '—'}
           tone={firmware.health_status === 'failed' ? 'danger' : undefined}
           description={firmware.health_error}

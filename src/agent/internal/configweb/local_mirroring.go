@@ -31,6 +31,7 @@ func (s *Server) handleLocalIPhoneMirroring(w http.ResponseWriter, r *http.Reque
 	client := &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(req)
 	if err != nil {
+		s.invalidateAgentEndpoint(base)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "code": "agent_unavailable", "error": "local Agent unavailable"})
 		return
 	}

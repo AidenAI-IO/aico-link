@@ -5,6 +5,7 @@ import { Children, Component, Fragment, isValidElement } from 'react';
 import { useAtomValue } from 'jotai';
 import { glyphs } from '../lib/glyphs';
 import { resolve } from '../lib/i18n';
+import { Loading } from './Loading';
 
 export function Text({ value, className }: { value?: TextSpec | null; className?: string }) {
   return <span className={className}>{resolve(value)}</span>;
@@ -51,6 +52,9 @@ export function Row({
   chevron,
   leading,
   className = '',
+  labelTone,
+  descriptionTone,
+  loading = false,
 }: {
   label?: TextSpec;
   value?: TextSpec | null;
@@ -62,6 +66,9 @@ export function Row({
   chevron?: boolean;
   leading?: ReactNode;
   className?: string;
+  labelTone?: string;
+  descriptionTone?: string;
+  loading?: boolean;
 }) {
   const press = onPress
     ? {
@@ -80,18 +87,36 @@ export function Row({
     <div
       className={`ds-row ${onPress ? 'ds-row--tappable' : ''} ${className}`}
       data-action={action}
+      aria-busy={loading || undefined}
       {...press}
     >
       {leading}
       <div className="ds-row__body">
-        <Text value={label} className="ds-row__label" />
-        {description != null && <Text value={description} className="ds-row__description" />}
+        <Text
+          value={label}
+          className={`ds-row__label ${labelTone ? `ds-row__label--${labelTone}` : ''}`}
+        />
+        {description != null && (
+          <Text
+            value={description}
+            className={`ds-row__description ${descriptionTone ? `ds-row__description--${descriptionTone}` : ''}`}
+          />
+        )}
       </div>
       <div className="ds-row__accessory">
-        {value != null && (
-          <Text value={value} className={`ds-row__value ${tone ? `ds-row__value--${tone}` : ''}`} />
+        {loading ? (
+          <Loading />
+        ) : (
+          <>
+            {value != null && (
+              <Text
+                value={value}
+                className={`ds-row__value ${tone ? `ds-row__value--${tone}` : ''}`}
+              />
+            )}
+            {children}
+          </>
         )}
-        {children}
         {chevron && <Icon name="chevron" className="ds-row__chevron" />}
       </div>
     </div>
@@ -103,20 +128,32 @@ export function Group({
   children,
   note,
   joined = false,
+  captionMarker,
+  footnote,
+  captionAction,
 }: {
   caption?: TextSpec;
   children?: ReactNode;
   note?: TextSpec | null;
   joined?: boolean;
+  captionMarker?: string;
+  footnote?: TextSpec;
+  captionAction?: ReactNode;
 }) {
   return (
     <div>
       {caption && (
-        <div className="ds-group__caption">
+        <div
+          className={`ds-group__caption ${captionMarker ? 'ds-group__caption--marked' : ''} ${captionAction ? 'ds-group__caption--with-action' : ''}`}
+        >
+          {captionMarker && (
+            <span className={`ds-group__marker ds-group__marker--${captionMarker}`} />
+          )}
           <Text value={caption} />
+          {captionAction}
         </div>
       )}
-      <div className="ds-group">
+      <div className={`ds-group ${footnote ? 'ds-group--noted' : ''}`}>
         {Children.toArray(children).map((child, index) => (
           <Fragment key={isValidElement(child) ? (child.key ?? index) : index}>
             {index > 0 && !joined && <div className="ds-separator" />}
@@ -125,6 +162,7 @@ export function Group({
         ))}
         {note && <Text value={note} className="ds-group__note" />}
       </div>
+      {footnote && <Text value={footnote} className="page__note page__note--below" />}
     </div>
   );
 }
@@ -246,7 +284,7 @@ export function ResourceError({
   model: DeviceState;
   name: keyof DeviceState['resources'];
 }) {
-  const state = useAtomValue(model.resources[name].atom);
+  const state = useAtomValue(model.resources[name].view);
   if (!state.stale || !state.error) return null;
   return (
     <p className="ds-field__error" role="status">

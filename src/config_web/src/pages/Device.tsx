@@ -3,15 +3,18 @@ import type { DeviceState } from '../state/device';
 import type { PageProps, MirroringData, OperationResult } from '../types';
 import { useEffect, useState } from 'react';
 import { useAtomValue } from 'jotai';
-import { confirmSheet } from '../components/overlays';
-import { msg, resolve } from '../lib/i18n';
+import { Modal, confirmSheet } from '../components/overlays';
+import { msg, resolve, t } from '../lib/i18n';
 import { toast } from '../components/overlays';
 import { isEmbedded } from '../lib/environment';
 import { CONTAINER_ITEMS, LOCAL_ITEMS } from '../app/navItems';
 import { terminalUrl } from './Advanced';
+import { ChoiceRow } from '../components/choices';
 import { FILESYSTEMS, BackupPanel } from './Backup';
 import { MCPTokensPanel } from './MCP';
 import { Button, Group, ResourceError, Row, Switch, Text } from '../components/ui';
+import { Loading } from '../components/Loading';
+import { isInitialLoading } from '../state/resource';
 
 const report = (error: unknown) => toast(error instanceof Error ? error.message : String(error));
 const json = (body: unknown) => ({
@@ -20,7 +23,9 @@ const json = (body: unknown) => ({
 });
 
 export function USBInternet({ model }: { model: DeviceState }) {
-  const { data, stale, busy } = useAtomValue(model.resources.usb.atom);
+  const resource = useAtomValue(model.resources.usb.view);
+  const { data, stale, busy } = resource;
+  const loading = isInitialLoading(resource);
   const label = msg('usb_internet.title', 'USB 联网');
   const status = stale
     ? msg('usb_internet.unavailable', '无法读取状态')
@@ -32,8 +37,8 @@ export function USBInternet({ model }: { model: DeviceState }) {
           : msg('usb_internet.mac', '通过 Mac 联网')
         : msg('usb_internet.waiting', '等待主机共享网络');
   return (
-    <Group>
-      <Row label={label} description={status}>
+    <Group note={data && !data.via_usb ? msg('lan.usb_only', '只能通过 USB 连接修改') : undefined}>
+      <Row label={label} description={loading ? undefined : status} loading={loading}>
         <Switch
           checked={data?.enabled}
           label={label}
@@ -64,22 +69,27 @@ export function USBInternet({ model }: { model: DeviceState }) {
 
 export function AdvancedPage({ model, navigate }: PageProps) {
   const snapshot = useAtomValue(model.current);
-  const { data: lan, stale } = useAtomValue(model.resources.lan.atom);
+  const lanResource = useAtomValue(model.resources.lan.view);
+  const { data: lan, stale } = lanResource;
+  const config = useAtomValue(model.resources.snapshot.view);
   return (
     <div className="ds-screen">
       <Group>
         <Row
           label={msg('advanced.logs', '日志')}
+          description={msg('advanced.logs_hint', '管理日志记录和导出')}
           chevron
           onPress={() => navigate('/advanced/logs')}
         />
         <Row
           label={msg('advanced.manual_config', '手动编辑配置')}
+          description={msg('advanced.manual_config_hint', '编辑 Agent TOML 配置文件')}
           chevron
           onPress={() => navigate('/advanced/config')}
         />
         <Row
           label={msg('advanced.terminal', '终端')}
+          description={msg('advanced.terminal_hint', '设备命令行')}
           chevron
           onPress={() => {
             if (isEmbedded()) window.location.href = terminalUrl();
@@ -88,6 +98,7 @@ export function AdvancedPage({ model, navigate }: PageProps) {
         />
         <Row
           label={msg('lan.title', '局域网访问')}
+          loading={isInitialLoading(lanResource)}
           value={
             stale
               ? msg('status.state.unknown', '未知')
@@ -100,6 +111,7 @@ export function AdvancedPage({ model, navigate }: PageProps) {
         />
         <Row
           label={msg('lan.password', '设备密码')}
+          loading={isInitialLoading(lanResource)}
           value={
             stale
               ? msg('status.state.unknown', '未知')
@@ -112,10 +124,13 @@ export function AdvancedPage({ model, navigate }: PageProps) {
         />
         <Row
           label="MCP"
+          loading={!snapshot.config && isInitialLoading(config)}
           value={
-            snapshot.config?.agent?.mcp_enabled === false
-              ? msg('lan.off', '已关闭')
-              : msg('lan.on', '已开启')
+            !snapshot.config
+              ? msg('status.state.unknown', '未知')
+              : snapshot.config.agent?.mcp_enabled === false
+                ? msg('lan.off', '已关闭')
+                : msg('lan.on', '已开启')
           }
           chevron
           onPress={() => navigate('/advanced/mcp')}
@@ -127,7 +142,9 @@ export function AdvancedPage({ model, navigate }: PageProps) {
 }
 
 export function StoragePage({ model }: PageProps) {
-  const { data, stale, busy } = useAtomValue(model.resources.storage.atom);
+  const resource = useAtomValue(model.resources.storage.view);
+  const { data, stale, busy } = resource;
+  const loading = isInitialLoading(resource);
   const [fs, setFS] = useState('fat32');
   const status = data || {};
   const internal = status.internal || {};
@@ -180,50 +197,65 @@ export function StoragePage({ model }: PageProps) {
   const used = (internal.total_bytes || 0) - (internal.free_bytes || 0);
   return (
     <div className="ds-screen">
-      <Group caption={msg('storage.status_caption', '存储状态')}>
-        <Row label={msg('storage.total_space', '总空间')} value={size(internal.total_bytes)} />
-        <Row label={msg('storage.available_space', '可用空间')} value={size(internal.free_bytes)} />
+      <Group
+        caption={msg('storage.status_caption', '存储状态')}
+        captionAction={
+          <button
+            type="button"
+            className="ds-caption-action"
+            data-action="refresh-storage"
+            disabled={busy}
+            onClick={() => model.resources.storage.refresh()}
+          >
+            <Text value={msg('storage.refresh', '刷新状态')} />
+          </button>
+        }
+      >
         {internal.available && (
           <div className="ds-meter-block">
-            <meter
-              min="0"
-              max={internal.total_bytes || 1}
-              value={Math.max(0, used)}
-              aria-label={resolve(msg('storage.used_space', '已用空间'))}
-            />
+            <div className="ds-meter">
+              <div
+                className="ds-meter__fill"
+                style={{
+                  width: `${Math.max(0, Math.min(100, (used / (internal.total_bytes || 1)) * 100))}%`,
+                }}
+              />
+            </div>
+            <div className="ds-meter__legend">
+              <span>{t('storage.used', { size: size(used) })}</span>
+              <span>{t('storage.remaining', { size: size(internal.free_bytes) })}</span>
+            </div>
           </div>
         )}
+        <Row
+          label={msg('storage.total_space', '总空间')}
+          value={size(internal.total_bytes)}
+          loading={loading}
+        />
+        <Row
+          label={msg('storage.available_space', '可用空间')}
+          value={size(internal.free_bytes)}
+          loading={loading}
+        />
       </Group>
       <ResourceError model={model} name="storage" />
       <Group caption={msg('storage.microsd_caption', 'microSD 设置')}>
         <Row
           label={msg('storage.running_mode', '运行模式')}
+          loading={loading}
           value={
             stale
               ? msg('status.state.unknown', '未知')
-              : card.mounted
-                ? msg('storage.card_state_mounted', 'SD 卡已挂载')
-                : card.present
-                  ? msg('storage.card_state_unusable', 'SD 卡不可用')
-                  : msg('storage.card_state_none', '未检测到 SD 卡')
+              : `${resolve(mode)} — ${resolve(card.mounted ? msg('storage.card_state_mounted', 'SD 卡已挂载') : card.present ? msg('storage.card_state_unusable', 'SD 卡不可用') : msg('storage.card_state_none', '未检测到 SD 卡'))}`
           }
-          description={mode}
         />
-        <label className="ds-field">
-          <Text value={msg('storage.format_as', '格式化为')} />
-          <select
-            className="ds-input"
-            value={fs}
-            disabled={busy || formatting}
-            onChange={(event) => setFS(event.target.value)}
-          >
-            {FILESYSTEMS.map((entry) => (
-              <option key={entry.value} value={entry.value}>
-                {resolve(entry.label)}
-              </option>
-            ))}
-          </select>
-        </label>
+        <ChoiceRow
+          label={msg('storage.format_as', '格式化为')}
+          options={FILESYSTEMS}
+          selected={fs}
+          onSelect={setFS}
+          disabled={busy || formatting}
+        />
         {formatting && (
           <p role="status">
             <Text value={msg('storage.format_in_progress', '正在格式化存储卡…')} />
@@ -237,6 +269,8 @@ export function StoragePage({ model }: PageProps) {
         <div className="ds-button-pair">
           <Button
             variant="danger-soft"
+            block
+            className="ds-btn ds-btn--danger-soft ds-btn--block ds-button-pair__item"
             action="format-card"
             disabled={stale || busy || formatting || !card.present}
             onClick={() => operation('format')}
@@ -245,6 +279,8 @@ export function StoragePage({ model }: PageProps) {
           </Button>
           <Button
             variant="accent-outline"
+            block
+            className="ds-btn ds-btn--accent-outline ds-btn--block ds-button-pair__item"
             action="eject-card"
             disabled={stale || busy || formatting || !card.mounted}
             onClick={() => operation('eject')}
@@ -268,10 +304,13 @@ export function StoragePage({ model }: PageProps) {
 }
 
 export function MCPPage({ model, navigate, header }: PageProps) {
-  const { data, stale, busy } = useAtomValue(model.resources.mcp.atom);
+  const resource = useAtomValue(model.resources.mcp.view);
+  const { data, stale, busy } = resource;
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [installing, setInstalling] = useState(false);
+  const [detailName, setDetailName] = useState<string | null>(null);
+  const detail = data?.servers?.find((server) => server.name === detailName);
   async function change(name: string, method: 'PATCH' | 'DELETE', enabled?: boolean) {
     if (
       method === 'DELETE' &&
@@ -292,6 +331,7 @@ export function MCPPage({ model, navigate, header }: PageProps) {
           }),
         () => null,
       );
+      if (method === 'DELETE') setDetailName(null);
     } catch (failure) {
       report(failure);
     }
@@ -313,94 +353,135 @@ export function MCPPage({ model, navigate, header }: PageProps) {
   }
   return (
     <div className="ds-screen">
-      <Group caption={msg('mcp.install_title', '给 Agent 安装 MCP')}>
+      <Group
+        caption={msg('mcp.install_title', '给 Agent 安装 MCP')}
+        note={msg(
+          'mcp.install_help',
+          '安装后 Agent 可调用服务提供的工具。点击服务可查看工具、启停、重连或卸载。',
+        )}
+      >
+        {isInitialLoading(resource) && <Loading block />}
         {(data?.servers || []).map((server) => (
-          <details key={server.name} className="ds-field">
-            <summary>
-              {server.name} ·{' '}
-              {resolve(
-                stale
-                  ? msg('status.state.unknown', '未知')
-                  : server.state === 'connected'
-                    ? msg('mcp.install_connected', '已连接')
-                    : !server.enabled
-                      ? msg('mcp.install_disabled', '已停用')
-                      : server.state === 'error'
-                        ? msg('mcp.install_error', '连接失败')
-                        : msg('mcp.install_disconnected', '待连接'),
-              )}
-            </summary>
-            {server.error && <p className="ds-field__error">{server.error}</p>}
-            <ul>
-              {(server.tools || []).map((tool) => (
-                <li key={tool}>{tool}</li>
-              ))}
-            </ul>
+          <Row
+            key={server.name}
+            label={server.name}
+            value={
+              stale
+                ? msg('status.state.unknown', '未知')
+                : server.state === 'connected'
+                  ? msg('mcp.install_connected', '已连接')
+                  : !server.enabled
+                    ? msg('mcp.install_disabled', '已停用')
+                    : server.state === 'error'
+                      ? msg('mcp.install_error', '连接失败')
+                      : msg('mcp.install_disconnected', '待连接')
+            }
+            tone={
+              server.state === 'error'
+                ? 'danger'
+                : server.state === 'connected'
+                  ? 'success'
+                  : 'muted'
+            }
+            description={
+              server.error || `${server.transport || ''} · ${(server.tools || []).length} tools`
+            }
+            chevron
+            onPress={busy ? undefined : () => setDetailName(server.name)}
+          />
+        ))}
+        <ResourceError model={model} name="mcp" />
+        <Row
+          label={msg('mcp.install_add', '安装 MCP')}
+          labelTone="accent"
+          action="install-mcp-server"
+          onPress={busy ? undefined : () => setInstalling(true)}
+        />
+        <Row
+          label={msg('mcp.install_refresh', '刷新连接状态')}
+          action="refresh-mcp-servers"
+          onPress={busy ? undefined : () => void model.resources.mcp.refresh()}
+        />
+      </Group>
+      {detail && (
+        <Modal title={detail.name} onClose={() => setDetailName(null)} busy={busy}>
+          <Group>
             <Row label={msg('mcp.install_enabled', '启用')}>
               <Switch
-                checked={server.enabled}
+                label={msg('mcp.install_enabled', '启用')}
+                checked={detail.enabled}
                 disabled={busy || stale}
-                label={server.name}
-                onChange={(enabled) => change(server.name, 'PATCH', enabled)}
+                onChange={(enabled) => change(detail.name, 'PATCH', enabled)}
               />
             </Row>
+            {(detail.tools || []).map((tool) => (
+              <Row key={tool} label={tool} descriptionTone="code" />
+            ))}
+          </Group>
+          <div className="page__footer">
             <Button
-              variant="quiet"
+              block
               disabled={busy || stale}
-              onClick={() => change(server.name, 'PATCH', true)}
+              onClick={() => change(detail.name, 'PATCH', true)}
             >
               <Text value={msg('mcp.install_reconnect', '重新连接')} />
             </Button>
-            <Button
-              variant="danger-soft"
-              disabled={busy || stale}
-              onClick={() => change(server.name, 'DELETE')}
-            >
+            <Button block disabled={busy || stale} onClick={() => change(detail.name, 'DELETE')}>
               <Text value={msg('mcp.install_remove', '卸载')} />
             </Button>
-          </details>
-        ))}
-        <ResourceError model={model} name="mcp" />
-        <Button variant="quiet" disabled={busy} onClick={() => setInstalling((value) => !value)}>
-          <Text value={msg('mcp.install_add', '安装 MCP')} />
-        </Button>
-        {installing && (
-          <form className="ds-field" onSubmit={install}>
-            <label>
-              <Text value={msg('mcp.install_config', 'MCP JSON 配置')} />
-              <textarea
-                className="ds-input"
-                rows={12}
-                value={draft}
-                disabled={busy}
-                onChange={(event) => setDraft(event.target.value)}
-                autoComplete="off"
-                spellCheck="false"
-              />
-            </label>
-            <p className="ds-group__note">
-              <Text
-                value={msg(
-                  'mcp.install_trust',
-                  '仅安装你信任的服务。stdio 命令会以 Agent 的权限在设备上运行。',
-                )}
-              />
-            </p>
+          </div>
+        </Modal>
+      )}
+      {installing && (
+        <Modal
+          title={msg('mcp.install_add', '安装 MCP')}
+          onClose={() => setInstalling(false)}
+          busy={busy}
+        >
+          <form onSubmit={install}>
+            <Text
+              value={msg(
+                'mcp.install_paste',
+                '粘贴服务提供方的 mcpServers JSON 配置。支持 stdio 和 Streamable HTTP；命令及其依赖须已安装在 Agent 所在设备。',
+              )}
+              className="ds-group__note"
+            />
+            <Text
+              value={msg(
+                'mcp.install_trust',
+                '仅安装你信任的服务。stdio 命令会以 Agent 的权限在设备上运行。',
+              )}
+              className="ds-group__note"
+            />
+            <textarea
+              className="ds-input"
+              rows={12}
+              value={draft}
+              disabled={busy}
+              onChange={(event) => setDraft(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              aria-label={resolve(msg('mcp.install_config', 'MCP JSON 配置'))}
+              placeholder='{"mcpServers":{"example":{"type":"http","url":"https://example.com/mcp"}}}'
+            />
             {error && (
               <p role="alert" className="ds-field__error">
                 {error}
               </p>
             )}
-            <button
-              type="submit"
-              className="ds-btn ds-btn--primary"
-              disabled={busy || !draft.trim()}
-            >
-              <Text value={msg('mcp.install_connect', '安装并连接')} />
-            </button>
+            <div className="page__footer">
+              <Button
+                type="submit"
+                block
+                disabled={busy || !draft.trim()}
+                action="install-mcp-submit"
+              >
+                <Text value={msg('mcp.install_connect', '安装并连接')} />
+              </Button>
+            </div>
           </form>
-        )}
-      </Group>
+        </Modal>
+      )}
       {!model.local && (
         <MCPTokensPanel
           model={model}
@@ -415,8 +496,9 @@ export function MCPPage({ model, navigate, header }: PageProps) {
 
 export function LocalOverview({ model, navigate }: PageProps) {
   const snapshot = useAtomValue(model.current);
-  const device = useAtomValue(model.resources.device.atom);
-  const mirror = useAtomValue(model.resources.mirroring.atom);
+  const device = useAtomValue(model.resources.device.view);
+  const mirror = useAtomValue(model.resources.mirroring.view);
+  const config = useAtomValue(model.resources.snapshot.view);
   const [restored, setRestored] = useState(false);
   const status = device.data?.agent_status || {};
   const provider = snapshot.config?.model?.provider;
@@ -444,6 +526,7 @@ export function LocalOverview({ model, navigate }: PageProps) {
       <Group>
         <Row
           label={msg('advanced.agent_status', 'Agent 状态')}
+          loading={isInitialLoading(device)}
           value={
             device.stale
               ? msg('status.state.unknown', '未知')
@@ -452,10 +535,17 @@ export function LocalOverview({ model, navigate }: PageProps) {
                 : msg('local.offline', '无法连接')
           }
           description={
-            status.url || msg('local.offline_help', '可以保存配置；Agent 启动后会加载它。')
+            status.url ||
+            (device.stale
+              ? undefined
+              : msg('local.offline_help', '可以保存配置；Agent 启动后会加载它。'))
           }
         />
-        <Row label={msg('local.target', '当前目标设备')} value={status.device_type || '—'} />
+        <Row
+          label={msg('local.target', '当前目标设备')}
+          value={status.device_type || '—'}
+          loading={isInitialLoading(device)}
+        />
       </Group>
       {mirror.data?.supported && (
         <Group>
@@ -495,6 +585,7 @@ export function LocalOverview({ model, navigate }: PageProps) {
       <Group>
         <Row
           label={msg('local.main_model', '当前主模型')}
+          loading={!snapshot.config && isInitialLoading(config)}
           value={snapshot.config?.model?.model || '—'}
           description={provider}
           chevron
@@ -502,10 +593,13 @@ export function LocalOverview({ model, navigate }: PageProps) {
         />
         <Row
           label="API Key"
+          loading={!snapshot.config && isInitialLoading(config)}
           value={
-            snapshot.config?.model_providers?.[provider || '']?.has_api_key
-              ? msg('local.key_ready', '已配置')
-              : msg('local.key_missing', '未配置')
+            !snapshot.config
+              ? msg('status.state.unknown', '未知')
+              : snapshot.config.model_providers?.[provider || '']?.has_api_key
+                ? msg('local.key_ready', '已配置')
+                : msg('local.key_missing', '未配置')
           }
           chevron
           onPress={() => navigate('/model/providers')}

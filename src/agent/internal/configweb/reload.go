@@ -20,6 +20,13 @@ import (
 func (s *Server) agentBaseURL() (*url.URL, error) {
 	baseURL := strings.TrimSpace(s.options.AgentHTTPBaseURL)
 	if baseURL == "" {
+		// Share discovery across concurrent pollers, but periodically rediscover
+		// custom ports even if the old endpoint remains reachable.
+		s.agentEndpointMu.Lock()
+		defer s.agentEndpointMu.Unlock()
+		if s.agentEndpointURL != "" && time.Now().Before(s.agentEndpointExpires) {
+			return url.Parse(s.agentEndpointURL)
+		}
 		status := s.queryAgentStatus()
 		host, _ := status["port_host"].(string)
 		port, _ := status["port"].(int)
@@ -30,12 +37,25 @@ func (s *Server) agentBaseURL() (*url.URL, error) {
 			port = 8080
 		}
 		baseURL = fmt.Sprintf("http://%s", net.JoinHostPort(host, strconv.Itoa(port)))
+		s.agentEndpointURL = baseURL
+		s.agentEndpointExpires = time.Now().Add(30 * time.Second)
 	}
 	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
 		return nil, fmt.Errorf("agent HTTP endpoint is invalid")
 	}
 	return base, nil
+}
+
+// Failed requests invalidate discovery for the next request. Never replay a
+// mutation automatically: the Agent may already have accepted it.
+func (s *Server) invalidateAgentEndpoint(base *url.URL) {
+	s.agentEndpointMu.Lock()
+	defer s.agentEndpointMu.Unlock()
+	cached, err := url.Parse(s.agentEndpointURL)
+	if err == nil && cached.Host == base.Host {
+		s.agentEndpointURL = ""
+	}
 }
 
 // reloadAgentConfig asks the independent Agent process to re-read its config.
@@ -59,6 +79,7 @@ func (s *Server) reloadAgentConfig(ctx context.Context, revision uint64) (map[st
 	req.Header.Set("Content-Type", "application/json")
 	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
+		s.invalidateAgentEndpoint(base)
 		return nil, fmt.Errorf("agent config reload request failed: %w", err)
 	}
 	defer response.Body.Close()
@@ -94,6 +115,7 @@ func (s *Server) fetchAgentApplicationStatus(ctx context.Context) ([]byte, int, 
 	}
 	response, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
 	if err != nil {
+		s.invalidateAgentEndpoint(base)
 		return nil, 0, fmt.Errorf("agent configuration status unavailable")
 	}
 	defer response.Body.Close()
@@ -114,6 +136,15 @@ func (s *Server) handleConfigApplication(w http.ResponseWriter, r *http.Request)
 	if fetchErr == nil {
 		fetchErr = json.Unmarshal(data, &live)
 	}
+	// Disk state must remain observable even when the Agent is unavailable or
+	// has not been asked to apply an external edit. Keep runtime revisions intact.
+	persistedRevision := agent.ConfigFileRevision(s.options.AgentConfigPath)
+	respond := func(code int) {
+		writeJSON(w, code, struct {
+			agent.ConfigApplyStatus
+			PersistedRevision uint64 `json:"persisted_revision"`
+		}{live, persistedRevision})
+	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 	// Re-read local state after the HTTP fetch: a save may have finished while
@@ -126,19 +157,20 @@ func (s *Server) handleConfigApplication(w http.ResponseWriter, r *http.Request)
 	}
 	if s.configSavePending {
 		live.State, live.Applied, live.Pending, live.Error = "pending", false, true, ""
-		writeJSON(w, http.StatusOK, live)
+		respond(http.StatusOK)
 		return
 	}
 	if s.configApplyError != "" {
 		live.State, live.Applied, live.Pending, live.Error = "failed", false, false, s.configApplyError
-		writeJSON(w, http.StatusOK, live)
+		respond(http.StatusOK)
 		return
 	}
 	if fetchErr != nil {
-		writeJSONError(w, http.StatusServiceUnavailable, fetchErr.Error())
+		live.State, live.Error = "unavailable", fetchErr.Error()
+		respond(http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, statusCode, live)
+	respond(statusCode)
 }
 
 func (s *Server) finishConfigSave() {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useAtomValue } from 'jotai';
 import type { DeviceState } from '../state/device';
-import type { Schema } from '../lib/schema';
 export function useQuery<T>(
   load: (signal: AbortSignal) => Promise<T>,
   dependencies: readonly unknown[],
@@ -74,12 +74,25 @@ export function useQuery<T>(
   const retry = useCallback(() => setVersion((value) => value + 1), []);
   return { ...(state.id === id ? state : { id, data: null, error: '', loading: true }), retry };
 }
-export const useSchema = (model: DeviceState) =>
-  useQuery(
-    async (signal) => {
-      const schema = await model.send<Schema>('/api/config/schema', { signal });
-      if (!Array.isArray(schema.sections)) throw new Error('Configuration schema unavailable');
-      return schema;
-    },
-    [model],
-  );
+export function useSchema(model: DeviceState) {
+  const resource = model.resources.schema;
+  const state = useAtomValue(resource.view);
+  useEffect(() => {
+    const read = () => {
+      if (!document.hidden && !model.store.get(resource.atom).data) void resource.refresh();
+    };
+    read();
+    document.addEventListener('visibilitychange', read);
+    window.addEventListener('online', read);
+    return () => {
+      document.removeEventListener('visibilitychange', read);
+      window.removeEventListener('online', read);
+    };
+  }, [model, resource]);
+  return {
+    data: state.data,
+    error: state.error || '',
+    loading: state.data === null && !state.error,
+    retry: useCallback(() => void resource.refresh(), [resource]),
+  };
+}

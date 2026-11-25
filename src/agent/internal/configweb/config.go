@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"aico-agent/internal/agent"
+	"aico-agent/internal/configupdate"
 	"aico-agent/internal/logging"
 	"aico-agent/internal/wifiproxy"
 )
@@ -33,8 +34,8 @@ func (s *Server) runAgentCLI(timeout time.Duration, input []byte, args ...string
 // runtime loader is the authority because it is the loader the Agent boots with,
 // so the verdict here cannot drift from the one that keeps the Agent down.
 //
-// Callers reach this only after `agent config` has already read the same file
-// through the editor loader, which rejects an unreadable, undecodable, or
+// Callers reach this only after the canonical editor loader has read the file.
+// It rejects an unreadable, undecodable, or
 // non-file target before a form is rendered. An unusable file therefore answers
 // unavailable from that step, and a failure here names a field to repair.
 //
@@ -62,30 +63,45 @@ func (s *Server) logAgentRecoveryState() {
 	logging.Warnf("config_web", "config_web", "Agent config is invalid; starting recovery portal: %s", validationErrors[0].Message)
 }
 
-// handleGetConfig returns only the persisted agent.toml projection. Device,
-// Wi-Fi, firmware and environment state live behind the explicit snapshot
-// resource so callers can evolve each resource independently.
+// handleGetConfig uses the canonical editor loader and credential-free DTO in
+// process. Reading persisted settings must not wait for an Agent subprocess or
+// unrelated hardware probes. The aggregate snapshot remains available separately.
 func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
-	result := s.runAgentCLI(5*time.Second, nil, "config", "--config="+s.options.AgentConfigPath, "--format=json")
-	if result.TimedOut {
-		writeJSONError(w, http.StatusServiceUnavailable, "agent config timed out")
+	// External editors can replace the file too. Only publish a revision when
+	// both the editor view and runtime validation describe that stable file.
+	for attempt := 0; attempt < 3; attempt++ {
+		revision := agent.ConfigFileRevision(s.options.AgentConfigPath)
+		cfg, err := agent.LoadResolvedConfigForUpdate(s.options.AgentConfigPath)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"ok": false, "code": "config_read_failed", "error": "Agent configuration could not be read",
+				"paths": map[string]string{"agent_config": s.options.AgentConfigPath},
+			})
+			return
+		}
+		valid, validationErrors := configValidationState(s.options.AgentConfigPath)
+		if revision != agent.ConfigFileRevision(s.options.AgentConfigPath) {
+			continue
+		}
+		// Round-trip only the canonical DTO, never the credential-bearing Config.
+		data, err := json.Marshal(configupdate.FromAgentConfig(cfg))
+		if err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "agent config unavailable")
+			return
+		}
+		var config map[string]any
+		if err := json.Unmarshal(data, &config); err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "agent config unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "config": s.projectConfig(config), "revision": revision,
+			"config_valid": valid, "config_errors": validationErrors,
+			"paths": map[string]string{"agent_config": s.options.AgentConfigPath},
+		})
 		return
 	}
-	if result.ExitCode != 0 {
-		writeJSONError(w, http.StatusServiceUnavailable, "agent config unavailable")
-		return
-	}
-	var config map[string]any
-	if err := json.Unmarshal(result.Output, &config); err != nil || config == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "agent config returned invalid JSON")
-		return
-	}
-	valid, validationErrors := configValidationState(s.options.AgentConfigPath)
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "config": s.projectConfig(config),
-		"config_valid": valid, "config_errors": validationErrors,
-	})
+	writeJSONError(w, http.StatusServiceUnavailable, "agent config changed while reading; retry")
 }
 
 func (s *Server) handleGetDeviceSnapshot(w http.ResponseWriter, _ *http.Request) {
@@ -152,17 +168,10 @@ func (s *Server) handleGetDeviceSnapshot(w http.ResponseWriter, _ *http.Request)
 }
 
 func (s *Server) handleConfigMeta(w http.ResponseWriter, _ *http.Request) {
-	result := s.runAgentCLI(5*time.Second, nil, "config-meta", "--format=json")
-	if result.TimedOut || result.ExitCode != 0 || !json.Valid(result.Output) {
-		message := "config metadata unavailable"
-		if result.ExitCode == 127 {
-			message = "agent config unavailable: agent binary not found"
-		}
-		writeJSONError(w, http.StatusServiceUnavailable, message)
-		return
-	}
+	// The CLI encodes this same canonical metadata; no subprocess is needed.
+	data, err := json.Marshal(agent.ConfigMeta())
 	var metadata any
-	if err := json.Unmarshal(result.Output, &metadata); err != nil {
+	if err != nil || json.Unmarshal(data, &metadata) != nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "config metadata unavailable")
 		return
 	}

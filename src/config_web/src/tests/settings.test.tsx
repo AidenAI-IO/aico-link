@@ -6,6 +6,7 @@ import type { PageProps, Transport } from '../types';
 import { DecisionPage, ProviderForm } from '../pages/Models';
 import { RawConfigPage } from '../pages/Advanced';
 import { ValueField } from '../components/fields';
+import { ChoiceRow, Dropdown } from '../components/choices';
 import { OverlayHost, Modal } from '../components/overlays';
 import { useSettings } from '../hooks/settings';
 import { applyLocale } from '../lib/i18n';
@@ -39,6 +40,63 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+it('blocks open dropdown choices when disabled and allows them again when enabled', () => {
+  const select = vi.fn();
+  const picker = (disabled: boolean) => (
+    <Dropdown
+      label="Provider"
+      selected="first"
+      options={[
+        { value: 'first', label: 'First' },
+        { value: 'second', label: 'Second' },
+      ]}
+      onSelect={select}
+      disabled={disabled}
+    />
+  );
+  const view = render(picker(false));
+  fireEvent.click(screen.getByRole('button', { name: 'Provider First' }));
+  view.rerender(picker(true));
+  const second = screen.getByRole('option', { name: 'Second' });
+  expect((second as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(second);
+  expect(select).not.toHaveBeenCalled();
+  view.rerender(picker(false));
+  fireEvent.click(second);
+  expect(select).toHaveBeenCalledWith('second');
+});
+it('keeps staged choices through observations, restores focus and rolls back a rejected choice', async () => {
+  let outcome: 'staged' | 'failed' = 'staged';
+  const select = vi.fn(async () => outcome);
+  const choices = [
+    { value: 'first', label: 'First' },
+    { value: 'second', label: 'Second' },
+  ];
+  const picker = (selected: string) => (
+    <ChoiceRow label="Retention" selected={selected} options={choices} onSelect={select} />
+  );
+  const view = render(picker('first'));
+  const trigger = screen.getByRole('button', { name: 'Retention First' });
+  trigger.focus();
+  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole('button', { name: 'Second' }));
+  await act(flush);
+  expect(document.activeElement).toBe(trigger);
+  view.rerender(picker('first'));
+  expect(screen.getByRole('button', { name: 'Retention Second' })).toBe(trigger);
+  view.rerender(picker('second'));
+  view.rerender(picker('first'));
+  expect(screen.getByRole('button', { name: 'Retention First' })).toBe(trigger);
+  outcome = 'failed';
+  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole('button', { name: 'Second' }));
+  await act(flush);
+  expect(screen.getByRole('button', { name: 'Retention First' })).toBe(trigger);
+  fireEvent.click(trigger);
+  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBe(null);
+  expect(document.activeElement).toBe(trigger);
 });
 it('keeps a newer draft focused when an older save completes and allows a rejected value to retry', async () => {
   let finish!: (result: 'saved' | 'failed') => void;
@@ -191,7 +249,7 @@ it('omits blank stored secrets and follows schema visibility in provider forms',
   );
   await act(flush);
   expect(screen.queryByLabelText('secret_key')).toBe(null);
-  const input = screen.getByLabelText('Provider base URL');
+  const input = screen.getByLabelText('Base URL');
   fireEvent.change(input, { target: { value: 'https://new' } });
   fireEvent.submit(input.closest('form')!);
   await act(flush);
@@ -201,7 +259,7 @@ it('omits blank stored secrets and follows schema visibility in provider forms',
   model.dispose();
 });
 it('computes the current restart plan before committing and guards native saves against duplicates', async () => {
-  const send = vi.fn(async (path: string) =>
+  const send = vi.fn(async (path: string, _options?: RequestInit) =>
     path === '/api/config/plan'
       ? { apply: 'agent_restart' }
       : { apply: 'live', config: { agent: { input_mode: 'stt' } } },
@@ -224,11 +282,15 @@ it('computes the current restart plan before committing and guards native saves 
   fireEvent.click(screen.getByText('Change'));
   await act(flush);
   expect(screen.getByRole('dialog')).toBeTruthy();
-  expect(send.mock.calls.filter(([path]) => path === '/api/config')).toHaveLength(0);
+  const writes = () =>
+    send.mock.calls.filter(
+      ([path, options]) => path === '/api/config' && options?.method === 'PATCH',
+    );
+  expect(writes()).toHaveLength(0);
   window.dispatchEvent(new Event('aico:save-request'));
   fireEvent.click(screen.getByText('Save & Restart'));
   await act(flush);
-  expect(send.mock.calls.filter(([path]) => path === '/api/config')).toHaveLength(1);
+  expect(writes()).toHaveLength(1);
   model.dispose();
 });
 it('keeps raw TOML recovery writable only after a successful read and preserves failed edits', async () => {
@@ -237,9 +299,10 @@ it('keeps raw TOML recovery writable only after a successful read and preserves 
     if (offline) throw new Error('TOML offline');
     return new Response('[agent]\nlocale="en-US"');
   });
-  const { model, props, mount } = setup(async () => {
+  const send = vi.fn(async () => {
     throw new Error('invalid TOML');
   });
+  const { model, props, mount } = setup(send);
   props.route.path = '/advanced/config';
   mount(<RawConfigPage {...props} />);
   await act(flush);
@@ -250,8 +313,15 @@ it('keeps raw TOML recovery writable only after a successful read and preserves 
   await act(flush);
   expect(input.disabled).toBe(false);
   fireEvent.change(input, { target: { value: 'draft = invalid' } });
-  fireEvent.click(screen.getByText('Save'));
+  fireEvent(window, new Event('aico:save-request'));
   await act(flush);
+  expect(send).toHaveBeenCalledWith(
+    '/api/config/backup',
+    expect.objectContaining({
+      method: 'PUT',
+      body: 'draft = invalid',
+    }),
+  );
   expect(input.value).toBe('draft = invalid');
   model.dispose();
 });

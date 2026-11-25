@@ -291,6 +291,55 @@ func TestRestartAndPlanRejectCrossSiteRequests(t *testing.T) {
 	}
 }
 
+func TestConfigReadWithoutAgentBinary(t *testing.T) {
+	options := testOptions(t)
+	options.AgentBinary = filepath.Join(t.TempDir(), "missing-agent")
+	server := &Server{options: options}
+	for _, inputMode := range []string{"stt", "realtime", "unsupported"} {
+		config := fmt.Sprintf(`[voice_settings.mode]
+input_mode = %q
+[model_settings.providers.main]
+type = "openai"
+api_key = "do-not-expose"
+`, inputMode)
+		if err := os.WriteFile(options.AgentConfigPath, []byte(config), 0600); err != nil {
+			t.Fatal(err)
+		}
+		response := httptest.NewRecorder()
+		server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+		var payload struct {
+			Config struct {
+				Agent struct {
+					InputMode string `json:"input_mode"`
+				} `json:"agent"`
+			} `json:"config"`
+			Revision     uint64                        `json:"revision"`
+			ConfigValid  bool                          `json:"config_valid"`
+			ConfigErrors []agent.ConfigValidationError `json:"config_errors"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || payload.Config.Agent.InputMode != inputMode || payload.Revision != agent.ConfigFileRevision(options.AgentConfigPath) {
+			t.Fatalf("config read status=%d mode=%s revision=%d", response.Code, payload.Config.Agent.InputMode, payload.Revision)
+		}
+		if strings.Contains(response.Body.String(), "do-not-expose") {
+			t.Fatal("configuration read exposed a credential")
+		}
+		if inputMode == "unsupported" && (payload.ConfigValid || len(payload.ConfigErrors) == 0) {
+			t.Fatal("configuration read omitted runtime validation errors")
+		}
+	}
+	if err := os.WriteFile(options.AgentConfigPath, []byte("[broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unreadable config status=%d", response.Code)
+	}
+}
+
 func TestServerStartsWithInvalidAgentConfigAndReportsFieldError(t *testing.T) {
 	options := testOptions(t)
 	config := `[voice_settings.mode]
@@ -380,7 +429,7 @@ input_mode = "stt"
 	state := func() (bool, agent.ConfigValidationError) {
 		t.Helper()
 		resp := httptest.NewRecorder()
-		server.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/device/snapshot", nil))
+		server.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/config", nil))
 		if resp.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 		}

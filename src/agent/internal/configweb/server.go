@@ -48,6 +48,9 @@ type Server struct {
 	configMu                 sync.Mutex
 	configServiceMu          sync.Mutex
 	configSaveMu             sync.Mutex
+	agentEndpointMu          sync.Mutex
+	agentEndpointURL         string
+	agentEndpointExpires     time.Time
 	systemEnvMu              sync.Mutex
 	configSavePending        bool
 	configApplyError         string

@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useAtomValue } from 'jotai';
+import { Loading } from '../components/Loading';
+import { isInitialLoading } from '../state/resource';
 import type { PageProps } from '../types';
 import { useSettings } from '../hooks/settings';
 import { useQuery } from '../hooks/query';
@@ -53,6 +55,7 @@ function Code({ value }: { value: string }) {
 export function MCPTokensPanel(props: PageProps) {
   const saver = useSettings(props, 'MCP', props.model.local ? '/' : '/advanced');
   const snapshot = useAtomValue(props.model.current);
+  const config = useAtomValue(props.model.resources.snapshot.view);
   const query = useQuery(
     (signal) =>
       props.model.send<{ tokens: Token[] }>('/api/security/mcp-tokens', {
@@ -97,22 +100,42 @@ export function MCPTokensPanel(props: PageProps) {
   return (
     <>
       <Group>
-        <ConfigField
-          section="agent"
-          field={{ key: 'mcp_enabled', widget: 'boolean' }}
-          value={saver.config.agent?.mcp_enabled !== false}
-          save={(value) => saver.change('agent.mcp_enabled', { agent: { mcp_enabled: value } })}
-        />
+        {snapshot.config ? (
+          <ConfigField
+            section="agent"
+            label={msg('advanced.mcp_enabled', 'MCP')}
+            description={msg(
+              'advanced.mcp_enabled_help',
+              '让电脑上的 AI 助手（如 Claude Code、Cursor）通过 Aico Link 操作手机，例如截屏、点击和输入文字。',
+            )}
+            field={{ key: 'mcp_enabled', widget: 'boolean' }}
+            value={saver.config.agent?.mcp_enabled !== false}
+            save={(value) => saver.change('agent.mcp_enabled', { agent: { mcp_enabled: value } })}
+          />
+        ) : (
+          <Row
+            label="MCP"
+            value={msg('status.state.unknown', '未知')}
+            loading={isInitialLoading(config)}
+          />
+        )}
       </Group>
       {saver.config.agent?.mcp_enabled !== false && (
-        <Group caption={msg('mcp.title', 'MCP 访问令牌')}>
+        <Group
+          note={msg(
+            'mcp.help',
+            '电脑和 Aico Link 连同一个 Wi-Fi 就能用，不需要开启局域网访问。令牌只能用于 MCP，不会过期，修改设备密码后依然有效；不再使用时在这里撤销。',
+          )}
+        >
           <QueryError {...query} />
+          {isInitialLoading(query) && <Loading block />}
           {query.data?.tokens.map((token) => (
             <Row
               key={token.id}
               label={token.name}
               description={new Date(token.created_at).toLocaleString()}
               value={msg('mcp.revoke', '撤销')}
+              tone="danger"
               onPress={
                 busy
                   ? undefined
@@ -144,9 +167,12 @@ export function MCPTokensPanel(props: PageProps) {
               }
             />
           ))}
-          <Button disabled={busy} action="create-mcp-token" onClick={() => setDialog('name')}>
-            <Text value={msg('mcp.create', '创建令牌')} />
-          </Button>
+          <Row
+            label={msg('mcp.create', '创建令牌')}
+            labelTone="accent"
+            action="create-mcp-token"
+            onPress={busy ? undefined : () => setDialog('name')}
+          />
         </Group>
       )}
       {dialog && (

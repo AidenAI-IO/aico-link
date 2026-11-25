@@ -71,6 +71,7 @@ func (s *Server) handleSpeakerProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	response, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
+		s.invalidateAgentEndpoint(base)
 		writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("agent speaker request failed: %v", err))
 		return
 	}

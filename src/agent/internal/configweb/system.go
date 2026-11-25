@@ -197,8 +197,15 @@ func (s *Server) handleOTAUpdate(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handleOTALogs(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"ok": true, "ota_update_running": s.otaUpdateRunning(), "hybrid_update_phase": s.hybridUpdatePhase(), "ota_log": readLogSnapshot(s.options.OTAUpdateLogPath, 128*1024, 96*1024), "ota_health_log": readLogSnapshot(s.options.OTAHealthLogPath, 128*1024, 96*1024)})
+func (s *Server) handleOTALogs(w http.ResponseWriter, r *http.Request) {
+	value := map[string]any{"ok": true, "ota_update_running": s.otaUpdateRunning(), "hybrid_update_phase": s.hybridUpdatePhase()}
+	// Preserve the full response for existing clients. Background observers can
+	// explicitly omit logs without reading either log file.
+	if r.URL.Query().Get("logs") != "0" {
+		value["ota_log"] = readLogSnapshot(s.options.OTAUpdateLogPath, 128*1024, 96*1024)
+		value["ota_health_log"] = readLogSnapshot(s.options.OTAHealthLogPath, 128*1024, 96*1024)
+	}
+	writeJSON(w, http.StatusOK, value)
 }
 
 func (s *Server) hybridUpdatePhase() string {

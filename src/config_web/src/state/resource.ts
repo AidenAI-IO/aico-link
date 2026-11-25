@@ -1,4 +1,5 @@
 import { atom } from 'jotai/vanilla';
+import { selectAtom } from 'jotai/utils';
 import type { createStore } from 'jotai/vanilla';
 
 export interface ResourceState<T> {
@@ -8,12 +9,18 @@ export interface ResourceState<T> {
   busy: boolean;
   updatedAt: number | null;
 }
+
+/** A first read is pending; a failed read must expose its error instead. */
+export const isInitialLoading = (state: { data: unknown; error: string | null }) =>
+  state.data === null && !state.error;
+
 interface ResourceOptions<T> {
   read: (signal: AbortSignal) => Promise<T>;
   interval?: number;
   timeout?: number;
   accept?: (next: T, previous: T | null) => boolean;
   observeDuringWrite?: boolean;
+  equalViewData?: (a: T | null, b: T | null) => boolean;
 }
 
 /** One request owner per resource, independent of the number of subscribers. */
@@ -25,6 +32,7 @@ export function createResource<T>(
     timeout = 8000,
     accept = () => true,
     observeDuringWrite = false,
+    equalViewData = Object.is,
   }: ResourceOptions<T>,
 ) {
   const state = atom<ResourceState<T>>({
@@ -34,6 +42,17 @@ export function createResource<T>(
     busy: false,
     updatedAt: null,
   });
+  // Views do not subscribe to observation timestamps. Ordering and freshness
+  // metadata remain available on the raw atom for request coordination.
+  const view = selectAtom(
+    state,
+    ({ data, error, stale, busy }) => ({ data, error, stale, busy }),
+    (a, b) =>
+      equalViewData(a.data, b.data) &&
+      a.error === b.error &&
+      a.stale === b.stale &&
+      a.busy === b.busy,
+  );
   let epoch = 0;
   let pending: Promise<void> | null = null;
   let controller: AbortController | null = null;
@@ -128,6 +147,7 @@ export function createResource<T>(
   }
   return {
     atom: state,
+    view,
     get epoch() {
       return epoch;
     },

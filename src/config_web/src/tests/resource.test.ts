@@ -131,6 +131,151 @@ describe('resource lifecycle', () => {
 
 describe('device state', () => {
   it.each([false, true])(
+    'retries canonical validation after a post-save read fails (container: %s)',
+    async (container) => {
+      let revision = 'one';
+      let reads = 0;
+      const canonical = deferred();
+      let signal: AbortSignal | null | undefined;
+      const model = createDeviceState(
+        async (path, options) => {
+          if (path === '/api/config/application')
+            return { state: 'applied', revision, persisted_revision: revision };
+          if (path === '/api/config') {
+            reads++;
+            if (reads === 2) throw new Error('temporary config read failure');
+            if (reads === 3) {
+              signal = options?.signal;
+              return canonical.promise;
+            }
+            return { config: {}, revision, config_valid: true };
+          }
+          return {};
+        },
+        { container },
+      );
+      await model.start();
+      await model.resources.application.refresh();
+      revision = 'two';
+      model.publishSave({ state: 'applied', config: {}, revision });
+      await model.resources.snapshot.refresh();
+      expect(model.store.get(model.resources.snapshot.atom).stale).toBe(true);
+      expect(model.store.get(model.current).config_valid).toBeUndefined();
+      await model.resources.application.refresh();
+      await flush();
+      expect(reads).toBe(3);
+      for (let i = 0; i < 3; i++) await model.resources.application.refresh();
+      expect(reads).toBe(3);
+      expect(signal?.aborted).toBe(false);
+      canonical.resolve({ config: {}, revision, config_valid: true, config_errors: [] });
+      await model.resources.snapshot.refresh();
+      expect(model.store.get(model.resources.snapshot.atom).stale).toBe(false);
+      expect(model.store.get(model.current).config_valid).toBe(true);
+      await model.resources.application.refresh();
+      expect(reads).toBe(3);
+      model.dispose();
+    },
+  );
+  it.each([false, true])(
+    'observes persisted edits independently of runtime (offline: %s)',
+    async (offline) => {
+      let revision = 'one';
+      let failNextConfig = false;
+      const send = vi.fn(async (path) => {
+        if (path === '/api/config/application') {
+          const status = { state: 'applied', revision: 'runtime', persisted_revision: revision };
+          if (offline) throw Object.assign(new Error('offline'), status);
+          return status;
+        }
+        if (failNextConfig) {
+          failNextConfig = false;
+          throw new Error('temporary config read failure');
+        }
+        return { config: { model: { model: revision } }, revision };
+      });
+      const model = createDeviceState(send);
+      await model.start();
+      await model.resources.application.refresh();
+      revision = 'two';
+      failNextConfig = true;
+      await model.resources.application.refresh();
+      await flush();
+      expect(model.store.get(model.config)?.model?.model).toBe('one');
+      await model.resources.application.refresh();
+      await flush();
+      expect(model.store.get(model.config)?.model?.model).toBe('two');
+      await model.resources.application.refresh();
+      expect(send.mock.calls.filter(([path]) => path === '/api/config')).toHaveLength(3);
+      expect(model.store.get(model.resources.application.atom).stale).toBe(offline);
+      model.dispose();
+    },
+  );
+  it('reconciles canonical validation after a repair', async () => {
+    let repaired = false;
+    const send = vi.fn(async () => ({
+      config: { agent: { input_mode: repaired ? 'stt' : 'invalid' } },
+      revision: repaired ? 'two' : 'one',
+      config_valid: repaired,
+      config_errors: repaired ? [] : [{ message: 'invalid mode' }],
+    }));
+    const model = createDeviceState(send);
+    await model.start();
+    expect(model.store.get(model.current).config_valid).toBe(false);
+    repaired = true;
+    const saved = {
+      config: { agent: { input_mode: 'stt' } },
+      revision: 'two',
+      state: 'applied',
+    };
+    model.publishSave(saved);
+    model.publishSave(saved);
+    await flush();
+    expect(model.store.get(model.current)).toMatchObject({ config_valid: true, config_errors: [] });
+    expect(send).toHaveBeenCalledTimes(2);
+    model.dispose();
+  });
+  it('keeps OTA background status light and cancels log reads outside firmware routes', async () => {
+    const send = vi.fn(async (_path: string) => ({ ota_update_running: false }));
+    const model = createDeviceState(send);
+    model.activate('/');
+    await flush();
+    expect(send.mock.calls.some(([path]) => path === '/api/ota/status')).toBe(false);
+    model.activate('/firmware');
+    await flush();
+    expect(send.mock.calls.filter(([path]) => path === '/api/ota/status')).toHaveLength(1);
+    model.activate('/voice');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(send.mock.calls.filter(([path]) => path === '/api/ota/status')).toHaveLength(1);
+    expect(
+      send.mock.calls.filter(([path]) => path === '/api/ota/status?logs=0').length,
+    ).toBeGreaterThan(1);
+    model.dispose();
+  });
+  it('ignores observation timestamps in views while enforcing their ordering', async () => {
+    const model = createDeviceState(async () => ({}));
+    const observation = (time: number, connected = true) => ({
+      wifi_status: {
+        connected,
+        state: connected ? 'COMPLETED' : 'DISCONNECTED',
+        observed_at_unix_us: time,
+      },
+    });
+    model.publishWiFi(observation(100));
+    const notified = vi.fn();
+    const stop = model.store.sub(model.current, notified);
+    model.publishWiFi(observation(200));
+    expect(notified).not.toHaveBeenCalled();
+    model.publishWiFi(observation(150, false));
+    expect(notified).not.toHaveBeenCalled();
+    await model.resources.wifi.refresh();
+    expect(model.store.get(model.current).wifi_status?.state).toBe('UNKNOWN');
+    model.publishWiFi(observation(300, false));
+    expect(model.store.get(model.current).wifi_status?.state).toBe('DISCONNECTED');
+    expect(notified).toHaveBeenCalledTimes(2);
+    stop();
+    model.dispose();
+  });
+  it.each([false, true])(
     'keeps board polling out of PC routes (container: %s)',
     async (container) => {
       const send = vi.fn(async (path) => {
@@ -186,6 +331,45 @@ describe('device state', () => {
     });
     model.dispose();
   });
+  it.each([true, false])(
+    'joins the initial config read without aborting it (application arrives first: %s)',
+    async (applicationFirst) => {
+      const read = deferred();
+      const send = vi.fn<import('../types').Transport>(() => read.promise);
+      const model = createDeviceState(send);
+      const request = model.start();
+      await flush();
+      const application = () =>
+        model.resources.application.publish({ state: 'applied', revision: 'one' });
+      if (applicationFirst) application();
+      read.resolve({ config: { agent: { input_mode: 'realtime' } }, revision: 'one' });
+      await request;
+      if (!applicationFirst) application();
+      await flush();
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0][1]?.signal?.aborted).toBe(false);
+      expect(model.store.get(model.current).config?.agent?.input_mode).toBe('realtime');
+      model.dispose();
+    },
+  );
+  it('reconciles an external edit racing the first application observation', async () => {
+    const read = deferred();
+    let reads = 0;
+    const model = createDeviceState(async () =>
+      ++reads === 1
+        ? read.promise
+        : { config: { agent: { input_mode: 'realtime' } }, revision: 'two' },
+    );
+    const request = model.start();
+    await flush();
+    model.resources.application.publish({ state: 'applied', revision: 'two' });
+    read.resolve({ config: { agent: { input_mode: 'stt' } }, revision: 'one' });
+    await request;
+    await flush();
+    expect(reads).toBe(2);
+    expect(model.store.get(model.current).config?.agent?.input_mode).toBe('realtime');
+    model.dispose();
+  });
   it('starts a fresh aggregate read when the external revision changes during a read', async () => {
     const old = deferred();
     let snapshotReads = 0;
@@ -225,7 +409,17 @@ describe('device state', () => {
   });
   it('preserves a newer saved config when an older aggregate arrives', async () => {
     const read = deferred();
-    const model = createDeviceState(() => read.promise);
+    let reads = 0;
+    const model = createDeviceState(async () =>
+      ++reads === 1
+        ? read.promise
+        : {
+            config: { agent: { input_mode: 'realtime' } },
+            revision: 'new',
+            config_valid: true,
+            config_errors: [],
+          },
+    );
     const request = model.resources.snapshot.refresh();
     await flush();
     model.publishSave({
@@ -242,7 +436,7 @@ describe('device state', () => {
   });
   it('tracks asynchronous application failures and external config revisions', async () => {
     const send = vi.fn(async (url) =>
-      url === '/api/device/snapshot' ? { config: { agent: { input_mode: 'realtime' } } } : {},
+      url === '/api/config' ? { config: { agent: { input_mode: 'realtime' } } } : {},
     );
     const model = createDeviceState(send);
     await model.start();

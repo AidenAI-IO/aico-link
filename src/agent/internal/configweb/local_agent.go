@@ -182,7 +182,7 @@ func validateLocalFields(section string, raw json.RawMessage, allowed map[string
 	return nil
 }
 
-// Projection runs after the canonical CLI has removed credential values.
+// Projection runs after the canonical Config Web DTO has removed credential values.
 func (s *Server) projectConfig(config map[string]any) map[string]any {
 	if !s.options.LocalAgent {
 		return config

@@ -3,6 +3,7 @@ import type { DeviceState } from './state/device';
 
 export type TextSpec = string | { key: string; fallback?: string };
 export type Revision = string | number;
+export type VoiceMode = 'stt' | 'realtime';
 export interface Configuration {
   agent?: { locale?: string; input_mode?: string; mcp_enabled?: boolean; [key: string]: unknown };
   model?: { provider?: string; model?: string; reasoning_effort?: string; [key: string]: unknown };
@@ -67,6 +68,7 @@ export interface DeviceData {
   agent_status?: AgentStatus;
 }
 export interface Snapshot extends Partial<WiFiData>, DeviceData {
+  revision?: Revision;
   snapshot_error?: { message: string; code?: string };
   config?: Configuration | null;
   storage?: StorageData;
@@ -84,6 +86,7 @@ export interface ApplicationData {
   reboot_required?: boolean;
   revision?: Revision;
   runtime_id?: string;
+  persisted_revision?: Revision;
   config?: Configuration;
   locale?: string;
 }
@@ -100,6 +103,7 @@ export interface OTAData {
   ota_health_log?: { log?: string };
 }
 export interface MCPServer {
+  transport?: string;
   name: string;
   state: string;
   enabled: boolean;

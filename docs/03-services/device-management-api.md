@@ -34,8 +34,9 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Storage | `GET /api/storage/status` | Read SD/eMMC state and formatting tasks |
 | Storage | `POST /api/storage/format` | Format the SD card asynchronously |
 | Storage | `POST /api/storage/eject` | Sync and safely eject the SD card |
-| Device | `GET /api/device/snapshot` | Read the aggregated initial-page model: configuration, Wi-Fi, device, firmware/component versions, and storage summaries |
+| Device | `GET /api/device/snapshot` | Read the aggregated device model: configuration, Wi-Fi, device, firmware/component versions, and storage summaries |
 | Device | `GET /api/device/status` | Read the device, firmware/component versions, Agent process, USB/HID, and capability summary |
+| Device | `GET /api/device/firmware` | Read firmware/component and business package versions without probing Agent readiness |
 | Device | `POST /api/device/reboot` | Reboot the device |
 | Agent | `POST /api/agent/restart` | Restart the Agent process; Config Web and the USB link stay up |
 | Security | `GET /api/security/lan-access` | Read the LAN access switch and whether a device password is set |
@@ -54,7 +55,7 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Network | `DELETE /api/network/wifi/connection?ssid=...` | Forget a network without relying on a DELETE request body |
 | System | `GET/PUT /api/system/environment` | Read/save environment and report whether Agent restart is needed |
 | System | `POST /api/system/environment/apply` | Explicitly apply saved environment and restart Agent |
-| OTA | `GET /api/ota/status` | Read the current state, progress, and log summary |
+| OTA | `GET /api/ota/status` | Read state, progress and log summary; `?logs=0` omits logs for background polling |
 | OTA | `POST /api/ota/updates` | Create an OTA task and return its `task_id` |
 | Logs | `GET /api/logs/agent` | Read the Agent log summary |
 | Logs | `GET /api/logs/llm` | List available LLM HTTP log files |
@@ -149,7 +150,13 @@ A successful `PATCH /api/config` persists the file and queues runtime applicatio
 ```
 
 Poll `GET /api/config/application` for `state`, `pending`, `applied`,
-`reboot_required`, `revision`, `applied_revision`, and optional `error`.
+`reboot_required`, `revision`, `applied_revision`, `persisted_revision`, and optional `error`.
+`persisted_revision` identifies the file currently on disk independently of the
+runtime's last requested `revision`. It is also included in HTTP 503 responses
+when Agent status is unavailable, so clients can still observe external edits.
+Clients must retain the unavailable runtime state on such errors. A changed file
+revision invalidates cached config and validation; matching runtime status alone
+does not establish that the current file has been applied.
 `persisted` confirms the atomic file write; `applied` confirms all settings in
 that revision are active. Revisions are opaque 64-bit values; browser clients
 should use the returned state rather than perform numeric revision arithmetic.
@@ -564,8 +571,11 @@ Retired routes such as `/api/wifi/*`, `/api/system/env`,
 `/api/ota/update`, `/api/reboot`, `/api/agent/*`, and `/api/llm-logs/*` have
 been removed and return `404 Not Found`; no compatibility adapters are
 provided. Clients must use the canonical resources in the table above.
-`GET /api/config` has only configuration semantics; use
-`/api/device/snapshot` for the aggregated initial page load.
+`GET /api/config` has only configuration semantics and uses the canonical editor
+loader and credential-free DTO in process. It includes the persisted revision,
+validation state and config path. The frontend reads configuration, firmware,
+Wi-Fi and storage independently so a slow status probe cannot delay unrelated
+summaries. `/api/device/snapshot` remains available to aggregate these resources.
 
 ## Internal Agent Reload
 

@@ -144,11 +144,11 @@ export function BackupPanel({ model }: { model: DeviceState }) {
   }
   return (
     <>
-      <Group caption={msg('storage.full_backup_caption', '完整数据备份')}>
+      <Group caption={msg('storage.backup_caption', '备份与还原')} joined>
         <p className="ds-group__intro">
           <Text
             value={msg(
-              'backup.create_intro',
+              'storage.full_backup_intro',
               '自动备份全部可用数据，包括 SD 用户文件、Python 环境和诊断日志。',
             )}
           />
@@ -161,6 +161,9 @@ export function BackupPanel({ model }: { model: DeviceState }) {
         )}
         <div className="ds-button-pair">
           <Button
+            variant="accent-outline"
+            block
+            className="ds-btn ds-btn--accent-outline ds-btn--block ds-button-pair__item"
             action="create-backup"
             disabled={backup.running || !!blocked || isEmbedded()}
             onClick={async () => {
@@ -179,6 +182,9 @@ export function BackupPanel({ model }: { model: DeviceState }) {
             <Text value={msg('storage.create_backup', '创建备份')} />
           </Button>
           <Button
+            variant="accent"
+            block
+            className="ds-btn ds-btn--accent ds-btn--block ds-button-pair__item"
             action="restore-backup"
             disabled={backup.running || !!blocked}
             onClick={() => file.current?.click()}
@@ -228,12 +234,29 @@ export function BackupPanel({ model }: { model: DeviceState }) {
           />
         )}
       </Group>
-      <Group caption={msg('storage.config_backup_caption', '仅 Agent 配置（.toml）')}>
+      <Group caption={msg('storage.config_backup_caption', '仅 Agent 配置（.toml）')} joined>
+        <Text
+          value={msg(
+            'storage.config_backup_intro',
+            '导出当前 Agent 配置，或从经过校验的 TOML 备份恢复配置。',
+          )}
+          className="ds-group__intro"
+        />
         <div className="ds-button-pair">
-          <Button disabled={busy} action="export-backup" onClick={() => void exportConfig()}>
+          <Button
+            variant="accent-outline"
+            block
+            className="ds-btn ds-btn--accent-outline ds-btn--block ds-button-pair__item"
+            disabled={busy}
+            action="export-backup"
+            onClick={() => void exportConfig()}
+          >
             <Text value={msg('storage.export', '导出')} />
           </Button>
           <Button
+            variant="accent"
+            block
+            className="ds-btn ds-btn--accent ds-btn--block ds-button-pair__item"
             disabled={busy || backup.running}
             action="import-backup"
             onClick={() => toml.current?.click()}

@@ -7,6 +7,7 @@ import { useAtomValue } from 'jotai';
 import { msg, resolve, t } from '../lib/i18n';
 import { Modal, toast } from '../components/overlays';
 import { Button, Text, Group, ResourceError, Row, Switch } from '../components/ui';
+import { isInitialLoading } from '../state/resource';
 
 export function SecurityPage({
   model,
@@ -15,7 +16,9 @@ export function SecurityPage({
   model: DeviceState;
   password?: boolean;
 }) {
-  const { data, stale, busy } = useAtomValue(model.resources.lan.atom);
+  const resource = useAtomValue(model.resources.lan.view);
+  const { data, stale, busy } = resource;
+  const loading = isInitialLoading(resource);
   const [sheet, setSheet] = useState<'set' | 'clear' | null>(null);
   const write = async (body: Record<string, unknown>, clear = false) => {
     try {
@@ -53,6 +56,7 @@ export function SecurityPage({
         >
           <Row
             label={msg('lan.title', '局域网访问')}
+            loading={loading}
             description={msg(
               'lan.help',
               '开启后，同一局域网内的设备也能访问设置页和 Agent。MCP 使用单独的令牌，不受这个开关影响。',
@@ -81,9 +85,11 @@ export function SecurityPage({
       >
         <Row
           label={
-            data?.password_set
-              ? msg('lan.change_password', '修改密码')
-              : msg('lan.set_password', '设置密码')
+            !data
+              ? msg('lan.password', '设备密码')
+              : data.password_set
+                ? msg('lan.change_password', '修改密码')
+                : msg('lan.set_password', '设置密码')
           }
           value={
             stale
@@ -92,6 +98,7 @@ export function SecurityPage({
                 ? msg('lan.password_set', '已设置')
                 : msg('lan.password_unset', '未设置')
           }
+          loading={loading}
           action="open-lan-password"
           chevron
           onPress={unavailable ? undefined : askPassword}

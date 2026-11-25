@@ -46,11 +46,13 @@ export function Modal({
   children,
   onClose,
   busy = false,
+  hideTitle = false,
 }: {
   title: TextSpec;
   children: ReactNode;
   onClose: () => void;
   busy?: boolean;
+  hideTitle?: boolean;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const titleID = useId();
@@ -98,7 +100,7 @@ export function Modal({
         <div className="ds-sheet__grabber">
           <div className="ds-sheet__handle" />
         </div>
-        <h2 id={titleID} className="ds-sheet__title">
+        <h2 id={titleID} className={hideTitle ? 'ds-sr-only' : 'ds-sheet__title'}>
           <Text value={title} />
         </h2>
         <div className="ds-sheet__body">{children}</div>
