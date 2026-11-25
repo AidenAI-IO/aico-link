@@ -17,7 +17,23 @@ import (
 type RecallMemoryTool struct {
 	store     *LongTermMemoryStore
 	temporary *LongTermMemoryStore
+	// rerankModel optionally reorders a wide topical candidate set with the
+	// main chat model. Without one, recall keeps the deterministic score order.
+	rerankModel llms.Model
 }
+
+const (
+	// memoryRecallRerankTimeout bounds the optional main-model rerank so a slow
+	// provider cannot stall the tool call.
+	memoryRecallRerankTimeout = 5 * time.Second
+	// memoryRecallCandidateMultiplier expands the search window before rerank.
+	memoryRecallCandidateMultiplier = 4
+	// memoryRecallMinCandidates is the floor for that expanded window.
+	memoryRecallMinCandidates = 20
+	// memoryRecallMaxSearchTerms caps tags+entities written or requested so a
+	// model cannot flood the index or query with unbounded synonyms.
+	memoryRecallMaxSearchTerms = 24
+)
 
 type SaveMemoryTool struct {
 	store *LongTermMemoryStore
@@ -94,6 +110,11 @@ func NewRecallMemoryToolWithTemporary(store, temporary *LongTermMemoryStore) *Re
 	return &RecallMemoryTool{store: store, temporary: temporary}
 }
 
+// SetRerankModel enables main-model reranking of wide topical recall candidates.
+func (t *RecallMemoryTool) SetRerankModel(model llms.Model) {
+	t.rerankModel = model
+}
+
 func (t *RecallMemoryTool) Name() string { return "recall_memory" }
 
 func (t *RecallMemoryTool) Description() string {
@@ -101,6 +122,7 @@ func (t *RecallMemoryTool) Description() string {
 		"Recall temporary and long-term memories by tags, entities, or types. Leave arrays empty to match all.",
 		"Temporary memories are short-lived notification-derived conclusions and are returned with memory_scope=temporary; long-term memories are returned with memory_scope=long_term.",
 		"Use for remembered preferences, rules, procedures, facts, profile info, or screen content the user saved earlier with the device button.",
+		"When searching by topic, cast a wide net: include synonyms, aliases, related phrasings, and common Chinese/English variants of the topic in tags and entities (for example 猫/橘猫/宠物, reimbursement/报销/OA). Prefer several useful search terms over a single narrow word.",
 		"Screen content the user saved belongs here even when they phrase it as something recent (\"the tracking number I just saved\"); use types [\"screen_snapshot\"] for those. Only use recall_session_chunks for what was actually said in conversation.",
 		"When no screen_snapshot matches, say that nothing matching was saved; conversation history and other sources are not records of saved screens.",
 		"A screen_snapshot is a past observation: a status read from it holds only at its capture time (created_at, or a time recorded in its content), so report that time and do not present the status as current.",
@@ -112,8 +134,8 @@ func (t *RecallMemoryTool) Description() string {
 
 func (t *RecallMemoryTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
-		"tags":     stringArrayArgSchema("Topic or domain keywords such as verification, payment, or expense."),
-		"entities": stringArrayArgSchema("Specific named things such as apps, accounts, services, or people."),
+		"tags":     stringArrayArgSchema("Wide topic keywords for search: include synonyms, aliases, and related Chinese/English variants (e.g. 猫, 橘猫, 宠物, cat). Avoid empty filler."),
+		"entities": stringArrayArgSchema("Specific named things such as apps, accounts, services, or people; include alternate names when useful."),
 		"types":    stringArrayArgSchema("Memory categories: preference (likes/dislikes), rule (must/must-not), procedure (how-to), fact (stable info), profile (user background), screen_snapshot (screen content the user saved with the device button). Leave empty and pass no tags to get the most recently saved screen_snapshot entries first."),
 		"limit":    minIntegerArgSchema("Maximum number of memories to return.", 1),
 	})
@@ -127,9 +149,22 @@ func (t *RecallMemoryTool) Call(ctx context.Context, input string) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("decode recall_memory input: %w", err)
 	}
+	query.Tags = clampMemorySearchTerms(query.Tags, memoryRecallMaxSearchTerms)
+	query.Entities = clampMemorySearchTerms(query.Entities, memoryRecallMaxSearchTerms)
+
+	userLimit := query.Limit
+	if userLimit <= 0 {
+		userLimit = 5
+	}
+	topical := memoryQueryHasTopicalTerms(query)
+	searchQuery := query
+	if topical {
+		searchQuery.Limit = recallCandidateLimit(userLimit)
+	}
+
 	results := make([]MemoryResult, 0)
 	if t.temporary != nil {
-		temporary, err := t.temporary.Search(ctx, query)
+		temporary, err := t.temporary.Search(ctx, searchQuery)
 		if err != nil {
 			return "", err
 		}
@@ -138,7 +173,7 @@ func (t *RecallMemoryTool) Call(ctx context.Context, input string) (string, erro
 		}
 		results = append(results, temporary...)
 	}
-	longTerm, err := t.store.Search(ctx, query)
+	longTerm, err := t.store.Search(ctx, searchQuery)
 	if err != nil {
 		return "", err
 	}
@@ -146,7 +181,6 @@ func (t *RecallMemoryTool) Call(ctx context.Context, input string) (string, erro
 		longTerm[i].MemoryScope = "long_term"
 	}
 	results = append(results, longTerm...)
-	topical := memoryQueryHasTopicalTerms(query)
 	sort.SliceStable(results, func(i, j int) bool {
 		si := recallMemoryResultScore(query, results[i])
 		sj := recallMemoryResultScore(query, results[j])
@@ -164,12 +198,121 @@ func (t *RecallMemoryTool) Call(ctx context.Context, input string) (string, erro
 		return results[i].ID < results[j].ID
 	})
 	if !topical {
-		results = capTemporaryRecallResults(results, query.Limit)
-	} else if query.Limit > 0 && len(results) > query.Limit {
-		results = results[:query.Limit]
+		results = capTemporaryRecallResults(results, userLimit)
+	} else if len(results) > userLimit {
+		if t.rerankModel != nil {
+			if reranked, err := t.rerankRecallResults(ctx, query, results, userLimit); err == nil {
+				results = reranked
+			} else {
+				logging.Infof("agent", "memory", "recall_memory rerank fallback error=%s candidates=%d limit=%d", memoryRequestJudgmentErrorKind(err), len(results), userLimit)
+				results = results[:userLimit]
+			}
+		} else {
+			results = results[:userLimit]
+		}
 	}
 	recordRecalledMemoryIDs(ctx, results, func(r MemoryResult) string { return r.ID })
 	return encodeToolJSON(map[string]any{"results": results})
+}
+
+func recallCandidateLimit(userLimit int) int {
+	if userLimit <= 0 {
+		userLimit = 5
+	}
+	limit := userLimit * memoryRecallCandidateMultiplier
+	if limit < memoryRecallMinCandidates {
+		limit = memoryRecallMinCandidates
+	}
+	return limit
+}
+
+func clampMemorySearchTerms(values []string, max int) []string {
+	if max <= 0 || len(values) <= max {
+		return values
+	}
+	return values[:max]
+}
+
+func (t *RecallMemoryTool) rerankRecallResults(ctx context.Context, query MemoryQuery, candidates []MemoryResult, limit int) ([]MemoryResult, error) {
+	if t.rerankModel == nil || limit <= 0 || len(candidates) <= limit {
+		if len(candidates) > limit && limit > 0 {
+			return candidates[:limit], nil
+		}
+		return candidates, nil
+	}
+	var b strings.Builder
+	b.WriteString("Select the memories most relevant to the search below.\n")
+	b.WriteString("Return JSON only: {\"ids\":[\"id1\",\"id2\",...]} with at most ")
+	b.WriteString(fmt.Sprintf("%d", limit))
+	b.WriteString(" ids, best first. Use only ids from the candidates. If none fit, return {\"ids\":[]}.\n\n")
+	b.WriteString("Search tags: ")
+	b.WriteString(strings.Join(query.Tags, ", "))
+	b.WriteString("\nSearch entities: ")
+	b.WriteString(strings.Join(query.Entities, ", "))
+	if len(query.Types) > 0 {
+		b.WriteString("\nTypes: ")
+		b.WriteString(strings.Join(query.Types, ", "))
+	}
+	b.WriteString("\n\nCandidates:\n")
+	byID := make(map[string]MemoryResult, len(candidates))
+	for i, candidate := range candidates {
+		byID[candidate.ID] = candidate
+		summary := strings.TrimSpace(candidate.Summary)
+		if summary == "" {
+			summary = firstSentence(candidate.Content)
+		}
+		if len([]rune(summary)) > 160 {
+			summary = string([]rune(summary)[:160])
+		}
+		b.WriteString(fmt.Sprintf("%d. id=%s type=%s title=%s summary=%s\n", i+1, candidate.ID, candidate.Type, candidate.Title, summary))
+	}
+	callCtx, cancel := context.WithTimeout(ctx, memoryRecallRerankTimeout)
+	defer cancel()
+	raw, err := llms.GenerateFromSinglePrompt(callCtx, t.rerankModel, b.String(), llms.WithJSONMode(), llms.WithMaxTokens(256))
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.Unmarshal([]byte(stripJSONFences(raw)), &payload); err != nil {
+		return nil, fmt.Errorf("%w: %v", errMemoryRequestJudgmentParse, err)
+	}
+	out := make([]MemoryResult, 0, limit)
+	seen := make(map[string]struct{}, limit)
+	for _, id := range payload.IDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		candidate, ok := byID[id]
+		if !ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, candidate)
+		if len(out) >= limit {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%w: empty rerank ids", errMemoryRequestJudgmentParse)
+	}
+	// Fill remaining slots from the deterministic ranking so limit is honored
+	// when the model returns a partial list.
+	for _, candidate := range candidates {
+		if len(out) >= limit {
+			break
+		}
+		if _, ok := seen[candidate.ID]; ok {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	return out, nil
 }
 
 // recallMemoryResultScore ranks merged results. Without topical terms every
@@ -304,6 +447,7 @@ func (t *SaveMemoryTool) Description() string {
 		personalMemoryAdmissionGuidance,
 		"Do not tell the user something was remembered or saved until this tool returns status=saved or status=ignored as a duplicate.",
 		"Use profile for durable user facts (name, nickname, location, timezone, home city, role, background); preference/rule for future defaults and must/must-not behavior such as a default city; fact for stable info that should be recalled but not surfaced in the synthesized user profile.",
+		"Fill tags and entities for future search in the same call: include synonyms, aliases, related phrasings, and common Chinese/English variants so later recall can find this memory without an exact wording match (for example 猫/橘猫/宠物/cat for a pet preference). Prefer several useful terms over a single narrow tag; skip empty filler and pure time words.",
 		"A secret is kept only if the user explicitly asked to keep it: set sensitive and put in user_request only their words asking to remember it, never the sentence stating the secret; otherwise it is refused and you must say it was not remembered.",
 		"Set durable=false, or better do not call at all, for a one-off plan, appointment, reminder, or passing state; such a call is refused. durable=true is for a lasting preference, rule, procedure, or personal fact, including a preference the user limits to a period (\"keep replies short for the next three weeks\").",
 		"Returns status=saved with id, ignored for a duplicate, or refused.",
@@ -316,8 +460,8 @@ func (t *SaveMemoryTool) ArgsSchema() map[string]any {
 		"type":              stringEnumArgSchema("Memory category.", "preference", "rule", "procedure", "fact", "profile"),
 		"title":             stringArgSchema("Short title for the memory."),
 		"content":           stringArgSchema("The stable information to remember."),
-		"tags":              stringArrayArgSchema("Topic or domain keywords for future search, e.g. verification, payment, expense. Not time words or vague terms."),
-		"entities":          stringArrayArgSchema("Specific named things mentioned by the memory, such as apps, accounts, services, or people."),
+		"tags":              stringArrayArgSchema("Wide search keywords for future recall: synonyms, aliases, and Chinese/English variants (e.g. 报销, 审批, reimbursement, OA). Skip empty filler and pure time words."),
+		"entities":          stringArrayArgSchema("Specific named things mentioned by the memory, such as apps, accounts, services, or people; include alternate names when useful."),
 		"evidence":          stringArrayArgSchema("Original user quotes or observations that led to this memory, to help verify relevance later."),
 		"priority":          rangedIntegerArgSchema("Importance from 1 to 100: 80+ for user-stated rules/preferences, 60+ for inferred patterns, 40+ for observations.", 1, 100),
 		"replaces_id":       stringArgSchema("ID returned by recall_memory when correcting an existing memory; requires expected_revision."),
@@ -390,6 +534,8 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 	if req.Priority <= 0 {
 		req.Priority = 80
 	}
+	req.Tags = clampMemorySearchTerms(req.Tags, memoryRecallMaxSearchTerms)
+	req.Entities = clampMemorySearchTerms(req.Entities, memoryRecallMaxSearchTerms)
 	item := MemoryItem{
 		Type:             req.Type,
 		Priority:         req.Priority,

@@ -10,6 +10,12 @@ Run Aico directly on your computer with a real phone, without an Aico Link
 board or a Docker sandbox. One launcher starts Config Web, the phone bridge,
 and Agent Web, and stops its own processes together on `Ctrl-C`.
 
+> **Simulator, not a product.** Running Aico on a PC simulates Aico Link in
+> software so you can try Aico before the hardware ships. It is not an officially
+> released product, and it does not reproduce the hardware experience: it relies
+> on ADB or other software bridges instead of HDMI capture and USB HID, and has
+> no board microphone or speaker.
+
 ## Prepare Once
 
 Install Git, Go 1.26 or newer, Python 3.10 or newer, and
@@ -122,6 +128,12 @@ committed Unicode through the optional
 The bridge temporarily selects that IME for Base64 input and restores the
 original keyboard; devices without it retain the ASCII fallback. Mirroring
 supports committed Unicode through the Mac.
+
+In USB/WDA mode, the Agent sends the original Unicode through native
+`insert_text` and verifies the result from screenshots. Direct bridge
+`/api/tools/enter_text` calls require `text` and `focus`; they verify the same
+accessible field's value through WDA. Both paths avoid replaying uncertain
+delivery. Inspect the field before retrying a failed text entry.
 
 For an existing bridge, pass its loopback origin. The launcher verifies that
 its type matches the mode and claims the same task route; it leaves that bridge

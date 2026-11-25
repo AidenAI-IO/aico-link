@@ -145,6 +145,44 @@ def test_adb_baseline_stops_retained_companion_app(monkeypatch, bridge_enabled, 
         assert commands[0][1]["check"] is True
 
 
+@pytest.mark.parametrize("failing_device", [None, 1])
+def test_adb_case_starts_one_bridge_per_leased_device(monkeypatch, tmp_path, failing_device):
+    case = SuiteCase(id="wide", suite="suites/wide.json", environment="adb",
+                     target_platform="android", max_concurrency=2)
+    started, stopped, commands = [], [], []
+
+    def fake_environment_url(case, *, run_id, environment, **kwargs):
+        if len(started) == failing_device:
+            raise RuntimeError("emulator offline")
+        started.append((run_id, environment["ANDROID_SERIAL"]))
+        return f"http://bridge-{len(started)}.test", {"pid": len(started)}
+
+    monkeypatch.setattr(run_case_module, "BENCHMARK_ROOT", tmp_path)
+    monkeypatch.setattr(run_case_module, "_environment_url", fake_environment_url)
+    monkeypatch.setattr(run_case_module, "_stop_service", stopped.append)
+    monkeypatch.setattr(run_case_module, "_stop_daemon_projects_by_run_id", lambda run_id: None)
+    monkeypatch.setattr(run_case_module, "_effective_exit_code", lambda code, path: code)
+    monkeypatch.setattr(run_case_module.subprocess, "run", lambda command, **kwargs: (
+        commands.append(command) or run_case_module.subprocess.CompletedProcess(command, 0)))
+
+    run = lambda: run_case_module.run_case(  # noqa: E731
+        case, run_id="ci-wide",
+        # A third device is more than the case may use.
+        environment={"ANDROID_SERIAL": "emulator-5554, emulator-5556,emulator-5558"},
+    )
+    if failing_device is not None:
+        with pytest.raises(RuntimeError, match="emulator offline"):
+            run()
+        assert stopped == [{"pid": 1}]  # The device that did start is released.
+        return
+    assert run() == 0
+    assert started == [("ci-wide", "emulator-5554"), ("ci-wide-d1", "emulator-5556")]
+    command, = commands
+    assert command[command.index("--environment-url") + 1] == "http://bridge-1.test"
+    assert command[command.index("--additional-environment-url") + 1] == "http://bridge-2.test"
+    assert stopped == [{"pid": 1}, {"pid": 2}]
+
+
 def test_external_case_reads_its_named_environment_variable() -> None:
     case = next(
         item

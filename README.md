@@ -95,6 +95,8 @@ At runtime, the Agent is intentionally decoupled from C++ service internals: Fra
 
 ## Quick Start
 
+To try Aico before Aico Link hardware ships, you can run it on your computer.
+This PC version simulates Aico Link in software and is not an official product.
 To run the Agent directly on your computer with a real Android phone or an
 iPhone through USB/WDA or macOS iPhone Mirroring, start with
 [Local Agent with a Real Phone](docs/01-getting-started/local-agent-real-phone.md).
@@ -103,7 +105,7 @@ From the repository root, use `python3 scripts/local_agent.py android`,
 `python3 scripts/local_agent.py ios` to start the selected native workflow.
 It covers native startup, Config Web, phone connection, verification, and switching targets.
 
-For the fastest hardware-free experience, start Config Web and Agent Web with
+To try it in a Docker sandbox instead, start Config Web and Agent Web with
 the [Try Aico on PC](docs/01-getting-started/try-aico-on-pc.md) guide:
 
 ```bash

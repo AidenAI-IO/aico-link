@@ -2446,7 +2446,9 @@ func TestRuntimeRunCompactsWithoutLogger(t *testing.T) {
 			spec:  model.ModelSpec{ContextWindow: 8_192},
 		},
 		NewMemoryManager(""),
-		&ToolSet{tools: map[string]langtools.Tool{}},
+		// nil tools avoids RegisterMemoryTools; this case only covers compaction
+		// with a nil logger, not memory-tool schema size.
+		nil,
 		NewSkillIndex(),
 	)
 	runtime.contextManager = manager

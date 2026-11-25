@@ -48,6 +48,9 @@ def value_matches(actual: Any, expected: Any) -> bool:
             if isinstance(actual, list):
                 return any(value_matches(item, needle) for item in actual)
             return False
+        if keys == {"$digits"}:
+            # Phone numbers: "+1 415-555-0132" and "+14155550132" are the same number.
+            return isinstance(actual, str) and re.sub(r"\D", "", actual) == expected["$digits"]
         if keys and keys <= {"$gte", "$lte"}:
             # Inclusive numeric bounds, e.g. a normalized tap coordinate band.
             if isinstance(actual, bool) or not isinstance(actual, (int, float)):

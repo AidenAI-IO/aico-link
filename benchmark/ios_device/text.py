@@ -14,3 +14,22 @@ def validate_ios_text(text):
     # deadlines. Mirroring retains the shared 4096-unit limit.
     if len(text.encode("utf-16-le")) // 2 > MAX_TEXT_UTF16_UNITS:
         raise ValueError(f"direct iOS input accepts at most {MAX_TEXT_UTF16_UNITS} UTF-16 units per request; no text was sent")
+
+
+def text_insertion_matches(before, after, text):
+    """Verify only an unambiguous changed span, without caret/selection metadata."""
+    if before == after:
+        return False
+    prefix = 0
+    while prefix < min(len(before), len(after)) and before[prefix] == after[prefix]:
+        prefix += 1
+
+    suffix = 0
+    while (suffix < len(before) - prefix and suffix < len(after) - prefix
+           and before[len(before) - suffix - 1] == after[len(after) - suffix - 1]):
+        suffix += 1
+
+    # A requested string already present in the unchanged prefix or suffix
+    # cannot prove delivery. If repeated text makes the range ambiguous, leave
+    # the result unverified rather than expanding the range to fit the request.
+    return after[prefix:len(after) - suffix] == text

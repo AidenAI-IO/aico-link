@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ci.publish_langfuse import (
     find_manifests,
+    is_published,
     publish_command,
     publish_runs,
     summarize,
@@ -81,6 +82,8 @@ def test_a_failing_run_does_not_affect_its_siblings(tmp_path: Path):
     )
 
     assert [outcome.ok for outcome in outcomes] == [True, False]
+    # Only the success is marked, so the publish step retries the failure.
+    assert is_published(good) and not is_published(bad)
     assert outcomes[1].returncode == 2 and outcomes[1].detail == "exit status 2"
     assert any("Langfuse publication failed for ci-1-1-bad" in line for line in lines)
     assert summarize(outcomes) == "Langfuse publication: 2 attempted, 1 succeeded, 1 failed"
