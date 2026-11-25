@@ -168,7 +168,7 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
     calls = effective_tool_calls(trace)
     tools_used = [tc.tool for tc in calls]
     forbidden = [tc for tc in calls if tc.tool in spec.forbidden_tools
-                 and not (spec.allow_device_cli and is_device_cli_shell(tc))]
+                 and not (spec.allow_device_cli and tc.tool == "shell")]
     # Preserve legacy presence checks; a failed nested request isn't evidence
     # that a device command was performed. Forbidden checks still see attempts.
     required_tools_used = {tc.tool for tc in trace.tool_calls}

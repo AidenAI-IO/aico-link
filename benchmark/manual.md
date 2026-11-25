@@ -424,7 +424,7 @@ Common fields:
 | `rubric` | The judge model's scoring items. An optional `scope: "precondition"` evaluates a starting-state check against the pre-screenshot separately from Agent outcomes. The default scope is `outcome`; at least one outcome check is required. |
 | `hard_assertions` | Deterministic checks, e.g. tool-call counts, timeout, required/forbidden tools |
 | `hard_assertions.required_tool_calls` | Requires a tool call whose input contains a specified nested subset |
-| `hard_assertions.allow_device_cli` | Opt in to a `forbidden_tools: ["shell"]` exception for foreground literal `device-cli` commands (optionally joined by `&&`) with recorded controller evidence. Arbitrary shell commands and forbidden device tools remain forbidden. |
+| `hard_assertions.allow_device_cli` | Allow the `shell` transport in Device CLI-compatible cases even if `shell` is in the legacy `forbidden_tools` list. Nested device actions are still checked; shell text alone is never evidence of device execution. |
 | `repeats` | Number of times a single task is repeated |
 | `input_screenshot` | Static image input, suitable for perception tasks |
 | `expected_answer` | Direct answer for multiple-choice/fixed-answer tasks |

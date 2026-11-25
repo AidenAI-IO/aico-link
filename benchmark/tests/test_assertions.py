@@ -910,15 +910,15 @@ def test_expected_option_answer_requires_label_separator():
         assert result.predicted_answer == "(b)"
 
 
-def test_cli_wait_requires_controller_evidence_to_satisfy_shell_policy():
-    wait = ToolCall(step=1, tool="device_cli_wait", input={"milliseconds": 2000})
-    shell = ToolCall(step=1, tool="shell", input={"command": "device-cli wait 2000"})
-    trace = Trace(tool_calls=[shell], final_response="Done", total_tool_calls=1, total_duration_ms=2000)
-    spec = HardAssertions(forbidden_tools=["shell"], allow_device_cli=True)
+def test_cli_compatible_case_allows_shell_without_crediting_unexecuted_actions():
+    shell = ToolCall(step=1, tool="shell", input={"command": "device-cli scroll-to top"}, is_error=True)
+    trace = Trace(tool_calls=[shell], final_response="Done", total_tool_calls=1, total_duration_ms=0)
+    spec = HardAssertions(forbidden_tools=["shell", "touch_gesture"], required_tools=["quick_action"])
     assert not evaluate_hard_assertions(trace, spec, timed_out=False).results.forbidden_tools
-    shell.device_cli_calls = [wait]
-    assert evaluate_hard_assertions(trace, spec, timed_out=False).all_passed
-    shell.input["command"] += " && echo extra"
+    spec.allow_device_cli = True
+    results = evaluate_hard_assertions(trace, spec, timed_out=False).results
+    assert results.forbidden_tools and not results.required_tools
+    shell.device_cli_calls = [ToolCall(step=1, tool="touch_gesture", input={})]
     assert not evaluate_hard_assertions(trace, spec, timed_out=False).results.forbidden_tools
 
 
