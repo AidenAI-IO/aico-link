@@ -51,6 +51,7 @@ export function BackupPanel({ model }: { model: DeviceState }) {
     [busy, setBusy] = useState(false);
   const file = useRef<HTMLInputElement>(null),
     toml = useRef<HTMLInputElement>(null);
+  const restoreSequence = useRef(0);
   useEffect(() => {
     let mounted = true;
     engine
@@ -69,20 +70,21 @@ export function BackupPanel({ model }: { model: DeviceState }) {
     };
   }, [engine]);
   async function restore(chosen: File) {
+    const sequence = ++restoreSequence.current;
     try {
-      const created = await engine.chooseRestore(chosen);
-      if (
-        await confirmSheet({
-          title: msg('storage.full_restore_confirm_title', '恢复这个备份？'),
-          body: t('storage.full_restore_confirm_body', {
-            name: chosen.name,
-            created: created || '—',
-          }),
-          confirmLabel: msg('storage.restore_backup', '恢复备份'),
-          danger: true,
-        })
-      )
-        await engine.startRestore({ confirmIdentity: false });
+      const selection = await engine.chooseRestore(chosen);
+      if (sequence !== restoreSequence.current) return;
+      const confirmed = await confirmSheet({
+        title: msg('storage.full_restore_confirm_title', '恢复这个备份？'),
+        body: t('storage.full_restore_confirm_body', {
+          name: chosen.name,
+          created: selection.createdAt || '—',
+        }),
+        confirmLabel: msg('storage.restore_backup', '恢复备份'),
+        danger: true,
+      });
+      if (confirmed && sequence === restoreSequence.current)
+        await engine.startRestore({ confirmIdentity: false, selection: selection.id });
     } catch (error) {
       toast(errorText(error));
     }

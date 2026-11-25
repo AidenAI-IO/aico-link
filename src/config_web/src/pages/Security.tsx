@@ -135,8 +135,9 @@ export function SecurityPage({
             onPress={async () => {
               try {
                 await model.send('/api/auth/logout', { method: 'POST' });
-              } finally {
                 window.location.assign('/login');
+              } catch (error) {
+                toast(apiError(error).message);
               }
             }}
           />

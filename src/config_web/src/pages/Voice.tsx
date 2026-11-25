@@ -118,9 +118,31 @@ export function VoicePage(props: PageProps) {
             type="button"
             role="tab"
             aria-selected={mode === value}
+            tabIndex={mode === value ? 0 : -1}
             className={`ds-segmented__item ${mode === value ? 'ds-segmented__item--active' : ''}`}
             data-action={`voice-mode-${value}`}
             onClick={() => setMode(value)}
+            onKeyDown={(event) => {
+              const choices = ['realtime', 'stt'] as const;
+              const current = choices.indexOf(value);
+              const next =
+                event.key === 'ArrowRight'
+                  ? (current + 1) % choices.length
+                  : event.key === 'ArrowLeft'
+                    ? (current - 1 + choices.length) % choices.length
+                    : event.key === 'Home'
+                      ? 0
+                      : event.key === 'End'
+                        ? choices.length - 1
+                        : -1;
+              if (next < 0) return;
+              event.preventDefault();
+              const selected = choices[next];
+              setMode(selected);
+              event.currentTarget.parentElement
+                ?.querySelector<HTMLButtonElement>(`[data-action="voice-mode-${selected}"]`)
+                ?.focus();
+            }}
           >
             <span
               className={`ds-segmented__check ${mode === value ? 'ds-segmented__check--visible' : ''}`}

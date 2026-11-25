@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -333,6 +334,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.authority.ServeAuthority(w, r)
 		return
 	}
+	if r.URL.Path == "/mcp" {
+		s.serveMCP(w, r)
+		return
+	}
 	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 		s.APIHandler().ServeHTTP(w, r)
 		return
@@ -341,6 +346,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Error(w, "Not Found", http.StatusNotFound)
+}
+
+func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
+	if r.TLS == nil {
+		writeJSONError(w, http.StatusUpgradeRequired, "MCP requires HTTPS")
+		return
+	}
+	target, err := s.agentBaseURL()
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "MCP service unavailable")
+		return
+	}
+	address := strings.ToLower(target.Hostname())
+	ip := net.ParseIP(address)
+	if address != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		writeJSONError(w, http.StatusBadGateway, "MCP service must use a local Agent endpoint")
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.FlushInterval = -1
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
+		writeJSONError(w, http.StatusBadGateway, "MCP service unavailable")
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) bool {

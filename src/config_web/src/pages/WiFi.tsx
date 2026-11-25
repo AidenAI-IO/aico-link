@@ -64,7 +64,7 @@ function JoinSheet({
   }, []);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || !ssid.trim()) return;
+    if (busy || !ssid.length) return;
     if (network.secured && password.length < 8) {
       setError(resolve(msg('ui.wifi_password_rule', '密码至少 8 个字符，区分大小写')));
       return;
@@ -72,7 +72,7 @@ function JoinSheet({
     setError('');
     try {
       const result = await model.resources.wifi.mutate(
-        () => connect({ ssid: ssid.trim(), psk: password, proxyMode: mode, proxyUrl: url }),
+        () => connect({ ssid, psk: password, proxyMode: mode, proxyUrl: url }),
         selectWiFi,
       );
       if (!result.ok) throw new Error(failureText(result));
@@ -234,7 +234,7 @@ function JoinSheet({
               type="submit"
               className="ds-btn ds-btn--primary ds-btn--block"
               data-action="wifi-join"
-              disabled={busy || !ssid.trim()}
+              disabled={busy || !ssid.length}
             >
               <Text
                 value={

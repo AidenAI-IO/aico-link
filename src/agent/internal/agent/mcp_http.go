@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/logging"
 	"aico-agent/internal/mcp"
 	"aico-agent/internal/netproxy"
@@ -37,8 +39,19 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if r.TLS == nil && !lanaccess.IsUSB(r) && !isLoopbackMCPClient(r.RemoteAddr) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusUpgradeRequired)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "mcp_https_required"})
+		return
+	}
 	handler := &mcp.Handler{Backend: mcpServerBackend{server: s}}
 	handler.ServeHTTP(w, r)
+}
+
+func isLoopbackMCPClient(remote string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remote))
+	return err == nil && net.ParseIP(strings.Trim(host, "[]")).IsLoopback()
 }
 
 type mcpServerBackend struct {

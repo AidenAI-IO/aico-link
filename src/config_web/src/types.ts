@@ -68,6 +68,7 @@ export interface DeviceData {
   agent_status?: AgentStatus;
 }
 export interface Snapshot extends Partial<WiFiData>, DeviceData {
+  https_port?: number;
   revision?: Revision;
   snapshot_error?: { message: string; code?: string };
   config?: Configuration | null;
@@ -86,6 +87,7 @@ export interface ApplicationData {
   reboot_required?: boolean;
   revision?: Revision;
   runtime_id?: string;
+  boot_id?: string;
   persisted_revision?: Revision;
   config?: Configuration;
   locale?: string;

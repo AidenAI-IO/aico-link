@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -44,6 +45,7 @@ func TestMCPEnabledInitialize(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "127.0.0.1:4321"
 	rec := httptest.NewRecorder()
 	server.handleMCP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -51,6 +53,28 @@ func TestMCPEnabledInitialize(t *testing.T) {
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"aico-agent"`)) {
 		t.Fatalf("body=%s", rec.Body.String())
+	}
+}
+
+func TestMCPRejectsPlainHTTPFromWiFiClients(t *testing.T) {
+	enabled := true
+	runtime := &Runtime{config: Config{MCPEnabled: &enabled}}
+	server := &Server{runtime: runtime}
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	req.RemoteAddr = "192.0.2.10:4321"
+	rec := httptest.NewRecorder()
+	server.handleMCP(rec, req)
+	if rec.Code != http.StatusUpgradeRequired || !strings.Contains(rec.Body.String(), "mcp_https_required") {
+		t.Fatalf("plain Wi-Fi MCP status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	secure := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	secure.TLS = &tls.ConnectionState{}
+	secure.Header.Set("Accept", "application/json, text/event-stream")
+	secure.RemoteAddr = "192.0.2.10:4321"
+	secureRec := httptest.NewRecorder()
+	server.handleMCP(secureRec, secure)
+	if secureRec.Code == http.StatusUpgradeRequired {
+		t.Fatalf("TLS MCP request was rejected: %s", secureRec.Body.String())
 	}
 }
 

@@ -16,10 +16,13 @@ interface Token {
   created_at: string;
 }
 export function wifiEndpoint(
-  location: Pick<Location, 'hostname'> = window.location,
+  location: Pick<Location, 'hostname' | 'protocol' | 'port'> = window.location,
   wifiAddress = '',
+  httpsPort = 0,
 ) {
-  return `http://${wifiAddress || location.hostname}:8080/mcp`;
+  if (!Number.isInteger(httpsPort) || httpsPort < 1 || httpsPort > 65535) return '';
+  const port = location.protocol === 'https:' && location.port ? location.port : String(httpsPort);
+  return `https://${wifiAddress || location.hostname}:${port}/mcp`;
 }
 export function mcpClientSnippets(endpoint: string, secret: string) {
   return {
@@ -41,11 +44,14 @@ function Code({ value }: { value: string }) {
       <pre className="ds-code__text">{value}</pre>
       <Button
         variant="quiet"
-        onClick={() =>
-          navigator.clipboard
-            .writeText(value)
-            .catch(() => toast(msg('mcp.copy_failed', '无法复制，请手动选择')))
-        }
+        onClick={async () => {
+          try {
+            if (!navigator.clipboard?.writeText) throw new Error('clipboard_unavailable');
+            await navigator.clipboard.writeText(value);
+          } catch {
+            toast(msg('mcp.copy_failed', '无法复制，请手动选择'));
+          }
+        }}
       >
         <Text value={msg('mcp.copy', '复制')} />
       </Button>
@@ -70,10 +76,12 @@ export function MCPTokensPanel(props: PageProps) {
     [secret, setSecret] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const snippets = mcpClientSnippets(
-    wifiEndpoint(window.location, snapshot.wifi_status?.ip_address),
-    secret,
+  const endpoint = wifiEndpoint(
+    window.location,
+    snapshot.wifi_status?.ip_address,
+    snapshot.https_port || 0,
   );
+  const snippets = endpoint ? mcpClientSnippets(endpoint, secret) : null;
   async function create() {
     if (busy || !name.trim()) return;
     setBusy(true);
@@ -127,6 +135,16 @@ export function MCPTokensPanel(props: PageProps) {
             '电脑和 Aico Link 连同一个 Wi-Fi 就能用，不需要开启局域网访问。令牌只能用于 MCP，不会过期，修改设备密码后依然有效；不再使用时在这里撤销。',
           )}
         >
+          {!endpoint && (
+            <p role="status">
+              <Text
+                value={msg(
+                  'mcp.https_unavailable',
+                  '设备尚未启用 HTTPS MCP 地址。请先配置 Config Web HTTPS，再创建令牌。',
+                )}
+              />
+            </p>
+          )}
           <QueryError {...query} />
           {isInitialLoading(query) && <Loading block />}
           {query.data?.tokens.map((token) => (
@@ -171,7 +189,7 @@ export function MCPTokensPanel(props: PageProps) {
             label={msg('mcp.create', '创建令牌')}
             labelTone="accent"
             action="create-mcp-token"
-            onPress={busy ? undefined : () => setDialog('name')}
+            onPress={busy || !endpoint ? undefined : () => setDialog('name')}
           />
         </Group>
       )}
@@ -200,7 +218,11 @@ export function MCPTokensPanel(props: PageProps) {
                 disabled={busy}
               />
               {error && <p role="alert">{error}</p>}
-              <Button type="submit" action="mcp-token-submit" disabled={busy || !name.trim()}>
+              <Button
+                type="submit"
+                action="mcp-token-submit"
+                disabled={busy || !name.trim() || !endpoint}
+              >
                 <Text value={msg('mcp.create', '创建令牌')} />
               </Button>
             </form>
@@ -215,8 +237,12 @@ export function MCPTokensPanel(props: PageProps) {
                 />
               </p>
               <Code value={secret} />
-              <Code value={snippets.claudeCode} />
-              <Code value={snippets.json} />
+              {snippets && (
+                <>
+                  <Code value={snippets.claudeCode} />
+                  <Code value={snippets.json} />
+                </>
+              )}
               <p>
                 {resolve(
                   msg(

@@ -150,11 +150,35 @@ export function Dropdown({
       if (event.key === 'Escape') {
         setOpen(false);
         trigger.current?.focus();
+        return;
       }
+      const options = [
+        ...(root.current?.querySelectorAll<HTMLButtonElement>(
+          'button[role="option"]:not(:disabled)',
+        ) || []),
+      ];
+      if (!options.length) return;
+      const index = options.indexOf(document.activeElement as HTMLButtonElement);
+      let next: number;
+      if (event.key === 'ArrowDown') next = index < 0 ? 0 : (index + 1) % options.length;
+      else if (event.key === 'ArrowUp')
+        next = index < 0 ? options.length - 1 : (index - 1 + options.length) % options.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = options.length - 1;
+      else return;
+      event.preventDefault();
+      options[next]?.focus();
     };
     document.addEventListener('pointerdown', outside, true);
     document.addEventListener('keydown', key);
-    root.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' });
+    const selected = root.current?.querySelector<HTMLButtonElement>(
+      'button[role="option"][aria-selected="true"]:not(:disabled)',
+    );
+    (
+      selected ||
+      root.current?.querySelector<HTMLButtonElement>('button[role="option"]:not(:disabled)')
+    )?.focus();
+    selected?.scrollIntoView?.({ block: 'nearest' });
     return () => {
       document.removeEventListener('pointerdown', outside, true);
       document.removeEventListener('keydown', key);

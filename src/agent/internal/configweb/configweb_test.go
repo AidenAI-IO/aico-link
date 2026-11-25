@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -239,6 +240,37 @@ func TestServerServesStaticAssetsAndRejectsTraversal(t *testing.T) {
 	server.ServeHTTP(resp, req)
 	if resp.Code != http.StatusNotFound {
 		t.Fatalf("symlink asset returned status %d", resp.Code)
+	}
+}
+
+func TestMCPRequiresHTTPSAndProxiesThroughTheLoopbackAgent(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mcp" || r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Errorf("proxied request path=%q authorization=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("event: message\\ndata: ok\\n\\n"))
+	}))
+	defer upstream.Close()
+	options := testOptions(t)
+	options.AgentHTTPBaseURL = upstream.URL
+	server, err := NewServer(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := httptest.NewRecorder()
+	server.ServeHTTP(plain, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}")))
+	if plain.Code != http.StatusUpgradeRequired {
+		t.Fatalf("plain HTTP status=%d body=%s", plain.Code, plain.Body.String())
+	}
+	secureRequest := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
+	secureRequest.TLS = &tls.ConnectionState{}
+	secureRequest.Header.Set("Authorization", "Bearer test-token")
+	secureRequest.Header.Set("Accept", "text/event-stream")
+	secure := httptest.NewRecorder()
+	server.ServeHTTP(secure, secureRequest)
+	if secure.Code != http.StatusAccepted || !strings.Contains(secure.Body.String(), "data: ok") {
+		t.Fatalf("HTTPS proxy status=%d body=%q", secure.Code, secure.Body.String())
 	}
 }
 

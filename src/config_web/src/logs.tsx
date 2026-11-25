@@ -98,6 +98,7 @@ function LogsApp() {
     [groups, setGroups] = useState<LogGroup[]>([]),
     [index, setIndex] = useState(0),
     [status, setStatus] = useState(''),
+    [importStatus, setImportStatus] = useState(''),
     [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const name = selected || (files.data?.files[0]?.name ?? '');
@@ -128,7 +129,7 @@ function LogsApp() {
   }, [name, files.data]);
   async function importLog(file: File) {
     if (!isValidLogFileName(file.name)) {
-      setStatus('File name must match llm-http-*.log');
+      setImportStatus('File name must match llm-http-*.log');
       return;
     }
     if (
@@ -144,9 +145,10 @@ function LogsApp() {
         body: file,
       });
       setSelected(file.name);
+      setImportStatus('');
       files.retry();
     } catch (error) {
-      setStatus(String(error));
+      setImportStatus(String(error));
     } finally {
       setBusy(false);
     }
@@ -181,8 +183,13 @@ function LogsApp() {
               if (file) void importLog(file);
             }}
           />
+          {files.error && (
+            <div className="action-status" role="alert">
+              {files.error}
+            </div>
+          )}
           <div className="action-status" role="status">
-            {files.error || status}
+            {importStatus || status}
           </div>
           <div id="fileList">
             {files.data?.files.map((file) => (

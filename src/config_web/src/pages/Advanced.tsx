@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useAtomValue } from 'jotai';
 import type { ApplicationData, PageProps } from '../types';
 import { apiError } from '../api/client';
@@ -159,8 +159,11 @@ export function agentLogLines(log: string) {
 export function AgentLogsPage(props: PageProps) {
   usePageHeader(props, msg('advanced.agent_log', '实时 Agent 日志'));
   const status = useAtomValue(props.model.resources.device.view);
-  const pre = useRef<HTMLPreElement>(null);
   const [shown, setShown] = useState('');
+  const pre = useRef<HTMLPreElement>(null);
+  const pendingLog = useRef<string | null>(null);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
   const stick = useRef(true);
   const query = useQuery(
     (signal) =>
@@ -171,14 +174,35 @@ export function AgentLogsPage(props: PageProps) {
     2000,
   );
   const log = query.data?.agent_log?.log?.trim() || query.data?.agent_log?.error || '';
-  useEffect(() => {
-    const selection = window.getSelection();
-    if (selection && !selection.isCollapsed && pre.current?.contains(selection.anchorNode)) return;
+  const showLog = useCallback((value: string) => {
     const node = pre.current;
     stick.current =
-      !shown || (!!node && node.scrollTop + node.clientHeight >= node.scrollHeight - 16);
-    setShown(log);
-  }, [log, shown]);
+      !shownRef.current || (!!node && node.scrollTop + node.clientHeight >= node.scrollHeight - 16);
+    shownRef.current = value;
+    setShown(value);
+  }, []);
+  useEffect(() => {
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && pre.current?.contains(selection.anchorNode)) {
+      pendingLog.current = log;
+      return;
+    }
+    pendingLog.current = null;
+    showLog(log);
+  }, [log, showLog]);
+  useEffect(() => {
+    const updateSelection = () => {
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed && pre.current?.contains(selection.anchorNode))
+        return;
+      if (pendingLog.current === null) return;
+      const value = pendingLog.current;
+      pendingLog.current = null;
+      showLog(value);
+    };
+    document.addEventListener('selectionchange', updateSelection);
+    return () => document.removeEventListener('selectionchange', updateSelection);
+  }, [showLog]);
   useLayoutEffect(() => {
     if (stick.current && pre.current) pre.current.scrollTop = pre.current.scrollHeight;
   }, [shown]);

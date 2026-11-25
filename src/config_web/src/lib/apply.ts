@@ -36,7 +36,7 @@ const AGENT_RESTART_TIMEOUT_MS = 60000;
 const AGENT_RESTART_BLIND_GRACE_MS = 10000;
 const POLL_INTERVAL_MS = 2000;
 const PROBE_TIMEOUT_MS = 3000;
-/** Answered by Config Web, and carries the Agent's `runtime_id` once it is up. */
+/** Answered by Config Web, and carries Agent and device restart identifiers. */
 const PROBE_URL = '/api/config/application';
 
 /** @param {string} level */
@@ -113,7 +113,7 @@ async function probe() {
   const timer = controller ? setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS) : null;
   try {
     const response = await fetch(PROBE_URL, { cache: 'no-store', signal: controller?.signal });
-    let body: { runtime_id?: string } = {};
+    let body: { runtime_id?: string; boot_id?: string } = {};
     try {
       body = await response.json();
     } catch {
@@ -133,17 +133,19 @@ const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
  * Wait for the device to go down and come back. Exported for the OTA page,
  * whose reboot the updater starts itself.
  */
-export async function waitForReboot() {
+export async function waitForReboot(previousBoot = '') {
   const started = Date.now();
-  let sawDown = false;
+  let downSince = 0;
   while (Date.now() - started < REBOOT_TIMEOUT_MS) {
     await sleep(POLL_INTERVAL_MS);
     const result = await probe();
-    if (!result) {
-      sawDown = true;
-    } else if (sawDown && result.ok) {
-      return;
-    } else if (!sawDown && Date.now() - started > REBOOT_START_TIMEOUT_MS) {
+    if (!result || !result.ok) {
+      if (!downSince) downSince = Date.now();
+      continue;
+    }
+    if (previousBoot && result.body.boot_id && result.body.boot_id !== previousBoot) return;
+    if (!previousBoot && downSince && Date.now() - downSince >= POLL_INTERVAL_MS * 2) return;
+    if (!downSince && Date.now() - started > REBOOT_START_TIMEOUT_MS) {
       throw new Error(resolve(msg('apply.reboot_not_started', '设备没有重启，请稍后重试。')));
     }
   }
@@ -186,8 +188,9 @@ export async function performRestart(level: string) {
   const overlay = showProgress(copy.progress, copy.progressBody);
   try {
     if (level === APPLY_REBOOT) {
+      const before = await probe();
       await request('/api/device/reboot', { method: 'POST' });
-      await waitForReboot();
+      await waitForReboot(before?.ok ? before.body.boot_id : '');
       postToHost({ type: 'aico_config_restart', apply: level, phase: 'finished' });
       window.location.reload();
       return true;

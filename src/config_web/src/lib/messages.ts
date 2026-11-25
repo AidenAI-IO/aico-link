@@ -1014,6 +1014,8 @@ export const messages: Record<string, Record<string, string>> = {
     'mcp.title': 'MCP access tokens',
     'mcp.help':
       'Works as soon as the computer and Aico Link are on the same Wi-Fi; LAN access can stay off. A token is good only for MCP, does not expire, and still works after a password change; revoke it here when you no longer use it.',
+    'mcp.https_unavailable':
+      'This device does not have an HTTPS MCP endpoint enabled. Configure HTTPS for Config Web before creating a token.',
     'mcp.direct_hint':
       'Plugged straight into Aico Link with the cable? Replace the IP in the address with 192.168.42.1.',
     'mcp.create': 'Create token',
@@ -2296,6 +2298,7 @@ export const messages: Record<string, Record<string, string>> = {
     'mcp.title': 'MCP 访问令牌',
     'mcp.help':
       '电脑和 Aico Link 连同一个 Wi-Fi 就能用，不需要开启局域网访问。令牌只能用于 MCP，不会过期，修改设备密码后依然有效；不再使用时在这里撤销。',
+    'mcp.https_unavailable': '设备尚未启用 HTTPS MCP 地址。请先配置 Config Web HTTPS，再创建令牌。',
     'mcp.direct_hint': '用数据线直连 Aico Link 时，把地址里的 IP 换成 192.168.42.1。',
     'mcp.create': '创建令牌',
     'mcp.new_title': '新建令牌',

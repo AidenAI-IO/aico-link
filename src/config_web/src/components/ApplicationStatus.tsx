@@ -62,7 +62,7 @@ export function ApplicationStatus({ model }: { model: DeviceState }) {
           </Button>
         </>
       )}
-      {!model.local && !stale && data?.reboot_required && (
+      {!model.local && !stale && (data?.reboot_required || data?.state === 'reboot_required') && (
         <Button
           variant="quiet"
           onClick={async () => {

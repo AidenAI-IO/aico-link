@@ -21,9 +21,45 @@ export function apiError(value: unknown): APIError {
   return new APIError(String(value));
 }
 let writes: Promise<unknown> = Promise.resolve();
-export async function performRequest<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(path, options);
-  const source = await response.text();
+const WRITE_TIMEOUT_MS = 30000;
+export async function performRequest<T>(
+  path: string,
+  options?: RequestInit,
+  timeoutMs = 0,
+): Promise<T> {
+  const controller = timeoutMs ? new AbortController() : null;
+  const upstream = options?.signal;
+  const relayAbort = () => controller?.abort(upstream?.reason);
+  if (upstream?.aborted) relayAbort();
+  else upstream?.addEventListener('abort', relayAbort, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const send = async () => {
+    const response = await fetch(
+      path,
+      controller ? { ...options, signal: controller.signal } : options,
+    );
+    const source = await response.text();
+    if (controller?.signal.aborted) throw new APIError('Request aborted');
+    return { response, source };
+  };
+  let response: Response;
+  let source: string;
+  try {
+    ({ response, source } = await (timeoutMs
+      ? Promise.race([
+          send(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              controller?.abort();
+              reject(Object.assign(new APIError('Request timed out'), { code: 'request_timeout' }));
+            }, timeoutMs);
+          }),
+        ])
+      : send()));
+  } finally {
+    if (timer) clearTimeout(timer);
+    upstream?.removeEventListener('abort', relayAbort);
+  }
   let body: Record<string, unknown>;
   try {
     const parsed: unknown = source ? JSON.parse(source) : {};
@@ -60,7 +96,7 @@ export function request<T = Record<string, unknown>>(
     options?.method &&
     options.method !== 'GET'
   ) {
-    const next = writes.then(() => performRequest<T>(path, options));
+    const next = writes.then(() => performRequest<T>(path, options, WRITE_TIMEOUT_MS));
     writes = next.catch(() => {});
     return next;
   }

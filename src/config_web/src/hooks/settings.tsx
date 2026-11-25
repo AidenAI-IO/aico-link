@@ -115,6 +115,11 @@ export function useSettings(props: PageProps, title: TextSpec, back?: string, he
       }
     }
     if (sequence.current.get(key) !== id || !mounted.current) return 'superseded';
+    if (committing.current) {
+      staged.current.set(key, { patch, level: apply });
+      repaint();
+      return 'staged';
+    }
     if (needsRestart(apply)) {
       staged.current.set(key, { patch, level: apply });
       repaint();
@@ -147,12 +152,12 @@ export function useSettings(props: PageProps, title: TextSpec, back?: string, he
     committing.current = true;
     if (mounted.current) setBusy(true);
     try {
-      const restart = [...staged.current.values()].reduce(
+      const entries = new Map(staged.current);
+      const restart = [...entries.values()].reduce(
         (max, item) => ((rank[item.level] || 0) > (rank[max] || 0) ? item.level : max),
         'live',
       );
       if (!(await confirmRestart(restart)) || !mounted.current) return false;
-      const entries = new Map(staged.current);
       const result = await save(
         [...entries.values()].reduce((patch, item) => mergePatch(patch, item.patch), {}),
       );

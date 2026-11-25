@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -140,10 +141,12 @@ func (s *Server) handleConfigApplication(w http.ResponseWriter, r *http.Request)
 	// has not been asked to apply an external edit. Keep runtime revisions intact.
 	persistedRevision := agent.ConfigFileRevision(s.options.AgentConfigPath)
 	respond := func(code int) {
+		bootID, _ := os.ReadFile(s.options.BootIDPath)
 		writeJSON(w, code, struct {
 			agent.ConfigApplyStatus
 			PersistedRevision uint64 `json:"persisted_revision"`
-		}{live, persistedRevision})
+			BootID            string `json:"boot_id,omitempty"`
+		}{live, persistedRevision, strings.TrimSpace(string(bootID))})
 	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()

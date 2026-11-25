@@ -407,6 +407,17 @@ describe('device state', () => {
     expect(model.store.get(model.current).wifi_status!.connected).toBe(false);
     model.dispose();
   });
+  it('does not reseed a resource after a newer dedicated read commits', async () => {
+    const read = deferred();
+    const model = createDeviceState(() => read.promise);
+    const request = model.resources.snapshot.refresh();
+    await flush();
+    model.resources.storage.publish({ card: { present: false, mounted: false } });
+    read.resolve({ config: {}, storage: { card: { present: true, mounted: true } } });
+    await request;
+    expect(model.store.get(model.resources.storage.atom).data?.card?.present).toBe(false);
+    model.dispose();
+  });
   it('preserves a newer saved config when an older aggregate arrives', async () => {
     const read = deferred();
     let reads = 0;

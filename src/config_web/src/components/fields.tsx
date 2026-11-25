@@ -125,6 +125,7 @@ export function ValueField({
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState('');
   const sequence = useRef(0);
+  const pending = useRef(0);
   const staged = useRef(false);
   const confirmed = secret ? '' : Array.isArray(saved) ? saved.join('\n') : String(saved ?? '');
   useEffect(() => {
@@ -138,13 +139,19 @@ export function ValueField({
   }, [confirmed]);
   const text = draft ?? confirmed;
   async function commit() {
-    if (draft === null || (text === confirmed && !staged.current) || (secret && !text)) return;
+    if (
+      draft === null ||
+      (text === confirmed && !staged.current && pending.current === 0) ||
+      (secret && !text)
+    )
+      return;
     const value = parse(text.trim());
     if (value === undefined) {
       setError(resolve(msg('config.invalid_value', '无效值')));
       return;
     }
     const id = ++sequence.current;
+    pending.current++;
     setError('');
     const submitted = text;
     try {
@@ -157,6 +164,8 @@ export function ValueField({
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      pending.current--;
     }
   }
   const common = {

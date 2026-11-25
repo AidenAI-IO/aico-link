@@ -6,6 +6,7 @@ import { createMaintenanceRequestID } from '../lib/maintenance';
 import { readArchiveHeader, uploadBrowserChunks } from '../lib/transfers';
 import { createBackupEngine } from '../lib/backup';
 import { request } from '../api/client';
+import { wifiEndpoint } from '../pages/MCP';
 import { createRouter } from '../app/router';
 import {
   currentNetworks,
@@ -93,6 +94,42 @@ it('serializes config, locale and TOML writes while reads continue after a failu
   expect(started.slice(-2)).toEqual(['/api/config/locale', '/api/config/backup']);
   vi.stubGlobal('fetch', async () => new Response('null', { status: 200 }));
   expect(await request('/api/test')).toEqual({});
+});
+it('releases the config write queue when a response body stalls', async () => {
+  vi.useFakeTimers();
+  const signals: AbortSignal[] = [];
+  let call = 0;
+  vi.stubGlobal('fetch', async (_path: string, options?: RequestInit) => {
+    call++;
+    if (call === 1) {
+      signals.push(options?.signal as AbortSignal);
+      return { ok: true, status: 200, statusText: '', text: () => new Promise<string>(() => {}) };
+    }
+    return new Response(JSON.stringify({ ok: true }));
+  });
+  try {
+    const first = request('/api/config', { method: 'PATCH', body: '{}' });
+    const failed = expect(first).rejects.toMatchObject({ code: 'request_timeout' });
+    const second = request('/api/config/locale', { method: 'PUT', body: '{}' });
+    await vi.advanceTimersByTimeAsync(30000);
+    await failed;
+    await expect(second).resolves.toEqual({ ok: true });
+    expect(signals[0].aborted).toBe(true);
+    expect(call).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it('generates MCP URLs only when a TLS endpoint is available', () => {
+  expect(wifiEndpoint({ hostname: 'aico.local', protocol: 'http:', port: '' }, '192.168.1.2')).toBe(
+    '',
+  );
+  expect(
+    wifiEndpoint({ hostname: 'aico.local', protocol: 'http:', port: '' }, '192.168.1.2', 443),
+  ).toBe('https://192.168.1.2:443/mcp');
+  expect(wifiEndpoint({ hostname: 'aico.local', protocol: 'https:', port: '8443' }, '', 443)).toBe(
+    'https://aico.local:8443/mcp',
+  );
 });
 it('decodes route metadata and leaves download, external, and standalone page links alone', async () => {
   window.history.replaceState({}, '', '/');

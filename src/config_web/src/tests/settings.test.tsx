@@ -7,7 +7,7 @@ import { DecisionPage, ProviderForm } from '../pages/Models';
 import { RawConfigPage } from '../pages/Advanced';
 import { ValueField } from '../components/fields';
 import { ChoiceRow, Dropdown } from '../components/choices';
-import { OverlayHost, Modal } from '../components/overlays';
+import { OverlayHost, Modal, toast } from '../components/overlays';
 import { useSettings } from '../hooks/settings';
 import { applyLocale } from '../lib/i18n';
 const flush = async () => {
@@ -65,6 +65,43 @@ it('blocks open dropdown choices when disabled and allows them again when enable
   view.rerender(picker(false));
   fireEvent.click(second);
   expect(select).toHaveBeenCalledWith('second');
+});
+it('supports keyboard navigation in dropdown options', () => {
+  render(
+    <Dropdown
+      label="Provider"
+      selected="first"
+      options={[
+        { value: 'first', label: 'First' },
+        { value: 'second', label: 'Second' },
+        { value: 'third', label: 'Third' },
+      ]}
+      onSelect={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Provider First' }));
+  expect(document.activeElement).toBe(screen.getByRole('option', { name: 'First' }));
+  fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(screen.getByRole('option', { name: 'Second' }));
+  fireEvent.keyDown(document.activeElement!, { key: 'End' });
+  expect(document.activeElement).toBe(screen.getByRole('option', { name: 'Third' }));
+  fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Provider First' }));
+});
+it('expires only the toast invocation that scheduled its timer', async () => {
+  vi.useFakeTimers();
+  render(<OverlayHost />);
+  try {
+    act(() => toast('Same message', { durationMs: 1000 }));
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    act(() => toast('Same message', { durationMs: 1000 }));
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(screen.getByRole('status').textContent).toBe('Same message');
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(screen.queryByRole('status')).toBe(null);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it('keeps staged choices through observations, restores focus and rolls back a rejected choice', async () => {
   let outcome: 'staged' | 'failed' = 'staged';
@@ -126,6 +163,21 @@ it('keeps a newer draft focused when an older save completes and allows a reject
   expect(input.value).toBe('new draft');
   fireEvent.blur(input);
   expect(commit).toHaveBeenCalledTimes(3);
+});
+it('submits a reverted field value while its earlier save is pending', async () => {
+  const finishes: ((result: 'saved') => void)[] = [];
+  const commit = vi.fn(() => new Promise<'saved'>((resolve) => finishes.push(resolve)));
+  render(<ValueField label="Model" saved="A" onCommit={commit} />);
+  const input = screen.getByLabelText('Model') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'B' } });
+  fireEvent.blur(input);
+  fireEvent.change(input, { target: { value: 'A' } });
+  fireEvent.blur(input);
+  expect(commit).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    finishes.forEach((finish) => finish('saved'));
+    await flush();
+  });
 });
 it('resumes following confirmed values after a staged field is persisted', async () => {
   const commit = vi.fn(async () => 'staged' as const);
@@ -258,6 +310,80 @@ it('omits blank stored secrets and follows schema visibility in provider forms',
   ]);
   model.dispose();
 });
+it('locks provider and schema choices while a provider save is pending', async () => {
+  let rejectSave!: (error: Error) => void;
+  let notifySave!: () => void;
+  const saveStarted = new Promise<void>((resolve) => {
+    notifySave = resolve;
+  });
+  const { model, props, mount } = setup(
+    async (path, options) => {
+      if (path === '/api/config/schema')
+        return {
+          sections: [
+            {
+              name: 'model_providers',
+              fields: [
+                {
+                  key: 'region',
+                  widget: 'select',
+                  enum: [
+                    { value: 'one', label: 'One' },
+                    { value: 'two', label: 'Two' },
+                  ],
+                },
+                { key: 'base_url' },
+              ],
+            },
+          ],
+        };
+      if (path === '/api/config/plan') return { apply: 'live' };
+      if (path === '/api/config' && options?.method === 'PATCH') {
+        notifySave();
+        return new Promise((_resolve, reject) => {
+          rejectSave = reject;
+        });
+      }
+      return { config: {} };
+    },
+    {
+      model_providers: {
+        existing: { type: 'custom', region: 'one', base_url: 'https://old' },
+      },
+    },
+  );
+  const view = mount(
+    <ProviderForm
+      props={props}
+      recordSection="model_providers"
+      type="custom"
+      existingName="existing"
+      back="/model/providers"
+    />,
+  );
+  await act(flush);
+  fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://new' } });
+  fireEvent.submit(view.container.querySelector('form')!);
+  await act(async () => {
+    await saveStarted;
+    await flush();
+  });
+
+  const choiceRows = () => [
+    ...view.container.querySelectorAll<HTMLElement>('.ds-form-card .ds-row--outlined'),
+  ];
+  expect(choiceRows()).toHaveLength(2);
+  choiceRows().forEach((row) => fireEvent.click(row));
+  expect(screen.queryByRole('dialog')).toBe(null);
+
+  await act(async () => {
+    rejectSave(new Error('write failed'));
+    await flush();
+  });
+  fireEvent.click(choiceRows()[0]);
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  model.dispose();
+});
 it('computes the current restart plan before committing and guards native saves against duplicates', async () => {
   const send = vi.fn(async (path: string, _options?: RequestInit) =>
     path === '/api/config/plan'
@@ -291,6 +417,54 @@ it('computes the current restart plan before committing and guards native saves 
   fireEvent.click(screen.getByText('Save & Restart'));
   await act(flush);
   expect(writes()).toHaveLength(1);
+  model.dispose();
+});
+it('saves only the staged entries whose restart level was confirmed', async () => {
+  let releasePlan!: (value: { apply: string }) => void;
+  const send = vi.fn(async (path: string, options?: RequestInit) => {
+    if (path === '/api/config/plan') {
+      const patch = JSON.parse(String(options?.body)).config;
+      if (patch.hid) return new Promise<{ apply: string }>((resolve) => (releasePlan = resolve));
+      return { apply: 'agent_restart' };
+    }
+    return { apply: 'live', config: {} };
+  });
+  const { model, props, mount } = setup(send);
+  function Form() {
+    const saver = useSettings(props, 'Settings');
+    return (
+      <>
+        <button onClick={() => void saver.change('agent', { agent: { input_mode: 'stt' } })}>
+          Stage agent
+        </button>
+        <button onClick={() => void saver.change('hid', { hid: { keyboard_layout: 'azerty' } })}>
+          Stage reboot
+        </button>
+        <button onClick={() => void saver.commit()}>Commit</button>
+      </>
+    );
+  }
+  mount(<Form />);
+  fireEvent.click(screen.getByText('Stage agent'));
+  await act(flush);
+  fireEvent.click(screen.getByText('Stage reboot'));
+  fireEvent.click(screen.getByText('Commit'));
+  await act(flush);
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  await act(async () => {
+    releasePlan({ apply: 'reboot' });
+    await flush();
+  });
+  fireEvent.click(screen.getByText('Save & Restart'));
+  await act(flush);
+  const writes = send.mock.calls
+    .filter(([path, options]) => path === '/api/config' && options?.method === 'PATCH')
+    .map(([, options]) => JSON.parse(String(options?.body)).config);
+  expect(writes).toEqual([{ agent: { input_mode: 'stt' } }]);
+  fireEvent.click(screen.getByText('Commit'));
+  await act(flush);
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  expect(screen.getByText(/reboot/i)).toBeTruthy();
   model.dispose();
 });
 it('keeps raw TOML recovery writable only after a successful read and preserves failed edits', async () => {

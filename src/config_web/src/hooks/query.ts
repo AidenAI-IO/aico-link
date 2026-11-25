@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useAtomValue } from 'jotai';
 import type { DeviceState } from '../state/device';
 export function useQuery<T>(
@@ -7,7 +7,9 @@ export function useQuery<T>(
   interval = 0,
 ) {
   const source = useRef(load);
-  source.current = load;
+  useLayoutEffect(() => {
+    source.current = load;
+  }, [load]);
   const identity = useRef({ dependencies, id: 0 });
   if (
     dependencies.length !== identity.current.dependencies.length ||

@@ -70,16 +70,18 @@ export function parseOtaLog(log: string) {
   // belong to that same run; legacy logs still start at "check: start".
   let start = -1;
   let hybrid = false;
+  let activeHybrid = false;
   lines.forEach((line, index) => {
-    if (/message="hybrid: start"/.test(line)) {
+    const marker = MESSAGE.exec(line);
+    if (marker?.[1] === 'hybrid') {
       start = index;
       hybrid = true;
-    } else if (!hybrid && /message="(?:ota )?check: start"/.test(line)) start = index;
+      activeHybrid = !['completed', 'up-to-date'].includes(marker[2]);
+    } else if (!activeHybrid && /message="(?:ota )?check: start"/.test(line)) {
+      start = index;
+      hybrid = false;
+    }
   });
-  if (start < 0) {
-    start = lines.findIndex((line) => /message="hybrid:/.test(line));
-    hybrid = start >= 0;
-  }
   const result: {
     state: string;
     stage: string | null;
@@ -178,7 +180,7 @@ export function parseOtaLog(log: string) {
       if (code !== 0) {
         result.state = 'failed';
         result.error = lastPlain;
-      } else if (result.state === 'running' || result.state === 'rebooting') {
+      } else if (!hybrid && (result.state === 'running' || result.state === 'rebooting')) {
         result.state =
           result.stage === 'reboot'
             ? 'updated'

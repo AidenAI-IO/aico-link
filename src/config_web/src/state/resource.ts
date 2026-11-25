@@ -54,6 +54,7 @@ export function createResource<T>(
       a.busy === b.busy,
   );
   let epoch = 0;
+  let version = 0;
   let pending: Promise<void> | null = null;
   let controller: AbortController | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -66,6 +67,7 @@ export function createResource<T>(
     const previous = store.get(state);
     const next = { ...previous, ...patch };
     if (patch.data && equal(previous.data, patch.data)) next.data = previous.data;
+    if (Object.hasOwn(patch, 'data')) version++;
     store.set(state, next);
   };
   function cancel() {
@@ -110,7 +112,11 @@ export function createResource<T>(
         update({ data, error: null, stale: false, updatedAt: Date.now() });
       })
       .catch((error) => {
-        if (current === epoch) update({ error: error.message || String(error), stale: true });
+        if (current === epoch)
+          update({
+            error: error instanceof Error ? error.message : String(error ?? 'Request failed'),
+            stale: true,
+          });
       })
       .finally(() => {
         if (current !== epoch) return;
@@ -150,6 +156,9 @@ export function createResource<T>(
     view,
     get epoch() {
       return epoch;
+    },
+    get version() {
+      return version;
     },
     refresh,
     publish,

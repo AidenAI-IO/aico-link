@@ -58,10 +58,11 @@ it.each([
       value.resources.application.publish({
         ...applied,
         state: 'reboot_required',
-        reboot_required: true,
       }),
     );
     expect(screen.getByText('已保存，重启后生效')).toBeTruthy();
+    if (local || container) expect(screen.queryByRole('button', { name: '重启设备' })).toBe(null);
+    else expect(screen.getByRole('button', { name: '重启设备' })).toBeTruthy();
     act(() =>
       value.resources.application.publish({ ...applied, state: 'failed', error: 'Rejected' }),
     );
@@ -227,6 +228,18 @@ describe('live React views', () => {
         .getByRole('tab', { name: mode === 'stt' ? '经典模式' : '实时模式' })
         .getAttribute('aria-selected'),
     ).toBe('true');
+  });
+  it('moves focus between voice tabs with the arrow keys', () => {
+    const value = model();
+    value.store.set(value.config, { agent: { input_mode: 'realtime' } });
+    mount(value, <VoicePage {...props(value, '/voice')} />);
+    const realtime = screen.getByRole('tab', { name: '实时模式' });
+    realtime.focus();
+    fireEvent.keyDown(realtime, { key: 'ArrowRight' });
+    const classic = screen.getByRole('tab', { name: '经典模式' });
+    expect(document.activeElement).toBe(classic);
+    expect(classic.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: '实时模式' }).tabIndex).toBe(-1);
   });
   it.each([false, true])(
     'retains voice tabs across subpages and navigation without saving (container: %s)',

@@ -155,18 +155,48 @@ export function normalizeAnthropicMessage(value: unknown): LogMessage {
 }
 export function requestMessages(value: unknown): LogMessage[] {
   const req = object(value);
-  const messages = array(req.messages).map(normalizeAnthropicMessage);
-  if (typeof req.system === 'string' && req.system)
-    messages.unshift({ role: 'system', content: req.system });
-  else if (Array.isArray(req.system) && req.system.length)
-    messages.unshift({ role: 'system', content: req.system.map(normalizeAnthropicContentPart) });
-  else if (typeof req.instructions === 'string')
-    messages.unshift({ role: 'system', content: req.instructions });
-  if (!messages.length) {
+  const hasMessages = Array.isArray(req.messages) && req.messages.length > 0;
+  const messages = hasMessages ? array(req.messages).map(normalizeAnthropicMessage) : [];
+  if (!hasMessages && Object.hasOwn(req, 'input')) {
     if (typeof req.input === 'string') messages.push({ role: 'user', content: req.input });
-    else messages.push(...array(req.input).map(normalizeAnthropicMessage));
+    else
+      for (const value of array(req.input)) {
+        const item = object(value);
+        if (item.type === 'function_call') {
+          messages.push({
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: string(item.call_id) || string(item.id),
+                type: 'function',
+                function: {
+                  name: string(item.name),
+                  arguments:
+                    typeof item.arguments === 'string'
+                      ? item.arguments
+                      : JSON.stringify(item.arguments ?? {}),
+                },
+              },
+            ],
+          });
+        } else if (item.type === 'function_call_output') {
+          messages.push({
+            role: 'tool',
+            tool_call_id: string(item.call_id),
+            content: responseItemText(item.output),
+          });
+        } else messages.push(normalizeAnthropicMessage(value));
+      }
   }
-  return messages;
+  const system: LogMessage[] = [];
+  if (typeof req.system === 'string' && req.system)
+    system.push({ role: 'system', content: req.system });
+  else if (Array.isArray(req.system) && req.system.length)
+    system.push({ role: 'system', content: req.system.map(normalizeAnthropicContentPart) });
+  else if (typeof req.instructions === 'string')
+    system.push({ role: 'system', content: req.instructions });
+  return system.concat(messages);
 }
 export function responseItemText(value: unknown): string {
   if (value == null) return '';
@@ -543,6 +573,7 @@ export function serializeMsg(m: LogMessage) {
   }
   if (m.tool_calls) s += '\u0002' + JSON.stringify(m.tool_calls);
   if (m.tool_call_id) s += '\u0003' + m.tool_call_id;
+  if (m.reasoning_content) s += '\u0004' + m.reasoning_content;
   return s;
 }
 function serializeContentPart(value: unknown) {

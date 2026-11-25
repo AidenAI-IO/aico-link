@@ -125,6 +125,8 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
   let job: BackupJob | null = null;
   let file: File | null = null;
   let header: ArchiveHeader | null = null;
+  let selectionID = 0;
+  let operationID = 0;
   let identityConfirmed = false;
   let view: BackupView = {
     kind: null,
@@ -209,7 +211,7 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
           : { phase: phaseText(payload), done: 0, total: 0 },
       );
     } else {
-      const total = Number(payload.archive_size || (file && file.size) || 0);
+      const total = Number(payload.archive_size || job?.archive_size || (file && file.size) || 0);
       const done = Number(payload.received_bytes || 0);
       const uploading =
         ['restore_ingest', 'reading_manifest', 'uploading_and_staging'].includes(state) &&
@@ -266,18 +268,23 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
     });
   }
 
-  async function poll(kind: string, jobId: string) {
+  async function poll(kind: string, jobId: string, owner = operationID) {
     for (let attempt = 0; attempt < 4 * 60 * 60; attempt += 1) {
-      if (!job || job.job_id !== jobId) return null;
+      if (owner !== operationID || !job || job.job_id !== jobId || TERMINAL.has(job.state))
+        return null;
       let payload;
       try {
         payload = await jobRequest(jobPath(kind, jobId));
       } catch (caught) {
+        if (owner !== operationID || !job || job.job_id !== jobId || TERMINAL.has(job.state))
+          return null;
         const error = apiError(caught);
         if (error.status === 404) throw error;
         await delay(2000);
         continue;
       }
+      if (owner !== operationID || !job || job.job_id !== jobId || TERMINAL.has(job.state))
+        return null;
       job = { ...job, ...payload };
       progress(payload);
       if (TERMINAL.has(payload.state)) {
@@ -296,6 +303,7 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
   }
 
   async function createBackup() {
+    const owner = ++operationID;
     emit({
       kind: 'backup',
       running: true,
@@ -314,12 +322,14 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
           protection: { mode: 'none' },
         }),
       });
+      if (owner !== operationID) return;
       job = { kind: 'backup', ...response };
       // The device starts streaming only once the archive URL is requested.
       if (!response.archive_url) throw new Error('archive_url_missing');
       triggerBrowserDownload(response.archive_url, response.suggested_filename);
-      await poll('backup', response.job_id);
+      await poll('backup', response.job_id, owner);
     } catch (caught) {
+      if (owner !== operationID) return;
       const error = apiError(caught);
       fail(error);
     }
@@ -327,17 +337,27 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
 
   /** Read and check a chosen archive; returns its creation time, if any. */
   async function chooseRestore(chosen: File) {
-    file = chosen;
-    header = await readArchiveHeader(chosen);
-    if (header.protection?.algorithm !== 'sha256-chunked') {
+    const selection = ++selectionID;
+    file = null;
+    header = null;
+    const selectedHeader = await readArchiveHeader(chosen);
+    if (selectedHeader.protection?.algorithm !== 'sha256-chunked') {
       throw Object.assign(new Error(t('backup.error.encrypted_archive_unsupported')), {
         error: 'encrypted_archive_unsupported',
       });
     }
-    return header.created_at ? new Date(header.created_at).toLocaleString() : '';
+    if (selection !== selectionID) return { id: selection, createdAt: '' };
+    file = chosen;
+    header = selectedHeader;
+    return {
+      id: selection,
+      createdAt: selectedHeader.created_at
+        ? new Date(selectedHeader.created_at).toLocaleString()
+        : '',
+    };
   }
 
-  async function submitPlan(payload: BackupJob) {
+  async function submitPlan(payload: BackupJob, owner: number) {
     const manifest =
       payload.manifest || (await jobRequest(jobPath('restore', payload.job_id))).manifest;
     if (!manifest || !Array.isArray(manifest.components)) throw new Error('manifest_invalid');
@@ -351,44 +371,79 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
         confirm_identity: identityConfirmed,
       }),
     });
+    if (owner !== operationID) return;
     job = { ...job, ...response };
   }
 
-  async function validateAndApply(jobId: string) {
+  async function validateAndApply(jobId: string, owner: number) {
     emit({ phase: t('backup.phase.validating'), done: 0, total: 0 });
     const validated = await maintenance(jobPath('restore', jobId, '/validate'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     });
+    if (owner !== operationID) return;
     job = { ...job, ...validated };
-    await applyRestore(jobId, validated.plan_digest);
+    await applyRestore(jobId, validated.plan_digest, owner);
   }
 
-  async function applyRestore(jobId: string, planDigest?: string) {
+  async function applyRestore(jobId: string, planDigest: string | undefined, owner: number) {
     emit({ phase: t('backup.phase.committing') });
-    let applied;
-    try {
-      applied = await maintenance(jobPath('restore', jobId, '/apply'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan_digest: planDigest, confirm: 'RESTORE' }),
-      });
-    } catch (caught) {
-      const error = apiError(caught);
-      // A dropped apply response does not stop the commit on the device; only
-      // a definite rejection (bad digest, not prepared) is a real failure.
-      if (error.status && error.status < 500 && error.error !== 'restore_committing') throw error;
-      await poll('restore', jobId);
-      return;
+    let applied: BackupJob | undefined;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2 && !applied; attempt += 1) {
+      try {
+        applied = await maintenance(jobPath('restore', jobId, '/apply'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan_digest: planDigest, confirm: 'RESTORE' }),
+        });
+      } catch (caught) {
+        if (owner !== operationID) return;
+        const error = apiError(caught);
+        // A definite rejection cannot have started apply. Transient failures
+        // are reconciled against job state before deciding whether to retry.
+        if (error.status && error.status < 500 && error.error !== 'restore_committing') throw error;
+        lastError = error;
+        let current: BackupJob | undefined;
+        for (let read = 0; read < 3 && !current; read += 1) {
+          try {
+            current = await jobRequest(jobPath('restore', jobId));
+          } catch {
+            if (read < 2) await delay(1000);
+          }
+        }
+        if (owner !== operationID) return;
+        if (!current) throw error;
+        job = { ...job, ...current };
+        if (TERMINAL.has(current.state)) {
+          finish(current);
+          return;
+        }
+        if (current.state === 'prepared' && attempt === 0) continue;
+        if (current.state === 'prepared') throw error;
+        await poll('restore', jobId, owner);
+        return;
+      }
     }
+    if (!applied) throw lastError || new Error('restore_apply_failed');
+    if (owner !== operationID) return;
     job = { ...job, ...applied };
     if (TERMINAL.has(applied.state)) finish(applied);
-    else await poll('restore', jobId);
+    else await poll('restore', jobId, owner);
   }
 
-  async function startRestore({ confirmIdentity }: { confirmIdentity: boolean }) {
-    if (!file || !header) return;
+  async function startRestore({
+    confirmIdentity,
+    selection,
+  }: {
+    confirmIdentity: boolean;
+    selection: number;
+  }) {
+    const selectedFile = file;
+    const selectedHeader = header;
+    if (!selectedFile || !selectedHeader || selectionID !== selection) return;
+    const owner = ++operationID;
     identityConfirmed = Boolean(confirmIdentity);
     emit({
       kind: 'restore',
@@ -404,15 +459,16 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           format_version: 1,
-          archive_size: file.size,
-          public_header: header,
+          archive_size: selectedFile.size,
+          public_header: selectedHeader,
           protection: { mode: 'none' },
         }),
       });
-      job = { kind: 'restore', ...created, archive_size: file.size };
-      emit({ phase: t('backup.phase.restore_ingest'), done: 0, total: file.size });
+      if (owner !== operationID) return;
+      job = { kind: 'restore', ...created, archive_size: selectedFile.size };
+      emit({ phase: t('backup.phase.restore_ingest'), done: 0, total: selectedFile.size });
       await uploadBrowserChunks(
-        file,
+        selectedFile,
         created.chunk_size,
         (index, chunk, hash) =>
           jobRequest(jobPath('restore', created.job_id, `/chunks/${index}`), {
@@ -421,17 +477,20 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
             body: chunk,
           }),
         async (response, offset, total) => {
+          if (owner !== operationID) throw new Error('restore_cancelled');
           job = { ...job, ...response };
           if (response.error)
             throw Object.assign(new Error(response.error.message || response.error.code), {
               error: response.error.code,
             });
           progress({ ...response, received_bytes: offset, archive_size: total });
-          if (response.state === 'awaiting_plan') await submitPlan(response);
+          if (response.state === 'awaiting_plan') await submitPlan(response, owner);
         },
       );
-      await validateAndApply(created.job_id);
+      if (owner !== operationID) return;
+      await validateAndApply(created.job_id, owner);
     } catch (caught) {
+      if (owner !== operationID) return;
       const error = apiError(caught);
       if (job?.job_id && !UNCANCELLABLE.includes(job.state) && !TERMINAL.has(job.state)) {
         try {
@@ -451,9 +510,21 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
       emit({ message: t('backup.restore_cannot_cancel'), error: true });
       return false;
     }
-    const payload = await maintenance(jobPath(view.kind, job.job_id), { method: 'DELETE' });
+    const current = job;
+    const kind = view.kind;
+    const owner = ++operationID;
+    let payload: BackupJob;
+    try {
+      payload = await maintenance(jobPath(kind, current.job_id), { method: 'DELETE' });
+    } catch (error) {
+      if (owner === operationID && job?.job_id === current.job_id)
+        void poll(kind || 'restore', current.job_id, owner).catch((failure) => fail(failure));
+      throw error;
+    }
+    if (owner !== operationID || job?.job_id !== current.job_id) return false;
     job = { ...job, ...payload };
     if (TERMINAL.has(payload.state)) finish(payload);
+    else void poll(kind || 'restore', current.job_id, owner).catch((error) => fail(error));
     return true;
   }
 
@@ -471,6 +542,7 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
       job?: BackupJob;
     }>('/api/maintenance/current', { credentials: 'same-origin' }).catch(() => null);
     if (!current || !current.job_id || (job && job.job_id === current.job_id)) return false;
+    const owner = ++operationID;
     const kind = current.operation === 'restore' ? 'restore' : 'backup';
     job = { kind, job_id: current.job_id, state: current.phase || '', ...(current.job || {}) };
     emit({
@@ -493,16 +565,22 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
         stalled: true,
         message: t('backup.restore_interrupted'),
       });
-      poll(kind, current.job_id).catch((error) => fail(error));
+      poll(kind, current.job_id, owner).catch((error) => {
+        if (owner === operationID) fail(error);
+      });
       return true;
     }
     // The upload finished before the refresh; the device is waiting for the
     // same requests the uninterrupted flow would have sent next. The user
     // confirmed the restore before it started, so it simply goes on.
     if (kind === 'restore' && (state === 'validating' || state === 'prepared')) {
-      resumeRestore(current.job_id).catch((error) => fail(error));
+      resumeRestore(current.job_id, owner).catch((error) => {
+        if (owner === operationID) fail(error);
+      });
     } else {
-      poll(kind, current.job_id).catch((error) => fail(error));
+      poll(kind, current.job_id, owner).catch((error) => {
+        if (owner === operationID) fail(error);
+      });
     }
     return true;
   }
@@ -518,21 +596,41 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
    * it is reported, so a lost response does not abandon a job the device is
    * still holding.
    */
-  async function resumeRestore(jobId: string) {
+  async function resumeRestore(jobId: string, owner: number) {
     let validateSent = false;
     const quietSince = Date.now();
+    let statusFailures = 0;
     try {
       for (;;) {
-        if (!job || job.job_id !== jobId) return;
-        const payload = await jobRequest(jobPath('restore', jobId));
+        if (owner !== operationID || !job || job.job_id !== jobId) return;
+        let payload: BackupJob;
+        try {
+          payload = await jobRequest(jobPath('restore', jobId));
+          statusFailures = 0;
+        } catch (caught) {
+          if (owner !== operationID || !job || job.job_id !== jobId) return;
+          const error = apiError(caught);
+          if (error.status === 404) {
+            await reconcileRestore(jobId, error, owner);
+            return;
+          }
+          statusFailures++;
+          if (statusFailures >= 5) {
+            fail(error);
+            return;
+          }
+          await delay(1000);
+          continue;
+        }
+        if (owner !== operationID || !job || job.job_id !== jobId) return;
         job = { ...job, ...payload };
         if (payload.state === 'prepared' && payload.plan_digest) {
-          await applyRestore(jobId, payload.plan_digest);
+          await applyRestore(jobId, payload.plan_digest, owner);
           return;
         }
         if (payload.state !== 'validating') {
           if (TERMINAL.has(payload.state)) finish(payload);
-          else await poll('restore', jobId);
+          else await poll('restore', jobId, owner);
           return;
         }
         if (!validateSent && Date.now() - quietSince >= RESUME_VALIDATE_AFTER_MS) {
@@ -543,26 +641,29 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
             headers: { 'Content-Type': 'application/json' },
             body: '{}',
           });
+          if (owner !== operationID) return;
           job = { ...job, ...validated };
           continue;
         }
         await delay(1000);
       }
     } catch (caught) {
+      if (owner !== operationID) return;
       const error = apiError(caught);
-      await reconcileRestore(jobId, error);
+      await reconcileRestore(jobId, error, owner);
     }
   }
 
   /** After a failed resume step: continue, report the device's outcome, or cancel. */
-  async function reconcileRestore(jobId: string, original: unknown) {
+  async function reconcileRestore(jobId: string, original: unknown, owner: number) {
     let payload;
     try {
       payload = await jobRequest(jobPath('restore', jobId));
     } catch {
-      fail(original);
+      if (owner === operationID) fail(original);
       return;
     }
+    if (owner !== operationID || !job || job.job_id !== jobId) return;
     job = { ...job, ...payload };
     if (TERMINAL.has(payload.state)) {
       finish(payload);
@@ -570,14 +671,18 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
     }
     if (payload.state === 'prepared' && payload.plan_digest) {
       try {
-        await applyRestore(jobId, payload.plan_digest);
+        await applyRestore(jobId, payload.plan_digest, owner);
         return;
       } catch {
         // Fall through to the cancel below with the first error.
       }
     } else if (UNCANCELLABLE.includes(payload.state)) {
       // Committing on the device already; it finishes on its own.
-      await poll('restore', jobId);
+      await poll('restore', jobId, owner);
+      return;
+    } else if (payload.state === 'validating') {
+      // A validation may still be running on the device after its response was lost.
+      await poll('restore', jobId, owner);
       return;
     }
     try {
@@ -585,7 +690,7 @@ export function createBackupEngine(onChange: (state: BackupView) => void) {
     } catch {
       // Already finished on the device.
     }
-    fail(original);
+    if (owner === operationID) fail(original);
   }
 
   return {

@@ -167,7 +167,10 @@ export function createDeviceState(
     timeout: 20000,
     async read(signal) {
       const versions = Object.fromEntries(
-        Object.entries(resources).map(([key, resource]) => [key, resource.epoch]),
+        Object.entries(resources).map(([key, resource]) => [
+          key,
+          { epoch: resource.epoch, version: resource.version },
+        ]),
       );
       let value: Snapshot;
       try {
@@ -184,11 +187,23 @@ export function createDeviceState(
       if (signal.aborted) return value;
       canonicalReadPending = false;
       store.set(snapshotFailure, undefined);
-      if (value.wifi_status && resources.wifi.epoch === versions.wifi)
+      if (
+        value.wifi_status &&
+        resources.wifi.epoch === versions.wifi.epoch &&
+        resources.wifi.version === versions.wifi.version
+      )
         resources.wifi.publish({ wifi_status: value.wifi_status, wifi: value.wifi });
-      if (value.storage && resources.storage.epoch === versions.storage)
+      if (
+        value.storage &&
+        resources.storage.epoch === versions.storage.epoch &&
+        resources.storage.version === versions.storage.version
+      )
         resources.storage.publish(value.storage);
-      if ((value.firmware || value.agent_status) && resources.device.epoch === versions.device)
+      if (
+        (value.firmware || value.agent_status) &&
+        resources.device.epoch === versions.device.epoch &&
+        resources.device.version === versions.device.version
+      )
         resources.device.publish({ firmware: value.firmware, agent_status: value.agent_status });
       store.set(config, value.config || null);
       return value;

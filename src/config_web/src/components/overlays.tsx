@@ -17,12 +17,17 @@ interface Confirmation {
 const confirmation = atom<Confirmation | null>(null);
 const notice = atom('');
 const progress = atom<{ title: TextSpec; body: TextSpec; failed?: boolean } | null>(null);
+let noticeID = 0;
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 export function toast(value: TextSpec, { durationMs = 3500 }: { durationMs?: number } = {}) {
   const text = resolve(value);
   store.set(notice, text);
+  const id = ++noticeID;
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = undefined;
   if (durationMs > 0)
-    setTimeout(() => {
-      if (store.get(notice) === text) store.set(notice, '');
+    noticeTimer = setTimeout(() => {
+      if (noticeID === id) store.set(notice, '');
     }, durationMs);
 }
 export function confirmSheet(spec: Omit<Confirmation, 'done'>): Promise<boolean> {
@@ -61,7 +66,10 @@ export function Modal({
     const app = document.getElementById('app');
     const inert = app?.inert;
     if (app) app.inert = true;
-    panel.current?.querySelector<HTMLElement>('input,button,textarea,select,[tabindex]')?.focus();
+    const first = panel.current?.querySelector<HTMLElement>(
+      'input:not(:disabled),button:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex="0"]',
+    );
+    (first || panel.current?.querySelector<HTMLElement>('h2') || panel.current)?.focus();
     return () => {
       if (app) app.inert = !!inert;
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
@@ -86,7 +94,10 @@ export function Modal({
         ];
         const first = controls[0],
           last = controls.at(-1);
-        if (event.shiftKey && document.activeElement === first) {
+        if (!controls.length) {
+          event.preventDefault();
+          panel.current?.focus();
+        } else if (event.shiftKey && document.activeElement === first) {
           event.preventDefault();
           last?.focus();
         } else if (!event.shiftKey && document.activeElement === last) {
@@ -96,11 +107,11 @@ export function Modal({
       }}
     >
       <div className="ds-sheet__scrim ds-sheet__scrim--open" onClick={() => !busy && onClose()} />
-      <div ref={panel} className="ds-sheet__panel ds-sheet__panel--open">
+      <div ref={panel} tabIndex={-1} className="ds-sheet__panel ds-sheet__panel--open">
         <div className="ds-sheet__grabber">
           <div className="ds-sheet__handle" />
         </div>
-        <h2 id={titleID} className={hideTitle ? 'ds-sr-only' : 'ds-sheet__title'}>
+        <h2 id={titleID} tabIndex={-1} className={hideTitle ? 'ds-sr-only' : 'ds-sheet__title'}>
           <Text value={title} />
         </h2>
         <div className="ds-sheet__body">{children}</div>

@@ -139,6 +139,7 @@ func (s *Server) handleGetDeviceSnapshot(w http.ResponseWriter, _ *http.Request)
 	}
 	response := map[string]any{
 		"ok":            true,
+		"https_port":    s.options.HTTPSPort,
 		"config":        config,
 		"config_valid":  valid,
 		"config_errors": validationErrors,

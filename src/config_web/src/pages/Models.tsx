@@ -297,7 +297,8 @@ export function ConnectionTest({
   values: Record<string, unknown>;
 }) {
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState('');
+  const [result, setResult] = useState<{ fingerprint: string; text: string } | null>(null);
+  const fingerprint = JSON.stringify(values);
   return (
     <div className="ds-group">
       <Button
@@ -305,20 +306,22 @@ export function ConnectionTest({
         action={`test-${sectionName}-connection`}
         disabled={busy}
         onClick={async () => {
+          const tested = fingerprint;
           setBusy(true);
           try {
             const response = await props.model.send<{
               ok: boolean;
               results?: { passed: boolean; detail?: string }[];
             }>('/api/config/test', { method: 'POST', ...json({ section: sectionName, values }) });
-            setResult(
-              response.ok
+            setResult({
+              fingerprint: tested,
+              text: response.ok
                 ? resolve(msg('model.test_passed', '连接成功'))
                 : response.results?.find((entry) => !entry.passed)?.detail ||
-                    resolve(msg('model.test_failed', '连接失败')),
-            );
+                  resolve(msg('model.test_failed', '连接失败')),
+            });
           } catch (error) {
-            setResult(apiError(error).message);
+            setResult({ fingerprint: tested, text: apiError(error).message });
           } finally {
             setBusy(false);
           }
@@ -326,7 +329,7 @@ export function ConnectionTest({
       >
         <Text value={msg('model.test', '测试连接')} />
       </Button>
-      {result && <p role="status">{result}</p>}
+      {result?.fingerprint === fingerprint && <p role="status">{result.text}</p>}
     </div>
   );
 }

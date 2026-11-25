@@ -18,6 +18,42 @@ const context = {
 const extract = (body: string) => JSON.parse(JSON.stringify(logs.extractResponseMessage(body)));
 const requestMessages = (body: unknown) => JSON.parse(JSON.stringify(logs.requestMessages(body)));
 it('preserves Anthropic, OpenAI and Responses messages, thinking and tool streams', () => {
+  assert.deepEqual(
+    requestMessages({ instructions: 'Be concise.', input: 'Hello.' }),
+    [
+      { role: 'system', content: 'Be concise.' },
+      { role: 'user', content: 'Hello.' },
+    ],
+    'Responses instructions must not suppress the input',
+  );
+  assert.deepEqual(
+    requestMessages({
+      input: [
+        { type: 'function_call', call_id: 'call-1', name: 'lookup', arguments: '{"q":"x"}' },
+        { type: 'function_call_output', call_id: 'call-1', output: 'Found it.' },
+      ],
+    }),
+    [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call-1',
+            type: 'function',
+            function: { name: 'lookup', arguments: '{"q":"x"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call-1', content: 'Found it.' },
+    ],
+    'Responses tool inputs must retain their call and result IDs',
+  );
+  const reasoningDiff = logs.buildMessageDiffOps(
+    [{ role: 'assistant', content: 'Answer', reasoning_content: 'First' }],
+    [{ role: 'assistant', content: 'Answer', reasoning_content: 'Second' }],
+  );
+  assert.equal(reasoningDiff[0].kind, 'modified');
   const anthropicRequest = {
     model: 'claude-sonnet-4-6',
     system: [{ type: 'text', text: 'Use the screen carefully.' }],

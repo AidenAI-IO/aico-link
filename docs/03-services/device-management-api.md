@@ -514,11 +514,11 @@ bearer token stays valid until it expires or the key is replaced.
 `GET /api/auth/session` returns `{"ok": true, "via_usb": false,
 "password_set": true, "authenticated": true}`.
 
-The board serves plain HTTP, so anyone who can capture traffic on the local
-network can capture the password and the token. Turn LAN access on only on
-trusted networks. The same applies to MCP access tokens, which travel over
-Wi-Fi even while LAN access is off: create them only on trusted networks and
-revoke any you no longer use.
+The Config Web HTTP endpoint is plain text, so anyone who can capture traffic
+on the local network can capture a password or session token. Use the Config
+Web HTTPS MCP endpoint for Wi-Fi clients and trust the board's local TLS CA.
+Direct Agent HTTP MCP is accepted only over USB or loopback. Turn LAN access on
+only on trusted networks and revoke any MCP tokens you no longer use.
 
 ### MCP Access Tokens
 
@@ -530,7 +530,8 @@ access stays off. Creating a token, which needs an admitted client (a USB one
 while no device password is set), is what
 opens MCP. An MCP access token:
 
-- reaches only `POST /mcp` on port 8080. It is refused everywhere else,
+- reaches only MCP `POST /mcp`, through the Config Web HTTPS reverse proxy or
+  directly on Agent port 8080 over USB. It is refused everywhere else,
   including `/api/tools/*` (which would bypass the MCP tool allowlist and the
   `mcp_shell_enabled` gate), Config Web, backup, the terminal, and SSH;
 - does not expire, and survives the password being changed or cleared and LAN
@@ -562,8 +563,8 @@ The secret is returned once and is not stored: the board keeps only its
 SHA-256 hash. A name is 1 to 64 characters on one line (`400` otherwise); the
 number of tokens is not limited. Revoking an unknown ID returns `404`. A
 missing or damaged token file accepts no token. Clients send the secret as
-`Authorization: Bearer <secret>`; see [MCP](../04-agent/mcp.md#authentication)
-for client configuration.
+`Authorization: Bearer <secret>`; use the Config Web HTTPS URL for Wi-Fi and
+see [MCP](../04-agent/mcp.md#authentication) for client configuration.
 
 ## API Boundary
 
