@@ -23,7 +23,8 @@ private:
 
     CameraConfig config_;
     std::string device_name_;
-    std::string pixel_format_;
+    bool downsample_nv16_;
+    std::string output_format_;
     std::string subdev_device_;
     std::string edid_path_;
     std::string prepared_mode_subdev_;

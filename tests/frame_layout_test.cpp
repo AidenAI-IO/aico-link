@@ -65,6 +65,18 @@ TEST_CASE("compact_nv12 copies padded Y and UV rows") {
     }
 }
 
+TEST_CASE("compact_nv12 downsamples padded NV16 without mixing chroma rows or channels") {
+    const std::vector<uint8_t> nv16 = {
+        1, 2, 99, 3, 4, 99, 5, 6, 99, 7, 8, 99,       // Y, stride 3
+        10, 20, 99, 30, 40, 99, 50, 60, 99, 70, 80, 99 // UV, stride 3
+    };
+    std::vector<uint8_t> compact;
+    REQUIRE(compact_nv12(nv16.data(), nv16.size(), 2, 4, 3, &compact, aico::ChromaLayout::NV16));
+    const std::vector<uint8_t> expected = {1, 2, 3, 4, 5, 6, 7, 8, 10, 20, 50, 60};
+    CHECK(compact == expected);
+    CHECK_FALSE(compact_nv12(nv16.data(), nv16.size() - 1, 2, 4, 3, &compact, aico::ChromaLayout::NV16));
+}
+
 TEST_CASE("compact_nv12 accepts tight layout") {
     std::vector<uint8_t> source(4 * 2 * 3 / 2, 7);
     std::vector<uint8_t> compact;
