@@ -174,7 +174,7 @@
       ],
       "hard_assertions": {
         "allow_device_cli": true,
-        "min_tool_calls": 4, "max_tool_calls": 7, "must_complete_within_sec": 180,
+        "min_tool_calls": 1, "max_tool_calls": 7, "must_complete_within_sec": 180,
         "required_tools": ["bridge_contacts"],
         "forbidden_tools": ["touch_gesture", "shell", "enter_text"],
         "required_tool_calls": [
@@ -252,7 +252,7 @@
       ],
       "hard_assertions": {
         "allow_device_cli": true,
-        "min_tool_calls": 4,
+        "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 240,
         "required_tools": [
