@@ -143,9 +143,15 @@ def test_load_suite_parses_range_environment_assertions(tmp_path: Path):
         {"min": 5, "max": "eleven"},
         {"min": 11, "max": 5},
         {"min": True, "max": 11},
+        {"$length": -1},
+        {"$length": True},
+        {"$exactly_once": []},
+        {"$exactly_once": {"displayName": "Ada"}},
+        {"$exactly_once": [{"score": {"$gte": "1"}}]},
+        {"$exactly_once": [{"phones": {"$contains": {"number": {"$digits": "+1 415"}}}}]},
     ],
 )
-def test_load_suite_rejects_invalid_range_environment_assertions(tmp_path: Path, spec):
+def test_load_suite_rejects_invalid_environment_assertion_specs(tmp_path: Path, spec):
     fixture = json.loads(json.dumps(FIXTURE))
     fixture["tasks"][0]["environment_assertions"] = {"apps.scroll_lab.firstVisibleOrdinal": spec}
     path = tmp_path / "bad_range_environment_assertions.json"

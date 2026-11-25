@@ -39,6 +39,8 @@ class SuiteCase:
     environment: str
     environment_variable: str = ""
     target_platform: str = "auto"
+    # Parallel tasks. An ADB case runs one task per device, so this is also the
+    # most devices it leases from the pool; fewer are used when fewer exist.
     max_concurrency: int = 1
     timeout_minutes: int = 180
     # False keeps the case out of the automatic runnable profile; it stays
@@ -108,8 +110,6 @@ def _case_from_raw(raw: Any, index: int) -> SuiteCase:
         raise CatalogError(f"task_ids for {case.id} must be an array of non-empty IDs")
     if len(set(case.task_ids)) != len(case.task_ids):
         raise CatalogError(f"duplicate task_ids for {case.id}")
-    if case.environment == "adb" and case.max_concurrency != 1:
-        raise CatalogError(f"ADB case {case.id} requires max_concurrency=1")
     return case
 
 

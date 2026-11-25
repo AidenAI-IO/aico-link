@@ -106,7 +106,7 @@ jobs:
     timeout-minutes: ${{ fromJSON(needs.plan.outputs.timeout_minutes) }}
     env:
       MATRIX: ${{ needs.plan.outputs.matrix }}
-      BENCHMARK_CI_MAX_PARALLEL: '2'
+      BENCHMARK_CI_MAX_PARALLEL: '4'
       BENCHMARK_REPEATS: ${{ inputs.repeats || vars.BENCHMARK_REPEATS || '1' }}
       BENCHMARK_AGENT_PROVIDER: ${{ vars.BENCHMARK_AGENT_PROVIDER }}
       DOCKER_BUILDKIT: 1
@@ -274,20 +274,32 @@ jobs:
           docker version
           docker compose version
           docker info
-      - name: Validate Android device
+      - name: Validate Android devices
+        id: android_devices
         # The ADB bridge shells out to adb. boot_completed is not enough: a dead
         # SystemUI still reports a finished boot, and every UI case then fails.
+        # BENCHMARK_ANDROID_SERIAL may list several emulators; ADB cases lease
+        # them as a pool. A device that stays unusable after one restart is
+        # dropped from the pool, and the job fails only when none is left.
         if: ${{ contains(needs.plan.outputs.matrix, '"environment":"adb"') }}
         env:
           ANDROID_SDK_DIR: ${{ vars.BENCHMARK_ANDROID_SDK_DIR || '~/android-sdk' }}
-          # A fresh android-emulator.service cgroup is about 8 GiB (4 GiB guest
-          # RAM plus SwiftShader). Above 16 GiB the RenderThread leak is large
-          # enough to matter on the 35 GiB runner.
-          EMULATOR_MEMORY_LIMIT_BYTES: "17179869184"
+          # A fresh emulator service cgroup is about 7 GiB (4 GiB guest RAM plus
+          # SwiftShader) and grows about 120 MiB per Android process death; see
+          # "Recycle Android emulators". One job adds 2-3 GiB, so above 12 GiB
+          # the previous job could not recycle the emulator (cancelled, runner
+          # lost) and it is restarted before cases start.
+          EMULATOR_MEMORY_LIMIT_BYTES: "12884901888"
         run: |
           set -euo pipefail
           sdk_dir="${ANDROID_SDK_DIR/#\~/$HOME}"
-          if [[ -z "${ANDROID_SERIAL:-}" ]]; then
+          IFS=',' read -r -a requested <<< "${ANDROID_SERIAL:-}"
+          serials=()
+          for serial in "${requested[@]}"; do
+            serial="$(echo "$serial" | xargs)"
+            [[ -n "$serial" ]] && serials+=("$serial")
+          done
+          if (( ${#serials[@]} == 0 )); then
             echo "ADB cases require the BENCHMARK_ANDROID_SERIAL repository variable" >&2
             exit 1
           fi
@@ -300,15 +312,15 @@ jobs:
           adb start-server
 
           adb_shell() {
-            timeout 15 adb -s "$ANDROID_SERIAL" shell "$@" | tr -d '\r'
+            timeout 15 adb -s "$serial" shell "$@" | tr -d '\r'
           }
 
           remove_window_xml() {
-            timeout 15 adb -s "$ANDROID_SERIAL" shell rm -f /sdcard/aico-window.xml >/dev/null 2>&1 || true
+            timeout 15 adb -s "$serial" shell rm -f /sdcard/aico-window.xml >/dev/null 2>&1 || true
           }
 
           wait_until_booted() {
-            timeout 300 adb -s "$ANDROID_SERIAL" wait-for-device || return 1
+            timeout 300 adb -s "$serial" wait-for-device || return 1
             local _
             for _ in $(seq 1 100); do
               if [[ "$(adb_shell getprop sys.boot_completed 2>/dev/null || true)" == "1" ]]; then
@@ -316,7 +328,7 @@ jobs:
               fi
               sleep 3
             done
-            echo "$ANDROID_SERIAL did not finish booting" >&2
+            echo "$serial did not finish booting" >&2
             timeout 15 adb devices >&2 || true
             return 1
           }
@@ -326,7 +338,7 @@ jobs:
             pid="$(adb_shell pidof com.android.systemui 2>/dev/null || true)"
             [[ -n "$pid" ]] || return 1
             remove_window_xml
-            timeout 30 adb -s "$ANDROID_SERIAL" shell uiautomator dump /sdcard/aico-window.xml >/dev/null || return 1
+            timeout 30 adb -s "$serial" shell uiautomator dump /sdcard/aico-window.xml >/dev/null || return 1
             xml="$(adb_shell cat /sdcard/aico-window.xml 2>/dev/null || true)"
             remove_window_xml
             [[ "$xml" == *"<hierarchy"* ]]
@@ -340,12 +352,29 @@ jobs:
               fi
               sleep 3
             done
-            echo "$ANDROID_SERIAL UI is not usable (SystemUI missing or uiautomator dump has no hierarchy)" >&2
+            echo "$serial UI is not usable (SystemUI missing or uiautomator dump has no hierarchy)" >&2
             return 1
           }
 
+          # emulator-<port> runs as android-emulator@<port>.service. The first
+          # serial may instead be the original single android-emulator.service.
+          # Any instance of a template unit resolves, so an instance counts only
+          # when it is enabled or running.
+          emulator_unit() {
+            local port="${serial#emulator-}"
+            if [[ "$port" != "$serial" ]] && {
+              systemctl --user is-enabled --quiet "android-emulator@${port}.service" 2>/dev/null ||
+              systemctl --user is-active --quiet "android-emulator@${port}.service"
+            }; then
+              echo "android-emulator@${port}.service"
+            elif [[ "$serial" == "${serials[0]}" ]] && systemctl --user cat android-emulator.service >/dev/null 2>&1; then
+              echo "android-emulator.service"
+            fi
+          }
+
           emulator_memory_bytes() {
-            systemctl --user show android-emulator.service -p MemoryCurrent --value 2>/dev/null || true
+            [[ -n "$unit" ]] || return 0
+            systemctl --user show "$unit" -p MemoryCurrent --value 2>/dev/null || true
           }
 
           memory_too_high() {
@@ -355,34 +384,52 @@ jobs:
             (( mem > EMULATOR_MEMORY_LIMIT_BYTES ))
           }
 
-          can_restart_emulator() {
-            systemctl --user cat android-emulator.service >/dev/null 2>&1
+          device_ready() {
+            if ! wait_until_booted || ! wait_for_ui || memory_too_high; then
+              if [[ -z "$unit" ]]; then
+                echo "$serial is not usable and has no emulator service to restart" >&2
+                return 1
+              fi
+              echo "Restarting $unit for $serial (memory=$(emulator_memory_bytes || true))"
+              systemctl --user restart "$unit" || return 1
+              wait_until_booted || return 1
+              wait_for_ui || return 1
+            fi
+            if memory_too_high; then
+              echo "$unit still uses $(emulator_memory_bytes) bytes after restart" >&2
+              return 1
+            fi
           }
 
-          if ! wait_until_booted || ! wait_for_ui || memory_too_high; then
-            if ! can_restart_emulator; then
-              echo "Android UI is not usable and android-emulator.service is not installed" >&2
-              exit 1
+          ready=()
+          for serial in "${serials[@]}"; do
+            unit="$(emulator_unit)"
+            if device_ready; then
+              ready+=("$serial")
+              echo "$serial UI is ready (Android $(adb_shell getprop ro.build.version.release), SystemUI $(adb_shell pidof com.android.systemui), emulator memory $(emulator_memory_bytes || echo n/a))"
+            else
+              echo "::warning title=Android device dropped::$serial is not usable; ADB cases run on the remaining devices"
             fi
-            echo "Restarting android-emulator.service (memory=$(emulator_memory_bytes || true))"
-            systemctl --user restart android-emulator.service
-            wait_until_booted
-            wait_for_ui
-          fi
-          if memory_too_high; then
-            echo "android-emulator.service still uses $(emulator_memory_bytes) bytes after restart" >&2
+          done
+          if (( ${#ready[@]} == 0 )); then
+            echo "No usable Android device among ${serials[*]}" >&2
             exit 1
           fi
-          echo "$ANDROID_SERIAL UI is ready (Android $(adb_shell getprop ro.build.version.release), SystemUI $(adb_shell pidof com.android.systemui), emulator memory $(emulator_memory_bytes || echo n/a))"
-      - name: Install Aico App on Android device
+          # Later steps and the case driver use only the usable devices.
+          echo "serials=$(IFS=','; echo "${ready[*]}")" >> "$GITHUB_OUTPUT"
+          echo "Android device pool: ${ready[*]}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install Aico App on Android devices
         id: aidenbridge_install
         if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
         # Only Aico App cases need the app. A failed install marks those
         # cases as failed in ci.run_cases instead of stopping every other case.
+        # Any pooled device may receive an Aico App case, so every one gets it.
         continue-on-error: true
+        env:
+          ANDROID_SERIAL: ${{ steps.android_devices.outputs.serials }}
         run: |
           set -euo pipefail
-          echo "Checking $AIDENBRIDGE_PACKAGE on $ANDROID_SERIAL"
+          IFS=',' read -r -a serials <<< "$ANDROID_SERIAL"
           release_name="$(curl --fail --silent --show-error --location --head --retry 3 --max-time 30 "$AIDENBRIDGE_APK_URL" |
             tr -d '\r' | sed -n 's/^[Cc]ontent-[Dd]isposition:.*filename="\([^"]*\)".*/\1/p' | tail -n 1)"
           [[ "$release_name" =~ -([0-9]+)\.apk$ ]] || {
@@ -390,37 +437,46 @@ jobs:
             exit 1
           }
           release_version="${BASH_REMATCH[1]}"
-          installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
-            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')" || true
-          installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")" || true
+          installed_version_on() {
+            adb -s "$1" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
+              sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p'
+          }
+          apk_path=""
           apk_sha256=""
-          if [[ "$installed_version" == "$release_version" && "$installed_path" == package:* ]]; then
-            install_status="Reused"
-            echo "Reusing $AIDENBRIDGE_PACKAGE version $installed_version"
-          else
-            install_status="Installed"
-            apk_path="$(mktemp "${RUNNER_TEMP:-/tmp}/aidenbridge.XXXXXX.apk")"
-            trap 'rm -f "$apk_path"' EXIT
-            echo "Downloading $release_name"
-            curl --fail --location --retry 3 --max-time 180 "$AIDENBRIDGE_APK_URL" --output "$apk_path"
-            apk_sha256="$(sha256sum "$apk_path" | cut -d ' ' -f 1)"
-            echo "Aico App APK SHA-256: $apk_sha256"
-            adb -s "$ANDROID_SERIAL" install -r "$apk_path"
-            installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
-              sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')"
-            installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")"
+          statuses=()
+          for serial in "${serials[@]}"; do
+            echo "Checking $AIDENBRIDGE_PACKAGE on $serial"
+            installed_version="$(installed_version_on "$serial")" || true
+            installed_path="$(adb -s "$serial" shell pm path "$AIDENBRIDGE_PACKAGE")" || true
+            if [[ "$installed_version" == "$release_version" && "$installed_path" == package:* ]]; then
+              statuses+=("$serial: Reused")
+              echo "Reusing $AIDENBRIDGE_PACKAGE version $installed_version on $serial"
+              continue
+            fi
+            if [[ -z "$apk_path" ]]; then
+              apk_path="$(mktemp "${RUNNER_TEMP:-/tmp}/aidenbridge.XXXXXX.apk")"
+              trap 'rm -f "$apk_path"' EXIT
+              echo "Downloading $release_name"
+              curl --fail --location --retry 3 --max-time 180 "$AIDENBRIDGE_APK_URL" --output "$apk_path"
+              apk_sha256="$(sha256sum "$apk_path" | cut -d ' ' -f 1)"
+              echo "Aico App APK SHA-256: $apk_sha256"
+            fi
+            adb -s "$serial" install -r "$apk_path"
+            installed_version="$(installed_version_on "$serial")"
+            installed_path="$(adb -s "$serial" shell pm path "$AIDENBRIDGE_PACKAGE")"
             [[ "$installed_version" == "$release_version" && "$installed_path" == package:* ]] || {
-              echo "Expected $AIDENBRIDGE_PACKAGE version $release_version, found ${installed_version:-none}" >&2
+              echo "Expected $AIDENBRIDGE_PACKAGE version $release_version on $serial, found ${installed_version:-none}" >&2
               exit 1
             }
-            echo "Installed $AIDENBRIDGE_PACKAGE version $installed_version"
-          fi
+            statuses+=("$serial: Installed")
+            echo "Installed $AIDENBRIDGE_PACKAGE version $installed_version on $serial"
+          done
           {
             echo "### Aico App APK"
             echo "Source: $AIDENBRIDGE_APK_URL"
             echo "Release: $release_name"
-            echo "Installed versionCode: $installed_version"
-            echo "Status: $install_status"
+            echo "Installed versionCode: $release_version"
+            echo "Status: $(IFS=';'; echo "${statuses[*]}")"
             if [[ -n "$apk_sha256" ]]; then
               echo "SHA-256: $apk_sha256"
             fi
@@ -429,21 +485,26 @@ jobs:
         id: aidenbridge_routing
         if: ${{ steps.aidenbridge_install.outcome == 'success' }}
         continue-on-error: true
+        env:
+          ANDROID_SERIAL: ${{ steps.android_devices.outputs.serials }}
         run: |
           set -euo pipefail
-          adb -s "$ANDROID_SERIAL" root
-          timeout 60 adb -s "$ANDROID_SERIAL" wait-for-device
-          [[ "$(adb -s "$ANDROID_SERIAL" shell id -u | tr -d '\r')" == "0" ]] || {
-            echo "Aico App capability benchmark requires a rooted Android emulator" >&2
-            exit 1
-          }
-          adb -s "$ANDROID_SERIAL" shell iptables -t nat -L OUTPUT -n >/dev/null
-          for permission in READ_CALENDAR WRITE_CALENDAR READ_CONTACTS WRITE_CONTACTS; do
-            adb -s "$ANDROID_SERIAL" shell pm grant "$AIDENBRIDGE_PACKAGE" "android.permission.$permission"
+          IFS=',' read -r -a serials <<< "$ANDROID_SERIAL"
+          for serial in "${serials[@]}"; do
+            adb -s "$serial" root
+            timeout 60 adb -s "$serial" wait-for-device
+            [[ "$(adb -s "$serial" shell id -u | tr -d '\r')" == "0" ]] || {
+              echo "Aico App capability benchmark requires a rooted Android emulator ($serial)" >&2
+              exit 1
+            }
+            adb -s "$serial" shell iptables -t nat -L OUTPUT -n >/dev/null
+            for permission in READ_CALENDAR WRITE_CALENDAR READ_CONTACTS WRITE_CONTACTS; do
+              adb -s "$serial" shell pm grant "$AIDENBRIDGE_PACKAGE" "android.permission.$permission"
+            done
+            if (( $(adb -s "$serial" shell getprop ro.build.version.sdk | tr -d '\r') >= 33 )); then
+              adb -s "$serial" shell pm grant "$AIDENBRIDGE_PACKAGE" android.permission.POST_NOTIFICATIONS
+            fi
           done
-          if (( $(adb -s "$ANDROID_SERIAL" shell getprop ro.build.version.sdk | tr -d '\r') >= 33 )); then
-            adb -s "$ANDROID_SERIAL" shell pm grant "$AIDENBRIDGE_PACKAGE" android.permission.POST_NOTIFICATIONS
-          fi
       - name: Prepare benchmark images
         working-directory: benchmark
         run: >-
@@ -454,10 +515,14 @@ jobs:
           --mobilegym-image "$MOBILEGYM_IMAGE"
           --mobilegym-log "$PREPARE_LOG"
       - name: Run benchmark cases
+        # Each run is published to Langfuse as soon as its case finishes, while
+        # later cases still run; the step ends once those publications finish.
         working-directory: benchmark
         env:
           MATRIX: ${{ needs.plan.outputs.matrix }}
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          # Only the devices that passed validation; unset when no ADB case runs.
+          ANDROID_SERIAL: ${{ steps.android_devices.outputs.serials || env.ANDROID_SERIAL }}
           # 0 only when Aico App cases are planned and their device setup failed.
           AIDENBRIDGE_READY: ${{ (steps.aidenbridge_install.outcome == 'failure' || steps.aidenbridge_routing.outcome == 'failure') && '0' || '1' }}
         run: >-
@@ -465,20 +530,27 @@ jobs:
           --matrix-json "$MATRIX"
           --run-id-prefix "$RUN_ID_PREFIX"
           --max-parallel "$BENCHMARK_CI_MAX_PARALLEL"
+          --publish-langfuse
+          --publish-max-parallel 8
+          --publish-run-timeout-sec 300
       - name: Clean up benchmark services
         if: ${{ always() }}
         env:
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -uo pipefail
-          if [[ -n "${ANDROID_SERIAL:-}" ]]; then
-            adb -s "$ANDROID_SERIAL" shell iptables -t nat -D OUTPUT \
+          # Every configured device, including any dropped during validation.
+          IFS=',' read -r -a serials <<< "${ANDROID_SERIAL:-}"
+          for serial in "${serials[@]}"; do
+            serial="$(echo "$serial" | xargs)"
+            [[ -n "$serial" ]] || continue
+            adb -s "$serial" shell iptables -t nat -D OUTPUT \
               -d 192.168.42.1/32 -p tcp --dport 8080 \
               -j DNAT --to-destination 127.0.0.1:8080 >/dev/null 2>&1 || true
-            adb -s "$ANDROID_SERIAL" reverse --remove tcp:8080 >/dev/null 2>&1 || true
+            adb -s "$serial" reverse --remove tcp:8080 >/dev/null 2>&1 || true
             # A terminated runner cannot execute its board-network context cleanup.
-            adb -s "$ANDROID_SERIAL" shell ip link del eth1 >/dev/null 2>&1 || true
-          fi
+            adb -s "$serial" shell ip link del eth1 >/dev/null 2>&1 || true
+          done
           # Every run id in this job starts with the prefix, so one prefix sweep
           # covers all the cases the fan-out started.
           for id in $(docker ps -aq --filter "name=aico-mobilegym-env-mobilegym-${RUN_ID_PREFIX}"); do
@@ -498,12 +570,54 @@ jobs:
             [[ -s "$pid_file" ]] || continue
             kill -TERM "$(cat "$pid_file")" >/dev/null 2>&1 || true
           done
-      - name: Publish completed runs to Langfuse
+      - name: Recycle Android emulators
+        # The emulator never frees the host RenderThreads of an Android process
+        # that dies, about 120 MiB per death, and every ADB task force-stops its
+        # app first. Restart every configured emulator after a job that used
+        # them, so the next job, scheduled or dispatched, starts from fresh
+        # emulators. Restarts run in parallel and return once each emulator is
+        # stopped and relaunched; it boots while this job publishes, and the
+        # next job's device check waits for the boot.
+        if: ${{ always() && contains(needs.plan.outputs.matrix, '"environment":"adb"') }}
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          IFS=',' read -r -a serials <<< "${ANDROID_SERIAL:-}"
+          first=""
+          for serial in "${serials[@]}"; do
+            serial="$(echo "$serial" | xargs)"
+            [[ -n "$serial" ]] || continue
+            first="${first:-$serial}"
+            # Same unit mapping as "Validate Android devices".
+            port="${serial#emulator-}"
+            if [[ "$port" != "$serial" ]] && {
+              systemctl --user is-enabled --quiet "android-emulator@${port}.service" 2>/dev/null ||
+              systemctl --user is-active --quiet "android-emulator@${port}.service"
+            }; then
+              unit="android-emulator@${port}.service"
+            elif [[ "$serial" == "$first" ]] && systemctl --user cat android-emulator.service >/dev/null 2>&1; then
+              unit="android-emulator.service"
+            else
+              echo "$serial has no emulator service; not recycled"
+              continue
+            fi
+            mem="$(systemctl --user show "$unit" -p MemoryCurrent --value 2>/dev/null || true)"
+            [[ "$mem" =~ ^[0-9]+$ ]] || mem=0
+            echo "Recycling $unit for $serial ($(( mem / 1048576 )) MiB)"
+            ( systemctl --user restart "$unit" || echo "::warning::could not restart $unit" ) &
+          done
+          wait
+      - name: Publish runs missed during the cases
         if: ${{ always() }}
+        # "Run benchmark cases" publishes each run when its case finishes and
+        # marks it published. This step only publishes runs without that
+        # marker: a failed publication, or every run when the case step was
+        # interrupted. It is a no-op after a normal run.
         # Observability is a side channel: a publish failure must not mask the
         # benchmark verdict this job exists to report. ci.publish_langfuse runs
         # each run in its own process (the Langfuse SDK shares one client per
-        # process, which deadlocks concurrent in-process publishes), four at a
+        # process, which deadlocks concurrent in-process publishes), eight at a
         # time, and kills any run that exceeds its limit. The step limit is a
         # backstop so publication can never hold the shared runner.
         continue-on-error: true
@@ -515,6 +629,7 @@ jobs:
           uv run python -m ci.publish_langfuse
           --runs-dir runs
           --run-id-prefix "$RUN_ID_PREFIX"
+          --max-parallel 8
           --run-timeout-sec 300
           --summary-path "$GITHUB_STEP_SUMMARY"
       - name: Generate benchmark dashboard

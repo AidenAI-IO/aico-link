@@ -133,3 +133,45 @@ def test_evaluate_environment_state_assertions_range_rejects_overshoot_and_non_n
         ("apps.scroll_lab.firstVisibleOrdinal", False, 15),
         ("apps.scroll_lab.selectedItemId", False, "<missing>"),
     ]
+
+
+@pytest.mark.parametrize(("contacts", "passed"), [
+    # Saved in another order, with the numbers formatted differently.
+    ([{"displayName": "Oliver Brooks", "phones": [{"number": "+442079460958"}]},
+      {"displayName": "Alice Chen", "phones": [{"number": "+86 13900138001"}]},
+      {"displayName": "Priya Natarajan", "phones": [{"number": "+1 (415) 555-0132"}],
+       "emails": [{"email": "priya.n@example.com"}]}], True),
+    # Imported twice.
+    ([{"displayName": "Oliver Brooks", "phones": [{"number": "+44 20 7946 0958"}]},
+      {"displayName": "Oliver Brooks", "phones": [{"number": "+44 20 7946 0958"}]},
+      {"displayName": "Priya Natarajan", "phones": [{"number": "+1 415 555 0132"}],
+       "emails": [{"email": "priya.n@example.com"}]}], False),
+    # A number paired with the wrong person.
+    ([{"displayName": "Oliver Brooks", "phones": [{"number": "+1 415 555 0132"}]},
+      {"displayName": "Alice Chen", "phones": [{"number": "+86 13900138001"}]},
+      {"displayName": "Priya Natarajan", "phones": [{"number": "+44 20 7946 0958"}],
+       "emails": [{"email": "priya.n@example.com"}]}], False),
+    # The country code was dropped.
+    ([{"displayName": "Oliver Brooks", "phones": [{"number": "020 7946 0958"}]},
+      {"displayName": "Alice Chen", "phones": [{"number": "+86 13900138001"}]},
+      {"displayName": "Priya Natarajan", "phones": [{"number": "+1 415 555 0132"}],
+       "emails": [{"email": "priya.n@example.com"}]}], False),
+    ("not a list", False),
+])
+def test_list_assertion_matches_each_item_exactly_once_in_any_order(contacts, passed):
+    def contact(name, digits):
+        return {"displayName": name, "phones": {"$contains": {"number": {"$digits": digits}}}}
+
+    spec = {
+        "$length": 3,
+        "$exactly_once": [
+            contact("Alice Chen", "8613900138001"),
+            {**contact("Priya Natarajan", "14155550132"),
+             "emails": {"$contains": {"email": "priya.n@example.com"}}},
+            contact("Oliver Brooks", "442079460958"),
+        ],
+    }
+
+    result, = evaluate_environment_state_assertions({"contacts": contacts}, {"contacts": spec})
+
+    assert result.passed is passed

@@ -14,14 +14,37 @@ def bridge_error(code: str, message: str, status: int = 400) -> dict[str, Any]:
 
 
 def parse_initial_state(raw: Any) -> dict[str, Any] | None:
-    """Validate a setup ``initial_state`` patch for ``window.__SIM__.setState``."""
+    """Validate a setup ``initial_state``.
+
+    ``apps`` and ``os`` are patches for ``window.__SIM__.setState``; ``files``
+    lists text files to write into the simulated phone storage.
+    """
     if raw is None:
         return None
-    if not isinstance(raw, dict) or not raw or set(raw) - {"apps", "os"}:
-        raise ValueError("initial_state must be a non-empty object with apps and/or os patches")
-    for key, patch in raw.items():
-        if not isinstance(patch, dict):
+    if not isinstance(raw, dict) or not raw or set(raw) - {"apps", "os", "files"}:
+        raise ValueError("initial_state must be a non-empty object with apps, os and/or files")
+    for key in ("apps", "os"):
+        if key in raw and not isinstance(raw[key], dict):
             raise ValueError(f"initial_state.{key} must be an object")
+    if "files" in raw:
+        files = raw["files"]
+        if not isinstance(files, list) or not files:
+            raise ValueError("initial_state.files must be a non-empty array")
+        paths: set[str] = set()
+        for index, item in enumerate(files):
+            if not isinstance(item, dict) or set(item) - {"path", "content", "mime_type"}:
+                raise ValueError(f"initial_state.files[{index}] must have path, content and optional mime_type")
+            path = item.get("path")
+            # Phone storage lives under /sdcard; anything else would not show in Files.
+            if not isinstance(path, str) or not path.startswith("/sdcard/") or path.endswith("/") or ".." in path.split("/"):
+                raise ValueError(f"initial_state.files[{index}].path must be a file under /sdcard/")
+            if path in paths:
+                raise ValueError(f"initial_state.files[{index}].path is duplicated: {path}")
+            paths.add(path)
+            if not isinstance(item.get("content"), str):
+                raise ValueError(f"initial_state.files[{index}].content must be text")
+            if "mime_type" in item and (not isinstance(item["mime_type"], str) or not item["mime_type"]):
+                raise ValueError(f"initial_state.files[{index}].mime_type must be a non-empty string")
     return raw
 
 

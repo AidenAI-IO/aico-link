@@ -13,6 +13,11 @@ several runs in one process the first shutdown stops the shared upload
 consumers and every other run then waits forever in ``flush()``. Separate
 processes also let a hard per-run timeout kill a stuck publish so the step can
 never hold the runner.
+
+``ci.run_cases`` publishes each run with ``publish_run`` as soon as its case
+finishes, overlapping publication with the cases still running. A published run
+gets a marker file, so this step only publishes what is left: runs whose
+publication failed, or every run when the case driver stopped early.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable
 
@@ -36,6 +42,7 @@ DEFAULT_MAX_PARALLEL = 4
 # is a stalled connection or a hung SDK flush, not useful work.
 DEFAULT_RUN_TIMEOUT_SEC = 300
 MAX_LOGGED_OUTPUT_CHARS = 20_000
+PUBLISHED_MARKER = ".langfuse-published"
 
 
 @dc.dataclass(frozen=True)
@@ -58,6 +65,10 @@ def find_manifests(runs_dir: Path, run_id_prefix: str) -> list[Path]:
         if path.is_file()
     ]
     return sorted(manifests)
+
+
+def is_published(run_dir: Path) -> bool:
+    return (run_dir / PUBLISHED_MARKER).is_file()
 
 
 def publish_command(run_dir: Path, dataset_prefix: str) -> list[str]:
@@ -99,6 +110,58 @@ def _run_isolated(command: list[str], *, timeout_sec: float, cwd: Path) -> tuple
     return returncode, timed_out, text
 
 
+def publish_run(
+    run_dir: Path,
+    *,
+    dataset_prefix: str = "aico-benchmark",
+    run_timeout_sec: float = DEFAULT_RUN_TIMEOUT_SEC,
+    command_for: Callable[[Path, str], list[str]] = publish_command,
+    cwd: Path = BENCHMARK_ROOT,
+    emit: Callable[[str], None],
+    output_lock: threading.Lock | None = None,
+) -> PublishOutcome:
+    """Publish one run in its own process and mark it published on success.
+
+    ``output_lock`` keeps the run's log group contiguous when other threads
+    print to the same stream.
+    """
+    started = time.monotonic()
+    try:
+        returncode, timed_out, output = _run_isolated(
+            command_for(run_dir, dataset_prefix), timeout_sec=run_timeout_sec, cwd=cwd,
+        )
+    except OSError as exc:  # the process could not even start
+        returncode, timed_out, output = None, False, f"could not start publisher: {exc}"
+    elapsed = time.monotonic() - started
+    ok = returncode == 0 and not timed_out
+    if timed_out:
+        detail = f"killed after exceeding {run_timeout_sec:.0f}s"
+    elif not ok:
+        detail = f"exit status {returncode}" if returncode is not None else output.strip()
+    else:
+        detail = ""
+    if ok:
+        try:
+            (run_dir / PUBLISHED_MARKER).write_text("", encoding="utf-8")
+        except OSError:
+            pass  # Publishing again later is harmless; losing the verdict is not.
+    with output_lock or nullcontext():
+        emit(f"::group::publish {run_dir.name} ({elapsed:.0f}s)")
+        if output.strip():
+            emit(output.rstrip())
+        emit("::endgroup::")
+        if not ok:
+            emit(f"::warning::Langfuse publication failed for {run_dir.name}: {detail}")
+    return PublishOutcome(
+        run_dir=run_dir,
+        ok=ok,
+        returncode=returncode,
+        timed_out=timed_out,
+        elapsed_sec=elapsed,
+        detail=detail,
+    )
+
+
 def publish_runs(
     run_dirs: list[Path],
     *,
@@ -112,38 +175,12 @@ def publish_runs(
     """Publish each run in its own process, concurrently and with a time bound."""
     if not run_dirs:
         return []
-    print_lock = threading.Lock()
+    output_lock = threading.Lock()
 
     def publish_one(run_dir: Path) -> PublishOutcome:
-        started = time.monotonic()
-        try:
-            returncode, timed_out, output = _run_isolated(
-                command_for(run_dir, dataset_prefix), timeout_sec=run_timeout_sec, cwd=cwd,
-            )
-        except OSError as exc:  # the process could not even start
-            returncode, timed_out, output = None, False, f"could not start publisher: {exc}"
-        elapsed = time.monotonic() - started
-        ok = returncode == 0 and not timed_out
-        if timed_out:
-            detail = f"killed after exceeding {run_timeout_sec:.0f}s"
-        elif not ok:
-            detail = f"exit status {returncode}" if returncode is not None else output.strip()
-        else:
-            detail = ""
-        with print_lock:
-            emit(f"::group::publish {run_dir.name} ({elapsed:.0f}s)")
-            if output.strip():
-                emit(output.rstrip())
-            emit("::endgroup::")
-            if not ok:
-                emit(f"::warning::Langfuse publication failed for {run_dir.name}: {detail}")
-        return PublishOutcome(
-            run_dir=run_dir,
-            ok=ok,
-            returncode=returncode,
-            timed_out=timed_out,
-            elapsed_sec=elapsed,
-            detail=detail,
+        return publish_run(
+            run_dir, dataset_prefix=dataset_prefix, run_timeout_sec=run_timeout_sec,
+            command_for=command_for, cwd=cwd, emit=emit, output_lock=output_lock,
         )
 
     workers = max(1, min(max_parallel, len(run_dirs)))
@@ -192,7 +229,14 @@ def cli(argv: list[str] | None = None) -> int:
     if args.run_timeout_sec <= 0:
         parser.error("--run-timeout-sec must be positive")
 
-    run_dirs = find_manifests(Path(args.runs_dir).resolve(), args.run_id_prefix)
+    completed = find_manifests(Path(args.runs_dir).resolve(), args.run_id_prefix)
+    already_published = [run_dir for run_dir in completed if is_published(run_dir)]
+    run_dirs = [run_dir for run_dir in completed if not is_published(run_dir)]
+    if already_published:
+        print(
+            f"{len(already_published)} run(s) were already published while the cases ran",
+            flush=True,
+        )
     outcomes = publish_runs(
         run_dirs,
         dataset_prefix=args.dataset_prefix,
@@ -200,13 +244,15 @@ def cli(argv: list[str] | None = None) -> int:
         run_timeout_sec=args.run_timeout_sec,
         emit=lambda message: print(message, flush=True),
     )
-    if not run_dirs:
+    if not completed:
         print(
             f"::warning::No completed manifest under {args.run_id_prefix}-*; "
             "skipping Langfuse publication",
             flush=True,
         )
     summary = summarize(outcomes)
+    if already_published:
+        summary += f"; {len(already_published)} already published during the cases"
     print(f"::notice::{summary}", flush=True)
     if args.summary_path:
         try:
