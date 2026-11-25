@@ -1074,7 +1074,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		),
 		realtimeVoiceToolDefinition(
 			realtimeEndConversationTool,
-			"End the voice conversation and return to standby when the user is done or asks to stop the voice interaction. Use this for goodbye, 退下, 退一下, 再见, stop listening, stop the service, go idle, standby, sleep, or wait for the next wakeup; these are conversation-control requests, not device or backend service-operation requests. Say a short farewell in the same response; the microphone stays open until you finish speaking. The user can start a new conversation at any time, and you keep your memory and history. Work you are already handling continues, and when it finishes the device comes back on its own to report the outcome, so you may briefly say that you will let them know.",
+			"End the voice conversation and return to standby when the user is done or asks to stop talking, for example goodbye, 退下, 退一下, 再见, stop listening, go idle, or standby. Say a short farewell in the same response; the microphone stays open until you finish speaking. The user can start a new conversation at any time, and you keep your memory and history. Work you are already doing continues, and the device comes back to report its outcome, so you may briefly say you will let them know.",
 			map[string]any{"type": "object", "properties": map[string]any{}},
 		),
 	}
@@ -1104,7 +1104,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		tools = append(tools,
 			realtimeVoiceToolDefinition(
 				realtimeCreateTaskTool,
-				"Handle any request you cannot directly and reliably answer or complete with the realtime conversation tools, including device state, visual inspection, external actions, lookups, or longer multi-step work. Call query_agent_task with no task_id first and continue the task that already covers the request instead of creating a duplicate. A new request that no outstanding task covers gets its own task, even while other work is running; never fold it into unrelated work with update_agent_task. Present the work to the user as your own responsibility. You may say you are handling it immediately; its result only means the work was accepted, so do not claim the underlying device or external outcome succeeded or failed until a task update or query_agent_task result shows status completed or failed. If this tool returns an error, tell the user you could not start the work.",
+				"Act on the phone or other devices, or look something up: reading the screen, opening apps, tapping and typing, device state, external actions, lookups, and multi-step work. Write a self-contained goal that includes what the user told you. It returns once the work is accepted, not when it is done. If it returns an error, tell the user you could not start it.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1115,7 +1115,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeCancelTaskTool,
-				"Cancel work that you previously started when the user asks you to stop it. If the work already finished but its result has not started delivery, this clears that stale result notification. A status of cancelling means cancellation is in progress, not finished; do not tell the user the work is stopped until a task update or query_agent_task result shows status cancelled.",
+				"Stop work the user wants stopped. If the work already finished but its result has not been told yet, this clears that result. Status cancelling means the stop is still in progress; confirm the stop only when a later result shows status cancelled.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1126,7 +1126,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeUpdateTaskTool,
-				"Replace the complete goal of work that is queued, running, or waiting for user action. Use this only when the user changes or corrects that same request, instead of cancelling it and creating another task. Do not use it to add an unrelated request; create a separate task for that. Confirm the goal update from this tool's result; do not treat the update itself as completion of the device work. If this tool returns an error, tell the user you could not update the work.",
+				"Replace the complete goal of queued, running, or waiting work when the user changes or corrects that same request. Do not use it to add an unrelated request; create a separate task for that. Accepting the new goal does not complete the work. If it returns an error, tell the user you could not update the work.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1148,7 +1148,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeResponseUserActionTool,
-				"Continue work after the user completed a requested device action. Use the internal task reference and pass a concise description of what the user did; never expose the internal reference to the user.",
+				"Continue work after the user did the device action you asked for. Pass what the user did as user_message.",
 				map[string]any{"type": "object", "properties": map[string]any{"task_id": map[string]any{"type": "string"}, "user_message": map[string]any{"type": "string"}}, "required": []string{"task_id", "user_message"}},
 			),
 		)
@@ -1183,6 +1183,8 @@ type realtimeVoiceToolExecutor struct {
 	delegated map[string]langtools.Tool
 	now       func() time.Time
 	tasks     *agenttask.Manager
+	// timezone returns the configured time zone; nil reports now as is.
+	timezone func() string
 }
 
 func newRealtimeVoiceToolExecutor(runtime *agent.Runtime, tasks *agenttask.Manager, availableTools ...[]langtools.Tool) realtimeVoiceToolExecutor {
@@ -1190,6 +1192,7 @@ func newRealtimeVoiceToolExecutor(runtime *agent.Runtime, tasks *agenttask.Manag
 	if runtime == nil {
 		return executor
 	}
+	executor.timezone = func() string { return runtime.ConfigSnapshot().TimezoneOrDefault() }
 	var available []langtools.Tool
 	if len(availableTools) > 0 && availableTools[0] != nil {
 		available = availableTools[0]
@@ -1248,6 +1251,9 @@ func (e realtimeVoiceToolExecutor) call(ctx context.Context, name, arguments str
 	switch name {
 	case realtimeCurrentTimeTool:
 		now := e.now()
+		if e.timezone != nil {
+			now = agent.ConfiguredTime(now, e.timezone())
+		}
 		zone, offsetSeconds := now.Zone()
 		return realtimeToolJSON(map[string]any{
 			"datetime":           now.Format(time.RFC3339),
@@ -1892,6 +1898,58 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	suppressedNotificationResponseIDs := make(map[string]struct{})
 	var notificationDrainDone <-chan error
 	var notificationDrainCancel context.CancelFunc
+	// deferredAssistantFinal holds the reply's final transcript until the
+	// response ends and the reply is saved. Providers send it while the audio
+	// still plays; clients that saw it would reload a history that lacks the
+	// reply and drop the bubble until it is saved.
+	var deferredAssistantFinal *realtimevoice.Event
+	// responseDiscarded marks a response the session cancelled by policy, such
+	// as an answer to noise. Unlike one the user interrupted, it is not saved.
+	responseDiscarded := false
+	interruptedSuffix := realtimeInterruptedReplySuffix(cfg.LocaleOrDefault())
+	// saveAssistantReply stores the current response's text once. An
+	// interrupted reply is kept, marked as such, so the user still sees what
+	// was said and the model knows it was cut off.
+	saveAssistantReply := func(interrupted bool) error {
+		if assistantPersisted {
+			return nil
+		}
+		text := strings.TrimSpace(responseText.String())
+		if text == "" {
+			text = strings.TrimSpace(responseTranscript.String())
+		}
+		if text == "" {
+			return nil
+		}
+		if interrupted {
+			text += interruptedSuffix
+		}
+		var usage *messages.Usage
+		if hasRealtimeResponseUsage {
+			usageCopy := realtimeResponseUsage
+			usage = &usageCopy
+		}
+		if err := appendRealtimeAssistantMessage(userContext, text, usage); err != nil {
+			return fmt.Errorf("persist realtime assistant response: %w", err)
+		}
+		assistantPersisted = true
+		// The usage belongs to the saved reply; a continuation reports its own.
+		realtimeResponseUsage = messages.Usage{}
+		hasRealtimeResponseUsage = false
+		return nil
+	}
+	// saveCutOffReply keeps a reply whose terminal event will not be handled,
+	// because the session ends or the response loses its ownership first.
+	saveCutOffReply := func(reason string) {
+		suppressed := responseSuppressed || suppressedNotificationResponsePending ||
+			hasSuppressedNotificationResponse(suppressedNotificationResponseIDs, turnState.responseID)
+		if (turnState.responseActive || turnState.responseTerminalPending) && !responseDiscarded && !suppressed && activeNotificationToken == "" {
+			if err := saveAssistantReply(true); err != nil {
+				logging.Warnf("agent", "realtime", "Save interrupted reply %s failed: %v", reason, err)
+			}
+		}
+	}
+	defer saveCutOffReply("at session end")
 	var sleep realtimeSleepState
 	defer func() {
 		if notificationDrainCancel != nil {
@@ -2549,6 +2607,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						emptyTurn.suppressTurn(turnState.ensureInputTurnSequence())
 						logging.Infof("agent", "realtime", "Suppressing empty user transcript turn: provider=%s session_id=%s item_id=%s turn=%d", providerName, info.ID, event.ItemID, turnState.inputTurnSequence)
 						if activeChat == nil && activeNotificationToken == "" && emptyTurn.shouldSuppressTurn(turnState.responseOwnerTurn()) {
+							responseDiscarded = true
 							if _, err := cancelRealtimeOutputForPolicy(ctx, &turnState, &cancelPending, startCancelAckTimer, cancelForegroundTools, canInterrupt, responseInterrupter, &playback, playbackAudio, outputFormat, semanticEmitter, &watchdog, "empty user transcript"); err != nil {
 								return err
 							}
@@ -2571,6 +2630,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						sleep.request()
 						logging.Infof("agent", "realtime", "Local conversation-exit intent: provider=%s session_id=%s transcript=%q", providerName, info.ID, transcript)
 						if turnState.responseActive || turnState.responseTerminalPending || turnState.responseRequestPending {
+							responseDiscarded = true
 							awaitingProvider, err := cancelRealtimeOutputForPolicy(ctx, &turnState, &cancelPending, startCancelAckTimer, cancelForegroundTools, canInterrupt, responseInterrupter, &playback, playbackAudio, outputFormat, semanticEmitter, &watchdog, "local conversation-exit intent")
 							if err != nil {
 								return err
@@ -2601,14 +2661,27 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					} else if responseTranscript.Len() == 0 {
 						responseTranscript.WriteString(event.Text)
 					}
-					if semanticEmitter != nil {
+					if turnState.responseActive || turnState.responseTerminalPending {
+						final := event
+						deferredAssistantFinal = &final
+					} else if semanticEmitter != nil {
+						// The response already ended; nothing will send it later.
 						semanticEmitter.emit(event)
 					}
 				}
 			case realtimevoice.EventResponseStarted:
 				ownerTurn := turnState.responseOwnerTurn()
+				duplicateCreated := event.ResponseID != "" && event.ResponseID == turnState.responseID && !turnState.responseRequestPending
 				if !turnState.responseStarted(event.ResponseID) {
 					logging.Warnf("agent", "realtime", "Ignoring stale response.created: response_id=%s input_turn=%d request_turn=%d", event.ResponseID, turnState.inputTurnSequence, turnState.responseRequestTurn)
+					// The user spoke after this response was requested. Left
+					// running, it holds the provider: some providers then
+					// answer the user's turn with nothing at all.
+					if canInterrupt && event.ResponseID != "" && !duplicateCreated {
+						if err := responseInterrupter.Interrupt(ctx, realtimevoice.ResponseInterruption{}); err != nil {
+							logging.Warnf("agent", "realtime", "Cancel superseded response failed: response_id=%s err=%v", event.ResponseID, err)
+						}
+					}
 					continue
 				}
 				if pendingResponseRequestID != "" {
@@ -2645,11 +2718,14 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				}
 				responseText.Reset()
 				responseTranscript.Reset()
+				deferredAssistantFinal = nil
 				assistantPersisted = false
+				responseDiscarded = false
 				if emptyTurn.shouldSuppressTurn(ownerTurn) && activeNotificationToken == "" && !responseSuppressed && activeChat == nil {
 					// Consume the arm only for the matching user-audio turn.
 					emptyTurn.clear()
 					logging.Infof("agent", "realtime", "Suppressing provider response for empty or local-exit turn: provider=%s session_id=%s response_id=%s turn=%d", providerName, info.ID, event.ResponseID, ownerTurn)
+					responseDiscarded = true
 					awaitingProvider, err := cancelRealtimeOutputForPolicy(ctx, &turnState, &cancelPending, startCancelAckTimer, cancelForegroundTools, canInterrupt, responseInterrupter, &playback, playbackAudio, outputFormat, semanticEmitter, &watchdog, "suppressed turn policy")
 					if err != nil {
 						return err
@@ -2815,13 +2891,27 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					logging.Warnf("agent", "realtime", "Ignoring stale terminal response event: response_id=%s active_response_id=%s", event.ResponseID, turnState.responseID)
 					continue
 				}
-				if semanticEmitter != nil {
+				wasCanceled := cancelPending || event.Kind == realtimevoice.EventResponseCancelled
+				// emitTerminal sends the reply's final transcript, unless the
+				// response was cut off, and then the terminal event. It runs once
+				// the reply is saved, so a client that reloads history on either
+				// event finds it there.
+				terminalEvent := event
+				emitTerminal := func() {
+					final := deferredAssistantFinal
+					deferredAssistantFinal = nil
+					if semanticEmitter == nil {
+						return
+					}
+					sameResponse := final != nil && (final.ResponseID == "" || terminalEvent.ResponseID == "" || final.ResponseID == terminalEvent.ResponseID)
+					if sameResponse && !wasCanceled && !responseDiscarded && terminalEvent.Kind == realtimevoice.EventResponseDone {
+						semanticEmitter.emit(*final)
+					}
 					// Terminal events describe the response outcome even when the
 					// response was invalidated by a user interruption. They are
 					// lifecycle/control events, so do not attach the old output epoch.
-					semanticEmitter.emit(event, 0)
+					semanticEmitter.emit(terminalEvent, 0)
 				}
-				wasCanceled := cancelPending || event.Kind == realtimevoice.EventResponseCancelled
 				cancelPending = false
 				stopCancelAckTimer()
 				if wasCanceled {
@@ -2856,6 +2946,14 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				}
 				if !suppressedResponse && !notificationResponse && !wasCanceled {
 					if hasTools, continueNow := toolTracker.done(event.ResponseID); hasTools {
+						// What it said before calling the tool is part of the
+						// conversation too; dropping it made the bubble vanish.
+						if !notificationResponse && !suppressedResponse && !responseDiscarded {
+							if err := saveAssistantReply(false); err != nil {
+								return err
+							}
+						}
+						emitTerminal()
 						if !continueNow {
 							continue
 						}
@@ -2870,25 +2968,19 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						continue
 					}
 				}
-				if !notificationResponse && !suppressedResponse && !assistantPersisted && !wasCanceled && (event.Status == "" || event.Status == "completed") {
-					assistantText := strings.TrimSpace(responseText.String())
-					if assistantText == "" {
-						assistantText = strings.TrimSpace(responseTranscript.String())
-					}
-					if assistantText != "" {
-						var usage *messages.Usage
-						if hasRealtimeResponseUsage {
-							usageCopy := realtimeResponseUsage
-							usage = &usageCopy
-						}
-						if err := appendRealtimeAssistantMessage(userContext, assistantText, usage); err != nil {
-							return fmt.Errorf("persist realtime assistant response: %w", err)
+				if !notificationResponse && !suppressedResponse {
+					completed := !wasCanceled && (event.Status == "" || event.Status == "completed")
+					if !responseDiscarded && (completed || wasCanceled) {
+						if err := saveAssistantReply(!completed); err != nil {
+							return err
 						}
 					}
 				}
 				realtimeResponseUsage = messages.Usage{}
 				hasRealtimeResponseUsage = false
-				assistantPersisted = false
+				// This reply is settled; the next response start resets it.
+				assistantPersisted = true
+				emitTerminal()
 				feedbackStatus := event.Status
 				if feedbackStatus == "" {
 					feedbackStatus = "completed"
@@ -2998,6 +3090,25 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if semanticEmitter != nil {
 					semanticEmitter.emit(event)
 				}
+			case realtimevoice.EventTurnResponseMissed:
+				// The user's turn was committed but not answered because a
+				// response this session requested was running. Stop that one
+				// and ask for an answer to the user's turn.
+				logging.Warnf("agent", "realtime", "Provider left the user turn unanswered while a requested response ran; answering it now: %v", event.Error)
+				if canInterrupt {
+					if err := responseInterrupter.Interrupt(ctx, realtimevoice.ResponseInterruption{}); err != nil {
+						logging.Warnf("agent", "realtime", "Cancel running response failed: %v", err)
+					}
+				}
+				// The new request retires the running response, so its late
+				// cancellation is ignored: save what it said now.
+				saveCutOffReply("before answering the unanswered turn")
+				turnState.inputTurnPending = false
+				requestOwner = nil
+				if err := textSession.CreateResponse(ctx); err != nil {
+					return markRealtimeProviderFailure(fmt.Errorf("answer unanswered user turn: %w", err))
+				}
+				requestResponse()
 			case realtimevoice.EventResponseRejected:
 				// Our response.create lost a race with the provider's own
 				// response (usually to speech it just detected). The request
@@ -4108,3 +4219,11 @@ func (r realtimeRecordingBackendReader) Read(timeoutMs uint32) (*agent.AudioChun
 }
 
 func (realtimeRecordingBackendReader) Close() error { return nil }
+
+// realtimeInterruptedReplySuffix marks a saved reply the user cut off.
+func realtimeInterruptedReplySuffix(locale string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(locale)), "zh") {
+		return "（已中断）"
+	}
+	return " (interrupted)"
+}

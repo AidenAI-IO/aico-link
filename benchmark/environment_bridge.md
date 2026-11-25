@@ -253,9 +253,12 @@ their own data when opened. `foreground_app_id` is an optional exact app ID to
 open after reset; it is not inferred from the preload list. A failed launch
 fails setup. `aico_app` is optional and only meaningful to bridges that
 implement the Phone Bridge endpoints below; other bridges may ignore it.
-`initial_state` is an optional simulator state patch applied after the reset
-and before the foreground app opens; MobileGym passes it to
-`window.__SIM__.setState`.
+`initial_state` is optional simulator data applied after the reset and before
+the foreground app opens. MobileGym passes its `apps` and `os` patches to
+`window.__SIM__.setState`, then writes each `files` entry
+(`{"path": "/sdcard/...", "content": "...", "mime_type": "text/plain"}`) into
+phone storage through `window.__SIM_FS__.write`. The reset clears storage, so a
+seeded file exists only for that task.
 
 For bridges that do not need setup, return success with `setup: false`.
 

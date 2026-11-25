@@ -313,7 +313,12 @@ const (
 	// detected) is already running. The session is still healthy; the
 	// request can be made again once that response ends.
 	EventResponseRejected EventKind = "response_rejected"
-	EventClosed           EventKind = "closed"
+	// EventTurnResponseMissed reports that the provider committed a user turn
+	// but created no response for it, because a response the session had
+	// requested was still running. The session is still healthy; the turn
+	// needs a response requested explicitly.
+	EventTurnResponseMissed EventKind = "turn_response_missed"
+	EventClosed             EventKind = "closed"
 )
 
 type Event struct {

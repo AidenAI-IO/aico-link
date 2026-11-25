@@ -220,6 +220,29 @@ before `foreground_app_id` opens:
 Arrays replace the current value. `initial_state` also requires
 `environment_bridge_types: ["mobilegym"]`.
 
+`initial_state.files` writes text files into phone storage after the patch, so
+the Agent can open them in the Files app. Each path must be under `/sdcard/`;
+`mime_type` defaults to `text/plain`. The reset clears storage, so a seeded file
+exists only for its task:
+
+```json
+"initial_state": {"files": [
+  {"path": "/sdcard/Download/contacts.txt", "content": "Name: Ada\nPhone: +1 415 555 0100\n"}
+]}
+```
+
+To check what the Agent saved regardless of order, an `environment_assertions`
+value can be a list check: `$length` is the exact item count, and each
+`$exactly_once` matcher must match exactly one item. `{"$digits": "..."}`
+compares only the digits, so `+1 415-555-0100` and `+14155550100` match:
+
+```json
+"os.providers.contacts.contacts": {"$length": 2, "$exactly_once": [
+  {"displayName": "Ada", "phones": {"$contains": {"number": {"$digits": "14155550100"}}}},
+  {"displayName": "Alice Chen"}
+]}
+```
+
 Text entry: the bridge types only US-keyboard ASCII and does not advertise
 native `insert_text`. While the simulated Aico App is connected, the Agent's
 `enter_text` writes Chinese and other non-ASCII text through the Phone Bridge

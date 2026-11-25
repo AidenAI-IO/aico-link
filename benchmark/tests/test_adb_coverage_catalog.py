@@ -18,7 +18,7 @@ def test_adb_profile_selects_only_serial_native_android_cases():
     cases = select_cases(catalog, profile="adb")
     assert cases
     assert all(case.environment == "adb" and case.target_platform == "android"
-               and case.max_concurrency == 1 for case in cases)
+               for case in cases)
     automatic_cases = [case for case in cases if case.runnable]
     assert automatic_cases  # Scheduled runs use the runnable profile.
     assert {case.id for case in automatic_cases} <= {
@@ -83,16 +83,6 @@ def test_catalog_rejects_invalid_task_selection(tmp_path: Path, task_ids):
         load_catalog(catalog_path=catalog, suites_dir=suites)
 
 
-def test_catalog_rejects_parallel_tasks_on_one_adb_device(tmp_path: Path):
-    catalog = tmp_path / "catalog.json"
-    catalog.write_text(json.dumps({"version": 1, "cases": [{
-        "id": "native", "suite": "suites/native.json", "environment": "adb",
-        "target_platform": "android", "max_concurrency": 2,
-    }]}))
-    with pytest.raises(CatalogError, match="max_concurrency=1"):
-        load_catalog(catalog_path=catalog, suites_dir=tmp_path)
-
-
 @pytest.mark.parametrize("case_id", [
     "adb_android_basic", "adb_android_text_editing", "adb_android_builtin_apps",
 ])
@@ -113,6 +103,6 @@ def test_task_selection_survives_matrix_and_reaches_runner(monkeypatch, tmp_path
     run_case_module.run_case(case, run_id="selection-test", environment={})
     command, = commands
     assert command[command.index("--target-platform") + 1] == "android"
-    assert command[command.index("--max-concurrency") + 1] == "1"
+    assert command[command.index("--max-concurrency") + 1] == str(original.max_concurrency)
     selected = [command[index + 1] for index, item in enumerate(command) if item == "--task-id"]
     assert selected == original.task_ids

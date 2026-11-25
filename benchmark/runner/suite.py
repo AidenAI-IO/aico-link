@@ -862,6 +862,7 @@ def _string_list_assertion(raw: Any, task_id: str, field: str) -> list[str]:
 
 
 RANGE_ASSERTION_KEYS = frozenset({"min", "max"})
+LIST_ASSERTION_KEYS = frozenset({"$length", "$exactly_once"})
 
 
 def is_range_assertion(value: Any) -> bool:
@@ -875,6 +876,37 @@ def is_range_assertion(value: Any) -> bool:
         isinstance(value, dict)
         and bool(value)
         and set(value.keys()) <= RANGE_ASSERTION_KEYS
+    )
+
+
+def is_list_assertion(value: Any) -> bool:
+    """True when ``value`` checks a list regardless of item order.
+
+    ``$length`` is the exact item count. Each ``$exactly_once`` entry is a matcher
+    (the same nested subset syntax as ``required_tool_calls``) that exactly one
+    item must satisfy, so order does not matter and duplicates fail.
+    """
+    return (
+        isinstance(value, dict)
+        and bool(value)
+        and set(value.keys()) <= LIST_ASSERTION_KEYS
+    )
+
+
+def _validate_list_assertion(task_id: str, path: str, spec: dict[str, Any]) -> None:
+    length = spec.get("$length")
+    if "$length" in spec and (isinstance(length, bool) or not isinstance(length, int) or length < 0):
+        raise SuiteValidationError(
+            f"task {task_id}: environment_assertions[{path!r}].$length must be a non-negative integer"
+        )
+    matchers = spec.get("$exactly_once")
+    if "$exactly_once" in spec and (not isinstance(matchers, list) or not matchers):
+        raise SuiteValidationError(
+            f"task {task_id}: environment_assertions[{path!r}].$exactly_once must be a non-empty array"
+        )
+    # An invalid operand would raise during evaluation and drop the result.
+    _validate_matcher_bounds(
+        matchers or [], f"task {task_id}: environment_assertions[{path!r}].$exactly_once"
     )
 
 
@@ -925,6 +957,8 @@ def _parse_environment_assertions(raw: Any, task_id: str) -> dict[str, Any]:
             ) from exc
         if is_range_assertion(expected):
             _validate_range_assertion(task_id, normalized, expected)
+        elif is_list_assertion(expected):
+            _validate_list_assertion(task_id, normalized, expected)
         assertions[normalized] = expected
     return assertions
 
@@ -1071,6 +1105,11 @@ def _validate_matcher_bounds(value: Any, path: str) -> None:
     if not isinstance(value, dict):
         return
     keys = set(value)
+    if "$digits" in keys:
+        digits = value["$digits"]
+        if keys != {"$digits"} or not isinstance(digits, str) or not digits.isdigit():
+            raise SuiteValidationError(f"{path}.$digits must be the only key and a string of digits")
+        return
     if keys and keys <= {"$gte", "$lte"}:
         for key, bound in value.items():
             if isinstance(bound, bool) or not isinstance(bound, (int, float)) or not math.isfinite(bound):

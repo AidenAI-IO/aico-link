@@ -28,6 +28,12 @@ func (u *deviceStateUpdater) UpdateState() map[string]string {
 	}
 }
 
+// ConfiguredTime returns now in the configured time zone. The process keeps
+// UTC as its local zone, so time.Now alone would report UTC.
+func ConfiguredTime(now time.Time, timezone string) time.Time {
+	return configuredTime(now, timezone)
+}
+
 // controllerTimeState renders the controller clock in the configured time
 // zone. It rides on every user turn's state message, so the model always sees
 // the current date and time without a date in the cached system prompt.

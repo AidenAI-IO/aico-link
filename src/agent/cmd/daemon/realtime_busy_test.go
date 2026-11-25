@@ -15,6 +15,9 @@ import (
 	"time"
 
 	"aico-agent/internal/agent"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 	"aico-agent/internal/agent/realtimevoice"
 	streamcontract "aico-agent/internal/stream"
 )
@@ -143,6 +146,9 @@ func startBusyTestSessionWithBlockedCreate(t *testing.T, timeout time.Duration, 
 // session's semantic events.
 var busyTestSemanticSink streamcontract.EventSink
 
+// busyTestConfigDir is the config directory of the last started session.
+var busyTestConfigDir string
+
 func startBusyTestSessionConfigured(t *testing.T, timeout time.Duration, blockCreate bool, interruptErr *error, ackTimeout time.Duration, explicitTools bool, bridges ...*realtimeChatBridge) (*busyTestSession, *realtimeChatBridge, <-chan error) {
 	t.Helper()
 	s := &busyTestSession{events: make(chan realtimevoice.Event, 32), created: make(chan struct{}, 32), closed: make(chan struct{}), toolResults: make(chan struct{}, 32)}
@@ -155,7 +161,8 @@ func startBusyTestSessionConfigured(t *testing.T, timeout time.Duration, blockCr
 	}
 	registry := realtimevoice.NewProviderRegistry()
 	registry.Register("gemini", func(realtimevoice.ProviderConfig) realtimevoice.Provider { return busyTestProvider{raw} })
-	cfg := agent.Config{ConfigDir: t.TempDir(), VoiceModel: agent.VoiceModelConfig{Provider: "gemini"},
+	busyTestConfigDir = t.TempDir()
+	cfg := agent.Config{ConfigDir: busyTestConfigDir, Locale: "zh-CN", VoiceModel: agent.VoiceModelConfig{Provider: "gemini"},
 		Audio: agent.AudioConfig{Backend: "audio_service", Socket: busyTestAudio(t), SampleRate: 16000, Channels: 1, BitWidth: 16}}
 	bridge := newRealtimeChatBridge()
 	if len(bridges) > 0 {
@@ -1002,5 +1009,136 @@ func TestRealtimeRejectedContinuationAfterServedChatIsRetried(t *testing.T) {
 		t.Fatalf("session exited instead of retrying: %v", err)
 	case <-time.After(time.Second):
 		t.Fatal("the refused continuation was not requested again")
+	}
+}
+
+// A response the session requested and the user then spoke over is cancelled
+// at the provider, and a user turn the provider left unanswered gets an
+// explicit response instead of ending the session.
+func TestRealtimeSupersededRequestedResponseIsCancelled(t *testing.T) {
+	var noErr error
+	s, bridge, done := startBusyTestSessionConfigured(t, 60*time.Second, false, &noErr, time.Second, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := bridge.Handle(ctx, agent.RealtimeChatRequest{RequestID: "typed", Message: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session ended: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("response not requested")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStarted, ItemID: "speech"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "superseded"}
+	select {
+	case <-s.interrupted:
+	case err := <-done:
+		t.Fatalf("session ended: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("superseded response was left running at the provider")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStopped, ItemID: "speech"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTurnResponseMissed}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("unanswered turn ended the session: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("unanswered user turn did not get a response")
+	}
+}
+
+// Providers send a reply's final transcript while its audio still plays.
+// Clients reload history on it, so it is published only once the response
+// ends and the reply is saved, followed by the terminal event.
+func TestRealtimeReplyFinalWaitsForTheSavedReply(t *testing.T) {
+	sink := &lockedSemanticSink{}
+	busyTestSemanticSink = sink
+	t.Cleanup(func() { busyTestSemanticSink = nil })
+	s, _, _ := startBusyTestSession(t, time.Second)
+
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStarted, ItemID: "speech"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStopped, ItemID: "speech"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "reply"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptDelta, ResponseID: "reply", Role: "assistant", Text: "it is sunny"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptFinal, ResponseID: "reply", Role: "assistant", Text: "it is sunny"}
+	time.Sleep(150 * time.Millisecond)
+	for _, event := range sink.snapshot() {
+		if event.Kind == streamcontract.EventTextFinal && event.ResponseID == "reply" {
+			t.Fatal("final transcript published while the reply was still playing")
+		}
+	}
+
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "reply", Status: "completed"}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		finalAt, terminalAt := -1, -1
+		for i, event := range sink.snapshot() {
+			if event.ResponseID != "reply" {
+				continue
+			}
+			switch event.Kind {
+			case streamcontract.EventTextFinal:
+				finalAt = i
+			case streamcontract.EventResponseTerminal:
+				terminalAt = i
+			}
+		}
+		if finalAt >= 0 && terminalAt >= 0 {
+			if finalAt > terminalAt {
+				t.Fatal("final transcript published after the terminal event")
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("final=%d terminal=%d, want both after the response ended", finalAt, terminalAt)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Replies are saved even when they do not end normally: what was said before
+// a tool call, and a reply the user cut off, which is marked as interrupted.
+func TestRealtimeSavesToolAndInterruptedReplies(t *testing.T) {
+	s, _, _ := startBusyTestSession(t, 60*time.Second)
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStarted, ItemID: "speech-1"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStopped, ItemID: "speech-1"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "tool-reply"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptDelta, ResponseID: "tool-reply", Role: "assistant", Text: "let me check"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventToolCall, ResponseID: "tool-reply", CallID: "call-1", Name: realtimeCurrentTimeTool, Arguments: `{}`}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "tool-reply", Status: "completed"}
+	select {
+	case <-s.toolResults:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tool result was not sent")
+	}
+
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "long-reply"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptDelta, ResponseID: "long-reply", Role: "assistant", Text: "here is a long answer"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStarted, ItemID: "speech-2"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseCancelled, ResponseID: "long-reply", Status: "cancelled"}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var saved []string
+		if manager, err := contextmanager.LoadContextManagerFromCurrentSession(agentpath.UserContextManagerSessionFolder(busyTestConfigDir)); err == nil {
+			for _, message := range manager.MessageListDump().Messages {
+				if message.Role == messages.MessageRoleAssistant {
+					saved = append(saved, message.Content)
+				}
+			}
+		}
+		if len(saved) == 2 {
+			if saved[0] != "let me check" || saved[1] != "here is a long answer（已中断）" {
+				t.Fatalf("saved replies = %q", saved)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("saved replies = %q, want the tool reply and the interrupted one", saved)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

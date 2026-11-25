@@ -103,17 +103,31 @@ async def _foreground_app(env: Any, app_id: str) -> None:
     await asyncio.sleep(0.8)
 
 
-async def _apply_initial_state(env: Any, patch: dict[str, Any]) -> None:
+async def _apply_initial_state(env: Any, initial_state: dict[str, Any]) -> None:
     page = getattr(env, "page", None)
     if page is None:
         raise RuntimeError("environment does not expose a browser page")
-    await page.evaluate(
-        """(patch) => {
-            if (!window.__SIM__?.setState) throw new Error('window.__SIM__.setState is unavailable');
-            window.__SIM__.setState(patch);
-        }""",
-        patch,
-    )
+    patch = {key: initial_state[key] for key in ("apps", "os") if key in initial_state}
+    if patch:
+        await page.evaluate(
+            """(patch) => {
+                if (!window.__SIM__?.setState) throw new Error('window.__SIM__.setState is unavailable');
+                window.__SIM__.setState(patch);
+            }""",
+            patch,
+        )
+    if initial_state.get("files"):
+        # The reset already cleared phone storage and waited for __SIM_FS__,
+        # which is only exposed once the file system has finished loading.
+        await page.evaluate(
+            """async (files) => {
+                if (!window.__SIM_FS__?.write) throw new Error('window.__SIM_FS__.write is unavailable');
+                for (const file of files) {
+                    await window.__SIM_FS__.write(file.path, file.content, { mimeType: file.mime_type || 'text/plain' });
+                }
+            }""",
+            initial_state["files"],
+        )
 
 
 class BridgeServer:
