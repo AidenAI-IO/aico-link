@@ -7,7 +7,7 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/board_low_level_system.sh
+  scripts/board/board_low_level_system.sh
 
 Runs board-local system readiness checks:
   - board identity, date, kernel, OS

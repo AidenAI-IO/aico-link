@@ -7,7 +7,7 @@
 # the total is printed when the capture window ends.
 #
 # Designed to run ON THE BOARD, as root (journalctl of a system service):
-#   scp scripts/mcu_touch_test.sh aico@192.168.42.1:/tmp/
+#   scp scripts/board/mcu_touch_test.sh aico@192.168.42.1:/tmp/
 #   ssh aico@192.168.42.1 'sudo sh /tmp/mcu_touch_test.sh --seconds 60'
 #   # then touch the capacitive key repeatedly during the window
 #

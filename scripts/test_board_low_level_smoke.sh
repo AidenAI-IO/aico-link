@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+# The board-side scripts live in scripts/board.
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")/board" && pwd)"
 
 check_help_line() {
     expected="$1"

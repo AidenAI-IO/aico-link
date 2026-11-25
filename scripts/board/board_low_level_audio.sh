@@ -11,7 +11,7 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/board_low_level_audio.sh [options]
+  scripts/board/board_low_level_audio.sh [options]
 
 Runs board-local audio_service checks:
   - audio socket

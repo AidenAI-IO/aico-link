@@ -232,7 +232,7 @@ amixer sget 'DAC LINEOUT'
 
 Recommendations:
 
-- First run `scripts/setup_audio_volume.sh`;
+- First run `scripts/board/setup_audio_volume.sh`;
 - Confirm `[voice_settings.classic.audio].socket` path matches the service;
 - Use `record-stream` and `play-stream` to verify recording/playback separately;
 - Check if `ffmpeg` exists when TTS fails.

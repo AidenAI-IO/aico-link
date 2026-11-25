@@ -4,7 +4,7 @@
 # Generates test tones with python3 and plays them through audio_service
 # (the normal playback path) or, with --aplay, straight to the ALSA device.
 # Designed to run ON THE BOARD. Copy it over and run, e.g.:
-#   scp scripts/speaker_test.sh aico@192.168.42.1:/tmp/
+#   scp scripts/board/speaker_test.sh aico@192.168.42.1:/tmp/
 #   ssh aico@192.168.42.1 'sh /tmp/speaker_test.sh --max-volume'
 #
 # Exit status is 0 only when playback reports success.
