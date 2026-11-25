@@ -65,6 +65,9 @@ func run(base string, args []string) error {
 			return err
 		}
 	}
+	if args[0] == "tap" {
+		time.Sleep(devicecli.TapSettleDelay)
+	}
 	return nil
 }
 

@@ -29,6 +29,9 @@ For chords, use key meta+a or key meta a. Use key '+' for a literal plus.
 Coordinates are integers from 0 to 1000. Quote text as one shell argument.
 look saves a JPEG (default: /tmp). wait pauses for 0–30000 ms (default: 2000 ms).`
 
+// TapSettleDelay gives the UI time to respond before the next CLI command.
+const TapSettleDelay = 50 * time.Millisecond
+
 // Text routes for the enter_text tool. Omitting route preserves legacy behavior.
 const (
 	TextRouteDevice = "device"

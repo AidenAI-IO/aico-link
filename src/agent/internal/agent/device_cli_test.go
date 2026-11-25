@@ -225,6 +225,24 @@ func TestDeviceCLIDragStartCanBeReleasedFromAnotherShell(t *testing.T) {
 	}
 }
 
+func TestDeviceCLITapWaitsBeforeReturning(t *testing.T) {
+	gesture := &stubTool{name: "touch_gesture", output: `{"ok":true}`}
+	s := &Server{runtime: &Runtime{tools: &ToolSet{tools: map[string]langtools.Tool{"touch_gesture": gesture}}}}
+	capture := &deviceCLICapture{deferObservation: true}
+	var dispatched time.Time
+	gesture.callFn = func(context.Context, string) (string, error) {
+		dispatched = time.Now()
+		return `{"ok":true}`, nil
+	}
+	result, err := executeDeviceCLI(context.Background(), s, []string{"tap", "350", "270"}, capture)
+	if err != nil || result.IsError || dispatched.IsZero() || time.Since(dispatched) < 50*time.Millisecond {
+		t.Fatalf("tap must settle after dispatch before the next command: %+v, %v", result, err)
+	}
+	if len(capture.calls) != 1 {
+		t.Fatalf("tap delay must not add a device action: %+v", capture.calls)
+	}
+}
+
 func TestDeviceCLIShellFinalCaptureAfterWait(t *testing.T) {
 	for _, tc := range []struct {
 		name, ms string

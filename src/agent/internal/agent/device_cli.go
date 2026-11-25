@@ -261,6 +261,11 @@ func (c *deviceCLICapture) executeInShell(ctx context.Context, s *Server, calls 
 		if err != nil || result.IsError {
 			return result, err
 		}
+		if call.Tool == "touch_gesture" && call.Input["type"] == "tap" {
+			if err := sleepWithContext(ctx, devicecli.TapSettleDelay); err != nil {
+				return result, err
+			}
+		}
 		if call.Tool == "screenshot" {
 			if visual, ok := parseScreenshotObservation(result.Output); ok {
 				result.Output = screenshotObservationStatusSummary(call.Tool, visual.Result)

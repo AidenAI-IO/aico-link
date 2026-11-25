@@ -21,7 +21,8 @@ Coordinates are normalized to 0–1000 on both axes. A foreground shell can
 run up to 64 device operations and attaches one final screenshot, without a
 collage or action markers. When UI Grounding is enabled and the detector is
 available, that screenshot carries numbered UI boxes and normalized coordinates.
-Actions do not automatically wait for stability or attach screenshots individually.
+A successful `tap` waits 50 ms before the next command. This is a fixed delay,
+not a stability check. Actions do not attach screenshots individually.
 Split calls when the next step depends on the current layout. If a chain fails
 or times out, inspect the final screen before retrying:
 earlier operations may already have run. The orientation check can still reject
