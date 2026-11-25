@@ -48,6 +48,22 @@ def _text_entry_output(body):
     return json.loads(output["action_output"]), output
 
 
+@pytest.mark.parametrize("tool_input", [
+    r'{"text":"\ud800","replace":true}',
+    '{"text":"' + ("a" * 4097) + '","replace":true}',
+    r'{"text":"bad\u0000text","replace":true}',
+])
+def test_insert_text_rejects_invalid_input_before_device_action(bridge, tool_input):
+    _, device, base_url = bridge
+
+    status, body = _invoke(base_url, "insert_text", tool_input)
+
+    assert status == 200
+    assert body["is_error"] is True
+    assert "insert_text requires" in body["output"]
+    assert device.calls == []
+
+
 # ---- coordinate handling ----------------------------------------------------
 
 

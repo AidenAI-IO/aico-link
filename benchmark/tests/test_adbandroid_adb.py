@@ -226,6 +226,7 @@ def test_input_text_switches_to_preferred_ascii_ime_and_restores(monkeypatch):
             ],
             5,
         ),
+        ("text", ["shell", "settings", "get", "secure", "default_input_method"], 5),
     ]
 
 

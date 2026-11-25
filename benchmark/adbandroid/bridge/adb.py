@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -146,6 +147,7 @@ class ADBAndroidDevice:
         self._supports_keycombination: bool | None = None
         self._preferred_ime: str | None = None
         self._unicode_ime_install_lock = threading.Lock()
+        self._pending_input_method_restore: str | None = None
 
     # ---- low-level -------------------------------------------------------
 
@@ -273,11 +275,16 @@ class ADBAndroidDevice:
             )
         if text == "":
             raise ValueError("text is required")
+        self._recover_pending_input_method_restore()
         restore_ime = self._switch_to_ascii_input_method()
-        try:
+
+        def send_text() -> None:
             self._run(["shell", "input", "text", escape_adb_text(text)])
-        finally:
-            self._restore_input_method(restore_ime)
+
+        if restore_ime:
+            self._run_with_input_method_restore(restore_ime, send_text)
+        else:
+            send_text()
 
     def supports_text_insertion(self) -> bool:
         """Ensure the selected Unicode IME is installed before advertising it."""
@@ -320,6 +327,7 @@ class ADBAndroidDevice:
         validate_insert_text(text)
         if not isinstance(replace, bool):
             raise ValueError("replace must be a boolean")
+        self._recover_pending_input_method_restore()
         if self.unicode_input_method == ADB_KEYBOARD_INPUT_METHOD:
             self._insert_text_with_adbkeyboard(text, replace)
         else:
@@ -334,7 +342,8 @@ class ADBAndroidDevice:
         if not original_ime or original_ime.lower() == "null":
             raise ADBCommandError("cannot determine the input method to restore; no text was sent")
         self._ensure_input_method_enabled(ADB_KEYBOARD_IME)
-        try:
+
+        def send_text() -> None:
             if original_ime != ADB_KEYBOARD_IME:
                 self.set_input_method(ADB_KEYBOARD_IME)
             if self.current_input_method() != ADB_KEYBOARD_IME:
@@ -344,9 +353,11 @@ class ADBAndroidDevice:
                 self._keyboard_broadcast("ADB_CLEAR_TEXT")
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             self._keyboard_broadcast("ADB_INPUT_B64", ["--es", "msg", encoded])
-        finally:
-            if original_ime != ADB_KEYBOARD_IME:
-                self._restore_text_input_method(original_ime)
+
+        if original_ime != ADB_KEYBOARD_IME:
+            self._run_with_input_method_restore(original_ime, send_text)
+        else:
+            send_text()
 
     def _insert_text_with_appium(self, text: str, replace: bool) -> None:
         if "%s" in text:
@@ -359,7 +370,8 @@ class ADBAndroidDevice:
         if not original_ime or original_ime.lower() == "null":
             raise ADBCommandError("cannot determine the input method to restore; no text was sent")
         self._ensure_input_method_enabled(APPIUM_UNICODE_IME)
-        try:
+
+        def send_text() -> None:
             if original_ime != APPIUM_UNICODE_IME:
                 self.set_input_method(APPIUM_UNICODE_IME)
                 if self.current_input_method() != APPIUM_UNICODE_IME:
@@ -376,11 +388,39 @@ class ADBAndroidDevice:
                     "Appium UnicodeIME input failed or timed out; inspect the field before retrying"
                 ) from None
             time.sleep(APPIUM_TEXT_COMMIT_WAIT_SEC)
-        finally:
-            if original_ime != APPIUM_UNICODE_IME:
-                self._restore_text_input_method(original_ime)
+
+        if original_ime != APPIUM_UNICODE_IME:
+            self._run_with_input_method_restore(original_ime, send_text)
+        else:
+            send_text()
+
+    def _run_with_input_method_restore(
+        self,
+        original_ime: str,
+        action: Callable[[], None],
+        restore_wait_sec: float = DEFAULT_TEXT_RESTORE_WAIT_SEC,
+    ) -> None:
+        def restore() -> None:
+            if restore_wait_sec > 0:
+                time.sleep(restore_wait_sec)
+            self._restore_text_input_method(original_ime)
+
+        try:
+            action()
+        except Exception as input_error:
+            try:
+                restore()
+            except ADBCommandError as restore_error:
+                raise ADBCommandError(f"{input_error}; {restore_error}") from input_error
+            raise
+        restore()
+
+    def _recover_pending_input_method_restore(self) -> None:
+        if self._pending_input_method_restore:
+            self._restore_text_input_method(self._pending_input_method_restore)
 
     def _restore_text_input_method(self, original_ime: str) -> None:
+        self._pending_input_method_restore = original_ime
         try:
             self.set_input_method(original_ime)
             if self.current_input_method() != original_ime:
@@ -389,6 +429,7 @@ class ADBAndroidDevice:
             raise ADBCommandError(
                 "could not restore the original input method; inspect the field before retrying"
             ) from None
+        self._pending_input_method_restore = None
 
     def _ensure_input_method_enabled(self, ime_id: str) -> None:
         if ime_id in self.list_input_methods():
@@ -496,15 +537,6 @@ class ADBAndroidDevice:
             (ime for ime in PREFERRED_ASCII_INPUT_METHODS if ime in enabled_imes), ""
         )
         return self._preferred_ime
-
-    def _restore_input_method(self, ime_id: str) -> None:
-        if not ime_id or ime_id.lower() == "null":
-            return
-        time.sleep(DEFAULT_TEXT_RESTORE_WAIT_SEC)
-        try:
-            self.set_input_method(ime_id)
-        except ADBCommandError:
-            pass
 
     def start_settings(self) -> None:
         self._run(["shell", "am", "start", "-a", "android.settings.SETTINGS"])

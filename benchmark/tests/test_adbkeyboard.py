@@ -232,6 +232,33 @@ def test_restore_failure_is_reported(keyboard):
     state["fail_restore"] = True
     with pytest.raises(ADBCommandError, match="restore the original"):
         device.insert_text("你好")
+    assert device._pending_input_method_restore == "example/.LatinIME"
+
+    state["fail_restore"] = False
+    device.insert_text("再次输入")
+    assert device._pending_input_method_restore is None
+    assert state["ime"] == "example/.LatinIME"
+
+
+def test_restore_failure_does_not_hide_input_failure(keyboard):
+    device, state = keyboard
+    state["fail_broadcast"] = True
+    state["fail_restore"] = True
+
+    with pytest.raises(ADBCommandError, match="ADB_INPUT_B64 failed or timed out.*restore the original"):
+        device.insert_text("你好")
+    assert device._pending_input_method_restore == "example/.LatinIME"
+
+
+def test_ascii_input_reports_restore_failure(keyboard, monkeypatch):
+    device, state = keyboard
+    state["fail_restore"] = True
+    monkeypatch.setattr(device, "_switch_to_ascii_input_method", lambda: "example/.LatinIME")
+    monkeypatch.setattr(device, "_run", lambda args, **kwargs: b"")
+
+    with pytest.raises(ADBCommandError, match="restore the original"):
+        device.input_text("hello")
+    assert device._pending_input_method_restore == "example/.LatinIME"
 
 
 def test_failed_selection_does_not_clear_field(keyboard):
