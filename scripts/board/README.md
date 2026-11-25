@@ -10,6 +10,10 @@ scp -r scripts/board aico@192.168.42.1:/tmp/
 ssh -t aico@192.168.42.1 'sudo sh /tmp/board/board_hw_test.sh --interactive'
 ```
 
+Production lines: follow
+[docs/03-hardware/factory-test-guide.md](../../docs/03-hardware/factory-test-guide.md)
+(flashing, login, test run and records).
+
 Use `ssh -t` for interactive runs so prompts can read answers. Every script
 prints `[PASS]`, `[WARN]`, `[FAIL]` or `[SKIP]` lines and exits non-zero when a
 check failed; `--help` lists its options.

@@ -7,6 +7,9 @@ audio smoke), `speaker_test.sh` (audible tones), `mcu_touch_test.sh` (touch
 key) and `board_jpeg_smoke.py` (JPEG requests). The RTC test,
 `scripts/board_rtc_test.sh`, runs on a host and drives the board over USB.
 
+For the production-line procedure (flashing, login, running the tests and
+keeping the records), see the [Factory Test Guide](factory-test-guide.md).
+
 The suites run on the board as root. They use the local service sockets and
 command-line tools only: no Agent, Config Web, SSH or HTTP API. The analysis
 helper `board_hw_tools.py` uses the Python standard library only.
