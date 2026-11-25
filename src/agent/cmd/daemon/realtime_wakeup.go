@@ -3780,7 +3780,7 @@ func realtimeReplayTimeState(last, now time.Time, timezone string, restored bool
 	}
 	lead := "The messages above are restored from the earlier conversation."
 	if !restored {
-		lead = "The earlier conversation is not shown. Use recall_session_chunks if the user refers to it."
+		lead = "The earlier conversation above ended long ago and is shown only as an old transcript."
 	}
 	state := lead + "\n" +
 		"last_message_time: " + agent.ControllerTimeState(last, timezone) + "\n" +
@@ -3814,19 +3814,86 @@ func replayedRealtimeWork(recent []messages.Message, tasks *agenttask.Manager) [
 			if json.Unmarshal([]byte(result.Content), &created) != nil || created.ID == "" {
 				continue
 			}
-			goal := strconv.Quote(limitRealtimeTaskField(created.Prompt, 300))
 			current, ok := tasks.Query(created.ID)
-			switch {
-			case !ok:
-				work = append(work, goal+" stopped without a result when the device restarted; it is not running.")
-			case current.Status == agenttask.StatusCancelled || current.Status == agenttask.StatusCancelling:
+			if !ok {
+				goal := strconv.Quote(limitRealtimeTaskField(created.Prompt, 300))
+				if realtimeTaskOutcomeRecorded(recent, created.ID) {
+					work = append(work, goal+" finished and its result was reported earlier; it is not running.")
+				} else {
+					work = append(work, goal+" stopped without a result when the device restarted; it is not running.")
+				}
+				continue
+			}
+			// The goal may have been replaced since it was created.
+			goal := strconv.Quote(limitRealtimeTaskField(current.Prompt, 300))
+			switch current.Status {
+			case agenttask.StatusCancelled:
 				work = append(work, goal+" was stopped; it is not running.")
+			case agenttask.StatusCancelling:
+				work = append(work, goal+" is being stopped; the stop is not confirmed yet.")
 			default:
 				work = append(work, goal+" status="+string(current.Status)+".")
 			}
 		}
 	}
 	return work
+}
+
+// realtimeTaskOutcomeRecorded reports whether the restored turns hold a
+// finished result for the task: a work update, or a query result naming it
+// with a terminal status. Tasks live in memory, so after a restart this is the
+// only sign that the work finished.
+func realtimeTaskOutcomeRecorded(recent []messages.Message, taskID string) bool {
+	for _, message := range recent {
+		switch message.Role {
+		case messages.MessageRoleNotice:
+			if strings.Contains(message.Content, taskID) {
+				return true
+			}
+		case messages.MessageRoleToolResult:
+			for _, result := range message.ToolResults {
+				if result.Name != realtimeQueryTaskTool || !strings.Contains(result.Content, taskID) {
+					continue
+				}
+				for _, status := range []agenttask.Status{agenttask.StatusCompleted, agenttask.StatusFailed, agenttask.StatusCancelled} {
+					if strings.Contains(result.Content, `"status":"`+string(status)+`"`) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// realtimeEarlierConversation renders turns from a conversation that ended
+// long ago as one marked transcript. Recall searches only compacted chunks,
+// so dropping these turns would leave them unreachable; replayed as live
+// turns they would steer the model into resuming an old topic.
+func realtimeEarlierConversation(recent []messages.Message) string {
+	var lines []string
+	for _, message := range recent {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		var speaker string
+		switch message.Role {
+		case messages.MessageRoleUser:
+			speaker = "user"
+		case messages.MessageRoleAssistant:
+			speaker = "assistant"
+		case messages.MessageRoleNotice:
+			speaker = "work update"
+		default:
+			continue
+		}
+		lines = append(lines, speaker+": "+limitRealtimeTaskField(content, 300))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return util.STag("earlier_conversation", "An old conversation, kept for reference only. It is finished: do not resume, repeat, or report anything from it unless the user brings it up.\n"+strings.Join(lines, "\n"))
 }
 
 func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextReplayer, manager *contextmanager.ContextManager, tasks *agenttask.Manager, imageInput bool, now time.Time, timezone string) error {
@@ -3840,8 +3907,13 @@ func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextRep
 	}
 	work := replayedRealtimeWork(recent, tasks)
 	if now.Sub(last) > realtimeContextReplayGap {
-		return session.ReplayContext(ctx, []realtimevoice.ContextItem{{Type: "message", Role: "user",
-			Content: realtimeReplayTimeState(last, now, timezone, false, work)}})
+		var items []realtimevoice.ContextItem
+		if earlier := realtimeEarlierConversation(recent); earlier != "" {
+			items = append(items, realtimevoice.ContextItem{Type: "message", Role: "user", Content: earlier})
+		}
+		items = append(items, realtimevoice.ContextItem{Type: "message", Role: "user",
+			Content: realtimeReplayTimeState(last, now, timezone, false, work)})
+		return session.ReplayContext(ctx, items)
 	}
 	toolStates := realtimeToolStateMessages(recent)
 	// Only the latest image is replayed: earlier screens are stale, and

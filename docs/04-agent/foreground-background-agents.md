@@ -29,16 +29,21 @@ opened; the stored system message keeps the stable instructions, so it is not
 rewritten every session. Replay ends with a state message giving the time of the
 last restored message, the current time, and the elapsed time between them.
 That message also reports what became of each task the restored turns created,
-because those turns only show that it was accepted: it may still be running,
-may have been stopped from a screen, or may have been lost when the device
-restarted, since tasks live in memory. Restored work updates are tagged
-`<notice>` so they do not read as something the user said.
+under its current goal, because those turns only show that it was accepted: it
+may still be running, may be stopping or have been stopped from a screen, or may
+be gone after a device restart, since tasks live in memory. A task that is gone
+counts as finished when the restored turns hold its result, and as lost
+otherwise. Restored work updates are tagged `<notice>` so they do not read as
+something the user said.
 
 When the last message is more than 30 minutes old, the earlier turns are not
-replayed. The session starts with only that state message, which points the
-model at `recall_session_chunks`. Replayed turns steer the model more strongly
-than its instructions, so an old topic, answer, or work update would otherwise
-carry on into a conversation resumed hours later.
+replayed as live turns. They are sent as one `<earlier_conversation>`
+transcript of user, assistant, and work-update text, marked as finished and for
+reference only, followed by the state message. Replayed turns steer the model
+more strongly than its instructions, so an old topic, answer, or work update
+would otherwise carry on into a conversation resumed hours later. The
+transcript is kept rather than dropped because `recall_session_chunks` searches
+only compacted chunks and cannot return these recent turns.
 
 The backend also exposes [schedules and routines](./schedules-and-routines.md)
 through the `schedule` tool. MCU timer expiry resumes scheduled work in its

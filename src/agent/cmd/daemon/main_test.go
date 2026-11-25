@@ -885,19 +885,22 @@ func TestRealtimeNoticePersistsAsNoticeInUserContext(t *testing.T) {
 		t.Fatalf("time note = %q", note)
 	}
 
-	// A conversation resumed after a long gap starts fresh: only the time note.
+	// A conversation resumed after a long gap is not replayed as live turns:
+	// it comes back as one transcript marked old, then the time note.
 	replayer = &recordingContextReplayer{}
 	if err := replayRealtimeContext(context.Background(), replayer, manager, nil, false, got[1].Timestamp.Add(2*time.Hour), "UTC"); err != nil {
 		t.Fatal(err)
 	}
-	if len(replayer.items) != 1 || strings.Contains(replayer.items[0].Content, "background task completed") ||
-		!strings.Contains(replayer.items[0].Content, "elapsed: 2h0m0s") {
-		t.Fatalf("replayed after gap = %+v, want only the time note", replayer.items)
+	if len(replayer.items) != 2 || !strings.HasPrefix(replayer.items[0].Content, "<earlier_conversation>") ||
+		!strings.Contains(replayer.items[0].Content, "work update: background task completed") ||
+		!strings.Contains(replayer.items[1].Content, "elapsed: 2h0m0s") {
+		t.Fatalf("replayed after gap = %+v, want the old transcript then the time note", replayer.items)
 	}
 }
 
 // The restored turns only show that work was accepted, so replay closes with
-// what became of each piece: lost to a restart, stopped, or still going.
+// what became of each piece: lost to a restart, finished before it, stopped,
+// or still going under its current goal.
 func TestRealtimeReplayReportsCurrentWorkStatus(t *testing.T) {
 	tasks := agenttask.NewManager(&fakeBackgroundTaskRunner{started: make(chan string, 2), release: make(chan struct{})})
 	defer tasks.Close()
@@ -912,11 +915,14 @@ func TestRealtimeReplayReportsCurrentWorkStatus(t *testing.T) {
 	if _, err := tasks.CancelUnfinished(stopped.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tasks.Update(live.ID, "check the calendar for tomorrow"); err != nil {
+		t.Fatal(err)
+	}
 	manager, err := contextmanager.NewContextManager(t.TempDir(), "system")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, task := range []agenttask.Task{{ID: "task_gone", Prompt: "browse the feed"}, live, stopped} {
+	for i, task := range []agenttask.Task{{ID: "task_gone", Prompt: "browse the feed"}, {ID: "task_done", Prompt: "read the news"}, live, stopped} {
 		call := realtimevoice.Event{CallID: fmt.Sprintf("call_%d", i), Name: realtimeCreateTaskTool, Arguments: `{}`}
 		output, _ := json.Marshal(task)
 		if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: task.Prompt}); err != nil {
@@ -926,6 +932,9 @@ func TestRealtimeReplayReportsCurrentWorkStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := appendRealtimeNoticeMessage(manager, `- task_id=task_done status=completed result="three headlines"`); err != nil {
+		t.Fatal(err)
+	}
 	replayer := &recordingContextReplayer{}
 	if err := replayRealtimeContext(context.Background(), replayer, manager, tasks, false, time.Now(), "UTC"); err != nil {
 		t.Fatal(err)
@@ -934,7 +943,8 @@ func TestRealtimeReplayReportsCurrentWorkStatus(t *testing.T) {
 	for _, want := range []string{
 		`work: "browse the feed" stopped without a result when the device restarted`,
 		`work: "open the files" was stopped; it is not running.`,
-		`work: "check the calendar" status=`,
+		`work: "read the news" finished and its result was reported earlier`,
+		`work: "check the calendar for tomorrow" status=`,
 	} {
 		if !strings.Contains(note, want) {
 			t.Fatalf("time note = %q, want %q", note, want)
