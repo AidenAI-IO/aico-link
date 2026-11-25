@@ -1074,7 +1074,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		),
 		realtimeVoiceToolDefinition(
 			realtimeEndConversationTool,
-			"End the voice conversation and return to standby when the user is done or asks to stop the voice interaction. Use this for goodbye, 退下, 退一下, 再见, stop listening, stop the service, go idle, standby, sleep, or wait for the next wakeup; these are conversation-control requests, not device or backend service-operation requests. Say a short farewell in the same response; the microphone stays open until you finish speaking. The user can start a new conversation at any time, and you keep your memory and history. Work you are already handling continues, and when it finishes the device comes back on its own to report the outcome, so you may briefly say that you will let them know.",
+			"End the voice conversation and return to standby when the user is done or asks to stop talking, for example goodbye, 退下, 退一下, 再见, stop listening, go idle, or standby. Say a short farewell in the same response; the microphone stays open until you finish speaking. The user can start a new conversation at any time, and you keep your memory and history. Work you are already doing continues, and the device comes back to report its outcome, so you may briefly say you will let them know.",
 			map[string]any{"type": "object", "properties": map[string]any{}},
 		),
 	}
@@ -1104,7 +1104,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		tools = append(tools,
 			realtimeVoiceToolDefinition(
 				realtimeCreateTaskTool,
-				"Handle any request you cannot directly and reliably answer or complete with the realtime conversation tools, including device state, visual inspection, external actions, lookups, or longer multi-step work. Call query_agent_task with no task_id first and continue the task that already covers the request instead of creating a duplicate. A new request that no outstanding task covers gets its own task, even while other work is running; never fold it into unrelated work with update_agent_task. Present the work to the user as your own responsibility. You may say you are handling it immediately; its result only means the work was accepted, so do not claim the underlying device or external outcome succeeded or failed until a task update or query_agent_task result shows status completed or failed. If this tool returns an error, tell the user you could not start the work.",
+				"Act on the phone or other devices, or look something up: reading the screen, opening apps, tapping and typing, device state, external actions, lookups, and multi-step work. Write a self-contained goal that includes what the user told you. It returns once the work is accepted, not when it is done. If it returns an error, tell the user you could not start it.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1115,7 +1115,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeCancelTaskTool,
-				"Cancel work that you previously started when the user asks you to stop it. If the work already finished but its result has not started delivery, this clears that stale result notification. A status of cancelling means cancellation is in progress, not finished; do not tell the user the work is stopped until a task update or query_agent_task result shows status cancelled.",
+				"Stop work the user wants stopped. If the work already finished but its result has not been told yet, this clears that result. Status cancelling means the stop is still in progress; confirm the stop only when a later result shows status cancelled.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1126,7 +1126,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeUpdateTaskTool,
-				"Replace the complete goal of work that is queued, running, or waiting for user action. Use this only when the user changes or corrects that same request, instead of cancelling it and creating another task. Do not use it to add an unrelated request; create a separate task for that. Confirm the goal update from this tool's result; do not treat the update itself as completion of the device work. If this tool returns an error, tell the user you could not update the work.",
+				"Replace the complete goal of queued, running, or waiting work when the user changes or corrects that same request. Do not use it to add an unrelated request; create a separate task for that. Accepting the new goal does not complete the work. If it returns an error, tell the user you could not update the work.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1148,7 +1148,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeResponseUserActionTool,
-				"Continue work after the user completed a requested device action. Use the internal task reference and pass a concise description of what the user did; never expose the internal reference to the user.",
+				"Continue work after the user did the device action you asked for. Pass what the user did as user_message.",
 				map[string]any{"type": "object", "properties": map[string]any{"task_id": map[string]any{"type": "string"}, "user_message": map[string]any{"type": "string"}}, "required": []string{"task_id", "user_message"}},
 			),
 		)
