@@ -932,7 +932,15 @@ func TestRealtimeReplayReportsCurrentWorkStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := appendRealtimeNoticeMessage(manager, `- task_id=task_done status=completed result="three headlines"`); err != nil {
+	// Only a terminal status for that same task records an outcome: a
+	// user-action update, or a finished query result for another task whose
+	// goal mentions this one, does not.
+	if err := appendRealtimeNoticeMessage(manager, "- task_id=task_done status=completed task=\"read the news\" result=\"three headlines\"\n"+
+		"- task_id=task_gone status=running task=\"browse the feed\" pending_user_action=\"unlock the phone\""); err != nil {
+		t.Fatal(err)
+	}
+	query := realtimevoice.Event{CallID: "call_query", Name: realtimeQueryTaskTool, Arguments: `{}`}
+	if err := appendRealtimeToolExecution(manager, query, `{"id":"task_other","prompt":"inspect task_gone","status":"completed"}`, nil); err != nil {
 		t.Fatal(err)
 	}
 	replayer := &recordingContextReplayer{}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -3840,23 +3841,34 @@ func replayedRealtimeWork(recent []messages.Message, tasks *agenttask.Manager) [
 }
 
 // realtimeTaskOutcomeRecorded reports whether the restored turns hold a
-// finished result for the task: a work update, or a query result naming it
-// with a terminal status. Tasks live in memory, so after a restart this is the
-// only sign that the work finished.
+// finished result for the task: a work update or a query result giving that
+// task a terminal status. Tasks live in memory, so after a restart this is the
+// only sign that the work finished. A work update for a task waiting on the
+// user is not a result.
 func realtimeTaskOutcomeRecorded(recent []messages.Message, taskID string) bool {
+	terminal := []agenttask.Status{agenttask.StatusCompleted, agenttask.StatusFailed, agenttask.StatusCancelled}
 	for _, message := range recent {
 		switch message.Role {
 		case messages.MessageRoleNotice:
-			if strings.Contains(message.Content, taskID) {
-				return true
+			for _, status := range terminal {
+				if strings.Contains(message.Content, "- task_id="+taskID+" status="+string(status)+" ") {
+					return true
+				}
 			}
 		case messages.MessageRoleToolResult:
 			for _, result := range message.ToolResults {
-				if result.Name != realtimeQueryTaskTool || !strings.Contains(result.Content, taskID) {
+				if result.Name != realtimeQueryTaskTool {
 					continue
 				}
-				for _, status := range []agenttask.Status{agenttask.StatusCompleted, agenttask.StatusFailed, agenttask.StatusCancelled} {
-					if strings.Contains(result.Content, `"status":"`+string(status)+`"`) {
+				var listed struct {
+					Tasks []agenttask.Task `json:"tasks"`
+				}
+				var single agenttask.Task
+				if json.Unmarshal([]byte(result.Content), &listed) != nil || json.Unmarshal([]byte(result.Content), &single) != nil {
+					continue
+				}
+				for _, task := range append(listed.Tasks, single) {
+					if task.ID == taskID && slices.Contains(terminal, task.Status) {
 						return true
 					}
 				}
