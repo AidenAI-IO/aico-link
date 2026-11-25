@@ -710,10 +710,88 @@ def board_identity() -> dict:
         "model": read_text("/proc/device-tree/model").strip("\x00"),
         "kernel": " ".join(os.uname()),
         "aico_release": read_text("/etc/aico-release"),
+        "os_release": next((line.split("=", 1)[1].strip('"') for line in read_text("/etc/os-release").splitlines()
+                            if line.startswith("PRETTY_NAME=")), ""),
         "packages": run_text(["dpkg-query", "-W", "-f=${Package} ${Version}\\n", "aico*"]).splitlines(),
         "uptime_s": read_text("/proc/uptime").split(" ")[0] if read_text("/proc/uptime") else None,
         "operator": os.environ.get("SUDO_USER") or os.environ.get("USER") or "",
     }
+
+
+def clock_state() -> dict:
+    """Whether the timestamps of a run can be trusted: NTP sync and the RTC."""
+    show = {}
+    for line in run_text(["timedatectl", "show"]).splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            show[key] = value
+    rtc = read_text("/sys/class/rtc/rtc0/since_epoch")
+    now = int(time.time())
+    state = {
+        "system_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+        "timezone": show.get("Timezone", ""),
+        "ntp_enabled": show.get("NTP") == "yes" if show else None,
+        "ntp_synchronized": show.get("NTPSynchronized") == "yes" if show else None,
+    }
+    if rtc.isdigit():
+        state["rtc_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(rtc)))
+        state["rtc_minus_system_s"] = int(rtc) - now
+    return state
+
+
+def failure_details(run_dir: str, events: list[dict], context_lines: int = 20) -> list[dict]:
+    """Every FAIL/WARN event with the indented detail lines printed under it.
+
+    Events and transcript lines are matched in order per suite, so a message
+    that repeats picks up the detail of its own occurrence.
+    """
+    transcripts: dict[str, list[str]] = {}
+    cursors: dict[str, int] = {}
+    details = []
+    for event in events:
+        if event.get("result") not in ("FAIL", "WARN"):
+            continue
+        suite = event.get("suite") or "?"
+        if suite not in transcripts:
+            try:
+                with open(os.path.join(run_dir, f"{suite}.log"), errors="replace") as handle:
+                    transcripts[suite] = handle.read().splitlines()
+            except OSError:
+                transcripts[suite] = []
+            cursors[suite] = 0
+        lines = transcripts[suite]
+        wanted = f"[{event['result']}] {event.get('message', '')}"
+        context: list[str] = []
+        for index in range(cursors[suite], len(lines)):
+            if lines[index].rstrip() == wanted.rstrip():
+                cursors[suite] = index + 1
+                for line in lines[index + 1:index + 1 + context_lines]:
+                    if not line.startswith("    "):
+                        break
+                    context.append(line[4:])
+                break
+        details.append({"time": event.get("time"), "uptime_s": event.get("uptime_s"), "suite": suite,
+                        "section": event.get("section", ""), "result": event["result"],
+                        "message": event.get("message", ""), "detail": context,
+                        "transcript": f"{suite}.log"})
+    return details
+
+
+def write_failures(path: str, run_id: str, failures: list[dict]) -> None:
+    with open(path, "w") as handle:
+        handle.write(f"# Failures and warnings of run {run_id}: "
+                     f"{sum(f['result'] == 'FAIL' for f in failures)} FAIL, "
+                     f"{sum(f['result'] == 'WARN' for f in failures)} WARN\n")
+        handle.write("# Each entry: time (UTC) and seconds since boot, suite / section, message,\n"
+                     "# then the detail lines the check printed. Full context: <suite>.log\n")
+        for result in ("FAIL", "WARN"):
+            for f in (x for x in failures if x["result"] == result):
+                handle.write(f"\n[{f['result']}] {f['time']} (uptime {f['uptime_s'] if f['uptime_s'] is not None else '?'} s) {f['suite']} / {f['section'] or '-'}\n")
+                handle.write(f"  {f['message']}\n")
+                for line in f["detail"]:
+                    handle.write(f"    | {line}\n")
+        if not failures:
+            handle.write("\nno failures or warnings\n")
 
 
 def cmd_evidence_finalize(args: argparse.Namespace) -> int:
@@ -741,10 +819,20 @@ def cmd_evidence_finalize(args: argparse.Namespace) -> int:
             suite[event["result"]] += 1
         suite["last_event"] = event.get("time")
         if event.get("result") == "END":
-            suite["exit"] = event.get("message", "")
+            code = event.get("message", "").replace("exit=", "")
+            suite["exit_code"] = int(code) if code.lstrip("-").isdigit() else code
     for name, suite in suites.items():
-        failed_exit = suite.get("exit", "exit=0") != "exit=0"
+        failed_exit = suite.get("exit_code", 0) != 0
         suite["result"] = "FAIL" if suite["FAIL"] or failed_exit else ("WARN" if suite["WARN"] else "PASS")
+    entry = suites.get(args.entry)
+    if entry is not None and len(suites) > 1:
+        # The entry point runs the other suites; give it their totals.
+        for key in ("PASS", "WARN", "FAIL", "SKIP"):
+            entry[key] = sum(s[key] for n, s in suites.items() if n != args.entry)
+        entry["result"] = "FAIL" if entry["FAIL"] or entry.get("exit_code", 0) != 0 else ("WARN" if entry["WARN"] else "PASS")
+
+    failures = failure_details(run_dir, events)
+    write_failures(os.path.join(run_dir, "failures.txt"), args.run_id, failures)
 
     if start_epoch:
         kernel = run_text(["journalctl", "-k", "--no-pager", "-o", "short-iso", "--since", f"@{start_epoch}"], timeout=30)
@@ -775,7 +863,9 @@ def cmd_evidence_finalize(args: argparse.Namespace) -> int:
         "finished_utc": finished,
         "exit_code": args.exit_code,
         "board": board_identity(),
+        "clock": clock_state(),
         "suites": suites,
+        "failures": failures,
         "event_count": len(events),
         "scripts_sha256": scripts,
         "artifacts": artifacts,
@@ -809,7 +899,15 @@ def cmd_evidence_finalize(args: argparse.Namespace) -> int:
     for name, suite in sorted(suites.items()):
         print(f"suite       {name:<12} {suite['result']:<5} pass={suite['PASS']} warn={suite['WARN']} "
               f"fail={suite['FAIL']} skip={suite['SKIP']}  {suite['first_event']} .. {suite['last_event']}")
+    clock = manifest["clock"]
+    print(f"clock       {clock['system_utc']} ntp_synchronized={clock.get('ntp_synchronized')} "
+          f"rtc_minus_system={clock.get('rtc_minus_system_s', '?')}s")
     print(f"events      {len(events)} timestamped entries in events.jsonl")
+    fails = [f for f in failures if f["result"] == "FAIL"]
+    print(f"failures    {len(fails)} FAIL, {len(failures) - len(fails)} WARN; details with context in failures.txt")
+    for f in fails:
+        hint = f"  ({f['detail'][0].strip()})" if f["detail"] else ""
+        print(f"  {f['time']} {f['suite']}/{f['section'] or '-'}: {f['message']}{hint}"[:200])
     print(f"directory   {run_dir}  ({len(artifacts)} files, SHA256SUMS)")
     print(f"bundle      {tar_path}")
     print(f"bundle sha256 {sha256_file(tar_path)}")

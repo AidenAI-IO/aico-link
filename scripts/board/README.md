@@ -16,7 +16,7 @@ check failed; `--help` lists its options.
 
 The `board_hw_*` suites also leave evidence of each run in
 `/tmp/aico_hw_<run-id>/` and `/tmp/aico_hw_<run-id>.tar.gz`: console
-transcripts, timestamped events, board identity and firmware (`run.json`),
+transcripts, timestamped events, a failure list with details (`failures.txt`), board identity, firmware and clock state (`run.json`),
 script and artifact hashes, the kernel log of the run, all captures and
 screenshots, and `SHA256SUMS`. The console ends with the tarball's SHA-256.
 Copy the tarball back to keep the record:

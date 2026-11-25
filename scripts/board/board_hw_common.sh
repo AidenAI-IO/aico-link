@@ -7,10 +7,13 @@
 # Evidence bundle: every run writes <artifact-dir>/aico_hw_<run-id>/ with
 #   <suite>.log     full console transcript of each suite
 #   events.jsonl    every check result, prompt and operator answer with UTC
-#                   time and seconds since boot
+#                   time, seconds since boot and the section it belongs to
+#   failures.txt    every FAIL and WARN with time, suite, section and the
+#                   detail lines printed under it
 #   run.json        board identity (boot id, serial, MACs, firmware, packages),
-#                   start/end, arguments, script hashes, per-suite results and
-#                   artifact hashes
+#                   clock state (NTP sync, RTC), start/end, arguments, script
+#                   hashes, per-suite results and times, failures and artifact
+#                   hashes
 #   kernel.log      kernel messages logged during the run
 #   captures, screenshots and measurements written by the suites
 #   SHA256SUMS      hashes of every file in the bundle
@@ -50,16 +53,28 @@ hw_json_escape() {
     printf '%s' "$1" | tr -d '\000-\010\013-\037' | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n\t' '  '
 }
 
+HW_SECTION=""
+
 # hw_event RESULT MESSAGE -> one JSON line in events.jsonl
 hw_event() {
     [ -n "$HW_EVENTS" ] || return 0
-    printf '{"time":"%s","uptime_s":%s,"suite":"%s","result":"%s","message":"%s"}\n' \
-        "$(hw_now)" "$(hw_uptime)" "$HW_SUITE" "$1" "$(hw_json_escape "$2")" >>"$HW_EVENTS"
+    printf '{"time":"%s","uptime_s":%s,"suite":"%s","section":"%s","result":"%s","message":"%s"}\n' \
+        "$(hw_now)" "$(hw_uptime)" "$HW_SUITE" "$(hw_json_escape "$HW_SECTION")" "$1" "$(hw_json_escape "$2")" >>"$HW_EVENTS"
+}
+
+# hw_line_event LINE - record a console line of a script that does not write
+# events itself ("== section ==" and "[RESULT] message" lines), as it happens.
+hw_line_event() {
+    case "$1" in
+        "== "*" ==") HW_SECTION="${1#== }"; HW_SECTION="${HW_SECTION% ==}"; hw_event SECTION "$HW_SECTION" ;;
+        "[PASS] "*|"[WARN] "*|"[FAIL] "*|"[SKIP] "*) hw_line_result="${1#\[}"; hw_event "${hw_line_result%%\]*}" "${1#\[*\] }" ;;
+    esac
 }
 
 # The result functions of board_low_level_common.sh, plus an event per line.
 section() {
     printf '\n== %s ==\n' "$*"
+    HW_SECTION="$*"
     hw_event SECTION "$*"
 }
 
@@ -183,9 +198,9 @@ hw_tool() {
     FAILS=$((FAILS + ${hw_tool_fails:-0}))
     WARNS=$((WARNS + ${hw_tool_warns:-0}))
     if [ -n "$HW_EVENTS" ]; then
-        sed -nE 's/^\[(PASS|WARN|FAIL|SKIP)\] (.*)$/\1 \2/p' "$hw_tool_out" | while read -r hw_result hw_message; do
-            hw_event "$hw_result" "$hw_message"
-        done
+        while IFS= read -r hw_line; do
+            case "$hw_line" in "== "*) ;; *) hw_line_event "$hw_line" ;; esac
+        done <"$hw_tool_out"
     fi
     if [ "$hw_tool_rc" -ne 0 ] && [ "${hw_tool_fails:-0}" -eq 0 ]; then
         fail "board_hw_tools.py $1 exited with rc=$hw_tool_rc"

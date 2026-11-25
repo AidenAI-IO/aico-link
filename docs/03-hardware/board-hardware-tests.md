@@ -162,16 +162,17 @@ tests ran on this board, when, with which scripts, and what they measured:
 
 | File | Content |
 | --- | --- |
-| `<suite>.log` | Full console transcript of each suite (and `all.log` for the entry point), with a header giving the start time, uptime, boot id, host, operator and command line, and a footer with the end time and exit code |
-| `events.jsonl` | One JSON line per section, check result, prompt and operator answer, with UTC time and seconds since boot |
-| `run.json` | Run id, start and end, exit code, board identity (boot id, serial, MAC addresses, model, kernel, `/etc/aico-release`, installed `aico*` packages, uptime, operator), per-suite counts and time span, SHA-256 of every script, size and SHA-256 of every artifact |
+| `failures.txt` | Start here when a run fails: every FAIL, then every WARN, with UTC time, seconds since boot, suite and section, the message and the detail lines the check printed under it (receiver status, error replies). The same list is in `run.json` under `failures` |
+| `<suite>.log` | Full console transcript of each suite (`lowlevel.log` for the low-level smoke, `all.log` for the entry point), with a header giving the start time, uptime, boot id, host, operator and command line, and a footer with the end time and exit code |
+| `events.jsonl` | One JSON line per section, check result, prompt and operator answer, recorded as it happens, with UTC time, seconds since boot and the section it belongs to |
+| `run.json` | Run id, start and end, exit code, board identity (boot id, serial, MAC addresses, model, kernel, `/etc/aico-release`, installed `aico*` packages, OS release, uptime, operator), clock state at the end of the run (NTP enabled and synchronized, time zone, RTC time and its offset from the system clock, which tells whether the timestamps can be trusted), per-suite counts, time span and exit code, failures, SHA-256 of every script, size and SHA-256 of every artifact |
 | `kernel.log` | Kernel messages logged since the run started (receiver locks, USB, audio, MMC) |
 | `*.pcm`, `*.json`, `*.bmp` | Microphone captures (16-bit little-endian at the reported rate and channel count), loopback measurements and screenshots |
 | `report.txt` | The entry point's report |
 | `SHA256SUMS` | SHA-256 of every file in the directory |
 
 The last lines of the console print the run id, board serial and boot id,
-each suite's result and time span, the tarball path and its SHA-256. Keep the
+each suite's result and time span, the clock state, every failure with its time and section (details in `failures.txt`), the tarball path and its SHA-256. Keep the
 tarball, or at least record its SHA-256 with the board serial, as the test
 record; `sha256sum -c SHA256SUMS` inside the extracted directory shows that
 nothing was changed afterwards. Copy the captures to a host to listen to them

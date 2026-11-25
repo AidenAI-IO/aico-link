@@ -127,7 +127,24 @@ run_suite() {
     log="$(mktemp "${TMPDIR:-/tmp}/aico_hw_suite.XXXXXX")"
     printf '\n################ %s ################\n' "$name" | tee -a "$REPORT"
     # The suites read prompts from /dev/tty, so tee does not block them.
-    sh "$@" 2>&1 | tee "$log" | tee -a "$REPORT"
+    if [ "$name" = "lowlevel" ]; then
+        # The low-level smoke scripts do not write events or a transcript
+        # themselves: record both line by line while they run.
+        transcript="${AICO_HW_RUN_DIR:-$AICO_LOW_LEVEL_ARTIFACT_DIR}/lowlevel.log"
+        printf '# Aico hardware test transcript: suite=lowlevel run_id=%s\n# started=%s uptime_s=%s boot_id=%s\n# command: %s\n' \
+            "$RUN_ID" "$(hw_now)" "$(hw_uptime)" "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" "$*" >"$transcript"
+        sh "$@" 2>&1 | (
+            HW_SUITE=lowlevel
+            HW_SECTION=""
+            while IFS= read -r line; do
+                printf '%s\n' "$line"
+                hw_line_event "$line"
+            done
+        ) | tee -a "$transcript" | tee "$log" | tee -a "$REPORT"
+        printf '# finished=%s uptime_s=%s\n' "$(hw_now)" "$(hw_uptime)" >>"$transcript"
+    else
+        sh "$@" 2>&1 | tee "$log" | tee -a "$REPORT"
+    fi
     passes="$(grep -c '^\[PASS\]' "$log")"
     warns="$(grep -c '^\[WARN\]' "$log")"
     fails="$(grep -c '^\[FAIL\]' "$log")"
@@ -137,12 +154,6 @@ run_suite() {
     [ "$fails" -gt 0 ] && { result="FAIL"; OVERALL=1; }
     SUMMARY="$SUMMARY$(printf '%-12s %-5s pass=%-3s warn=%-3s fail=%-3s skip=%s' "$name" "$result" "$passes" "$warns" "$fails" "$skips")
 "
-    if [ "$name" = "lowlevel" ]; then
-        # The low-level smoke scripts do not write events themselves.
-        sed -nE 's/^\[(PASS|WARN|FAIL|SKIP)\] (.*)$/\1 \2/p' "$log" | while read -r hw_result hw_message; do
-            HW_SUITE=lowlevel hw_event "$hw_result" "$hw_message"
-        done
-    fi
     hw_event SUITE "$name $result pass=$passes warn=$warns fail=$fails skip=$skips"
     rm -f "$log"
 }

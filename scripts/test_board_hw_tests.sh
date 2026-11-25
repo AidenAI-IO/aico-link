@@ -225,7 +225,7 @@ expect_line "cannot read config file" "$out"
 
 # 6b. Evidence bundle of the first MCU run ---------------------------------------------
 RUN_DIR="$AICO_LOW_LEVEL_ARTIFACT_DIR/aico_hw_evidence-mcu"
-for file in mcu.log events.jsonl run.json SHA256SUMS; do
+for file in mcu.log events.jsonl failures.txt run.json SHA256SUMS; do
     [ -s "$RUN_DIR/$file" ] || fail "evidence file missing: $file"
 done
 [ -s "$RUN_DIR.tar.gz" ] || fail "evidence tarball missing"
@@ -239,14 +239,22 @@ events = [json.loads(line) for line in open(run + "/events.jsonl")]
 checks = [e for e in events if e["result"] in ("PASS", "WARN", "FAIL", "SKIP")]
 assert checks and all(e["time"].endswith("Z") and e["suite"] == "mcu" for e in checks), "event fields"
 assert any(e["result"] == "START" for e in events) and any(e["result"] == "END" for e in events), "start/end"
+assert all(e["section"] for e in checks), "every check names its section"
 manifest = json.load(open(run + "/run.json"))
 assert manifest["run_id"] == "evidence-mcu" and manifest["exit_code"] == 0, "manifest header"
 suite = manifest["suites"]["mcu"]
 assert suite["PASS"] == sum(1 for e in checks if e["result"] == "PASS") and suite["FAIL"] == 0, "suite counts"
 assert "board_hw_mcu.sh" in manifest["scripts_sha256"] and "mcu.log" in manifest["artifacts"], "hashes"
 assert manifest["board"]["hostname"], "board identity"
+assert manifest["clock"]["system_utc"].endswith("Z") and not [f for f in manifest["failures"] if f["result"] == "FAIL"], "clock and failures"
 PY
 (cd "$RUN_DIR" && sha_check) || fail "SHA256SUMS does not verify"
+
+# 6c. A failing run lists each failure with time, section and detail lines.
+out="$(sh "$SCRIPT_DIR/board_hw_mcu.sh" --socket "$WORK/missing.sock" --run-id evidence-fail 2>&1)" && fail "missing MCU socket should fail"
+FAILURES="$AICO_LOW_LEVEL_ARTIFACT_DIR/aico_hw_evidence-fail/failures.txt"
+grep -qE '^\[FAIL\] [0-9T:-]+Z \(uptime [0-9.?]+ s\) mcu / ' "$FAILURES" || { cat "$FAILURES" >&2; fail "failures.txt entry header"; }
+expect_line "details with context in failures.txt" "$out"
 
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
