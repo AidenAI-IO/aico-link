@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: could not install the selected input method: {exc}", file=sys.stderr, flush=True)
             return 1
         if installed:
-            print(f"Installed selected input method: {args.unicode_input_method}", flush=True)
+            print(f"Installed selected input method: {args.unicode_input_method}", file=sys.stderr, flush=True)
 
     server = ADBBridgeServer(device, host=args.bridge_host, port=args.bridge_port)
     environment_url = server.start()

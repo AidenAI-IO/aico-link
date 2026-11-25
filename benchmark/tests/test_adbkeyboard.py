@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import io
+import json
 
 import pytest
 
@@ -85,6 +86,35 @@ def test_capability_reflects_new_keyboard_installation(keyboard):
     assert device.supports_text_insertion() is True
     assert state["installed"] == [ADB_KEYBOARD_IME]
     assert sum(call[:2] == ["install", "-r"] for call in state["calls"]) == 1
+
+
+@pytest.mark.parametrize("input_method", ["adbkeyboard", "appium"])
+@pytest.mark.parametrize("failure", ["download", "install"])
+def test_failed_install_is_optional_for_capability_but_strict_for_input(
+    keyboard, monkeypatch, input_method, failure,
+):
+    device, state = keyboard
+    device.unicode_input_method = input_method
+    state["installed"] = []
+    if failure == "download":
+        def fail_download(_package):
+            raise ADBCommandError("could not download selected IME")
+        monkeypatch.setattr(adb_module, "_download_verified_ime_apk", fail_download)
+        error = "could not download"
+    else:
+        state["fail_install"] = True
+        error = "installing .* failed"
+
+    assert device.supports_text_insertion() is False
+    with pytest.raises(ADBCommandError, match=error):
+        device.ensure_unicode_input_method_installed()
+    with pytest.raises(ADBCommandError, match=error):
+        device.insert_text("你好", replace=True)
+
+    assert not any(
+        call[:3] in (["shell", "ime", "set"], ["shell", "am", "broadcast"])
+        for call in state["calls"]
+    )
 
 
 def test_insert_enables_and_selects_installed_adbkeyboard_then_restores(keyboard):
@@ -173,7 +203,9 @@ def test_ime_download_rejects_unexpected_sha256(monkeypatch):
         _download_verified_ime_apk(package)
 
 
-def test_start_bridge_installs_selected_ime_before_serving(monkeypatch):
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize("install_fails", [False, True])
+def test_start_bridge_installs_selected_ime_before_serving(monkeypatch, capsys, json_output, install_fails):
     calls = []
 
     class FakeDevice:
@@ -185,6 +217,8 @@ def test_start_bridge_installs_selected_ime_before_serving(monkeypatch):
 
         def ensure_unicode_input_method_installed(self):
             calls.append("install-selected")
+            if install_fails:
+                raise ADBCommandError("installation failed")
             return True
 
     class FakeServer:
@@ -210,11 +244,29 @@ def test_start_bridge_installs_selected_ime_before_serving(monkeypatch):
     monkeypatch.setattr(start_bridge, "threading", FakeThreading)
     monkeypatch.setattr(start_bridge.signal, "signal", lambda *_args: None)
 
-    result = start_bridge.main(["--adb-serial", "serial-1", "--unicode-input-method", "appium"])
+    args = ["--adb-serial", "serial-1", "--unicode-input-method", "appium"]
+    if json_output:
+        args.append("--json")
+    result = start_bridge.main(args)
+    captured = capsys.readouterr()
+
+    if install_fails:
+        assert result == 1
+        assert "server-created" not in calls
+        assert captured.out == ""
+        assert "installation failed" in captured.err
+        return
 
     assert result == 0
     assert calls.index("install-selected") < calls.index("server-created")
     assert ("device", "appium") in calls
+    assert "Installed selected input method: appium" in captured.err
+    if json_output:
+        startup = json.loads(captured.out)
+        assert startup["environment_url"] == "http://127.0.0.1:12345"
+        assert startup["unicode_input_method"] == "appium"
+    else:
+        assert "ADB Android environment started" in captured.out
 
 
 def test_failed_broadcast_restores_ime_without_replay_or_payload_leak(keyboard):

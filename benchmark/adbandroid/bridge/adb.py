@@ -288,7 +288,10 @@ class ADBAndroidDevice:
 
     def supports_text_insertion(self) -> bool:
         """Ensure the selected Unicode IME is installed before advertising it."""
-        self.ensure_unicode_input_method_installed()
+        try:
+            self.ensure_unicode_input_method_installed()
+        except ADBCommandError:
+            return False
         return True
 
     def ensure_unicode_input_method_installed(self) -> bool:
@@ -334,10 +337,7 @@ class ADBAndroidDevice:
             self._insert_text_with_appium(text, replace)
 
     def _insert_text_with_adbkeyboard(self, text: str, replace: bool) -> None:
-        if not self.supports_text_insertion():
-            raise ADBCommandError(
-                "Install ADBKeyBoard before Unicode input"
-            )
+        self.ensure_unicode_input_method_installed()
         original_ime = self.current_input_method()
         if not original_ime or original_ime.lower() == "null":
             raise ADBCommandError("cannot determine the input method to restore; no text was sent")
@@ -362,10 +362,7 @@ class ADBAndroidDevice:
     def _insert_text_with_appium(self, text: str, replace: bool) -> None:
         if "%s" in text:
             raise ValueError('text must not contain "%s": adb input text types it as a space')
-        if not self.supports_text_insertion():
-            raise ADBCommandError(
-                "Install Appium Settings with io.appium.settings/.UnicodeIME before Unicode input"
-            )
+        self.ensure_unicode_input_method_installed()
         original_ime = self.current_input_method()
         if not original_ime or original_ime.lower() == "null":
             raise ADBCommandError("cannot determine the input method to restore; no text was sent")

@@ -84,9 +84,11 @@ newline/tab. A broadcast response alone cannot prove that an app accepted text;
 inspect the field after verification failures or timeouts before retrying.
 The bridge does not replay an uncertain insertion. A restore failure is reported
 explicitly; select your normal IME with `adb shell ime set YOUR_ORIGINAL_IME`.
-If the selected IME APK cannot be downloaded or installed, bridge startup
-reports the failure. Preinstall the APK with the commands above when the host is
-offline. The low-level `keyboard_text` primitive remains ASCII-only.
+If the selected IME APK cannot be downloaded or installed while the device is
+ready, bridge startup reports the failure and stops before serving requests.
+If the device is not ready, installation is deferred until a later capability
+probe or text insertion. Preinstall the APK with the commands above when the
+host is offline. The low-level `keyboard_text` primitive remains ASCII-only.
 
 ## Appium UnicodeIME alternative
 
@@ -121,9 +123,11 @@ uv run python -m adbandroid.scripts.start_bridge \
 ```
 
 The selected path is fixed for the bridge process; it does not fall back to the
-other Unicode IME if the selected one is unavailable. Without the selected IME,
-the Agent retains its ASCII input path. Appium replacement requests need
-Android's `input keycombination` support for Ctrl+A and Delete.
+other Unicode IME if the selected one is unavailable. A running bridge reports
+Unicode input as unavailable when installation fails, retaining its ASCII input
+path. Explicit Unicode insertion still reports the installation error.
+Appium replacement requests need Android's `input keycombination` support for
+Ctrl+A and Delete.
 
 ## Quick start
 
