@@ -26,6 +26,7 @@ import (
 	"aico-agent/internal/agenttask"
 	"aico-agent/internal/logging"
 	streamcontract "aico-agent/internal/stream"
+	"aico-agent/internal/util"
 
 	langtools "github.com/tmc/langchaingo/tools"
 )
@@ -838,10 +839,11 @@ func TestRealtimeVisualToolResultHandlesImages(t *testing.T) {
 	}
 	for _, imageInput := range []bool{false, true} {
 		replayer := &recordingContextReplayer{}
-		if err := replayRealtimeContext(context.Background(), replayer, manager, imageInput); err != nil {
+		if err := replayRealtimeContext(context.Background(), replayer, manager, nil, imageInput, time.Now(), "UTC"); err != nil {
 			t.Fatal(err)
 		}
-		if len(replayer.items) != 4 || replayer.items[1].Type != "function_call_output" ||
+		// The fifth item is the closing time note.
+		if len(replayer.items) != 5 || replayer.items[1].Type != "function_call_output" ||
 			replayer.items[3].Role != "user" || !strings.Contains(replayer.items[3].Content, "app_connected: true") {
 			t.Fatalf("imageInput=%t replayed = %+v", imageInput, replayer.items)
 		}
@@ -866,6 +868,77 @@ func TestRealtimeNoticePersistsAsNoticeInUserContext(t *testing.T) {
 	got := manager.MessageListDump().Messages
 	if len(got) != 2 || got[1].Role != messages.MessageRoleNotice || got[1].Content != "background task completed" {
 		t.Fatalf("messages = %+v, want notice role", got)
+	}
+
+	// A recent conversation is replayed with the notice kept apart from user
+	// speech, then closed with the time since it ended.
+	replayer := &recordingContextReplayer{}
+	now := got[1].Timestamp.Add(10 * time.Minute)
+	if err := replayRealtimeContext(context.Background(), replayer, manager, nil, false, now, "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	if len(replayer.items) != 2 || replayer.items[0].Content != util.STag("notice", "background task completed") {
+		t.Fatalf("replayed = %+v, want tagged notice then time note", replayer.items)
+	}
+	if note := replayer.items[1].Content; replayer.items[1].Role != "user" || !strings.Contains(note, "elapsed: 10m0s") ||
+		!strings.Contains(note, "current_time: "+agent.ControllerTimeState(now, "UTC")) {
+		t.Fatalf("time note = %q", note)
+	}
+
+	// A conversation resumed after a long gap starts fresh: only the time note.
+	replayer = &recordingContextReplayer{}
+	if err := replayRealtimeContext(context.Background(), replayer, manager, nil, false, got[1].Timestamp.Add(2*time.Hour), "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	if len(replayer.items) != 1 || strings.Contains(replayer.items[0].Content, "background task completed") ||
+		!strings.Contains(replayer.items[0].Content, "elapsed: 2h0m0s") {
+		t.Fatalf("replayed after gap = %+v, want only the time note", replayer.items)
+	}
+}
+
+// The restored turns only show that work was accepted, so replay closes with
+// what became of each piece: lost to a restart, stopped, or still going.
+func TestRealtimeReplayReportsCurrentWorkStatus(t *testing.T) {
+	tasks := agenttask.NewManager(&fakeBackgroundTaskRunner{started: make(chan string, 2), release: make(chan struct{})})
+	defer tasks.Close()
+	live, err := tasks.Create("check the calendar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := tasks.Create("open the files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.CancelUnfinished(stopped.ID); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := contextmanager.NewContextManager(t.TempDir(), "system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, task := range []agenttask.Task{{ID: "task_gone", Prompt: "browse the feed"}, live, stopped} {
+		call := realtimevoice.Event{CallID: fmt.Sprintf("call_%d", i), Name: realtimeCreateTaskTool, Arguments: `{}`}
+		output, _ := json.Marshal(task)
+		if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: task.Prompt}); err != nil {
+			t.Fatal(err)
+		}
+		if err := appendRealtimeToolExecution(manager, call, string(output), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replayer := &recordingContextReplayer{}
+	if err := replayRealtimeContext(context.Background(), replayer, manager, tasks, false, time.Now(), "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	note := replayer.items[len(replayer.items)-1].Content
+	for _, want := range []string{
+		`work: "browse the feed" stopped without a result when the device restarted`,
+		`work: "open the files" was stopped; it is not running.`,
+		`work: "check the calendar" status=`,
+	} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("time note = %q, want %q", note, want)
+		}
 	}
 }
 

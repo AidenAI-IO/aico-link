@@ -23,6 +23,23 @@ To keep realtime context bounded, a new websocket session replays only the
 latest 10 user turns, including the assistant/tool messages belonging to those
 turns. The full user history remains on disk.
 
+The realtime model gets no per-turn state, so a session tells it the time in
+three ways. The instructions sent to the provider end with the time the session
+opened; the stored system message keeps the stable instructions, so it is not
+rewritten every session. Replay ends with a state message giving the time of the
+last restored message, the current time, and the elapsed time between them.
+That message also reports what became of each task the restored turns created,
+because those turns only show that it was accepted: it may still be running,
+may have been stopped from a screen, or may have been lost when the device
+restarted, since tasks live in memory. Restored work updates are tagged
+`<notice>` so they do not read as something the user said.
+
+When the last message is more than 30 minutes old, the earlier turns are not
+replayed. The session starts with only that state message, which points the
+model at `recall_session_chunks`. Replayed turns steer the model more strongly
+than its instructions, so an old topic, answer, or work update would otherwise
+carry on into a conversation resumed hours later.
+
 The backend also exposes [schedules and routines](./schedules-and-routines.md)
 through the `schedule` tool. MCU timer expiry resumes scheduled work in its
 originating backend conversation, following compaction revisions. Scheduled

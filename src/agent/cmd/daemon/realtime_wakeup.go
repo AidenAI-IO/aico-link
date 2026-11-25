@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,15 +29,20 @@ import (
 )
 
 const (
-	realtimeAudioReadTimeoutMs        = 200
-	realtimeConnectTimeout            = 15 * time.Second
-	realtimeNotificationPoll          = 500 * time.Millisecond
-	realtimeNotificationDrain         = 30 * time.Second
-	realtimeSleepDrain                = 30 * time.Second
-	realtimePlaybackKeepAlive         = 10 * time.Second
-	realtimeToolCallTimeout           = 30 * time.Second
-	realtimeTaskResultDebounce        = 500 * time.Millisecond
-	realtimeContextReplayTurns        = 10
+	realtimeAudioReadTimeoutMs = 200
+	realtimeConnectTimeout     = 15 * time.Second
+	realtimeNotificationPoll   = 500 * time.Millisecond
+	realtimeNotificationDrain  = 30 * time.Second
+	realtimeSleepDrain         = 30 * time.Second
+	realtimePlaybackKeepAlive  = 10 * time.Second
+	realtimeToolCallTimeout    = 30 * time.Second
+	realtimeTaskResultDebounce = 500 * time.Millisecond
+	realtimeContextReplayTurns = 10
+	// realtimeContextReplayGap ends verbatim replay: a conversation resumed
+	// after it starts fresh, with the earlier one left to recall_session_chunks.
+	// Replayed turns steer the model more than its instructions do, so an old
+	// topic, an old answer, or an old work update would otherwise carry on.
+	realtimeContextReplayGap          = 30 * time.Minute
 	realtimeClientTurnEndpointSilence = 800 * time.Millisecond
 	realtimeClientTurnSpeechThreshold = 500
 	maxRetiredRealtimeResponseIDs     = 64
@@ -1634,6 +1640,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	if err := agent.SyncUserProfileSection(userContext, sessionConfig.Instructions); err != nil {
 		logging.Warnf("agent", "realtime", "Refresh user profile in realtime user context failed: %v", err)
 	}
+	// The opening time goes only to the provider. The stored user context
+	// keeps the stable instructions: a time in them would differ every
+	// session and rewrite the stored system message each time.
+	sessionConfig.Instructions = realtimeInstructionsWithSessionTime(sessionConfig.Instructions, time.Now(), cfg.TimezoneOrDefault())
 
 	providerName := realtimeProviderType(cfg)
 	logging.Infof("agent", "realtime", "Connecting: provider=%s model=%s region=%s workspace_configured=%t endpoint_override=%t",
@@ -1684,7 +1694,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	contextReplayer := session.ContextReplayer
 	canReplayContext := contextReplayer != nil
 	if supportsText && canReplayContext {
-		if err := replayRealtimeContext(ctx, contextReplayer, userContext, imageInput); err != nil {
+		if err := replayRealtimeContext(ctx, contextReplayer, userContext, tasks, imageInput, time.Now(), cfg.TimezoneOrDefault()); err != nil {
 			return markRealtimeProviderFailure(fmt.Errorf("restore realtime user context: %w", err))
 		}
 	}
@@ -3740,11 +3750,99 @@ func appendRealtimeToolExecution(manager *contextmanager.ContextManager, call re
 	return manager.AppendMessages(pair)
 }
 
-func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextReplayer, manager *contextmanager.ContextManager, imageInput bool) error {
+// realtimeInstructionsWithSessionTime tells the provider when the session
+// opened. Realtime sessions get no per-turn state, so without it the model
+// knows neither the date nor that time has passed since earlier turns.
+func realtimeInstructionsWithSessionTime(instructions string, now time.Time, timezone string) string {
+	return strings.TrimSpace(instructions) + "\n\nThis conversation session opened at " + agent.ControllerTimeState(now, timezone) +
+		". Use get_current_time for the exact time later in the session."
+}
+
+// lastRealtimeMessageTime returns when the latest non-system message was
+// written, or the zero time when there is none.
+func lastRealtimeMessageTime(recent []messages.Message) time.Time {
+	var last time.Time
+	for _, message := range recent {
+		if message.Role != messages.MessageRoleSystem && message.Timestamp.After(last) {
+			last = message.Timestamp
+		}
+	}
+	return last
+}
+
+// realtimeReplayTimeState tells the model when the earlier conversation ended
+// and what time it is now, so it can tell a reconnect from a conversation
+// resumed later. restored reports whether those messages were replayed.
+func realtimeReplayTimeState(last, now time.Time, timezone string, restored bool, work []string) string {
+	elapsed := now.Sub(last).Round(time.Minute)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	lead := "The messages above are restored from the earlier conversation."
+	if !restored {
+		lead = "The earlier conversation is not shown. Use recall_session_chunks if the user refers to it."
+	}
+	state := lead + "\n" +
+		"last_message_time: " + agent.ControllerTimeState(last, timezone) + "\n" +
+		"current_time: " + agent.ControllerTimeState(now, timezone) + "\n" +
+		"elapsed: " + elapsed.String()
+	for _, line := range work {
+		state += "\nwork: " + line
+	}
+	return util.STag("state", state)
+}
+
+// replayedRealtimeWork describes, as of now, each piece of work started in the
+// restored turns. Those turns show only that it was accepted; it may since have
+// been stopped from a screen, which tells the conversation nothing, or lost to
+// a restart, since tasks live in memory. Without this the model reports work
+// as still in progress, or reports old work as new.
+func replayedRealtimeWork(recent []messages.Message, tasks *agenttask.Manager) []string {
+	if tasks == nil {
+		return nil
+	}
+	var work []string
+	for _, message := range recent {
+		if message.Role != messages.MessageRoleToolResult {
+			continue
+		}
+		for _, result := range message.ToolResults {
+			if result.Name != realtimeCreateTaskTool {
+				continue
+			}
+			var created agenttask.Task
+			if json.Unmarshal([]byte(result.Content), &created) != nil || created.ID == "" {
+				continue
+			}
+			goal := strconv.Quote(limitRealtimeTaskField(created.Prompt, 300))
+			current, ok := tasks.Query(created.ID)
+			switch {
+			case !ok:
+				work = append(work, goal+" stopped without a result when the device restarted; it is not running.")
+			case current.Status == agenttask.StatusCancelled || current.Status == agenttask.StatusCancelling:
+				work = append(work, goal+" was stopped; it is not running.")
+			default:
+				work = append(work, goal+" status="+string(current.Status)+".")
+			}
+		}
+	}
+	return work
+}
+
+func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextReplayer, manager *contextmanager.ContextManager, tasks *agenttask.Manager, imageInput bool, now time.Time, timezone string) error {
 	if session == nil || manager == nil {
 		return nil
 	}
 	recent := recentRealtimeContextMessages(manager.MessageListDump().Messages, realtimeContextReplayTurns)
+	last := lastRealtimeMessageTime(recent)
+	if last.IsZero() {
+		return nil
+	}
+	work := replayedRealtimeWork(recent, tasks)
+	if now.Sub(last) > realtimeContextReplayGap {
+		return session.ReplayContext(ctx, []realtimevoice.ContextItem{{Type: "message", Role: "user",
+			Content: realtimeReplayTimeState(last, now, timezone, false, work)}})
+	}
 	toolStates := realtimeToolStateMessages(recent)
 	// Only the latest image is replayed: earlier screens are stale, and
 	// replaying every one would grow each restored context.
@@ -3791,10 +3889,18 @@ func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextRep
 			continue
 		}
 		role := "user"
-		if message.Role == messages.MessageRoleAssistant {
+		switch message.Role {
+		case messages.MessageRoleAssistant:
 			role = "assistant"
+		case messages.MessageRoleNotice:
+			// Realtime providers have no notice role. The tag keeps an
+			// earlier work update from reading as something the user said.
+			content = util.STag("notice", content)
 		}
 		items = append(items, realtimevoice.ContextItem{Type: "message", Role: role, Content: content})
+	}
+	if len(items) > 0 {
+		items = append(items, realtimevoice.ContextItem{Type: "message", Role: "user", Content: realtimeReplayTimeState(last, now, timezone, true, work)})
 	}
 	return session.ReplayContext(ctx, items)
 }
