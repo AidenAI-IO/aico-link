@@ -677,52 +677,14 @@ func TestRealtimeCancelCompletedTaskSuppressesAndRedactsPendingResult(t *testing
 	}
 }
 
-// A create that names outstanding work as the request it repeats returns that
-// work instead of starting a duplicate; any other create starts work, even
-// while something else runs or when the named work is no longer outstanding.
-func TestRealtimeCreateTaskReturnsRepeatedOutstandingWork(t *testing.T) {
-	runner := &fakeBackgroundTaskRunner{started: make(chan string, 3), release: make(chan struct{})}
-	manager := agenttask.NewManager(runner)
-	defer manager.Close()
-	executor := realtimeVoiceToolExecutor{tasks: manager, now: time.Now}
-	create := func(arguments string) (agenttask.Task, bool) {
-		t.Helper()
-		var result struct {
-			agenttask.Task
-			Created *bool           `json:"created"`
-			Held    *agenttask.Task `json:"task"`
-		}
-		if err := json.Unmarshal([]byte(executor.call(context.Background(), realtimeCreateTaskTool, arguments)), &result); err != nil {
-			t.Fatal(err)
-		}
-		if result.Created != nil && !*result.Created {
-			return *result.Held, false
-		}
-		return result.Task, true
-	}
-
-	first, created := create(`{"task":"open the chat app","repeats_task_id":""}`)
-	if !created || first.ID == "" {
-		t.Fatalf("first create = %+v, %t", first, created)
-	}
-	if held, created := create(`{"task":"go to the chat app","repeats_task_id":"` + first.ID + `"}`); created || held.ID != first.ID {
-		t.Fatalf("repeat create = %+v, %t, want %s back and nothing started", held, created, first.ID)
-	}
-	if other, created := create(`{"task":"check the weather","repeats_task_id":""}`); !created || other.ID == first.ID {
-		t.Fatalf("new request while work runs = %+v, %t", other, created)
-	}
-	if stale, created := create(`{"task":"open the mail app","repeats_task_id":"task_unknown"}`); !created || stale.ID == "" {
-		t.Fatalf("repeat of unknown work = %+v, %t, want it started", stale, created)
-	}
-}
-
 func TestRealtimeQueryTaskAcceptsOmittedTaskID(t *testing.T) {
 	definitions := make(map[string]realtimevoice.Tool)
 	for _, definition := range realtimeVoiceToolDefinitions(agent.Config{VoiceModel: agent.VoiceModelConfig{UseBackendAgent: true}}, nil) {
 		definitions[definition.Name] = definition
 	}
-	// The instructions ask for a check with no task_id, which only works
-	// while query_agent_task accepts an omitted task_id.
+	// The instructions let the model check work in progress without knowing
+	// its id, which only works while query_agent_task accepts an omitted
+	// task_id.
 	query, ok := definitions[realtimeQueryTaskTool]
 	if !ok {
 		t.Fatalf("missing %s definition", realtimeQueryTaskTool)

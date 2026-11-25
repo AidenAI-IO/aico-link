@@ -1108,10 +1108,9 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"task":            map[string]any{"type": "string", "description": "A self-contained description of the work you will handle."},
-						"repeats_task_id": map[string]any{"type": "string", "description": "The id of work you already started that this request repeats or rephrases. Then nothing new starts and you get that work back: if it is still running, say it is under way; if it finished, tell its result. Use an empty string for a new request, or when the user wants work done again."},
+						"task": map[string]any{"type": "string", "description": "A self-contained description of the work you will handle."},
 					},
-					"required": []string{"task", "repeats_task_id"},
+					"required": []string{"task"},
 				},
 			),
 			realtimeVoiceToolDefinition(
@@ -1276,26 +1275,13 @@ func (e realtimeVoiceToolExecutor) call(ctx context.Context, name, arguments str
 		return realtimeToolJSON(map[string]any{"status": "ending"})
 	case realtimeCreateTaskTool:
 		var input struct {
-			Task          string `json:"task"`
-			RepeatsTaskID string `json:"repeats_task_id"`
+			Task string `json:"task"`
 		}
 		if err := json.Unmarshal([]byte(arguments), &input); err != nil {
 			return realtimeToolJSON(map[string]any{"error": "invalid task arguments"})
 		}
 		if e.tasks == nil {
 			return realtimeToolJSON(map[string]any{"error": "background agent is unavailable"})
-		}
-		// The model declares whether the request repeats work it started;
-		// asking it to check first was skipped, and holding every create
-		// back until it called again lost new requests. Code only verifies
-		// that the named work is still outstanding, so a wrong or stale id
-		// starts the work rather than dropping it.
-		if repeats := strings.TrimSpace(input.RepeatsTaskID); repeats != "" {
-			for _, outstanding := range e.tasks.Outstanding() {
-				if outstanding.ID == repeats {
-					return realtimeToolJSON(map[string]any{"created": false, "task": outstanding})
-				}
-			}
 		}
 		task, err := e.tasks.CreateWithCause(input.Task, agenttask.CauseFromContext(ctx))
 
