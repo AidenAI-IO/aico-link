@@ -34,8 +34,7 @@ struct Options {
         // transitional output after STREAMON without rejecting valid content.
         camera.reject_uniform_frames = false;
         device_name = camera.device_name;
-        // Skip CIF chroma decimation while delivering compact NV12 over IPC.
-        pixel_format = "nv16-to-nv12";
+        pixel_format = "auto";
         subdev_device = camera.subdev_device;
         sync();
     }

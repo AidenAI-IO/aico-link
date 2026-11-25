@@ -1,6 +1,7 @@
 #include "frame_camera_capture_source.h"
 #include "aico_log.h"
 #include "rk628_hdmi_mode.h"
+#include "frame_service_defaults.h"
 #include <chrono>
 #include <dirent.h>
 #include <errno.h>
@@ -34,8 +35,8 @@ static std::string subdev_sysfs_device_path(const std::string& subdev_device) {
 FrameCameraCaptureSource::FrameCameraCaptureSource(const CameraConfig& config)
     : config_(config),
       device_name_(config.device_name ? config.device_name : "/dev/video0"),
-      downsample_nv16_(!config.pixel_format || strcmp(config.pixel_format, "nv16-to-nv12") == 0),
-      output_format_(downsample_nv16_ ? "nv12" : config.pixel_format),
+      requested_format_(config.pixel_format ? config.pixel_format : "auto"),
+      downsample_nv16_(false),
       subdev_device_(config.subdev_device && strcmp(config.subdev_device, "auto") != 0
                          ? config.subdev_device : ""),
       edid_path_(config.edid_path ? config.edid_path : ""),
@@ -108,10 +109,10 @@ bool FrameCameraCaptureSource::open() {
     const std::chrono::steady_clock::time_point open_started =
         std::chrono::steady_clock::now();
     AICO_LOG_INFO("camera_source", "open_started",
-                   "attempt=%llu video_device=%s configured_subdev=%s auto_subdev=%d pixel_format=%s width=%d height=%d",
+                   "attempt=%llu video_device=%s configured_subdev=%s auto_subdev=%d requested_format=%s width=%d height=%d",
                    static_cast<unsigned long long>(open_attempt),
                    device_name_.c_str(), subdev_device_.c_str(),
-                   auto_subdev_ ? 1 : 0, config_.pixel_format,
+                   auto_subdev_ ? 1 : 0, requested_format_.c_str(),
                    config_.width, config_.height);
     std::string bridge_name;
     config_.allow_edid_fallback = !periodic_force_enabled_;
@@ -150,6 +151,9 @@ bool FrameCameraCaptureSource::open() {
             fclose(file);
         }
     }
+    const std::string mode = frame_service_capture_mode(requested_format_, bridge_name);
+    downsample_nv16_ = mode == "nv16-to-nv12";
+    output_format_ = downsample_nv16_ ? "nv12" : mode;
     const std::string bridge_sysfs_device =
         subdev_sysfs_device_path(subdev_device_);
     AICO_LOG_INFO("camera_source", "bridge_selected",
@@ -284,9 +288,9 @@ bool FrameCameraCaptureSource::open() {
     }
 
     AICO_LOG_INFO("camera_source", "camera_init_started",
-                   "attempt=%llu video_device=%s subdev=%s",
+                   "attempt=%llu video_device=%s subdev=%s pixel_format=%s",
                    static_cast<unsigned long long>(open_attempt),
-                   device_name_.c_str(), subdev_device_.c_str());
+                   device_name_.c_str(), subdev_device_.c_str(), config_.pixel_format);
     errno = 0;
     const bool opened = camera_.init(config_);
     const int init_errno = opened ? 0 : errno;

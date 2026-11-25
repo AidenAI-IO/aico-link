@@ -26,7 +26,7 @@ Allowing multiple processes to directly open `/dev/video0` can lead to resource 
 | Capture mode | `on_demand` | One fresh capture for each `latest_frame` / screenshot request |
 | Warm-up frames | Mode-aware | `6` with persistent STREAMON; `0` when streaming restarts per request |
 | Production ring usage | `0` | Health reports `ring_buffer_size=0`, `ring_buffer_used=0` |
-| Pixel format | `nv16-to-nv12` | Debian and direct frame_service defaults; set `FRAME_SERVICE_PIXEL_FORMAT=uyvy` for compatibility fallback |
+| Pixel format | `auto` | RK628 uses NV16 capture with NV12 output. TC358743 and unidentified bridges use native NV12. |
 | Screenshot max edge | `960` | Related to Go screenshot tool default compression strategy |
 
 ## Startup
@@ -47,8 +47,8 @@ systemctl start aico-frame.service
 ```
 
 The Debian service uses the same on-demand capture lifecycle.
-`FRAME_SERVICE_PIXEL_FORMAT` in `/etc/aico_frame_service.conf` accepts `nv16-to-nv12`, `nv12`,
-`nv16`, `uyvy`, or `yuyv` and defaults to `nv16-to-nv12`. `FRAME_SERVICE_FPS` remains
+`FRAME_SERVICE_PIXEL_FORMAT` in `/etc/aico_frame_service.conf` accepts `auto`, `nv16-to-nv12`, `nv12`,
+`nv16`, `uyvy`, or `yuyv` and defaults to `auto`. `FRAME_SERVICE_FPS` remains
 accepted for configuration compatibility but is ignored in on-demand mode.
 
 ## Parameters
@@ -69,7 +69,7 @@ frame_service [--socket PATH] [--device PATH] [--width N] [--height N]
 | `--socket PATH` | UDS socket path |
 | `--device PATH` | V4L2 capture device, defaults to `/dev/video0` |
 | `--width N` / `--height N` | Required HDMI resolution, defaults to 1920x1080 |
-| `--pixel-format FMT` | `nv16-to-nv12` (default), `nv12`, `nv16`, `uyvy`, or `yuyv` |
+| `--pixel-format FMT` | `auto` (default), `nv16-to-nv12`, `nv12`, `nv16`, `uyvy`, or `yuyv` |
 | `--subdev PATH` | Explicit HDMI bridge subdev. The Debian service normally uses `--auto-subdev` so the bridge can appear after boot and its `/dev/v4l-subdevX` index can change. |
 | `--auto-subdev` | Rediscover `rk628-csi` or `tc358743` on every capture recovery. This is the Debian service mode and keeps the IPC endpoint alive while HDMI is absent. |
 | `--edid PATH` | Custom EDID hex. The Debian start helper automatically selects the 1080p30 CTA EDID for TC358743 and leaves RK628D on its 1080p60 driver EDID; an explicit path overrides this policy |
@@ -102,8 +102,10 @@ that waited for a capture before advancing would never receive one. Set an
 explicit path in `/etc/aico_frame_service.conf` only when automatic discovery
 is not suitable.
 
-By default, frame_service requests single-plane NV16 from V4L2 and delivers
-compact NV12 over IPC. This avoids intermittent vertical chroma misalignment
+In `auto` mode, frame_service selects the format on each capture open after
+identifying the HDMI bridge. TC358743 and unidentified bridges retain native
+NV12 capture. On RK628, the service requests single-plane NV16 from V4L2
+and delivers compact NV12 over IPC. This avoids intermittent vertical chroma misalignment
 seen with persistent native NV12 capture on RV1106. The capture copy removes
 row padding and samples every other interleaved UV row directly from the
 mapped NV16 frame. The payload has `width * height * 3 / 2` bytes. An explicit

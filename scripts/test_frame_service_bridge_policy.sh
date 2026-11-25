@@ -49,7 +49,7 @@ FRAME_SERVICE_PIXEL_FORMAT= \
     "$debian_start"
 grep -q -- '--auto-subdev' "$mock_root/args"
 grep -q -- '--no-force-trigger' "$mock_root/args"
-grep -q -- '--pixel-format nv16-to-nv12' "$mock_root/args"
+grep -q -- '--pixel-format auto' "$mock_root/args"
 grep -q -- '--pause-between-captures' "$mock_root/args"
 grep -q -- '--allow-uniform-frames' "$mock_root/args"
 
