@@ -57,6 +57,15 @@ started but did not release a contact attempts to release it at its origin.
 A successful `drag-start` intentionally leaves it held for a later
 `drag-release`. Direct HTTP drag retains its existing verification behavior.
 
+## Command help
+
+Run `device-cli --help` to list commands. Add `--help` immediately after a
+command, group, or action for focused usage, for example
+`device-cli app contacts --help` or `device-cli app calendar create --help`.
+Help prints to stdout and does not contact the daemon. To pass `--help` as
+literal text, use `device-cli type -- --help`, `device-cli app type -- --help`,
+or `device-cli app clipboard write -- --help`.
+
 ## Exit status and stdout
 
 Exit status `0` means the command succeeded. Failures exit nonzero and report

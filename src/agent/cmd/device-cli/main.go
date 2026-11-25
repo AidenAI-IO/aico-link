@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,16 +20,37 @@ func main() {
 	if base == "" {
 		base = "http://127.0.0.1:8080"
 	}
-	flag.StringVar(&base, "url", base, "Agent HTTP base URL")
-	flag.Usage = func() { fmt.Fprintln(os.Stderr, devicecli.Usage) }
-	flag.Parse()
-	if err := run(strings.TrimRight(base, "/"), flag.Args(), os.Stdout); err != nil {
+	flags := flag.NewFlagSet("device-cli", flag.ContinueOnError)
+	flags.StringVar(&base, "url", base, "Agent HTTP base URL")
+	flags.Usage = func() {}
+	if err := flags.Parse(os.Args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(os.Stdout, devicecli.Usage)
+			return
+		}
+		os.Exit(2)
+	}
+	if err := run(strings.TrimRight(base, "/"), flags.Args(), os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
 func run(base string, args []string, stdout io.Writer) error {
+	if help, requested := devicecli.CommandHelp(args); requested {
+		if help == "" {
+			return fmt.Errorf("unknown help topic; see device-cli --help")
+		}
+		_, err := fmt.Fprintln(stdout, help)
+		return err
+	}
+	// Separate literal text from help options when the text itself is --help.
+	switch strings.Join(args[:max(0, len(args)-2)], " ") {
+	case "type", "app type", "app clipboard write":
+		if args[len(args)-2] == "--" {
+			args = append(append([]string(nil), args[:len(args)-2]...), args[len(args)-1])
+		}
+	}
 	client := &http.Client{Timeout: 5 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	scoped := base == strings.TrimRight(os.Getenv("AICO_DEVICE_CLI_URL"), "/") && os.Getenv("AICO_DEVICE_CLI_TOKEN") != ""
 	var look *devicecli.LookOptions

@@ -8,20 +8,9 @@ metadata:
   allowed_tools:
     - skill_read
     - skill_list
-    - screenshot
-    - wait_for_stable_screen
     - shell
-    - open_app
-    - open_url
-    - quick_action
-    - touch_gesture
-    - keyboard_tap
-    - enter_text
     - audio_volume
     - recall_memory
-    - bridge_clipboard
-    - bridge_calendar
-    - bridge_contacts
     - bridge_notification
     - request_user_action
 ---
@@ -46,8 +35,9 @@ and permissions must always be checked at runtime.
 - Separate three levels of completion: a command was accepted, the companion app returned a result,
   and the phone UI or structured data was actually verified. Report the highest level that was
   observed. Do not treat an acknowledgement as proof that the result has been verified.
-- For visible UI work, use `device-operator` as well. Read that skill when it is not active because
-  it owns screenshot timing, coordinate calibration, gestures, text entry, and capture recovery.
+- Load the control skill selected by the active system profile before using its route. In
+  Device CLI mode, read `device-cli` before any device CLI command, including App data commands.
+  Use `device-operator` for visible UI work only in legacy mode. This skill is not a command reference.
 - Keep phone companion implementation private. Refer to the companion app, public operating
   system APIs, and bridge behavior; do not depend on its source files, classes, modules, or private
   implementation names.
@@ -107,7 +97,7 @@ opening the device from a second process:
 
 | Resource | Owner | Agent-facing use |
 | --- | --- | --- |
-| `/dev/video0`, RK628D/TC358743 HDMI capture | `frame_service` | `screenshot` requests a fresh frame through its Unix socket |
+| `/dev/video0`, RK628D/TC358743 HDMI capture | `frame_service` | Captures a fresh frame through its Unix socket |
 | Microphone, speaker, ALSA/RK MPI | `audio_service` | Recording, playback, volume, STT, and TTS PCM paths |
 | `/dev/hidg0` | USB gadget | Keyboard HID |
 | `/dev/hidg1` | USB gadget | Pointer or touch-style HID |
@@ -125,16 +115,13 @@ A normal task follows this loop:
 
 1. Read the user intent, current role profile, available tools, and active skills. Skill summaries
    are only routing hints; use `skill_read` when the body is needed.
-2. Inspect live state. For a visual task, obtain a fresh `screenshot` or wait for a stable screen
-   before choosing a target. For a phone API task, inspect bridge status and the relevant permission
-   or capability fields.
-3. Select the narrowest valid path. Use the UI route named in the active system profile: if it
-   names `device-operator` (legacy mode), follow that skill and use the exposed device tools for
-   launch, screenshots and other UI work. If it names `device-cli`, use `device-cli open` or
-   `device-cli url` for semantic launch and follow the `device-cli` skill for visible UI work.
-   For structured data, use the route below for the active mode.
-4. Make the smallest useful action, then observe again. Reuse a stable-screen wait when a launch or
-   navigation is asynchronous.
+2. Inspect live state. For visual tasks, use the latest screenshot or refresh it through the
+   active control route. For App data tasks, check connection and capability state.
+3. Use only the route selected by the system profile. In Device CLI mode, call foreground
+   `shell` with `device-cli` for UI operations and `device-cli app` for clipboard, calendar,
+   contacts, and notification sending. If unsure of the syntax, use `--help` on the relevant
+   command group. In legacy mode, use only the exposed tools and follow `device-operator` for UI work.
+4. Make the smallest useful action and observe the result before choosing the next one.
 5. Verify the result using the evidence appropriate to the operation. If a path fails, classify the
    failure and move to an allowed fallback instead of repeating blindly.
 
@@ -153,25 +140,14 @@ A normal task follows this loop:
 - `frame_service` captures on demand. If capture fails, pause UI input and follow the frame-service
   recovery procedure instead of acting on an old image.
 
-### Tool Routing Quick Reference
+### Result Verification
 
-In legacy mode, ignore the Device CLI options in this table: use only the exposed
-Bridge tools for structured data and the `device-operator` skill for launch and
-visible UI, including screenshots. In Device CLI mode, use `device-cli app`
-for the clipboard, calendar, contacts, and notification sending. Each action
-checks its own transport and permissions. For notification reads, use the
-exposed `bridge_notification` query tool in either mode.
-
-| User need | Preferred path | Required verification |
-| --- | --- | --- |
-| Read or write clipboard | `device-cli app clipboard` or `bridge_clipboard` | Structured bridge result; use a screenshot only if the clipboard is being pasted into visible UI |
-| Create, query, or delete calendar events | `device-cli app calendar` or `bridge_calendar` | Structured result and, for user-facing display, a screenshot |
-| Search or edit contacts | `device-cli app contacts` or `bridge_contacts` | Structured result; confirm identity before writes |
-| Send a notification | `device-cli app notification send` or `bridge_notification` with `action=send` | Result or scheduled status; do not claim delivery without event evidence |
-| Open an app or URL | `device-cli open` or `device-cli url` | Fresh screenshot of the destination |
-| Use an app's visible screen | `device-cli` in the foreground shell | Screenshot before and after the action |
-| Read phone notifications | `bridge_notification` with `action=query` | Notification ring generation and event IDs |
-| Recall notification-derived conclusions | `recall_memory` | Memory result; distinguish a derived conclusion from the exact source notification |
+- For clipboard, calendar, contacts, and notification sends, verify the command result before
+  reporting success. Confirm the target contact before updating it; do not infer notification delivery
+  from a scheduled send.
+- For app launches and other visible UI work, verify the destination on a fresh screenshot.
+- Read current phone notification events with the exposed `bridge_notification` query tool in either mode.
+  For remembered conclusions, use `recall_memory` and distinguish them from original source records.
 
 ## Phone Bridge
 
@@ -230,16 +206,18 @@ The board-side public tools normalize wire responses into readable JSON. At the 
 successful response is represented by the absence of an `error` field; do not require an `ok`
 boolean unless the tool contract explicitly supplies one.
 
-### Supported Operations (direct tool names refer to legacy mode)
+### Supported Wire Operations
 
-| Wire command | Payload purpose | Agent tool |
-| --- | --- | --- |
-| `open_app` | Semantic app name; the phone maps it to an installed launch target | `open_app` |
-| `open_app` with `url` | A validated HTTP, HTTPS, SMS, mailto, or tel URL; this is the wire form of public `open_url` | `open_url` |
-| `clipboard_read`, `clipboard_write` | Write uses `{ "text": "..." }` | `bridge_clipboard` with `action=read/write` |
-| `calendar_create`, `calendar_query`, `calendar_delete` | RFC3339 times; query uses `from`/`to`, delete uses `event_id` | `bridge_calendar` |
-| `contacts_query`, `contacts_create`, `contacts_update` | Search/limit or contact fields; update requires `contact_id` | `bridge_contacts` |
-| `notification_send` | Title/body plus optional schedule, sound, and badge | `bridge_notification` with `action=send` |
+These are protocol identifiers, not CLI commands or model-facing tools. Follow the active
+control skill for invocation syntax; do not construct Bridge wire requests in `shell`.
+
+| Wire command | Payload purpose |
+| --- | --- |
+| `open_app` | Semantic app name or a validated HTTP, HTTPS, SMS, mailto, or tel URL |
+| `clipboard_read`, `clipboard_write` | Read or write clipboard text |
+| `calendar_create`, `calendar_query`, `calendar_delete` | RFC3339 times or an existing event ID |
+| `contacts_query`, `contacts_create`, `contacts_update` | Search, create, or update a known contact ID |
+| `notification_send` | Title/body plus optional schedule, sound, and badge |
 
 `bridge_notification` with `action=query` is read-only: it reads the board notification event ring
 and does not ask the phone to send a new notification. Keep the last `generation` and `last_id` for
@@ -257,14 +235,13 @@ result; never dump the whole directory or an unbounded JSONL shard.
 
 ### Launch Semantics And Evidence
 
-- `open_app` accepts semantic names such as `browser`, `settings`, or a user-facing app name. The
+- Semantic app launch accepts names such as `browser`, `settings`, or a user-facing app name. The
   companion app owns the platform-specific launch mapping; the Agent should not hard-code private
   schemes or package details.
-- `open_url` accepts `http`, `https`, `sms`, `mailto`, and `tel` URLs. Validate the scheme before
-  sending it to the bridge. Use the Supported Operations table as the canonical wire mapping and
-  do not combine a URL with a semantic app target.
-- An `open_app` success only means that the operating system accepted a launch request. Wait for a
-  stable screen and take a screenshot before claiming that the app or destination is ready.
+- URL launch accepts `http`, `https`, `sms`, `mailto`, and `tel` URLs. Use the URL command
+  in the active control route; do not combine a URL with a semantic app target.
+- Launch success only means that the operating system accepted the request. Verify the destination
+  on a fresh screenshot before claiming that it is ready.
 - On iOS, URL preflight is limited by the system's allowed-query configuration and is not a complete
   installed-app probe. On Android, package visibility and background activity restrictions still
   apply.

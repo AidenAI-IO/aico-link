@@ -9,6 +9,39 @@ import (
 	"testing"
 )
 
+func TestSubcommandHelpDoesNotRequireDaemon(t *testing.T) {
+	for _, tc := range []struct {
+		args         []string
+		want, absent string
+	}{
+		{[]string{"tap", "--help"}, "device-cli tap X Y", "device-cli swipe"},
+		{[]string{"app", "contacts", "--help"}, "device-cli app contacts update --contact-id", "device-cli app calendar"},
+		{[]string{"app", "notification", "send", "-h"}, "--sound[=true|false]", "device-cli app contacts"},
+		{[]string{"help", "app", "calendar", "create"}, "--start-at TIME", "device-cli app calendar query"},
+	} {
+		var stdout strings.Builder
+		if err := run(":invalid-daemon-url", tc.args, &stdout); err != nil || !strings.Contains(stdout.String(), tc.want) || strings.Contains(stdout.String(), tc.absent) {
+			t.Errorf("%v: stdout = %q, error = %v", tc.args, stdout.String(), err)
+		}
+	}
+}
+
+func TestHelpLikeTextIsPassedToTheDevice(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var args []string
+		if err := json.NewDecoder(r.Body).Decode(&args); err != nil || !reflect.DeepEqual(args, []string{"app", "clipboard", "write", "--help"}) {
+			t.Errorf("unexpected request args: %q, %v", args, err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"output": `{"ok":true}`})
+	}))
+	defer server.Close()
+	t.Setenv("AICO_DEVICE_CLI_TOKEN", "")
+	var stdout strings.Builder
+	if err := run(server.URL, []string{"app", "clipboard", "write", "--", "--help"}, &stdout); err != nil || stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, error = %v", stdout.String(), err)
+	}
+}
+
 func TestAppDataKeepsServerConnectionGate(t *testing.T) {
 	args := []string{"app", "clipboard", "read"}
 	for _, tc := range []struct{ name, path, token, envSuffix string }{

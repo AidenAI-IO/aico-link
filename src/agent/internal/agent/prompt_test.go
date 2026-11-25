@@ -44,6 +44,22 @@ func TestRolePromptCarriesNoDate(t *testing.T) {
 	}
 }
 
+func TestRolePromptRoutesDeviceControlByMode(t *testing.T) {
+	rt := NewRuntimeWithDeps(Config{ConfigDir: t.TempDir()}, nil, nil, nil, NewSkillIndex())
+	rt.deviceCLI = false
+	legacy := rt.buildAgentProfile(rt.skills, nil, "").SystemPrompt
+	rt.deviceCLI = true
+	cli := rt.buildAgentProfile(rt.skills, nil, "").SystemPrompt
+	for _, name := range []string{"device-operator", "touch_gesture", "quick_action", "open_app"} {
+		if !strings.Contains(legacy, name) || strings.Contains(cli, name) {
+			t.Errorf("legacy routing hint %q should appear only in legacy mode", name)
+		}
+	}
+	if !strings.Contains(cli, "including App data commands") || !strings.Contains(cli, "load device-cli with skill_read") {
+		t.Fatal("CLI prompt must route App data work through the Device CLI skill")
+	}
+}
+
 func TestConactFoldGuidanceEnabledByDefaultAndCanBeDisabled(t *testing.T) {
 	t.Setenv("AICO_CONACT_UTG", "")
 	cfg := Config{ConfigDir: t.TempDir()}

@@ -2491,11 +2491,6 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 	// A new session has no earlier section to keep, so on a read failure the
 	// caller passes an empty profile; the next run's refresh adds it once the
 	// read works.
-	if r.deviceCLIEnabled() {
-		profile.SystemPrompt = strings.ReplaceAll(profile.SystemPrompt, "device-operator instructions", "device-cli instructions")
-		profile.SystemPrompt = strings.ReplaceAll(profile.SystemPrompt, "call skill_read for device-operator before the first screenshot or UI action", "call skill_read for device-cli before the first UI action")
-		profile.SystemPrompt = strings.ReplaceAll(profile.SystemPrompt, "they do not operate the target UI in screenshots", "only device-cli commands in the foreground shell operate the target UI")
-	}
 	profile.SystemPrompt = withUserProfileSection(profile.SystemPrompt, userProfile)
 	return profile
 }

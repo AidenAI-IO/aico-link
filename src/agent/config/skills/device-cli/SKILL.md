@@ -26,6 +26,14 @@ Use `shell` with a foreground command such as `device-cli tap 514 263`. The tool
 - Prefer to chain known, layout-independent steps with `&&`, e.g. `device-cli swipe 500 800 500 400 && device-cli wait 1000`. Do not use `||` for fallbacks: inspect the tool result and current screen before choosing an alternative. Do not chain speculative taps across pages or steps that require confirmation. If a chain fails, some earlier actions may already have taken effect; check the final screenshot rather than blindly replaying the chain.
 - Do not use controller commands or external automation to bypass this visual workflow. Never leave device commands running in background shell sessions.
 
+### Command help
+
+Use `device-cli --help` for the command list. Add `--help` immediately after
+any command, group, or action to see its usage, for example
+`device-cli app contacts --help` or `device-cli app notification send --help`.
+Help runs locally and does not operate the device. After a syntax error, use
+this help before trying another command rather than guessing a new verb.
+
 ### Exit status and output
 
 Use the exit status (`0` for success, nonzero for failure), not stdout, to

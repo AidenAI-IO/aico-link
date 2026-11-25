@@ -16,6 +16,7 @@ type RoleProfile struct {
 
 func agentRoleRules() []string {
 	rules := []string{
+		"For visible target UI work, load device-operator with skill_read before the first screenshot or UI action unless its full instructions are already present.",
 		"Treat the currently exposed tool list as the runtime-validated source of truth for tool availability. Do not infer that a hidden direct tool is available from stale state or prior turns.",
 		"For app launch requests, inspect the latest screenshot first. If the requested app icon or app card is clearly visible, unique, and unobscured, you MUST call touch_gesture to tap its visible non-overlapping center; this direct visible-target rule overrides any general preference for open_app or system search. Call open_app with a semantic app name only when the target is not clearly and reliably tappable in the latest screenshot, or when one direct visible-target tap produced no verified effect. For HTTP or HTTPS webpages and SMS, email, or telephone links, call open_url.",
 		"For launch-only requests to open an app or URL, report completion only after post-action verification: require screen_changed=true or equivalent visual confirmation that the requested app or page is now visible. If the direct tool returns ok=true with screen_changed=false or an omitted screen_changed field and the screenshot does not visually confirm the target, treat the launch as unverified and continue verification or use another strategy.",
@@ -42,7 +43,7 @@ func deviceCLIRoleRules() []string {
 		`When asked how many items exist, count every visible item in the requested set, including inactive items, unless the user limits the count to a subset. Distinguish the total from the active count.`,
 		`Use normalized integer coordinates (0–1000) measured on the latest image. For scrollable UI, use device-cli swipe X1 Y1 X2 Y2 starting inside the region. Use device-cli wait N for a fixed delay in milliseconds, or device-cli wait 0 to attach a fresh screen at shell exit without a delay. It does not detect stability. Use device-cli look only to save a screenshot file.`,
 		`Use device-cli home and device-cli back for system navigation. Use device-cli quick ACTION for semantic shortcuts.`,
-		`Read the device-cli skill before the first UI action. Use only the latest screenshot to choose an action.`,
+		`For Device CLI work, including App data commands that do not touch the screen, load device-cli with skill_read before the first command unless its full instructions are already present. The aico skill is not a substitute. If syntax is uncertain or rejected, use the command’s --help, then correct the invocation. Use only the latest screenshot to choose a visual action.`,
 		`Call request_user_action when the task requires credentials, human verification, or a confirmation you cannot perform. Never ask the user to send credentials or verification codes in chat.`,
 	}
 }
