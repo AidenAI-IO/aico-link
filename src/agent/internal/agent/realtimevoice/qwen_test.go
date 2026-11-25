@@ -329,6 +329,13 @@ func TestTranslateQwenIgnoresIdempotentCancelError(t *testing.T) {
 		t.Fatalf("response-in-progress error = %+v, ok=%t; want a rejected response", event, ok)
 	}
 
+	// A user turn left unanswered behind a requested response is not a
+	// session failure either: the turn can still be answered.
+	event, ok = translateQwenEvent([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"Server VAD turn committed but no response was created because a manual response is already in progress."}}`))
+	if !ok || event.Kind != EventTurnResponseMissed {
+		t.Fatalf("unanswered-turn error = %+v, ok=%t; want a missed turn", event, ok)
+	}
+
 	event, ok = translateQwenEvent([]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"invalid_value","message":"Invalid session config.","param":"session.update"}}`))
 	if !ok || event.Kind != EventError || event.Error == nil {
 		t.Fatalf("unrelated protocol error was suppressed: %+v, ok=%t", event, ok)
