@@ -85,6 +85,39 @@ explicitly; select your normal IME with `adb shell ime set YOUR_ORIGINAL_IME`.
 Devices without an enabled ADBKeyBoard retain the ASCII fallback; the low-level
 `keyboard_text` primitive remains ASCII-only.
 
+## Appium UnicodeIME alternative
+
+Appium Settings' `UnicodeIME` is an alternative for devices where ADBKeyBoard
+is unavailable. Install the [Appium Settings app](https://github.com/appium/appium-settings)
+on the target device. The bridge enables `io.appium.settings/.UnicodeIME` when
+needed, sends modified UTF-7 through `adb input text`, and restores the previous
+IME. The Appium route rejects literal `%s`, which Android interprets as a space
+in `input text`; ADBKeyBoard supports it.
+
+ADBKeyBoard remains the default. Select Appium explicitly when starting the
+local phone launcher:
+
+```bash
+python3 scripts/local_agent.py android --unicode-input-method appium
+```
+
+In Aico Launcher, choose **Appium UnicodeIME** in the Android instance's
+**Unicode input method** field. Stop the instance before editing it, save, and
+start it again to apply the selection.
+
+For direct bridge startup, pass the same option:
+
+```bash
+uv run python -m adbandroid.scripts.start_bridge \
+  --adb-serial YOUR_ADB_SERIAL \
+  --unicode-input-method appium
+```
+
+The selected path is fixed for the bridge process; it does not fall back to the
+other Unicode IME if the selected one is unavailable. Without the selected IME,
+the Agent retains its ASCII input path. Appium replacement requests need
+Android's `input keycombination` support for Ctrl+A and Delete.
+
 ## Quick start
 
 ### Option 1: CLI (recommended)

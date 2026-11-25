@@ -52,6 +52,26 @@ def test_target_config_is_preserved_and_cannot_be_shared_between_modes(args, tmp
             pytest.fail("mixed connection modes shared configuration")
 
 
+@pytest.mark.parametrize("options,expected", [([], "adbkeyboard"), (["--unicode-input-method", "appium"], "appium")])
+def test_android_unicode_input_method_option_is_forwarded(tmp_path, monkeypatch, options, expected):
+    monkeypatch.setattr(launcher.sys, "platform", "darwin")
+    args = launcher.arguments([
+        "android", *options, "--data-dir", str(tmp_path / "android"), "--no-open",
+    ])
+    monkeypatch.setattr(launcher, "android_serial", lambda _args: "emulator-5554")
+
+    command = launcher.bridge_command(args, "/prepared/python")
+
+    assert command[-2:] == ["--unicode-input-method", expected]
+
+
+def test_unicode_input_method_rejects_non_android_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher.sys, "platform", "darwin")
+
+    with pytest.raises(SystemExit):
+        launcher.arguments(["ios", "--unicode-input-method", "appium", "--data-dir", str(tmp_path / "ios")])
+
+
 def test_occupied_port_is_rejected_without_starting_a_process(args):
     with socket.socket() as occupied:
         occupied.bind(("127.0.0.1", args.agent_port))

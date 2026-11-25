@@ -262,8 +262,10 @@ def test_enter_text_rejects_removed_or_missing_arguments(bridge):
     assert all(call[0] != "input_text" for call in device.calls)
 
 
-def test_enter_text_reports_unsupported_text_without_typing(bridge):
+@pytest.mark.parametrize("input_method,setup", [("adbkeyboard", "ADBKeyBoard"), ("appium", "Appium Settings")])
+def test_enter_text_reports_unsupported_text_without_typing(bridge, input_method, setup):
     _, device, base_url = bridge
+    device.unicode_input_method = input_method
     status, body = _invoke(
         base_url,
         "enter_text",
@@ -274,6 +276,7 @@ def test_enter_text_reports_unsupported_text_without_typing(bridge):
     output = json.loads(body["output"])
     assert output["ok"] is False
     assert "US-keyboard ASCII" in output["suggestion"]
+    assert setup in output["suggestion"]
     assert all(call[0] != "input_text" for call in device.calls)
 
 
@@ -325,10 +328,12 @@ def test_uiautomator_extraction_keeps_legacy_whitespace_trimming():
     assert error == ""
 
 
-def test_enter_text_rejects_invalid_unicode_before_focus(bridge):
+@pytest.mark.parametrize("input_method,text", [("adbkeyboard", "你好\x00"), ("appium", "你好\x00"), ("appium", "你好%s")])
+def test_enter_text_rejects_invalid_unicode_before_focus(bridge, input_method, text):
     _, device, base_url = bridge
     device.unicode_input = True
-    _, body = _invoke(base_url, "enter_text", {"text": "你好\x00", "focus": {"x": 500, "y": 100}})
+    device.unicode_input_method = input_method
+    _, body = _invoke(base_url, "enter_text", {"text": text, "focus": {"x": 500, "y": 100}})
     assert json.loads(body["output"])["ok"] is False
     assert device.calls == []
 

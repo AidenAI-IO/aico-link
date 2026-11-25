@@ -29,10 +29,19 @@ PREFERRED_ASCII_INPUT_METHODS = (
 DEFAULT_TEXT_RESTORE_WAIT_SEC = 0.08
 ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
 ADB_KEYBOARD_PACKAGE = "com.android.adbkeyboard"
+ADB_KEYBOARD_INPUT_METHOD = "adbkeyboard"
+APPIUM_INPUT_METHOD = "appium"
+DEFAULT_UNICODE_INPUT_METHOD = ADB_KEYBOARD_INPUT_METHOD
+SUPPORTED_UNICODE_INPUT_METHODS = (ADB_KEYBOARD_INPUT_METHOD, APPIUM_INPUT_METHOD)
+APPIUM_UNICODE_IME = "io.appium.settings/.UnicodeIME"
+# Appium Settings 3.4.0's AppiumIME does not decode modified UTF-7.
+# UnicodeIME needs time to bind after selection and to commit before restore.
+APPIUM_IME_BIND_WAIT_SEC = 1.0
+APPIUM_TEXT_COMMIT_WAIT_SEC = 0.3
 
 # Characters adb `input text` can type reliably on a US keyboard layout.
 # Deliberately excludes newline/tab (input text cannot type them) and any
-# non-ASCII text (handled separately by insert_text through ADBKeyBoard).
+# non-ASCII text (handled separately by insert_text through the selected IME).
 ADB_TEXT_CHARS = set(
     "abcdefghijklmnopqrstuvwxyz"
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -65,14 +74,19 @@ class ADBAndroidDevice:
         timeout_sec: float = 10,
         screenshot_max_width: int = DEFAULT_SCREENSHOT_MAX_WIDTH,
         jpeg_quality: int = DEFAULT_JPEG_QUALITY,
+        unicode_input_method: str = DEFAULT_UNICODE_INPUT_METHOD,
     ):
         self.serial = str(serial).strip()
         if not self.serial:
             raise ValueError("adb serial is required")
+        if unicode_input_method not in SUPPORTED_UNICODE_INPUT_METHODS:
+            choices = ", ".join(SUPPORTED_UNICODE_INPUT_METHODS)
+            raise ValueError(f"unicode_input_method must be one of: {choices}")
         self.adb_path = adb_path
         self.timeout_sec = timeout_sec
         self.screenshot_max_width = max(1, int(screenshot_max_width))
         self.jpeg_quality = min(95, max(1, int(jpeg_quality)))
+        self.unicode_input_method = unicode_input_method
         self._screen_size: tuple[int, int] | None = None
         self._supports_keycombination: bool | None = None
         self._preferred_ime: str | None = None
@@ -210,18 +224,27 @@ class ADBAndroidDevice:
             self._restore_input_method(restore_ime)
 
     def supports_text_insertion(self) -> bool:
-        """Probe enabled IMEs each time so installation needs no bridge restart."""
-        return ADB_KEYBOARD_IME in self.list_input_methods()
+        """Probe the selected Unicode IME so installation needs no bridge restart."""
+        if self.unicode_input_method == ADB_KEYBOARD_INPUT_METHOD:
+            return ADB_KEYBOARD_IME in self.list_input_methods()
+        installed = self._run_text(["shell", "ime", "list", "-a", "-s"], timeout=5)
+        return APPIUM_UNICODE_IME in {line.strip() for line in installed.splitlines() if line.strip()}
 
     def insert_text(self, text: str, replace: bool = False) -> None:
-        """Commit Unicode once through ADBKeyBoard, restoring the user's IME.
+        """Commit Unicode once through the configured IME and restore the user's IME.
 
-        Broadcast completion is not proof that an editor accepted the text;
-        callers must verify the field and must not replay an ambiguous failure.
+        Delivery success is not proof that an editor accepted the text; callers
+        must verify the field and must not replay an ambiguous failure.
         """
         validate_insert_text(text)
         if not isinstance(replace, bool):
             raise ValueError("replace must be a boolean")
+        if self.unicode_input_method == ADB_KEYBOARD_INPUT_METHOD:
+            self._insert_text_with_adbkeyboard(text, replace)
+        else:
+            self._insert_text_with_appium(text, replace)
+
+    def _insert_text_with_adbkeyboard(self, text: str, replace: bool) -> None:
         if not self.supports_text_insertion():
             raise ADBCommandError(
                 "Install ADBKeyBoard and enable com.android.adbkeyboard/.AdbIME before Unicode input"
@@ -241,14 +264,53 @@ class ADBAndroidDevice:
             self._keyboard_broadcast("ADB_INPUT_B64", ["--es", "msg", encoded])
         finally:
             if original_ime != ADB_KEYBOARD_IME:
-                try:
-                    self.set_input_method(original_ime)
-                    if self.current_input_method() != original_ime:
-                        raise ADBCommandError("input method did not change")
-                except ADBCommandError:
-                    raise ADBCommandError(
-                        "could not restore the original input method; inspect the field before retrying"
-                    ) from None
+                self._restore_text_input_method(original_ime)
+
+    def _insert_text_with_appium(self, text: str, replace: bool) -> None:
+        if "%s" in text:
+            raise ValueError('text must not contain "%s": adb input text types it as a space')
+        if not self.supports_text_insertion():
+            raise ADBCommandError(
+                "Install Appium Settings with io.appium.settings/.UnicodeIME before Unicode input"
+            )
+        original_ime = self.current_input_method()
+        if not original_ime or original_ime.lower() == "null":
+            raise ADBCommandError("cannot determine the input method to restore; no text was sent")
+        if APPIUM_UNICODE_IME not in self.list_input_methods():
+            output = self._run_text(["shell", "ime", "enable", APPIUM_UNICODE_IME], timeout=5)
+            if "error" in output.lower() or "unknown" in output.lower():
+                raise ADBCommandError(f"enable input method {APPIUM_UNICODE_IME!r} failed: {output.strip()}")
+
+        try:
+            if original_ime != APPIUM_UNICODE_IME:
+                self.set_input_method(APPIUM_UNICODE_IME)
+                if self.current_input_method() != APPIUM_UNICODE_IME:
+                    raise ADBCommandError("Appium UnicodeIME selection failed; no text was sent")
+                time.sleep(APPIUM_IME_BIND_WAIT_SEC)
+            if replace:
+                self.keycombination(["KEYCODE_CTRL_LEFT", "KEYCODE_A"])
+                self.keyevent("KEYCODE_DEL")
+            encoded = encode_modified_utf7(text)
+            try:
+                self._run(["shell", "input", "text", escape_adb_text(encoded)])
+            except ADBCommandError:
+                raise ADBCommandError(
+                    "Appium UnicodeIME input failed or timed out; inspect the field before retrying"
+                ) from None
+            time.sleep(APPIUM_TEXT_COMMIT_WAIT_SEC)
+        finally:
+            if original_ime != APPIUM_UNICODE_IME:
+                self._restore_text_input_method(original_ime)
+
+    def _restore_text_input_method(self, original_ime: str) -> None:
+        try:
+            self.set_input_method(original_ime)
+            if self.current_input_method() != original_ime:
+                raise ADBCommandError("input method did not change")
+        except ADBCommandError:
+            raise ADBCommandError(
+                "could not restore the original input method; inspect the field before retrying"
+            ) from None
 
     def _wait_for_adb_keyboard(self) -> None:
         deadline = time.monotonic() + 3
@@ -492,6 +554,27 @@ class ADBAndroidDevice:
 
 def unsupported_adb_text_chars(text: str) -> str:
     return "".join(ch for ch in text if ch not in ADB_TEXT_CHARS)
+
+
+def encode_modified_utf7(text: str) -> str:
+    """Encode Unicode for Appium UnicodeIME's modified UTF-7 decoder."""
+    out: list[str] = []
+    pending: list[str] = []
+
+    def flush() -> None:
+        if pending:
+            encoded = base64.b64encode("".join(pending).encode("utf-16-be")).decode("ascii")
+            out.append("&" + encoded.rstrip("=").replace("/", ",") + "-")
+            pending.clear()
+
+    for ch in text:
+        if 0x20 <= ord(ch) <= 0x7E:
+            flush()
+            out.append("&-" if ch == "&" else ch)
+        else:
+            pending.append(ch)
+    flush()
+    return "".join(out)
 
 
 def escape_adb_text(text: str) -> str:

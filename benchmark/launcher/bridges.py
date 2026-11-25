@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from adbandroid.bridge.adb import DEFAULT_UNICODE_INPUT_METHOD, SUPPORTED_UNICODE_INPUT_METHODS
 from runner.environment import (
     DEFAULT_MOBILEGYM_IMAGE,
     MOBILEGYM_COMMIT_LABEL,
@@ -222,6 +223,18 @@ class ADBAndroidBridge(HostProcessBridge):
                 help="Run the check to list devices from `adb devices`. The device must be authorized.",
             ),
             field_spec(
+                "unicode_input_method",
+                "Unicode input method",
+                "select",
+                required=True,
+                default=DEFAULT_UNICODE_INPUT_METHOD,
+                options=[
+                    {"value": "adbkeyboard", "label": "ADBKeyBoard (default)"},
+                    {"value": "appium", "label": "Appium UnicodeIME"},
+                ],
+                help="Install the selected keyboard on the device. ADBKeyBoard must also be enabled.",
+            ),
+            field_spec(
                 "adb_path",
                 "adb path",
                 "text",
@@ -242,8 +255,12 @@ class ADBAndroidBridge(HostProcessBridge):
 
     def normalize(self, config: Any) -> dict[str, Any]:
         config = config_dict(config)
+        input_method = config.get("unicode_input_method", DEFAULT_UNICODE_INPUT_METHOD)
+        if input_method not in SUPPORTED_UNICODE_INPUT_METHODS:
+            raise validation.ValidationError("Unicode input method must be adbkeyboard or appium.")
         return {
             "serial": str(config.get("serial") or "").strip(),
+            "unicode_input_method": input_method,
             "adb_path": os.path.expanduser(
                 validation.executable(config.get("adb_path"), field="adb path", default="adb")
             ),
@@ -330,6 +347,7 @@ class ADBAndroidBridge(HostProcessBridge):
             self.launcher_python(), self.module,
             "--adb-serial", serial, "--adb-path", adb_path,
             "--bridge-host", bind_host, "--bridge-port", port,
+            "--unicode-input-method", ctx.config.get("unicode_input_method", DEFAULT_UNICODE_INPUT_METHOD),
         )
         self.launch(ctx, argv, bind_host=bind_host, port=port, adb_serial=serial)
         return BridgeStart(endpoint=f"http://{HOST_DOCKER_INTERNAL}:{port}", device_type="Android")
