@@ -431,6 +431,13 @@ Common fields:
 | `trace_observations` | Checks on specific behaviors in the trace, e.g. whether a given skill was read |
 | `mock_environment` | Suite-level default or task-level scripted Phone Bridge state, tool responses, and mock screen |
 
+For CLI-compatible cases, use `required_tool_calls` to assert ordered device
+operations across shell batches. Tool-call budgets count outer model calls, not
+nested operations. For injected failures, assert the bridge's recorded failure
+and the final outcome rather than requiring the failed action to succeed.
+Use `$one_of` in an input matcher for equivalent values, such as an app name
+and its canonical package ID.
+
 For tasks with a required starting screen, mark pre-screenshot-only rubric items
 `scope: "precondition"`. The runner checks those items against the pre-screenshot
 before Agent result scoring. A failed precondition is an ineligible environment

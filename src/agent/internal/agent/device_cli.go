@@ -182,6 +182,9 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 		if err != nil {
 			return ToolInvokeResponse{IsError: true, Error: err.Error(), ToolError: NewToolError(CodeInvalidArguments, err.Error())}, nil
 		}
+		if len(capture.calls) >= maxDeviceCLIActions {
+			return ToolInvokeResponse{}, fmt.Errorf("device-cli action limit per shell reached; continue in a new shell call")
+		}
 		if err := sleepWithContext(ctx, delay); err != nil {
 			return ToolInvokeResponse{}, err
 		}
@@ -191,6 +194,9 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 		// Preserve wait 0 as a way to request a model-facing observation,
 		// but leave all capture to the existing shell finalizer.
 		capture.needsScreenshot = true
+		capture.calls = append(capture.calls, deviceCLIToolEvidence{
+			Tool: "device_cli_wait", Input: map[string]any{"milliseconds": delay.Milliseconds()},
+		})
 		return ToolInvokeResponse{}, nil
 	}
 	calls, err := devicecli.Calls(args)

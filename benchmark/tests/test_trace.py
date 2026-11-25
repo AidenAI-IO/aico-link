@@ -312,3 +312,27 @@ def test_episode_evidence_recovers_redacted_app_data_args_from_literal_shell(suf
     call, = trace.tool_calls[0].device_cli_calls
     assert call.input == expected
     assert call.is_error and call.not_dispatched
+
+
+@pytest.mark.parametrize("suffix, tools, recovered", [
+    (" && device-cli tap 142 590", ["bridge_clipboard", "touch_gesture"], True),
+    (" && device-cli tap 142 590", ["bridge_clipboard"], False),
+    (" && printf nope", ["bridge_clipboard"], False),
+])
+def test_mixed_cli_batch_recovers_only_aligned_recorded_arguments(suffix, tools, recovered):
+    from runner.trace import apply_episode_tool_evidence
+
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({
+            "command": "device-cli app clipboard write 'marker && text'" + suffix,
+        })},
+        {"type": "tool_result", "tool_name": "shell", "content": "omitted"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": name, "input": {}, "is_error": False} for name in tools
+        ]},
+    }]})
+    calls = trace.tool_calls[0].device_cli_calls
+    assert [call.tool for call in calls] == tools
+    assert calls[0].input == ({"action": "write", "text": "marker && text"} if recovered else {})

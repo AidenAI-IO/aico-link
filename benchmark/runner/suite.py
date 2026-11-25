@@ -1105,6 +1105,12 @@ def _validate_matcher_bounds(value: Any, path: str) -> None:
     if not isinstance(value, dict):
         return
     keys = set(value)
+    if "$one_of" in keys:
+        alternatives = value["$one_of"]
+        if keys != {"$one_of"} or not isinstance(alternatives, list) or not alternatives:
+            raise SuiteValidationError(f"{path}.$one_of must be the only key and a non-empty array")
+        _validate_matcher_bounds(alternatives, f"{path}.$one_of")
+        return
     if "$digits" in keys:
         digits = value["$digits"]
         if keys != {"$digits"} or not isinstance(digits, str) or not digits.isdigit():

@@ -245,8 +245,11 @@ func TestDeviceCLIShellFinalCaptureAfterWait(t *testing.T) {
 			if elapsed := time.Since(started); elapsed < tc.delay {
 				t.Fatalf("wait returned after %v, want at least %v", elapsed, tc.delay)
 			}
-			if len(shot.inputs) != 0 || len(capture.calls) != 0 {
+			if len(shot.inputs) != 0 {
 				t.Fatal("wait should not capture a frame or dispatch a device tool")
+			}
+			if len(capture.calls) != 1 || capture.calls[0].Tool != "device_cli_wait" || capture.calls[0].Input["milliseconds"] != tc.delay.Milliseconds() || capture.calls[0].IsError {
+				t.Fatalf("expected completed wait evidence, got %+v", capture.calls)
 			}
 			if err := capture.finishShell(ctx, s.runtime, true); err != nil || capture.frame.Result.Width != 400 || len(shot.inputs) != 1 {
 				t.Fatalf("expected one final screenshot, got width %d and %d captures: %v", capture.frame.Result.Width, len(shot.inputs), err)

@@ -125,32 +125,49 @@ def is_device_cli_shell(tc: ToolCall) -> bool:
             and _CLI_CHAIN.fullmatch(command.strip()) is not None)
 
 
+_CLI_TOOL_NAMES = {
+    **dict.fromkeys(("tap", "double-tap", "long-press", "swipe", "drag-start", "drag-release"), "touch_gesture"),
+    **dict.fromkeys(("home", "back", "quick"), "quick_action"),
+    **dict.fromkeys(("key", "enter"), "keyboard_tap"),
+    "type": "enter_text", "open": "open_app", "url": "open_url", "look": "screenshot",
+    "scroll": "mouse_scroll", "move": "mouse_move", "wait": "device_cli_wait",
+}
+
+
 def _restore_app_data_args(tc: ToolCall) -> None:
-    # Redaction removes nested private inputs, but the literal command is
-    # already in benchmark history. Recover only arguments, never execution
-    # or success, and only when the complete tool sequence agrees with it.
+    # Only recover arguments from literal commands already in benchmark history.
+    # Match the recorded sequence before assigning any redacted inputs; never
+    # infer execution or success from shell text, including a short-circuited tail.
     if not is_device_cli_shell(tc) or not any(not call.input for call in tc.device_cli_calls):
         return
-    parsed = []
+    parsed: list[tuple[str, dict[str, Any]]] = []
     for match in _CLI_COMMAND.finditer(tc.input["command"].strip()):
-        args = shlex.split(match[0])
-        if len(args) not in (4, 5) or args[1] != "app":
-            return
-        domain, verb = args[2:4]
-        if verb not in _APP_DATA_VERBS.get(domain, ()):
-            return
-        if domain == "clipboard":
-            if len(args) != (4 if verb == "read" else 5):
+        args = shlex.split(match[0])[1:]
+        if args[0] == "drag":
+            parsed.extend([("touch_gesture", {}), ("touch_gesture", {})])
+        elif args[:2] == ["app", "type"] and len(args) == 3:
+            parsed.append(("enter_text", {"route": "app", "text": args[2]}))
+        elif args[0] in _CLI_TOOL_NAMES:
+            parsed.append((_CLI_TOOL_NAMES[args[0]], {}))
+        elif args[0] == "app" and len(args) in (3, 4):
+            domain, verb = args[1:3]
+            if verb not in _APP_DATA_VERBS.get(domain, ()):
                 return
-            fields = {} if verb == "read" else {"text": args[4]}
+            if domain == "clipboard":
+                if len(args) != (3 if verb == "read" else 4):
+                    return
+                fields = {} if verb == "read" else {"text": args[3]}
+            else:
+                fields = _safe_loads(args[3]) if len(args) == 4 else None
+                if not isinstance(fields, dict) or any(k.lower() == "action" for k in fields):
+                    return
+            parsed.append(("bridge_" + domain, {**fields, "action": verb}))
         else:
-            fields = _safe_loads(args[4]) if len(args) == 5 else None
-            if not isinstance(fields, dict) or any(k.lower() == "action" for k in fields):
-                return
-        parsed.append(("bridge_" + domain, {**fields, "action": verb}))
-    if [name for name, _ in parsed] != [call.tool for call in tc.device_cli_calls]:
+            return
+    recorded = tc.device_cli_calls
+    if [name for name, _ in parsed] != [call.tool for call in recorded]:
         return
-    for (_, fields), call in zip(parsed, tc.device_cli_calls):
+    for (_, fields), call in zip(parsed, recorded):
         if not call.input:
             call.input = fields
 

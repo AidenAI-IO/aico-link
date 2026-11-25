@@ -908,3 +908,25 @@ def test_expected_option_answer_requires_label_separator():
     for text in ("answer b", "option:b", "choice: b", "Answer\tB", "B", "Explanation\r\nAnswer: B\r\nMore text"):
         result = assertions.evaluate_expected_answer(text, "(b)", "option_letter")
         assert result.predicted_answer == "(b)"
+
+
+def test_cli_wait_requires_controller_evidence_to_satisfy_shell_policy():
+    wait = ToolCall(step=1, tool="device_cli_wait", input={"milliseconds": 2000})
+    shell = ToolCall(step=1, tool="shell", input={"command": "device-cli wait 2000"})
+    trace = Trace(tool_calls=[shell], final_response="Done", total_tool_calls=1, total_duration_ms=2000)
+    spec = HardAssertions(forbidden_tools=["shell"], allow_device_cli=True)
+    assert not evaluate_hard_assertions(trace, spec, timed_out=False).results.forbidden_tools
+    shell.device_cli_calls = [wait]
+    assert evaluate_hard_assertions(trace, spec, timed_out=False).all_passed
+    shell.input["command"] += " && echo extra"
+    assert not evaluate_hard_assertions(trace, spec, timed_out=False).results.forbidden_tools
+
+
+def test_app_identifier_alternatives_still_require_the_correct_app():
+    spec = HardAssertions(required_tool_calls=[RequiredToolCallSpec(
+        tool="open_app", input_contains={"app": {"$one_of": ["Settings", "com.android.settings"]}},
+    )])
+    for app, expected in [("Settings", True), ("com.android.settings", True), ("Camera", False)]:
+        trace = Trace(tool_calls=[ToolCall(step=1, tool="open_app", input={"app": app})],
+                      final_response="Done", total_tool_calls=1, total_duration_ms=0)
+        assert evaluate_hard_assertions(trace, spec, timed_out=False).all_passed is expected

@@ -67,6 +67,9 @@ func TestAppDataCommandRestrictsAction(t *testing.T) {
 		{[]string{"notification", "query", `{}`}, "", ""},
 		{[]string{"notification", "send", `{"Action":"query"}`}, "", ""},
 		{[]string{"calendar", "query", `null`}, "", ""},
+		{[]string{"contacts", "create", `{"name":"Alice","phone":"123"}`}, "", ""},
+		{[]string{"notification", "send", `{"title":"Reminder","time":"2030-01-01T09:00:00+08:00"}`}, "", ""},
+		{[]string{"calendar", "query", `{"start_at":"2030-01-01T09:00:00+08:00"}`}, "", ""},
 	} {
 		calls, err := Calls(append([]string{"app"}, tc.args...))
 		if tc.tool == "" {

@@ -177,6 +177,18 @@ func ParseWaitDuration(args []string) (time.Duration, error) {
 	return 0, fmt.Errorf("usage: device-cli wait [milliseconds] (0–30000)")
 }
 
+// The underlying bridge decoders ignore unknown JSON fields. Reject them at
+// the CLI boundary so a typo cannot silently create incomplete data.
+var appDataFields = map[string]string{
+	"calendar query":    "from to",
+	"calendar create":   "title start_at end_at all_day location notes alarm_minutes_before",
+	"calendar delete":   "event_id",
+	"contacts query":    "query limit",
+	"contacts create":   "name phone_numbers emails organization notes",
+	"contacts update":   "contact_id name phone_numbers emails organization notes",
+	"notification send": "title body schedule_at sound badge",
+}
+
 // App data commands reuse the existing Bridge schemas. The verb is selected
 // by the CLI, never by a field in the JSON object.
 func appDataCalls(args []string) ([]Call, error) {
@@ -195,9 +207,7 @@ func appDataCalls(args []string) ([]Call, error) {
 			return nil, fmt.Errorf("usage: device-cli app clipboard read|write [TEXT]")
 		}
 	case "calendar", "contacts", "notification":
-		valid := domain == "calendar" && (action == "query" || action == "create" || action == "delete") ||
-			domain == "contacts" && (action == "query" || action == "create" || action == "update") ||
-			domain == "notification" && action == "send"
+		allowed, valid := appDataFields[domain+" "+action]
 		if !valid || len(args) != 3 {
 			return nil, fmt.Errorf("unsupported app command or missing JSON object: %s %s", domain, action)
 		}
@@ -207,6 +217,9 @@ func appDataCalls(args []string) ([]Call, error) {
 		for key := range fields {
 			if strings.EqualFold(key, "action") {
 				return nil, fmt.Errorf("omit action from JSON; use the command verb")
+			}
+			if key == "" || strings.Contains(key, " ") || !strings.Contains(" "+allowed+" ", " "+key+" ") {
+				return nil, fmt.Errorf("unknown field %q for app %s %s; allowed fields: %s", key, domain, action, allowed)
 			}
 		}
 	default:

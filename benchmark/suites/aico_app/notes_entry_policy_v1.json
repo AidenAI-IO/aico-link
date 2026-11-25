@@ -31,8 +31,7 @@
           },
           "enter_text": {
             "input_contains": {
-              "text": {"$contains": "+1 202-555-0147"},
-              "focus": {}
+              "text": {"$contains": "+1 202-555-0147"}
             },
             "screen_contains": "Apple Notes is already open",
             "output": {"ok": true},
@@ -93,8 +92,7 @@
           },
           "enter_text": {
             "input_contains": {
-              "text": {"$contains": "+1 202-555-0147"},
-              "focus": {}
+              "text": {"$contains": "+1 202-555-0147"}
             },
             "screen_contains": "Apple Notes is open",
             "output": {"ok": true},
@@ -158,7 +156,7 @@
             }
           ],
           "enter_text": {
-            "input_contains": {"text": {"$contains": "+1 202-555-0147"}, "focus": {}},
+            "input_contains": {"text": {"$contains": "+1 202-555-0147"}},
             "screen_contains": "Apple Notes is open",
             "output": {"ok": true},
             "screen_text": "Apple Notes contains Biden phone number: +1 202-555-0147"

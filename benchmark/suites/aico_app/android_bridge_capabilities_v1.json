@@ -16,7 +16,7 @@
         {"id": "original_restored", "check": "The original clipboard text is restored and verified by a final bridge read."}
       ],
       "hard_assertions": {
-        "min_tool_calls": 5,
+        "min_tool_calls": 1,
         "max_tool_calls": 7,
         "must_complete_within_sec": 180,
         "required_tools": ["bridge_clipboard"],
@@ -68,7 +68,7 @@
         "required_tools": ["open_app"],
         "forbidden_tools": ["search_launch_app", "touch_gesture", "enter_text"],
         "required_tool_calls": [
-          {"tool": "open_app", "input_contains": {"app": "Settings"}}
+          {"tool": "open_app", "input_contains": {"app": {"$one_of": ["Settings", "com.android.settings"]}}}
         ]
       }
     },
