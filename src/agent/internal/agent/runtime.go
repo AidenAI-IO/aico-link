@@ -1582,6 +1582,18 @@ func (r *Runtime) sessionChunkWriter() *SessionChunkWriter {
 	return NewSessionChunkWriter(agentpath.ContextManagerSessionFolder(configDir), extraction)
 }
 
+func (r *Runtime) hasPriorUserMessage() bool {
+	if r.contextManager == nil {
+		return false
+	}
+	for _, message := range r.contextManager.CloneMessageList() {
+		if message.Role == messages.MessageRoleUser {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 	return func(message messages.Message) contextmanager.AppendMessageHookResult {
 		// if not user message, just skip
@@ -1623,11 +1635,13 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 			formated.WriteString(caption + "\n")
 		}
 		formated.WriteString(recalled)
-		if hint := r.conactLandmarkHint(); hint != "" {
-			if formated.Len() != 0 {
-				formated.WriteByte('\n')
+		if !r.hasPriorUserMessage() {
+			if hint := r.conactLandmarkHint(); hint != "" {
+				if formated.Len() != 0 {
+					formated.WriteByte('\n')
+				}
+				formated.WriteString(hint)
 			}
-			formated.WriteString(hint)
 		}
 		if formated.Len() == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{

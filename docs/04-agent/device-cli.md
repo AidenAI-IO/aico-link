@@ -128,9 +128,10 @@ variable to return to the normal context and tool policy.
   device actions. The graph separates `nav`, `create`, `edit`, `commit`,
   `cancel`, and `delete` edges. A default route uses only navigation edges;
   non-navigation guidance requires an explicit final-hop intent. The Agent
-  must verify landmarks on the live screen before acting. When landmarks are
-  available, the Agent includes a short list in the state message immediately
-  before the user message. Successful memory
+  must verify landmarks on the live screen before acting. When landmarks
+  are available, the Agent includes a short list in the initial state message
+  when a conversation starts. It is not repeated in later turn-state messages.
+  Successful memory
   calls use a separate bounded allowance, not the normal action-iteration limit.
 
 For native targets, a completed run can make one best-effort reflection

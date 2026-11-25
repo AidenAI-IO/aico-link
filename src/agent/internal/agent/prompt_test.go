@@ -496,7 +496,7 @@ func TestRolePromptOmitsRuntimeAndMemoryContext(t *testing.T) {
 	}
 }
 
-func TestStateHookInjectsUTGLandmarksBeforeUserMessage(t *testing.T) {
+func TestStateHookInjectsUTGLandmarksOnlyAtConversationStart(t *testing.T) {
 	t.Setenv("AICO_CONACT_UTG", "1")
 	cfg := Config{ConfigDir: t.TempDir()}
 	runtime := NewRuntimeWithDeps(cfg, nil, nil, &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
@@ -524,6 +524,15 @@ func TestStateHookInjectsUTGLandmarksBeforeUserMessage(t *testing.T) {
 	}
 	if strings.Contains(list[1].Content, "Optional Skill-UTG landmarks") {
 		t.Fatalf("UTG banner leaked into user message: %q", list[1].Content)
+	}
+	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "Now open the app"}); err != nil {
+		t.Fatal(err)
+	}
+	list = manager.CloneMessageList()
+	for _, msg := range list[2:] {
+		if strings.Contains(msg.Content, "Optional Skill-UTG landmarks") {
+			t.Fatalf("UTG landmarks were reinjected after conversation start: %#v", msg)
+		}
 	}
 }
 
