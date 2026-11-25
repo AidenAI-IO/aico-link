@@ -134,6 +134,40 @@ _CLI_TOOL_NAMES = {
 }
 
 
+def _calendar_flag_args(action: str, args: list[str]) -> dict[str, Any] | None:
+    allowed = {
+        "query": {"from", "to"},
+        "create": {"title", "start-at", "end-at", "all-day", "location", "notes", "alarm-minutes-before"},
+        "delete": {"event-id"},
+    }.get(action, set())
+    fields: dict[str, Any] = {}
+    pos = 0
+    while pos < len(args):
+        flag, inline, value = args[pos].partition("=")
+        pos += 1
+        name = flag.removeprefix("--")
+        key = name.replace("-", "_")
+        if name == flag or name not in allowed or key in fields:
+            return None
+        if name == "all-day":
+            if inline and value not in {"true", "false"}:
+                return None
+            fields[key] = not inline or value == "true"
+            continue
+        if not inline:
+            if pos == len(args) or args[pos].startswith("--"):
+                return None
+            value = args[pos]
+            pos += 1
+        if name == "alarm-minutes-before":
+            if not re.fullmatch(r"\+?[0-9]{1,19}", value):
+                return None
+            fields[key] = int(value)
+        else:
+            fields[key] = value
+    return fields
+
+
 def _restore_app_data_args(tc: ToolCall) -> None:
     # Only recover arguments from literal commands already in benchmark history.
     # Match the recorded sequence before assigning any redacted inputs; never
@@ -149,6 +183,11 @@ def _restore_app_data_args(tc: ToolCall) -> None:
             parsed.append(("enter_text", {"route": "app", "text": args[2]}))
         elif args[0] in _CLI_TOOL_NAMES:
             parsed.append((_CLI_TOOL_NAMES[args[0]], {}))
+        elif args[:2] == ["app", "calendar"] and len(args) >= 4 and args[3].startswith("--"):
+            fields = _calendar_flag_args(args[2], args[3:])
+            if fields is None:
+                return
+            parsed.append(("bridge_calendar", {**fields, "action": args[2]}))
         elif args[0] == "app" and len(args) in (3, 4):
             domain, verb = args[1:3]
             if verb not in _APP_DATA_VERBS.get(domain, ()):

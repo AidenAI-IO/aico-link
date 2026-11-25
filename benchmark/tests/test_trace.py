@@ -336,3 +336,25 @@ def test_mixed_cli_batch_recovers_only_aligned_recorded_arguments(suffix, tools,
     calls = trace.tool_calls[0].device_cli_calls
     assert [call.tool for call in calls] == tools
     assert calls[0].input == ({"action": "write", "text": "marker && text"} if recovered else {})
+
+
+def test_episode_evidence_recovers_calendar_flags_from_a_batch():
+    from runner.trace import apply_episode_tool_evidence
+
+    command = ("device-cli app calendar create --title 'Weekly sync' --start-at 2037-01-01T10:00:00Z "
+               "--alarm-minutes-before=10 --all-day && device-cli app calendar delete --event-id e1")
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+        {"type": "tool_result", "tool_name": "shell"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": "bridge_calendar", "input": {}, "is_error": False},
+            {"tool": "bridge_calendar", "input": {}, "is_error": True},
+        ]},
+    }]})
+    create, delete = trace.tool_calls[0].device_cli_calls
+    assert create.input == {"action": "create", "title": "Weekly sync", "start_at": "2037-01-01T10:00:00Z",
+                            "alarm_minutes_before": 10, "all_day": True}
+    assert delete.input == {"action": "delete", "event_id": "e1"}
+    assert delete.is_error

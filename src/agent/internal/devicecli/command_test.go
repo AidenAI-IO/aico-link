@@ -61,7 +61,7 @@ func TestAppDataCommandRestrictsAction(t *testing.T) {
 		tool, action string
 	}{
 		{[]string{"clipboard", "write", ""}, "bridge_clipboard", "write"},
-		{[]string{"calendar", "delete", `{"event_id":"e1"}`}, "bridge_calendar", "delete"},
+		{[]string{"calendar", "delete", "--event-id", "e1"}, "bridge_calendar", "delete"},
 		{[]string{"contacts", "create", `{"name":"Alice","emails":["alice@example.test"]}`}, "bridge_contacts", "create"},
 		{[]string{"notification", "send", `{"title":"Reminder","sound":false}`}, "bridge_notification", "send"},
 		{[]string{"notification", "query", `{}`}, "", ""},
@@ -110,5 +110,16 @@ func TestParseWaitDuration(t *testing.T) {
 		} else if err != nil || delay.Milliseconds() != int64(tc.ms) {
 			t.Errorf("%q: delay=%v, err=%v; want %d ms", tc.args, delay, err, tc.ms)
 		}
+	}
+}
+
+func TestCalendarCreateFlags(t *testing.T) {
+	calls, err := Calls([]string{"app", "calendar", "create", "--title", "Team sync", "--start-at=2026-11-23T09:00:00+08:00", "--alarm-minutes-before", "10", "--all-day"})
+	if err != nil || len(calls) != 1 {
+		t.Fatalf("create flags = %+v, %v", calls, err)
+	}
+	in := calls[0].Input
+	if in["action"] != "create" || in["title"] != "Team sync" || in["start_at"] != "2026-11-23T09:00:00+08:00" || in["alarm_minutes_before"] != 10 || in["all_day"] != true {
+		t.Fatalf("unexpected bridge input: %+v", in)
 	}
 }

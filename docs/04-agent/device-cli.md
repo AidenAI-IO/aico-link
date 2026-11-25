@@ -65,14 +65,16 @@ structured data and do not attach a screenshot.
 ```sh
 device-cli app clipboard read
 device-cli app clipboard write 'Hello'
-device-cli app calendar query '{"from":"2026-11-23T00:00:00+08:00","to":"2026-11-24T00:00:00+08:00"}'
+device-cli app calendar query --from 2026-11-23T00:00:00+08:00 --to 2026-11-24T00:00:00+08:00
+device-cli app calendar create --title 'Team sync' --start-at 2026-11-23T09:00:00+08:00 --end-at 2026-11-23T09:30:00+08:00
+device-cli app calendar delete --event-id EVENT_ID
 device-cli app contacts query '{"query":"Alice","limit":5}'
 device-cli app notification send '{"title":"Reminder","body":"Check the calendar","sound":false}'
 ```
 
-Calendar also supports `create` and `delete`; contacts also supports `create`
-and `update`. Use the existing Bridge tool argument fields, omitting `action`
-because the CLI verb supplies it. Notification `send` accepts `schedule_at`
+Calendar uses flags and RFC3339 times with a timezone. Contacts also supports
+`create` and `update`. For contacts and notifications, use the existing Bridge
+JSON fields, omitting `action` because the CLI verb supplies it. Notification `send` accepts `schedule_at`
 for a scheduled send. Confirm event details before creating or deleting events.
 The model uses these commands instead of direct clipboard, calendar, contacts,
 and notification-send tools in Device CLI mode. The underlying Bridge handlers
