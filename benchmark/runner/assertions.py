@@ -166,6 +166,14 @@ def _trace_has_tool_call(trace: Trace, tool_name: str, input_contains: dict[str,
 
 def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool) -> AssertionOutcome:
     calls = effective_tool_calls(trace)
+    # A shell batch can satisfy a minimum through its recorded operations.
+    # Replace the wrapper count, rather than counting it again. Keep the
+    # maximum on outer calls: it caps model interactions, not device actions.
+    minimum_count = trace.total_tool_calls + sum(
+        max(0, sum(call.has_result and not call.is_error and not call.not_dispatched
+                   for call in outer.device_cli_calls) - 1)
+        for outer in trace.tool_calls if outer.tool == "shell" and outer.has_result
+    )
     tools_used = [tc.tool for tc in calls]
     forbidden = [tc for tc in calls if tc.tool in spec.forbidden_tools
                  and not (spec.allow_device_cli and tc.tool == "shell")]
@@ -199,7 +207,7 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
             break
         search_start = matched_index + 1
     results = HardAssertionResults(
-        min_tool_calls=trace.total_tool_calls >= spec.min_tool_calls,
+        min_tool_calls=minimum_count >= spec.min_tool_calls,
         max_tool_calls=trace.total_tool_calls <= spec.max_tool_calls,
         required_tools=all(tool in required_tools_used for tool in spec.required_tools),
         forbidden_tools=not forbidden,
@@ -233,7 +241,7 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
                 id="min_tool_calls",
                 label="Min Tool Calls",
                 requirement=f"Use at least {spec.min_tool_calls} tool call(s).",
-                actual=f"Used {trace.total_tool_calls} tool call(s).",
+                actual=f"Used {minimum_count} tool call(s).",
             )
         )
     if results.max_tool_calls is False:

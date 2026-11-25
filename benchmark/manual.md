@@ -432,9 +432,12 @@ Common fields:
 | `mock_environment` | Suite-level default or task-level scripted Phone Bridge state, tool responses, and mock screen |
 
 For CLI-compatible cases, use `required_tool_calls` to assert ordered device
-operations across shell batches. Tool-call budgets count outer model calls, not
-nested operations. For injected failures, assert the bridge's recorded failure
-and the final outcome rather than requiring the failed action to succeed.
+operations across shell batches. For `min_tool_calls`, a completed shell batch
+counts as the greater of one call or its recorded successful, dispatched CLI
+operations. `max_tool_calls` still caps outer model calls. Shell text alone does
+not count as a nested operation. For injected failures, assert the bridge's
+recorded failure and the final outcome rather than requiring the failed action
+to succeed.
 Use `$one_of` in an input matcher for equivalent values, such as an app name
 and its canonical package ID.
 
