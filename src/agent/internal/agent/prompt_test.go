@@ -44,6 +44,29 @@ func TestRolePromptCarriesNoDate(t *testing.T) {
 	}
 }
 
+func TestConactFoldGuidanceEnabledByDefaultAndCanBeDisabled(t *testing.T) {
+	t.Setenv("AICO_CONACT_UTG", "")
+	cfg := Config{ConfigDir: t.TempDir()}
+	runtime := NewRuntimeWithDeps(cfg, nil, nil, nil, NewSkillIndex())
+	runtime.deviceCLI = true
+	profile := runtime.buildAgentProfile(runtime.skills, nil, "")
+	if !strings.Contains(profile.SystemPrompt, conactFoldRoleRule) {
+		t.Fatal("default ConAct fold guidance missing from system prompt")
+	}
+	if !runtime.conactEnabled(cfg) {
+		t.Fatal("ConAct should be enabled when AICO_CONACT_UTG is unset or empty")
+	}
+
+	t.Setenv("AICO_CONACT_UTG", "0")
+	profile = runtime.buildAgentProfile(runtime.skills, nil, "")
+	if strings.Contains(profile.SystemPrompt, "fold_subtask") {
+		t.Fatal("disabled ConAct fold guidance appeared in system prompt")
+	}
+	if runtime.conactEnabled(cfg) {
+		t.Fatal("AICO_CONACT_UTG=0 should disable ConAct")
+	}
+}
+
 func TestRolePromptExplainsNotificationMemoryAndRawHistoryLookup(t *testing.T) {
 	profile := testPromptProfile(AgentConfig{})
 	for _, want := range []string{"Phone notifications", "recall_memory", "/userdata/agent/memory/notifications/events/", "YYYY-MM-DD.jsonl", "exact original notification"} {

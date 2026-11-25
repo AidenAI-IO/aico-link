@@ -630,10 +630,8 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 				l.conact.rebase(llmExecutor.ContextManager())
 			}
 			previous := len(l.conact.steps)
-			nudge := l.conact.observe(toolExecution.Result)
-			if nudge && len(followup) > 0 {
-				followup[0].Parts = append(followup[0].Parts, llms.TextPart("If this subtask is complete, call fold_subtask with exact verified facts before switching goals."))
-			}
+			l.conact.observe(toolExecution.Result)
+
 			if len(followup) > 0 && len(l.conact.steps) > previous {
 				followup[0].Parts = append(followup[0].Parts, llms.TextPart(fmt.Sprintf("%s%d (after) [%s]", conactEvidencePrefix, len(l.conact.steps), l.conact.evidenceTag)))
 			}

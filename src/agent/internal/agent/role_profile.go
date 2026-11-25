@@ -47,6 +47,8 @@ func deviceCLIRoleRules() []string {
 	}
 }
 
+const conactFoldRoleRule = `When you have verified that a visual subtask is complete and another goal remains, call fold_subtask before switching goals. Record exact verified facts and the next goal so intermediate observations can be replaced with a fresh screen. Do not fold an unfinished subtask or after the overall request is complete.`
+
 func buildProfile(
 	cfg AgentConfig,
 	skills *SkillManager,

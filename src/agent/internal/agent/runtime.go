@@ -2473,6 +2473,9 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 	rules := agentRoleRules()
 	if r.deviceCLIEnabled() {
 		rules = deviceCLIRoleRules()
+		if r.conactEnabled(r.ConfigSnapshot()) {
+			rules = append(rules, conactFoldRoleRule)
+		}
 	}
 	profile := buildProfile(
 		AgentConfig{

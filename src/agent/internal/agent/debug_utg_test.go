@@ -41,8 +41,8 @@ func TestDebugUTGSnapshot(t *testing.T) {
 	}
 	rt.config.EnvironmentBridge.Endpoint = "http://bridge.invalid"
 	r, view = get()
-	if r.Code != http.StatusOK || view.Available || len(view.Nodes) != 0 {
-		t.Fatalf("bridge must not expose native graph: %d %s", r.Code, r.Body.String())
+	if r.Code != http.StatusOK || !view.Available || len(view.Nodes) != 1 || view.Nodes[0].Label != "phone_home" || len(view.Edges) != 1 {
+		t.Fatalf("bridge should expose the saved graph for the configured profile and platform: %d %s", r.Code, r.Body.String())
 	}
 	post := httptest.NewRecorder()
 	handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/api/debug/utg", nil))

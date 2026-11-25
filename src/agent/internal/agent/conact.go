@@ -26,7 +26,6 @@ const (
 	conactFold              = "fold_subtask"
 	conactSearch            = "utg_search"
 	conactGoto              = "utg_goto"
-	conactNudge             = 8
 	conactImageTrigger      = 14
 	conactImageRetain       = 6
 	conactMaxFree           = 16
@@ -41,7 +40,8 @@ type conactRun struct {
 	runtime           *Runtime
 	anchor            int
 	revision          string
-	actions, free     int
+	hasAction         bool
+	free              int
 	graph             skillUTG
 	path              string
 	steps             []utgStep
@@ -53,11 +53,11 @@ type conactRun struct {
 }
 
 func (r *Runtime) conactEnabled(cfg Config) bool {
-	return r.deviceCLIEnabled() && os.Getenv("AICO_CONACT_UTG") == "1" && !cfg.Benchmark.Headless && !cfg.Benchmark.MockTools
+	return r.deviceCLIEnabled() && os.Getenv("AICO_CONACT_UTG") != "0" && !cfg.Benchmark.Headless && !cfg.Benchmark.MockTools
 }
 
 func skillUTGPath(cfg Config, platform string) string {
-	if cfg.ConfigDir == "" || cfg.EnvironmentBridge.Endpoint != "" || cfg.Benchmark.Headless || cfg.Benchmark.MockTools {
+	if cfg.ConfigDir == "" || cfg.Benchmark.Headless || cfg.Benchmark.MockTools {
 		return ""
 	}
 	return filepath.Join(cfg.ConfigDir, "memory", "skill-utg", platform+".json")
@@ -81,7 +81,6 @@ func (c *conactRun) currentFingerprint() (utgFingerprint, bool) {
 	return utgFingerprint{}, false
 }
 
-// loadConactGraph reads the native target's graph, never a bridge fixture's.
 func (r *Runtime) loadConactGraph(cfg Config) (string, skillUTG) {
 	path := skillUTGPath(cfg, r.devicePlatformFromState())
 	if path == "" {
@@ -110,7 +109,7 @@ func (r *Runtime) conactLandmarkHint() string {
 func (c *conactRun) rebase(m *contextmanager.ContextManager) {
 	c.revision = m.GetSessionID()
 	c.anchor = len(m.CloneMessageList())
-	c.actions = 0
+	c.hasAction = false
 }
 
 func stripConactScreens(msg *messages.Message, keep func() bool) bool {
@@ -190,7 +189,7 @@ func (c *conactRun) fold(ctx context.Context, m *contextmanager.ContextManager, 
 			return "error: each fact must be nonempty and at most 1500 bytes", nil
 		}
 	}
-	if c.revision != m.GetSessionID() || c.actions == 0 {
+	if c.revision != m.GetSessionID() || !c.hasAction {
 		return "error: complete a device action before folding", nil
 	}
 	list, version := m.MessageSnapshot()
@@ -238,7 +237,7 @@ func (c *conactRun) fold(ctx context.Context, m *contextmanager.ContextManager, 
 	}
 	c.revision = m.GetSessionID()
 	c.anchor = len(prefix)
-	c.actions = 0
+	c.hasAction = false
 	c.last, c.hasLast = fingerprintUI(frame.ImageBytes)
 	return "Subtask folded.", nil
 }
@@ -350,13 +349,13 @@ func isConactTool(name string) bool {
 	return name == conactFold || name == conactSearch || name == conactGoto
 }
 
-func (c *conactRun) observe(result ToolResult) bool {
+func (c *conactRun) observe(result ToolResult) {
 	if result.containsPrivateDeviceData() {
 		c.privateDeviceData = true
 	}
 	if len(result.deviceCalls) == 0 {
 		c.hasLast = false // An arbitrary shell command may have changed the screen.
-		return false
+		return
 	}
 	var actions []utgStep
 	for _, call := range result.deviceCalls {
@@ -387,7 +386,7 @@ func (c *conactRun) observe(result ToolResult) bool {
 		actions = append(actions, step)
 	}
 	if len(actions) > 0 {
-		c.actions++
+		c.hasAction = true
 	}
 	before, had := c.last, c.hasLast
 	if len(result.deviceFrame.ImageBytes) > 0 {
@@ -400,7 +399,6 @@ func (c *conactRun) observe(result ToolResult) bool {
 		step.Before, step.After = before, c.last
 		c.steps = append(c.steps, step)
 	}
-	return len(actions) > 0 && c.actions%conactNudge == 0
 }
 
 // consolidate forks the finished prompt once. A bad proposal, timeout or

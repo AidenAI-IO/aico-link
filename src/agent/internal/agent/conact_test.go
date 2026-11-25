@@ -37,13 +37,14 @@ func TestConactFoldPreservesFactsAndSourceRevision(t *testing.T) {
 	add(messages.Message{Role: messages.MessageRoleUser, Content: "original request", Attachments: []messages.Attachment{{FilePath: "user.jpg", MIMEType: "image/jpeg"}}})
 	c.rebase(m)
 	const input = `{"subtask_name":"Read order","extracted_facts":["ID 00017 / 报告.pdf"],"next_goal":"Switch app"}`
-	if got, err := c.fold(ctx, m, input); err != nil || !strings.HasPrefix(got, "error:") || len(shot.inputs) != 0 {
-		t.Fatalf("empty fold: %q %v", got, err)
-	}
 	for i := 0; i < 2; i++ {
+		if got, err := c.fold(ctx, m, input); err != nil || !strings.HasPrefix(got, "error:") || len(shot.inputs) != i {
+			t.Fatalf("fold without a new action: %q %v", got, err)
+		}
 		add(messages.Message{Role: messages.MessageRoleState, Content: "temporary observation"})
 		id := m.GetSessionID()
-		c.actions = 1
+		c.observe(ToolResult{deviceCalls: []deviceCLIToolEvidence{{Tool: "touch_gesture"}}})
+
 		if got, err := c.fold(ctx, m, input); err != nil || got != "Subtask folded." {
 			t.Fatalf("fold: %q %v", got, err)
 		}
@@ -211,8 +212,15 @@ func TestSkillUTGReflectionForkDoesNotAppendOrLearnHiddenFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := newConactRun(&Runtime{})
-	c.path = filepath.Join(t.TempDir(), "utg.json")
+	rt := &Runtime{config: Config{
+		ConfigDir:         t.TempDir(),
+		Device:            DeviceConfig{DeviceType: "Android"},
+		EnvironmentBridge: EnvironmentBridgeConfig{Enabled: true, Endpoint: "http://bridge.invalid"},
+	}}
+	c := newConactRun(rt)
+	if want := filepath.Join(rt.config.ConfigDir, "memory", "skill-utg", "android.json"); c.path != want {
+		t.Fatalf("bridge run graph path = %q, want %q", c.path, want)
+	}
 	step := utgStep{After: utgFingerprint{Hash: 0xffff}, Kind: "tap", OK: true}
 	c.steps = []utgStep{step, step}
 	attachment := messages.Attachment{Source: messages.AttachmentSourceScreenshotObservation, MIMEType: "image/jpeg", FilePath: "screen.jpg"}
@@ -234,8 +242,8 @@ func TestSkillUTGReflectionForkDoesNotAppendOrLearnHiddenFrames(t *testing.T) {
 	if len(manager.CloneMessageList()) != count || len(mod.seen) != count+1 || mod.seen[count-1].Content != "Settings opened." || strings.Contains(mod.seen[count].Content, "step 1: tap") {
 		t.Fatalf("reflection must fork, using only current evidence, saw %d messages", len(mod.seen))
 	}
-	g, err := loadSkillUTG(c.path)
-	if err != nil || g.Nodes["hidden_screen"] != nil || len(g.route("phone_home", "phone_settings", "nav")) != 1 {
-		t.Fatalf("expected only the visible transition to be learned: %+v %v", g, err)
+	g := newConactRun(rt).graph
+	if g.Nodes["hidden_screen"] != nil || len(g.route("phone_home", "phone_settings", "nav")) != 1 {
+		t.Fatalf("expected the next bridge run to load only the visible transition: %+v", g)
 	}
 }
