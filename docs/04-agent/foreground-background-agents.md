@@ -105,13 +105,19 @@ replacement as an in-context steer: the current model or tool call is
 interrupted, the updated goal is added to the backend conversation as a user
 message, and the agent loop resumes with the same task ID and backend context.
 
-Before creating work, the foreground calls `query_agent_task` without a task ID
-and continues the task that already covers the request instead of starting a
-duplicate. That check answers with the tasks that are still in flight plus the
-finished tasks whose result has not been delivered to the foreground yet;
-delivered results are left out because the foreground holds them in its own
-context, so asking for the same work later is a genuine new request. A repeated
-or reworded request therefore does not start the same device work twice.
+`create_agent_task` takes a required `repeats_task_id`. When the user repeats
+or rephrases a request the foreground already started, it passes that work's
+ID; otherwise it passes an empty string. If the named work is still
+outstanding, the call starts nothing and returns `"created": false` with that
+work, and the foreground says it is under way or reports its result.
+Outstanding work is the tasks still in flight plus the finished tasks whose
+result has not been delivered to the foreground yet, the same list
+`query_agent_task` returns without a task ID. Delivered results are left out
+because the foreground holds them in its own context, so asking for the same
+work later is a genuine new request. An empty, unknown, or no longer
+outstanding ID starts the work: a new request is never held back waiting for
+another call, so a misjudged repeat at worst runs the work twice rather than
+dropping a request.
 
 The memory tools reuse the same registrations and stores as the background
 agent, so both agents read and write one memory plane. Their foreground

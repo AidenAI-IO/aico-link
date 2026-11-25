@@ -676,31 +676,42 @@ func TestRealtimeCancelCompletedTaskSuppressesAndRedactsPendingResult(t *testing
 	}
 }
 
-// While work is outstanding, a create returns that work instead of starting a
-// duplicate; only an explicit new request starts more.
-func TestRealtimeCreateTaskReturnsOutstandingWorkFirst(t *testing.T) {
-	runner := &fakeBackgroundTaskRunner{started: make(chan string, 2), release: make(chan struct{})}
+// A create that names outstanding work as the request it repeats returns that
+// work instead of starting a duplicate; any other create starts work, even
+// while something else runs or when the named work is no longer outstanding.
+func TestRealtimeCreateTaskReturnsRepeatedOutstandingWork(t *testing.T) {
+	runner := &fakeBackgroundTaskRunner{started: make(chan string, 3), release: make(chan struct{})}
 	manager := agenttask.NewManager(runner)
 	defer manager.Close()
 	executor := realtimeVoiceToolExecutor{tasks: manager, now: time.Now}
+	create := func(arguments string) (agenttask.Task, bool) {
+		t.Helper()
+		var result struct {
+			agenttask.Task
+			Created *bool           `json:"created"`
+			Held    *agenttask.Task `json:"task"`
+		}
+		if err := json.Unmarshal([]byte(executor.call(context.Background(), realtimeCreateTaskTool, arguments)), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Created != nil && !*result.Created {
+			return *result.Held, false
+		}
+		return result.Task, true
+	}
 
-	var first agenttask.Task
-	if err := json.Unmarshal([]byte(executor.call(context.Background(), realtimeCreateTaskTool, `{"task":"open the chat app"}`)), &first); err != nil || first.ID == "" {
-		t.Fatalf("first create = %+v, %v", first, err)
+	first, created := create(`{"task":"open the chat app","repeats_task_id":""}`)
+	if !created || first.ID == "" {
+		t.Fatalf("first create = %+v, %t", first, created)
 	}
-	var held struct {
-		Created     *bool            `json:"created"`
-		Outstanding []agenttask.Task `json:"outstanding"`
+	if held, created := create(`{"task":"go to the chat app","repeats_task_id":"` + first.ID + `"}`); created || held.ID != first.ID {
+		t.Fatalf("repeat create = %+v, %t, want %s back and nothing started", held, created, first.ID)
 	}
-	if err := json.Unmarshal([]byte(executor.call(context.Background(), realtimeCreateTaskTool, `{"task":"go to the chat app"}`)), &held); err != nil {
-		t.Fatal(err)
+	if other, created := create(`{"task":"check the weather","repeats_task_id":""}`); !created || other.ID == first.ID {
+		t.Fatalf("new request while work runs = %+v, %t", other, created)
 	}
-	if held.Created == nil || *held.Created || len(held.Outstanding) != 1 || held.Outstanding[0].ID != first.ID {
-		t.Fatalf("second create = %+v, want the outstanding task and nothing started", held)
-	}
-	var second agenttask.Task
-	if err := json.Unmarshal([]byte(executor.call(context.Background(), realtimeCreateTaskTool, `{"task":"check the weather","new_request":true}`)), &second); err != nil || second.ID == "" || second.ID == first.ID {
-		t.Fatalf("new request create = %+v, %v", second, err)
+	if stale, created := create(`{"task":"open the mail app","repeats_task_id":"task_unknown"}`); !created || stale.ID == "" {
+		t.Fatalf("repeat of unknown work = %+v, %t, want it started", stale, created)
 	}
 }
 
