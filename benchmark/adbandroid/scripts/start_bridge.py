@@ -63,6 +63,14 @@ def main(argv: list[str] | None = None) -> int:
         device.check_device()
     except ADBCommandError as exc:
         print(f"warning: adb device not ready yet: {exc}", file=sys.stderr, flush=True)
+    else:
+        try:
+            installed = device.ensure_unicode_input_method_installed()
+        except ADBCommandError as exc:
+            print(f"error: could not install the selected input method: {exc}", file=sys.stderr, flush=True)
+            return 1
+        if installed:
+            print(f"Installed selected input method: {args.unicode_input_method}", flush=True)
 
     server = ADBBridgeServer(device, host=args.bridge_host, port=args.bridge_port)
     environment_url = server.start()

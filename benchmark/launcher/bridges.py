@@ -49,7 +49,7 @@ from .docker import Docker
 from .net import container_side_url, host_proxy_args, host_side_url
 from .system import System
 
-ADB_READY_TIMEOUT_SEC = 45
+ADB_READY_TIMEOUT_SEC = 180
 MOBILEGYM_WEB_PORT = 4173
 MOBILEGYM_BRIDGE_PORT = 9090
 MAX_MOBILEGYM_ENVS = 8
@@ -232,7 +232,7 @@ class ADBAndroidBridge(HostProcessBridge):
                     {"value": "adbkeyboard", "label": "ADBKeyBoard (default)"},
                     {"value": "appium", "label": "Appium UnicodeIME"},
                 ],
-                help="Install the selected keyboard on the device. ADBKeyBoard must also be enabled.",
+                help="Install the selected input method.",
             ),
             field_spec(
                 "adb_path",
@@ -349,7 +349,14 @@ class ADBAndroidBridge(HostProcessBridge):
             "--bridge-host", bind_host, "--bridge-port", port,
             "--unicode-input-method", ctx.config.get("unicode_input_method", DEFAULT_UNICODE_INPUT_METHOD),
         )
-        self.launch(ctx, argv, bind_host=bind_host, port=port, adb_serial=serial)
+        self.launch(
+            ctx,
+            argv,
+            bind_host=bind_host,
+            port=port,
+            wait_step="Preparing the selected input method and starting the ADB bridge",
+            adb_serial=serial,
+        )
         return BridgeStart(endpoint=f"http://{HOST_DOCKER_INTERNAL}:{port}", device_type="Android")
 
 

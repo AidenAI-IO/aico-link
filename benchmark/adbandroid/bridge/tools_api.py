@@ -655,7 +655,7 @@ class ADBToolsAPIHandler:
             setup = (
                 "install Appium Settings with io.appium.settings/.UnicodeIME"
                 if getattr(device, "unicode_input_method", "adbkeyboard") == "appium"
-                else "install and enable ADBKeyBoard"
+                else "install ADBKeyBoard"
             )
             output = {
                 "ok": False,

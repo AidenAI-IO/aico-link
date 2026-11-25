@@ -119,7 +119,9 @@ phone-to-Agent network path; see [Phone Bridge](../../docs/04-agent/phone-bridge
 For Unicode text, choose **Unicode input method** in the instance's Android
 settings. **ADBKeyBoard** is the default and uses Base64 broadcasts.
 **Appium UnicodeIME** uses Appium Settings with modified UTF-7 input. Install
-the selected keyboard on the device; enable ADBKeyBoard once if you choose it.
+the selected method automatically when the Android bridge starts if it is not
+already installed. The bridge verifies the selected APK's SHA-256 and does not
+grant additional Android permissions.
 Both paths restore the original keyboard after insertion. Appium cannot type
 literal `%s`; replacement also requires Android's `input keycombination`.
 Existing instances use ADBKeyBoard until you edit the selection. Stop an
