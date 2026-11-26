@@ -21,6 +21,7 @@
     .spacer { flex:1; }
     .refresh, .action { border:1px solid var(--line); border-radius:5px; padding:7px 12px; color:var(--text); background:var(--panel2); cursor:pointer; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
     .refresh:hover, .action:hover { border-color:var(--blue); color:var(--blue); }
+    .refresh:disabled { opacity:.55; cursor:default; }
     .copy { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; border:0; border-radius:4px; background:transparent; color:var(--muted); cursor:pointer; flex:none; }
     .copy svg { width:13px; height:13px; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
     .copy:hover { color:var(--blue); background:var(--chip); }
@@ -119,6 +120,7 @@
     const episodeCache = new Map();
     const caches = { memory: [], device: [], chunks: [], episode: [] };
     let copySeq = 0;
+    let loadRun = 0;
 
     function chips(values) {
       const list = Array.isArray(values) ? values.filter(Boolean) : [];
@@ -136,16 +138,23 @@
     const copyIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
     const checkIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
 
-    function storeCopy(value) {
-      const key = `c${++copySeq}`;
+    function clearCopySection(section) {
+      const prefix = `${section}:`;
+      for (const key of [...copyStore.keys()]) {
+        if (key.startsWith(prefix)) copyStore.delete(key);
+      }
+    }
+
+    function storeCopy(section, id, value) {
+      const key = `${section}:${id || `anon-${++copySeq}`}`;
       copyStore.set(key, String(value ?? ''));
       return key;
     }
 
-    function copyButton(value) {
+    function copyButton(section, id, value) {
       const text = String(value ?? '');
       if (!text) return '';
-      return `<button class="copy" type="button" title="Copy" aria-label="Copy" data-copy="${esc(storeCopy(text))}">${copyIcon}</button>`;
+      return `<button class="copy" type="button" title="Copy" aria-label="Copy" data-copy="${esc(storeCopy(section, id, text))}">${copyIcon}</button>`;
     }
 
     function episodeCopyButton(id) {
@@ -154,30 +163,41 @@
       return `<button class="copy" type="button" title="Copy" aria-label="Copy" data-copy-episode="${esc(text)}">${copyIcon}</button>`;
     }
 
+    function markCopyResult(button, ok) {
+      if (!button) return;
+      button.classList.toggle('copied', ok);
+      button.innerHTML = ok ? checkIcon : copyIcon;
+      button.title = ok ? 'Copied' : 'Copy failed';
+      if (ok) {
+        setTimeout(() => {
+          button.classList.remove('copied');
+          button.innerHTML = copyIcon;
+          button.title = 'Copy';
+        }, 1000);
+      }
+    }
+
     async function copyText(text, button) {
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(text);
-        } else {
-          const area = document.createElement('textarea');
-          area.value = text;
-          area.setAttribute('readonly', '');
-          area.style.position = 'fixed';
-          area.style.opacity = '0';
-          document.body.appendChild(area);
+      let ok = false;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      } else {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        try {
           area.select();
-          document.execCommand('copy');
+          ok = document.execCommand('copy');
+        } finally {
           document.body.removeChild(area);
         }
-        if (button) {
-          button.classList.add('copied');
-          button.innerHTML = checkIcon;
-          setTimeout(() => {
-            button.classList.remove('copied');
-            button.innerHTML = copyIcon;
-          }, 1000);
-        }
-      } catch (_) {}
+      }
+      if (!ok) throw new Error('copy failed');
+      markCopyResult(button, true);
     }
 
     function matchesQuery(item, query) {
@@ -191,7 +211,7 @@
       return haystacks.some(value => String(value || '').toLowerCase().includes(needle));
     }
 
-    function itemCard(item) {
+    function itemCard(item, section) {
       const id = item.id || item.chunk_id || '';
       const type = item.type || '';
       const scope = item.memory_scope || item.source || '';
@@ -223,7 +243,7 @@
         + `<div class="item-title">${esc(headline || id || 'Memory')}</div>`
         + (preview && preview !== headline ? `<div class="item-preview">${esc(preview)}</div>` : '')
         + '</div>'
-        + `<div class="item-badges">${badges}${copyButton(JSON.stringify(item, null, 2))}</div>`
+        + `<div class="item-badges">${badges}${copyButton(section, id, JSON.stringify(item, null, 2))}</div>`
         + '</summary>'
         + '<div class="item-detail">'
         + (metaRows ? `<dl class="item-meta">${metaRows}</dl>` : '')
@@ -240,11 +260,12 @@
       const query = document.getElementById(filterId).value;
       const all = caches[kind] || [];
       const list = all.filter(item => matchesQuery(item, query));
+      clearCopySection(kind);
       count.textContent = query.trim()
         ? `${list.length} / ${all.length}`
         : `${all.length} total`;
       root.innerHTML = list.length
-        ? list.map(itemCard).join('')
+        ? list.map(item => itemCard(item, kind)).join('')
         : `<div class="empty">${esc(all.length ? 'No matches.' : emptyText)}</div>`;
       return list.length;
     }
@@ -333,7 +354,7 @@
       }
     }
 
-    async function openEpisode(id, { updateInput = true } = {}) {
+    async function openEpisode(id, { updateInput = true, run = loadRun } = {}) {
       const trimmed = String(id || '').trim();
       if (updateInput) document.getElementById('episodeId').value = trimmed;
       if (!trimmed) {
@@ -362,64 +383,82 @@
       document.querySelectorAll('details.episode-item').forEach(node => {
         node.open = node === card;
       });
-      return fillEpisodeDetail(trimmed);
+      const count = await fillEpisodeDetail(trimmed);
+      if (run !== loadRun) return 0;
+      return count;
     }
 
     function rerenderEpisodes(openId) {
-      return renderEpisodeList(caches.episode, openId || document.getElementById('episodeId').value.trim(), document.getElementById('episodeFilter').value);
+      const id = openId || document.getElementById('episodeId').value.trim();
+      renderEpisodeList(caches.episode, id, document.getElementById('episodeFilter').value);
+      if (id && document.querySelector(`details.episode-item[data-episode-id="${CSS.escape(id)}"]`)) {
+        fillEpisodeDetail(id);
+      }
     }
 
     async function loadMemory() {
+      const run = ++loadRun;
       const status = document.getElementById('status');
       const started = performance.now();
+      const refreshBtn = document.getElementById('refreshBtn');
       status.textContent = 'loading…';
+      refreshBtn.disabled = true;
       copyStore.clear();
       episodeCache.clear();
-      let memoryCount = 0;
-      let deviceCount = 0;
-      let chunksCount = 0;
       let episodeListCount = 0;
       let episodeCount = 0;
       let hadError = false;
 
+      const stillCurrent = () => run === loadRun;
+
       const memoryPromise = Promise.all([fetchDebugPlane('long_term'), fetchDebugPlane('temporary')])
         .then(([longTerm, temporary]) => {
+          if (!stillCurrent()) return;
           caches.memory = [...longTerm, ...temporary];
-          memoryCount = renderCachedList('memory', 'memoryList', 'memoryCount', 'memoryFilter', 'No long-term or temporary memories.');
+          renderCachedList('memory', 'memoryList', 'memoryCount', 'memoryFilter', 'No long-term or temporary memories.');
         })
         .catch(err => {
+          if (!stillCurrent()) return;
           hadError = true;
           caches.memory = [];
+          clearCopySection('memory');
           document.getElementById('memoryCount').textContent = 'error';
           document.getElementById('memoryList').innerHTML = `<div class="error">${esc(err.message || err)}</div>`;
         });
 
       const devicePromise = fetchDebugPlane('device')
         .then(items => {
+          if (!stillCurrent()) return;
           caches.device = items;
-          deviceCount = renderCachedList('device', 'deviceList', 'deviceCount', 'deviceFilter', 'No device memories.');
+          renderCachedList('device', 'deviceList', 'deviceCount', 'deviceFilter', 'No device memories.');
         })
         .catch(err => {
+          if (!stillCurrent()) return;
           hadError = true;
           caches.device = [];
+          clearCopySection('device');
           document.getElementById('deviceCount').textContent = 'error';
           document.getElementById('deviceList').innerHTML = `<div class="error">${esc(err.message || err)}</div>`;
         });
 
       const chunksPromise = fetchDebugPlane('chunks')
         .then(items => {
+          if (!stillCurrent()) return;
           caches.chunks = items;
-          chunksCount = renderCachedList('chunks', 'chunksList', 'chunksCount', 'chunksFilter', 'No session chunks.');
+          renderCachedList('chunks', 'chunksList', 'chunksCount', 'chunksFilter', 'No session chunks.');
         })
         .catch(err => {
+          if (!stillCurrent()) return;
           hadError = true;
           caches.chunks = [];
+          clearCopySection('chunks');
           document.getElementById('chunksCount').textContent = 'error';
           document.getElementById('chunksList').innerHTML = `<div class="error">${esc(err.message || err)}</div>`;
         });
 
       const episodeListPromise = loadEpisodeList()
         .then(entries => {
+          if (!stillCurrent()) return;
           caches.episode = entries;
           const preferred = document.getElementById('episodeId').value.trim()
             || (entries[0] && entries[0].id)
@@ -427,6 +466,7 @@
           episodeListCount = renderEpisodeList(entries, preferred, document.getElementById('episodeFilter').value);
         })
         .catch(err => {
+          if (!stillCurrent()) return;
           hadError = true;
           caches.episode = [];
           document.getElementById('episodeCount').textContent = 'error';
@@ -434,11 +474,13 @@
         });
 
       await Promise.all([memoryPromise, devicePromise, chunksPromise, episodeListPromise]);
+      if (!stillCurrent()) return;
 
       const selected = document.getElementById('episodeId').value.trim()
         || (caches.episode[0] && caches.episode[0].id)
         || '';
-      episodeCount = selected ? await openEpisode(selected, { updateInput: true }) : 0;
+      episodeCount = selected ? await openEpisode(selected, { updateInput: true, run }) : 0;
+      if (!stillCurrent()) return;
 
       document.getElementById('statMemory').textContent = String(caches.memory.length);
       document.getElementById('statDevice').textContent = String(caches.device.length);
@@ -446,6 +488,7 @@
       document.getElementById('statEpisode').textContent = episodeCount ? '1' : String(episodeListCount);
       document.getElementById('statMs').textContent = `${Math.round(performance.now() - started)} ms`;
       status.textContent = hadError ? 'loaded with errors' : 'loaded';
+      refreshBtn.disabled = false;
     }
 
     document.addEventListener('click', event => {
@@ -456,7 +499,7 @@
         const id = episodeCopyBtn.getAttribute('data-copy-episode') || '';
         fetchEpisodeJSON(id)
           .then(text => copyText(text, episodeCopyBtn))
-          .catch(() => {});
+          .catch(() => { markCopyResult(episodeCopyBtn, false); });
         return;
       }
       const copyBtn = event.target.closest('[data-copy]');
@@ -464,7 +507,7 @@
         event.preventDefault();
         event.stopPropagation();
         const text = copyStore.get(copyBtn.getAttribute('data-copy')) || '';
-        copyText(text, copyBtn);
+        copyText(text, copyBtn).catch(() => { markCopyResult(copyBtn, false); });
       }
     });
 
@@ -477,7 +520,7 @@
         if (node !== card) node.open = false;
       });
       fillEpisodeDetail(id);
-    });
+    }, true);
 
     document.getElementById('memoryFilter').addEventListener('input', () => {
       renderCachedList('memory', 'memoryList', 'memoryCount', 'memoryFilter', 'No long-term or temporary memories.');
@@ -492,7 +535,10 @@
       rerenderEpisodes(document.getElementById('episodeId').value.trim());
     });
 
-    document.getElementById('refreshBtn').addEventListener('click', () => { loadMemory(); });
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+      if (document.getElementById('refreshBtn').disabled) return;
+      loadMemory();
+    });
     document.getElementById('episodeForm').addEventListener('submit', event => {
       event.preventDefault();
       openEpisode(document.getElementById('episodeId').value).then(count => {

@@ -21,6 +21,36 @@ func addTestEpisode(t *testing.T, store *TaskEpisodeStore, id, goal string, at t
 	}
 }
 
+func TestListRecentOrdersByInstantNotLexicographicOffset(t *testing.T) {
+	store := NewTaskEpisodeStore(t.TempDir())
+	// ep_newer is 10:00Z. ep_older is 11:00+02:00 (== 09:00Z) and sorts later
+	// lexicographically, so a string compare would incorrectly prefer it.
+	if _, err := store.AddEpisode(context.Background(), TaskEpisode{
+		ID: "ep_newer", Status: "completed", UserGoal: "newer",
+		StartedAt: "2026-11-25T10:00:00Z",
+		EndedAt:   "2026-11-25T10:01:00Z",
+		Outcome:   TaskEpisodeOutcome{Success: true},
+	}); err != nil {
+		t.Fatalf("AddEpisode(ep_newer) error = %v", err)
+	}
+	if _, err := store.AddEpisode(context.Background(), TaskEpisode{
+		ID: "ep_older", Status: "completed", UserGoal: "older",
+		StartedAt: "2026-11-25T11:00:00+02:00",
+		EndedAt:   "2026-11-25T11:01:00+02:00",
+		Outcome:   TaskEpisodeOutcome{Success: true},
+	}); err != nil {
+		t.Fatalf("AddEpisode(ep_older) error = %v", err)
+	}
+
+	entries, err := store.ListRecent(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListRecent() error = %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != "ep_newer" {
+		t.Fatalf("ListRecent(limit=1) = %#v, want ep_newer first by instant", entries)
+	}
+}
+
 func TestEpisodeIndexKeepsShortTextAndFullEpisode(t *testing.T) {
 	store := NewTaskEpisodeStore(t.TempDir())
 	goal := strings.Repeat("会议记录内容", 2000)

@@ -767,12 +767,38 @@ func (s *TaskEpisodeStore) ListRecent(ctx context.Context, limit int) ([]episode
 	}
 	entries := append([]episodeIndexEntry(nil), index.Episodes...)
 	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].StartedAt > entries[j].StartedAt
+		return episodeStartedAtNewer(entries[i], entries[j])
 	})
 	if len(entries) > limit {
 		entries = entries[:limit]
 	}
 	return entries, nil
+}
+
+// parseEpisodeTimestamp parses episode index timestamps. Invalid values sort as
+// the zero time so they fall behind valid entries instead of winning by string
+// order when offsets differ (for example 11:00+02:00 vs 10:00Z).
+func parseEpisodeTimestamp(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return ts
+	}
+	if ts, err := time.Parse(time.RFC3339, value); err == nil {
+		return ts
+	}
+	return time.Time{}
+}
+
+func episodeStartedAtNewer(a, b episodeIndexEntry) bool {
+	ta := parseEpisodeTimestamp(a.StartedAt)
+	tb := parseEpisodeTimestamp(b.StartedAt)
+	if !ta.Equal(tb) {
+		return ta.After(tb)
+	}
+	return a.ID > b.ID
 }
 
 func (s *TaskEpisodeStore) Get(ctx context.Context, id string) (TaskEpisode, error) {
