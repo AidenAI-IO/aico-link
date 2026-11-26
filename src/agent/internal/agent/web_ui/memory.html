@@ -405,7 +405,8 @@
       const refreshBtn = document.getElementById('refreshBtn');
       status.textContent = 'loading…';
       refreshBtn.disabled = true;
-      copyStore.clear();
+      // Keep copyStore until each section re-renders and clearCopySection runs,
+      // so Copy on still-visible cards does not succeed with an empty string.
       episodeCache.clear();
       let episodeListCount = 0;
       let episodeCount = 0;
