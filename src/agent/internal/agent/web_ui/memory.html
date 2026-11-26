@@ -145,16 +145,18 @@
       }
     }
 
-    function storeCopy(section, id, value) {
-      const key = `${section}:${id || `anon-${++copySeq}`}`;
+    function storeCopy(section, value) {
+      // Per-render sequence keeps keys unique when long-term and temporary
+      // share an ID in the combined memory list.
+      const key = `${section}:${++copySeq}`;
       copyStore.set(key, String(value ?? ''));
       return key;
     }
 
-    function copyButton(section, id, value) {
+    function copyButton(section, value) {
       const text = String(value ?? '');
       if (!text) return '';
-      return `<button class="copy" type="button" title="Copy" aria-label="Copy" data-copy="${esc(storeCopy(section, id, text))}">${copyIcon}</button>`;
+      return `<button class="copy" type="button" title="Copy" aria-label="Copy" data-copy="${esc(storeCopy(section, text))}">${copyIcon}</button>`;
     }
 
     function episodeCopyButton(id) {
@@ -243,7 +245,7 @@
         + `<div class="item-title">${esc(headline || id || 'Memory')}</div>`
         + (preview && preview !== headline ? `<div class="item-preview">${esc(preview)}</div>` : '')
         + '</div>'
-        + `<div class="item-badges">${badges}${copyButton(section, id, JSON.stringify(item, null, 2))}</div>`
+        + `<div class="item-badges">${badges}${copyButton(section, JSON.stringify(item, null, 2))}</div>`
         + '</summary>'
         + '<div class="item-detail">'
         + (metaRows ? `<dl class="item-meta">${metaRows}</dl>` : '')
