@@ -9,6 +9,13 @@ complete firmware, signs `manifest.json`, and writes local artifacts to
 `output/debian/image/`. The current distribution path is a local or
 self-hosted HTTP(S) endpoint; the build does not publish to GitHub.
 
+Use a test device that is not configured for a managed channel (`dev`,
+`staging`, or `prod`). A managed device accepts only manifests signed for its
+own channel with a `<channel>-v<semver>` version, even through
+`--manifest-url`, so it rejects these examples with `signed manifest does not
+belong to configured channel`. See
+[OTA for External Developers](ota-external-developers.md).
+
 ## Example 1: Local Development
 
 Serve the generated files from a host that the device can reach. The server
@@ -32,6 +39,7 @@ OTA_BASE_URL="$BASE_URL" \
 ./debian_build.sh
 
 (cd output/debian/image && python3 -m http.server 8000 --bind 0.0.0.0) &
+SERVER_PID=$!
 ```
 
 Copy the public key to the device:
@@ -51,7 +59,7 @@ ota update \
 ```
 
 Keep the server running until the dry run finishes, then stop it on the host
-with `kill %1`.
+with `kill "$SERVER_PID"`.
 
 ## Example 2: Self-Hosted HTTP(S)
 

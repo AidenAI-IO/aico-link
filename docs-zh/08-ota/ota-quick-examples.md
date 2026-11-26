@@ -8,6 +8,11 @@ sidebar_position: 8
 写入 `output/debian/image/`。当前的分发路径是本地或自托管的 HTTP(S) 端点；构建不会发布到
 GitHub。
 
+请使用未配置为托管通道（`dev`、`staging` 或 `prod`）的测试设备。托管设备只接受为其自身通道签名、
+版本号为 `<channel>-v<semver>` 格式的清单，即使通过 `--manifest-url` 也是如此，因此会以
+`signed manifest does not belong to configured channel` 拒绝这些示例。参见
+[面向外部开发者的 OTA](ota-external-developers.md)。
+
 ## 示例 1：本地开发
 
 在设备可以访问的主机上提供生成的文件。服务器在子 shell 中后台运行，因此后续步骤仍在仓库根目录下执行：
@@ -29,6 +34,7 @@ OTA_BASE_URL="$BASE_URL" \
 ./debian_build.sh
 
 (cd output/debian/image && python3 -m http.server 8000 --bind 0.0.0.0) &
+SERVER_PID=$!
 ```
 
 将公钥复制到设备：
@@ -47,7 +53,7 @@ ota update \
   --dry-run
 ```
 
-在 dry run 完成之前保持服务器运行，完成后在主机上用 `kill %1` 停止它。
+在 dry run 完成之前保持服务器运行，完成后在主机上用 `kill "$SERVER_PID"` 停止它。
 
 ## 示例 2：自托管 HTTP(S)
 

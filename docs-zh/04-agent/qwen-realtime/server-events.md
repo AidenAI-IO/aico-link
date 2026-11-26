@@ -302,7 +302,7 @@ Qwen-Audio Realtime API 的服务端事件参考。所有服务端事件都包�
 
 ## **response.function\_call\_arguments.done**
 
-**说明**：Function Calling 参数输出完成。收到此事件后，客户端应执行对应的工具，用 `conversation.item.create` 提交 `function_call_output`，然后发送 `response.create` 触发第二次推理。
+**说明**：Function Calling 参数输出完成。收到此事件后，客户端应执行对应的工具，并用 `conversation.item.create` 提交 `function_call_output`。等收到 `response.done` 且所有工具结果都已提交后，再发送一次 `response.create` 触发第二次推理；在原响应仍在进行时发送的 `response.create` 会被 `invalid_request_error` 拒绝。
 
 | **event_id** `*string*` 本事件的唯一标识。 | ``` { "event_id": "event_xxx", "type": "response.function_call_arguments.done", "response_id": "resp_xxx", "item_id": "item_xxx", "output_index": 0, "call_id": "call_xxx", "name": "get_weather", "arguments": "{\"city\":\"杭州\"}" } ``` |
 | --- | --- |

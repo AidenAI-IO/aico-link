@@ -302,7 +302,7 @@ Server event reference for the Qwen-Audio Realtime API. All server events includ
 
 ## **response.function\_call\_arguments.done**
 
-**Description**: Function Calling argument output is complete. On receiving this event, the client should execute the corresponding tool, submit `function_call_output` using `conversation.item.create`, and then send `response.create` to trigger a second inference.
+**Description**: Function Calling argument output is complete. On receiving this event, the client should execute the corresponding tool, and submit `function_call_output` using `conversation.item.create`. After `response.done` arrives and every tool result has been submitted, send a single `response.create` to trigger a second inference; a `response.create` sent while the original response is still in progress is rejected with `invalid_request_error`.
 
 | **event_id** `*string*` Unique identifier of this event. | ``` { "event_id": "event_xxx", "type": "response.function_call_arguments.done", "response_id": "resp_xxx", "item_id": "item_xxx", "output_index": 0, "call_id": "call_xxx", "name": "get_weather", "arguments": "{\"city\":\"杭州\"}" } ``` |
 | --- | --- |
