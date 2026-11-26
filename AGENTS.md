@@ -74,13 +74,13 @@ dependencies reproduce CI.
 
 ## Repository conventions
 
-- Write all documentation outside `docs-zh/`, documentation updates, and
-  user-facing technical explanations in English. Keep terminology and links consistent with the
-  existing documentation under `docs/`.
+- Write documentation, documentation updates, and user-facing technical
+  explanations in English, except under `docs-zh/`. Keep terminology and links
+  consistent with the existing documentation under `docs/`.
 - `docs-zh/` is the Simplified Chinese translation of `docs/` and mirrors it
   file for file: same paths, front matter keys, heading structure, code
-  blocks, and link targets (images point back to the English copy under
-  `docs/`). When a change adds, removes, moves, or edits a page in `docs/`,
+  blocks, and link destinations (images point back to the English copy under
+  `docs/`; in-page `#fragment` anchors follow the translated headings). When a change adds, removes, moves, or edits a page in `docs/`,
   make the matching change in `docs-zh/` in the same pull request, including
   translated `_category_.json` labels for new sections.
 - Prefer small, reviewable changes that follow the existing source of truth.
