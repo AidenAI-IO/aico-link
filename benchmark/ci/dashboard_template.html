@@ -33,6 +33,9 @@
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
   .num { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .cap { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  #workflow-summary-values[hidden] { display: none; }
+  #workflow-summary .num { font-variant-numeric: normal; }
+  .workflow-model { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
   .bad { color: var(--bad); }
   .good { color: var(--good); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -154,12 +157,24 @@
 <div class="wrap">
   <h1>Benchmark Dashboard</h1>
   <div class="sub" id="sub"></div>
+  <section class="panel" id="workflow-summary" aria-labelledby="workflow-summary-title">
+    <h2 id="workflow-summary-title">Latest workflow run</h2>
+    <div class="cards" id="workflow-summary-values" hidden>
+      <div><div class="cap" id="workflow-model-label">Agent model</div><div class="workflow-model" id="workflow-model"></div></div>
+      <div>
+        <div class="cap">Overall pass rate (pass@1)</div>
+        <div class="num" id="workflow-pass-rate"></div>
+        <div class="empty" id="workflow-pass-count"></div>
+      </div>
+    </div>
+    <p class="empty" id="latest-run-note"></p>
+  </section>
   <div class="tabs" id="dashboard-tabs" role="tablist" aria-label="Dashboard view">
     <button id="tab-latest" role="tab" type="button" aria-selected="true" aria-controls="view-latest" tabindex="0">Latest results</button>
     <button id="tab-trends" role="tab" type="button" aria-selected="false" aria-controls="view-trends" tabindex="-1">Weekly trends</button>
   </div>
   <section id="view-latest" role="tabpanel" aria-labelledby="tab-latest">
-  <div class="panel" id="overview-panel"><h2>Latest results</h2><p id="latest-run-note" class="empty"></p>
+  <div class="panel" id="overview-panel"><h2>Latest results</h2>
     <p class="empty">Changes are relative to each dataset’s previous run.</p>
     <p class="empty">Test area</p><div id="change-summary" class="filters" role="group" aria-label="Filter latest datasets by test area"></div>
     <p class="empty" id="filter-count" role="status" aria-live="polite"></p>
@@ -215,10 +230,26 @@ el("reading-notes-label").textContent = `Metric definitions${DATA.warnings.lengt
 
 el("sub").textContent = `Last 7 days · ${when(DATA.windowStart)} — ${when(DATA.generatedAt)} · ${runs.length} workflow runs · ${DATA.suites.length} datasets`;
 
+const latestRun = runs.at(-1);
+if (latestRun) {
+  const models = [...new Set(latestRun.suites.map(suite => suite.agent_model?.trim() || "Unknown"))].sort();
+  el("workflow-summary-values").hidden = false;
+  el("workflow-model-label").textContent = models.length > 1 ? "Agent models" : "Agent model";
+  el("workflow-model").textContent = models.join(", ");
+  el("workflow-pass-rate").textContent = pct(latestRun.pass_at_1);
+  let passCount = `${latestRun.passed} of ${latestRun.eligible_tasks} eligible first attempts passed`;
+  if (!latestRun.metrics_complete) {
+    passCount = "First-attempt counts are incomplete.";
+  } else if (!latestRun.eligible_tasks) {
+    passCount = "No eligible first attempts.";
+  }
+  el("workflow-pass-count").textContent = passCount;
+  el("latest-run-note").innerHTML = `${esc(when(latestRun.timestamp))} · ${esc(latestRun.git_branch || "Unknown branch")} · ${commitLink(latestRun.commit_sha)}`;
+} else {
+  el("latest-run-note").textContent = "No workflow runs in this period.";
+}
+
 const datasets = DATA.suites;
-const newestDataset = datasets.reduce((newest, dataset) =>
-  !newest || dataset.latest.timestamp > newest.latest.timestamp ? dataset : newest, null);
-el("latest-run-note").innerHTML = `Latest commit · ${commitLink(newestDataset?.latest.commit_sha)}`;
 const safeLink = (url, label) => {
   try {
     const parsed = new URL(url);

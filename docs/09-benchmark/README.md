@@ -478,7 +478,10 @@ Task-selection metadata distinguishes a repetition change from changed coverage;
 older records without that metadata retain a general coverage-change notice.
 
 The daily benchmark workflow generates `dashboard.html` with the last 7 days
-of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml`
+of pass@1 trends and efficiency metrics. The dashboard opens with the agent
+models and overall pass@1 for the latest workflow run. The overall rate pools
+passes across eligible first attempts and is unavailable if any dataset lacks
+complete first-attempt counts. A separate `benchmark-weekly-report.yml`
 workflow runs every Thursday and sends a Lark card summarizing the last 7 days
 and each dataset's change from its own previous 7 days, with a link to the dashboard. History comes from
 Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
