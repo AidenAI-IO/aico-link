@@ -30,35 +30,42 @@ export function usePageHeader(
   level = 'live',
   back?: string,
   enabled = true,
+  { actionLabel, disabled = false }: { actionLabel?: TextSpec; disabled?: boolean } = {},
 ) {
   const { header, navigate, route } = props;
   const submitRef = useRef(submit);
   submitRef.current = submit;
   const label = resolve(title);
+  const actionText = resolve(actionLabel || saveLabel(level));
   useEffect(() => {
     if (!enabled) return;
     header({
       title: label,
       onBack: () => navigate(back || route.path.slice(0, route.path.lastIndexOf('/')) || '/'),
       action: dirty ? (
-        <Button variant="quiet" action="save-form" onClick={() => void submitRef.current?.()}>
-          <Text value={saveLabel(level)} />
+        <Button
+          variant="quiet"
+          action="save-form"
+          disabled={disabled}
+          onClick={() => void submitRef.current?.()}
+        >
+          <Text value={actionText} />
         </Button>
       ) : null,
     });
     postToHost({
       type: 'aico_config_save_state',
       title: label,
-      dirty,
+      dirty: dirty && !disabled,
       apply: level,
-      action_label: resolve(saveLabel(level)),
+      action_label: actionText,
     });
     const onSave = () => {
-      if (dirty) void submitRef.current?.();
+      if (dirty && !disabled) void submitRef.current?.();
     };
     window.addEventListener('aico:save-request', onSave);
     return () => window.removeEventListener('aico:save-request', onSave);
-  }, [header, navigate, route.path, label, dirty, level, back, enabled]);
+  }, [header, navigate, route.path, label, dirty, level, back, enabled, actionText, disabled]);
 }
 export function useSettings(props: PageProps, title: TextSpec, back?: string, header = true) {
   const config = useAtomValue(props.model.config) || {};
@@ -193,6 +200,8 @@ export function useSettings(props: PageProps, title: TextSpec, back?: string, he
     apply,
     commit,
     busy,
+    dirty: staged.current.size > 0,
+    level,
     isStaged: (key: string) => staged.current.has(key),
   };
 }

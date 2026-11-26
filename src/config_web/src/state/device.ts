@@ -1,5 +1,6 @@
 import { atom, createStore } from 'jotai/vanilla';
 import { createResource } from './resource';
+import { createModelHistory } from './model-history';
 import { applyLocale } from '../lib/i18n';
 import type { Schema } from '../lib/schema';
 import type {
@@ -105,6 +106,11 @@ export function createDeviceState(
   const local = native || container;
   const store = createStore();
   const config = atom<Configuration | null>(null);
+  const modelHistory = createModelHistory(
+    store,
+    config,
+    container ? 'container' : native ? 'native' : 'device',
+  );
   const voiceTab = atom<VoiceMode | null>(null);
   const voiceMode = atom(
     (get): VoiceMode =>
@@ -337,6 +343,7 @@ export function createDeviceState(
     resources: allResources,
     config,
     voiceMode,
+    modelHistory: modelHistory.atom,
     current,
     locale,
     configLocale,
@@ -362,6 +369,7 @@ export function createDeviceState(
     dispose() {
       visible = false;
       unsubscribe();
+      modelHistory.dispose();
       Object.values(allResources).forEach((resource) => resource.dispose());
     },
   };

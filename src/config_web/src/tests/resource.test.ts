@@ -3,6 +3,7 @@ import { createStore } from 'jotai/vanilla';
 import { createResource } from '../state/resource';
 import { createDeviceState } from '../state/device';
 import { applyLocale, getActiveLocale } from '../lib/i18n';
+import { modelScope, withModelHistory } from '../state/model-history';
 
 const deferred = () => {
   let resolve!: (value: unknown) => void;
@@ -35,6 +36,34 @@ it('applies the saved device locale before publishing the first config snapshot'
   expect(localeAtPublish).toBe('zh-CN');
   model.dispose();
   applyLocale('en-US', true);
+});
+
+it('keeps model history usable when browser storage is unavailable', () => {
+  const read = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    throw new Error('blocked');
+  });
+  const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new Error('blocked');
+  });
+  const model = createDeviceState(async () => {
+    throw new Error('offline');
+  });
+  try {
+    model.store.set(model.config, { model: { provider: 'demo', model: 'custom/one' } });
+    model.store.set(model.config, { model: { provider: 'demo', model: 'custom/two' } });
+    model.store.set(model.config, { model: { provider: 'demo', model: 'custom/one' } });
+    const scope = modelScope('model', 'demo', {});
+    expect(
+      withModelHistory(
+        [{ id: 'custom/two', name: 'Published name' }],
+        model.store.get(model.modelHistory)[scope],
+      ),
+    ).toEqual([{ id: 'custom/two', name: 'Published name' }, { id: 'custom/one' }]);
+  } finally {
+    model.dispose();
+    read.mockRestore();
+    write.mockRestore();
+  }
 });
 
 describe('resource lifecycle', () => {

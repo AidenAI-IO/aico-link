@@ -14,6 +14,7 @@ export const CONNECTION_KEYS = new Set([
   'region',
 ]);
 import { useState } from 'react';
+import { useAtomValue } from 'jotai';
 import type { ReactNode } from 'react';
 import { SwipeRow } from '../components/SwipeRow';
 import type { ConfigPatch, JsonObject, PageProps, ProviderRecord, VoiceMode } from '../types';
@@ -28,6 +29,7 @@ import { ProviderMark, SelectedCheck } from '../components/marks';
 import { Button, Group, Row, Text } from '../components/ui';
 import { ConfigField, FieldInput, QueryError, ValueField } from '../components/fields';
 import { confirmSheet, toast } from '../components/overlays';
+import { modelScope, withModelHistory } from '../state/model-history';
 export const PROVIDER_TYPES = [
   'openai',
   'anthropic',
@@ -581,6 +583,12 @@ export function ModelPicker(props: PageProps) {
   const saver = useSettings(props, msg('model.model', '模型'), '/model/main');
   const selected = saver.config.model || {};
   const type = saver.config.model_providers?.[selected.provider || '']?.type || '';
+  const history = useAtomValue(props.model.modelHistory);
+  const scope = modelScope(
+    'model',
+    selected.provider || '',
+    saver.config.model_providers?.[selected.provider || ''] || {},
+  );
   const catalog = useQuery(
     (signal) =>
       props.model.send<ModelCatalogue>(
@@ -600,7 +608,7 @@ export function ModelPicker(props: PageProps) {
     <div className="ds-screen">
       <QueryError {...catalog} />
       <Group>
-        {catalog.data?.models.map((model) => (
+        {withModelHistory(catalog.data?.models || [], history[scope]).map((model) => (
           <Row
             key={model.id}
             label={model.name || model.id}
@@ -625,6 +633,8 @@ export function DecisionPage(props: PageProps) {
   const saver = useSettings(props, msg('model.decision', '决策模型'), '/model');
   const decision = section(saver.config, 'decision');
   const provider = String(decision.provider || 'typesafe');
+  const history = useAtomValue(props.model.modelHistory);
+  const scope = modelScope('decision', provider, decision);
   const catalog = useQuery(
     (signal) =>
       provider === 'openrouter'
@@ -717,7 +727,7 @@ export function DecisionPage(props: PageProps) {
                 'model.decision_openrouter_model_help',
                 '留空默认使用 Jev；输入时显示模型建议，也可填写其他模型 ID',
               )}
-              suggestions={catalog.data?.models.map((model) => model.id)}
+              suggestions={withModelHistory(catalog.data?.models || [], history[scope])}
               onCommit={(value) =>
                 saver.change('decision.model', { decision: { model: value || null } })
               }
