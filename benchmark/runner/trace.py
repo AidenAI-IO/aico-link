@@ -227,15 +227,71 @@ def _app_flag_args(domain: str, action: str, args: list[str]) -> dict[str, Any] 
     return fields
 
 
+# Recognize simple shell diagnostics around CLI commands for argument recovery.
+# This is deliberately separate from is_device_cli_shell's transport policy.
+_SHELL_TOKEN = re.compile(rf"(?P<word>(?:{_CLI_LITERAL})+)|(?P<status>\"[^\"$`\\]*\$\?[^\"$`\\]*\")|(?P<op>&&|>>|[;|<>])")
+_DIAGNOSTIC_COMMANDS = {"echo", "wc", "od", "head"}
+
+
+def _literal_cli_commands(command: str) -> list[list[str]]:
+    commands = []
+    words: list[str] = []
+    redirect = False
+    piped = False
+    pos = 0
+    command = command.strip()
+    while pos < len(command):
+        if command[pos] in " \t":
+            pos += 1
+            continue
+        token = _SHELL_TOKEN.match(command, pos)
+        if token is None:
+            return []
+        pos = token.end()
+        op = token.group("op")
+        if op in {"<", ">", ">>"}:
+            if not words or redirect:
+                return []
+            redirect = True
+        elif op:
+            if not words or redirect:
+                return []
+            if words[0] == "device-cli" and not piped:
+                commands.append(words[1:])
+            elif words[0] not in _DIAGNOSTIC_COMMANDS:
+                return []
+            words = []
+            piped = op == "|"
+        else:
+            # Reject partially tokenized words, including shell expansions.
+            if pos < len(command) and command[pos] not in " \t;|<>&":
+                return []
+            if token.group("status") and (not words or words[0] != "echo" or redirect):
+                return []
+            if redirect:
+                redirect = False
+            else:
+                words.extend(shlex.split(token[0]))
+    if redirect:
+        return []
+    if words and words[0] == "device-cli" and not piped:
+        commands.append(words[1:])
+    elif words and words[0] not in _DIAGNOSTIC_COMMANDS:
+        return []
+    return commands
+
+
 def _restore_app_data_args(tc: ToolCall) -> None:
-    # Only recover arguments from literal commands already in benchmark history.
-    # Match the recorded sequence before assigning any redacted inputs; never
-    # infer execution or success from shell text, including a short-circuited tail.
-    if not is_device_cli_shell(tc) or not any(not call.input for call in tc.device_cli_calls):
+    # Match the recorded sequence before assigning any redacted inputs. Shell
+    # text cannot establish execution or success, including a short-circuited tail.
+    command = tc.input.get("command")
+    if (tc.tool != "shell" or not isinstance(command, str) or tc.input.get("background")
+            or "action" in tc.input or not any(not call.input for call in tc.device_cli_calls)):
         return
     parsed: list[tuple[str, dict[str, Any]]] = []
-    for match in _CLI_COMMAND.finditer(tc.input["command"].strip()):
-        args = shlex.split(match[0])[1:]
+    for args in _literal_cli_commands(command):
+        if not args:
+            return
         if args[0] == "drag":
             parsed.extend([("touch_gesture", {}), ("touch_gesture", {})])
         elif args[:2] == ["app", "type"] and len(args) == 3:

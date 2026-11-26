@@ -435,7 +435,10 @@ For CLI-compatible cases, use `required_tool_calls` to assert ordered device
 operations across shell batches. For `min_tool_calls`, a completed shell batch
 counts as the greater of one call or its recorded successful, dispatched CLI
 operations. `max_tool_calls` still caps outer model calls. Shell text alone does
-not count as a nested operation. For injected failures, assert the bridge's
+not count as a nested operation. The runner recovers redacted Bridge arguments
+from literal CLI commands only when their operation sequence matches the episode.
+Simple output diagnostics such as `echo` and file redirection are supported.
+For injected failures, assert the bridge's
 recorded failure and the final outcome rather than requiring the failed action
 to succeed.
 

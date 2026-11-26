@@ -327,8 +327,8 @@ def test_tool_result_evidence_preserves_non_image_data():
     assert tool_result_evidence(history) == history
 
 
-@pytest.mark.parametrize("suffix, expected", [("", {"action": "query", "query": "A && B"}), ("; echo extra", {})])
-def test_episode_evidence_recovers_redacted_app_data_args_from_literal_shell(suffix, expected):
+@pytest.mark.parametrize("suffix, recover", [("", True), ('; echo "EXIT:$?"', True), ("; eval \"$extra\"", False)])
+def test_episode_evidence_recovers_redacted_app_data_args_from_literal_shell(suffix, recover):
     from runner.trace import apply_episode_tool_evidence
 
     command = '''device-cli app contacts query '{"query":"A && B"}' '''.strip() + suffix
@@ -342,8 +342,35 @@ def test_episode_evidence_recovers_redacted_app_data_args_from_literal_shell(suf
         ]},
     }]})
     call, = trace.tool_calls[0].device_cli_calls
-    assert call.input == expected
+    assert call.input == ({"action": "query", "query": "A && B"} if recover else {})
     assert call.is_error and call.not_dispatched
+
+
+@pytest.mark.parametrize("command, recorded, expected", [
+    ('device-cli app contacts query --query Biden --limit 5; echo "EXIT:$?"',
+     ["bridge_contacts"], [{"action": "query", "query": "Biden", "limit": 5}]),
+    ("device-cli app clipboard write 'A; B' && echo 'device-cli app clipboard read' "
+     "&& device-cli app clipboard read > /tmp/clip.txt; wc -c < /tmp/clip.txt; od -c /tmp/clip.txt | head -20",
+     ["bridge_clipboard", "bridge_clipboard"], [{"action": "write", "text": "A; B"}, {"action": "read"}]),
+    ("device-cli app clipboard write 'marker' && echo extra && device-cli app clipboard read",
+     ["bridge_clipboard"], [{}]),
+    ('device-cli app contacts query --query "$NAME"; echo extra', ["bridge_contacts"], [{}]),
+])
+def test_episode_recovers_literal_cli_arguments_with_shell_diagnostics(command, recorded, expected):
+    from runner.trace import apply_episode_tool_evidence, is_device_cli_shell
+
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+        {"type": "tool_result", "tool_name": "shell"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": name, "input": {}, "is_error": False} for name in recorded
+        ]},
+    }]})
+    outer, = trace.tool_calls
+    assert [call.input for call in outer.device_cli_calls] == expected
+    assert not is_device_cli_shell(outer)
 
 
 @pytest.mark.parametrize("suffix, tools, recovered", [
