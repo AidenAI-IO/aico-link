@@ -4675,7 +4675,13 @@ func TestRuntimeClearMemoryResetsActiveUserContext(t *testing.T) {
 		NewSkillIndex(),
 	)
 	reset := make(chan struct{}, 1)
-	unregister := runtime.RegisterUserContextResetHook(func() { reset <- struct{}{} })
+	unregister, err := runtime.RegisterUserContextResetHook(func(context.Context) error {
+		reset <- struct{}{}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer unregister()
 
 	if err := runtime.ClearMemory(context.Background()); err != nil {

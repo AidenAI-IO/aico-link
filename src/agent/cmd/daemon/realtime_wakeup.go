@@ -1597,13 +1597,26 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	textOnly := cfg.Benchmark.RealtimeText || voice.Route() == agent.RealtimeAudioRouteText
 	sessionConfig := realtimeProviderSessionConfigWithTools(cfg, runtime, runtimeTools, textOnly)
 	if runtime != nil {
+		sessionDone := make(chan struct{})
+		unregisterReset, err := runtime.RegisterUserContextResetHook(func(clearCtx context.Context) error {
+			cancel()
+			select {
+			case <-sessionDone:
+				return nil
+			case <-clearCtx.Done():
+				return clearCtx.Err()
+			}
+		})
+		if err != nil {
+			return err
+		}
+		defer func() {
+			close(sessionDone)
+			unregisterReset()
+		}()
 		if err := runtime.PrepareUserContext(sessionConfig.Instructions); err != nil {
 			return err
 		}
-	}
-	if runtime != nil {
-		unregisterReset := runtime.RegisterUserContextResetHook(cancel)
-		defer unregisterReset()
 	}
 	userContext, err := agent.InitializeContextManager(
 		sessionConfig.Instructions,

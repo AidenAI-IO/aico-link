@@ -11,7 +11,10 @@ const assistantTextReveal = createStreamingTextReveal({
     onIdle: () => resumeHistoryAfterTextReveal()
 });
 
+let clearingSession = false;
+
 async function sendMessage(options) {
+    if (clearingSession) return;
     // With an empty box the primary button starts or ends voice. Enter only
     // sends, so a stray keypress never opens the microphone.
     const mode = composerPrimaryMode();
@@ -53,6 +56,8 @@ async function sendMessage(options) {
         timestamp: new Date().toISOString()
     });
 
+    const signal = currentChatAbortController.signal;
+    const generation = historyGeneration;
     let completed = false;
     try {
         const res = await fetch('/api/chat', {
@@ -62,7 +67,7 @@ async function sendMessage(options) {
                 'Accept': 'application/x-ndjson',
                 'X-Aico-Stream': 'ndjson'
             },
-            signal: currentChatAbortController.signal,
+            signal,
             body: JSON.stringify({
                 message: message,
                 attachments: attachments,
@@ -75,9 +80,10 @@ async function sendMessage(options) {
             throw new Error(errorText || 'Request failed');
         }
 
-        await consumeChatStream(res);
+        await consumeChatStream(res, signal);
         completed = true;
     } catch (err) {
+        if (clearingSession || generation !== historyGeneration) return;
         if (currentChatCancelRequested || err.name === 'AbortError') {
             addMessage({
                 type: 'assistant',
@@ -457,10 +463,12 @@ async function cancelPendingSteer() {
     }
 }
 
-async function consumeChatStream(res) {
+async function consumeChatStream(res, signal) {
     let sawDone = false;
     if (!res.body) {
-        sawDone = consumeChatStreamText(await res.text());
+        const text = await res.text();
+        signal.throwIfAborted();
+        sawDone = consumeChatStreamText(text);
         if (!sawDone) {
             throw new Error('Chat stream ended before done event.');
         }
@@ -473,6 +481,7 @@ async function consumeChatStream(res) {
 
     while (true) {
         const chunk = await reader.read();
+        signal.throwIfAborted();
         if (chunk.done) break;
         buffer += decoder.decode(chunk.value, { stream: true });
         const result = consumeChatStreamLines(buffer);
@@ -726,39 +735,33 @@ function closeTopbarMenu() {
     if (menu) menu.removeAttribute('open');
 }
 
-async function clearSession() {
-    closeTopbarMenu();
-    if (!confirm('Clear the current session? This will remove the current conversation.')) return;
-
-    try {
-        const res = await fetch('/api/clear', { method: 'POST' });
-        if (!res.ok) {
-            throw new Error(await res.text() || 'Failed to clear the session.');
-        }
-        clearDraftAttachments();
-        resetHistoryWindow();
-        renderHistory([]);
-    } catch (err) {
-        console.error('Failed to clear the session:', err);
-        showErrorToast('Clear failed', err);
-    }
+function clearSession() {
+    return clearConversation('/api/clear', 'Stop any running agent and clear the current conversation?');
 }
 
-async function clearSessionAndMemory() {
-    closeTopbarMenu();
-    if (!confirm('Clear the current session and permanently delete ALL memory, including long-term memories and the user profile?')) return;
+function clearSessionAndMemory() {
+    return clearConversation('/api/clear-all', 'Stop any running agent, clear the current session, and permanently delete ALL memory, including long-term memories and the user profile?');
+}
 
+async function clearConversation(path, prompt) {
+    closeTopbarMenu();
+    if (clearingSession || !confirm(prompt)) return;
+
+    clearingSession = true;
     try {
-        const res = await fetch('/api/clear-all', { method: 'POST' });
+        const res = await fetch(path, { method: 'POST' });
         if (!res.ok) {
-            throw new Error(await res.text() || 'Failed to clear the session and memory.');
+            throw new Error(await res.text() || 'Failed to clear the conversation.');
         }
+        currentChatAbortController?.abort();
         clearDraftAttachments();
         resetHistoryWindow();
         renderHistory([]);
     } catch (err) {
-        console.error('Failed to clear the session and memory:', err);
+        console.error('Failed to clear the conversation:', err);
         showErrorToast('Clear failed', err);
+    } finally {
+        clearingSession = false;
     }
 }
 
