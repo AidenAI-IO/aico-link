@@ -10,7 +10,7 @@ import { VoiceOptions } from '../pages/Voice';
 import { RawConfigPage } from '../pages/Advanced';
 import { ValueField } from '../components/fields';
 import { ChoiceRow, Dropdown } from '../components/choices';
-import { OverlayHost, Modal, toast } from '../components/overlays';
+import { OverlayHost, Modal, confirmSheet, showProgress, toast } from '../components/overlays';
 import { useSettings } from '../hooks/settings';
 import { applyLocale } from '../lib/i18n';
 const flush = async () => {
@@ -764,6 +764,70 @@ it('traps dialog focus and restores its opener on close', () => {
   fireEvent.keyDown(input, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBe(null);
   expect(document.activeElement).toBe(opener);
+});
+it.each(['cancel', 'escape', 'scrim', 'confirm'])(
+  'keeps confirmation focus contained and settles through %s',
+  async (action) => {
+    render(
+      <>
+        <button>Open confirmation</button>
+        <OverlayHost />
+      </>,
+    );
+    const opener = screen.getByRole('button', { name: 'Open confirmation' });
+    opener.focus();
+    let result!: Promise<boolean>;
+    act(() => {
+      result = confirmSheet({
+        title: 'Update?',
+        body: 'Services may restart.',
+        confirmLabel: 'Update',
+      });
+    });
+    const dialog = screen.getByRole('dialog', { name: 'Update?' });
+    expect(document.getElementById(dialog.getAttribute('aria-describedby')!)?.textContent).toBe(
+      'Services may restart.',
+    );
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    const confirm = screen.getByRole('button', { name: 'Update' });
+    expect(document.activeElement).toBe(cancel);
+    fireEvent.keyDown(cancel, { key: 'Tab' });
+    expect(document.activeElement).toBe(confirm);
+    fireEvent.keyDown(confirm, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(cancel);
+    if (action === 'escape') fireEvent.keyDown(cancel, { key: 'Escape' });
+    else if (action === 'scrim') fireEvent.click(dialog.querySelector('.ds-action-sheet__scrim')!);
+    else fireEvent.click(action === 'confirm' ? confirm : cancel);
+    await expect(result).resolves.toBe(action === 'confirm');
+    expect(screen.queryByRole('dialog')).toBe(null);
+    expect(document.activeElement).toBe(opener);
+  },
+);
+it('keeps restart progress modal until completion or a dismissible failure', () => {
+  render(
+    <>
+      <button>Restart</button>
+      <OverlayHost />
+    </>,
+  );
+  const opener = screen.getByRole('button', { name: 'Restart' });
+  opener.focus();
+  let progress!: ReturnType<typeof showProgress>;
+  act(() => {
+    progress = showProgress('Restarting', 'Waiting for the device.');
+  });
+  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+  expect(screen.getByRole('dialog', { name: 'Restarting' })).toBeTruthy();
+  act(() => progress.fail('Device unavailable.'));
+  expect(screen.getByRole('status').textContent).toBe('Device unavailable.');
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('dialog')).toBe(null);
+  expect(document.activeElement).toBe(opener);
+  act(() => {
+    progress = showProgress('Restarting', 'Waiting for the device.');
+  });
+  act(() => progress.remove());
+  expect(screen.queryByRole('dialog')).toBe(null);
 });
 it('restores app interactivity only after the last overlapping modal closes', () => {
   const app = document.createElement('div');

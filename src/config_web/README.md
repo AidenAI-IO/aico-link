@@ -97,6 +97,9 @@ Generated design tokens are excluded from Prettier; regenerate them with
   dialogs, full backup and restore, raw TOML recovery, and the LLM log viewer.
   Keyed rows preserve controls and focus. Dialogs use portals and trap focus.
   A removed list control is refocused only when focus belonged to that list.
+  Confirmations share the inset action sheet with a separate Cancel group and
+  red destructive actions; restart progress uses a centered blocking panel.
+  Both retain the form sheets' focus containment and restoration behavior.
 - `src/hooks/settings.tsx` plans saves against the backend, saves live changes
   immediately, and confirms staged changes before persisting and restarting.
   Per-field sequences reject obsolete results. Forms retain their own drafts

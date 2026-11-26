@@ -654,10 +654,12 @@
   align-items: center;
   width: 100%;
   max-width: 320px;
+  max-height: 100%;
   padding: var(--space-xxl) var(--space-xl);
   border-radius: var(--radius-sheet);
   background-color: var(--color-card);
   text-align: center;
+  overflow-y: auto;
 }
 
 .ds-restart__spinner {
@@ -679,10 +681,13 @@
 
 .ds-restart__body {
   display: block;
+  flex-shrink: 0;
+  max-width: 100%;
   margin: var(--space-sm) 0 var(--space-lg);
   font-size: var(--font-body-sm);
   line-height: 1.45;
   color: var(--color-ink-secondary);
+  overflow-wrap: anywhere;
 }
 
 /* ---- Conversation & tools ------------------------------------------------ */
@@ -1259,11 +1264,13 @@
   gap: var(--size-action-sheet-inset);
   width: 100%;
   max-width: 480px;
+  max-height: 92vh;
   margin: 0 auto;
   padding: 0 var(--size-action-sheet-inset)
     calc(var(--size-action-sheet-inset) + env(safe-area-inset-bottom, 0px));
   transform: translateY(110%);
   transition: transform var(--motion-sheet) var(--motion-sheet-bezier);
+  overflow-y: auto;
 }
 
 .ds-action-sheet__panel--open {
@@ -1273,6 +1280,7 @@
 .ds-action-sheet__group {
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   overflow: hidden;
   border-radius: var(--radius-action-sheet);
   background-color: var(--color-action-sheet-surface);
@@ -1299,6 +1307,7 @@
   font-size: var(--font-action-sheet-text);
   font-weight: var(--font-weight-semibold);
   color: var(--color-ink-secondary);
+  overflow-wrap: anywhere;
 }
 
 .ds-action-sheet__message {
@@ -1306,14 +1315,17 @@
   font-size: var(--font-action-sheet-text);
   line-height: 1.35;
   color: var(--color-ink-secondary);
+  overflow-wrap: anywhere;
 }
 
 .ds-action-sheet__button {
   width: 100%;
   min-height: var(--size-action-sheet-button);
+  padding: var(--space-md) var(--space-lg);
   font-size: var(--font-action-sheet-button);
   color: var(--color-action-sheet-tint);
   text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .ds-action-sheet__button:active {
