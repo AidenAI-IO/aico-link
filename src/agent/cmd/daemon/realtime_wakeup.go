@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,15 +30,20 @@ import (
 )
 
 const (
-	realtimeAudioReadTimeoutMs        = 200
-	realtimeConnectTimeout            = 15 * time.Second
-	realtimeNotificationPoll          = 500 * time.Millisecond
-	realtimeNotificationDrain         = 30 * time.Second
-	realtimeSleepDrain                = 30 * time.Second
-	realtimePlaybackKeepAlive         = 10 * time.Second
-	realtimeToolCallTimeout           = 30 * time.Second
-	realtimeTaskResultDebounce        = 500 * time.Millisecond
-	realtimeContextReplayTurns        = 10
+	realtimeAudioReadTimeoutMs = 200
+	realtimeConnectTimeout     = 15 * time.Second
+	realtimeNotificationPoll   = 500 * time.Millisecond
+	realtimeNotificationDrain  = 30 * time.Second
+	realtimeSleepDrain         = 30 * time.Second
+	realtimePlaybackKeepAlive  = 10 * time.Second
+	realtimeToolCallTimeout    = 30 * time.Second
+	realtimeTaskResultDebounce = 500 * time.Millisecond
+	realtimeContextReplayTurns = 10
+	// realtimeContextReplayGap ends verbatim replay: a conversation resumed
+	// after it gets the earlier turns only as one transcript marked old.
+	// Replayed turns steer the model more than its instructions do, so an old
+	// topic, an old answer, or an old work update would otherwise carry on.
+	realtimeContextReplayGap          = 30 * time.Minute
 	realtimeClientTurnEndpointSilence = 800 * time.Millisecond
 	realtimeClientTurnSpeechThreshold = 500
 	maxRetiredRealtimeResponseIDs     = 64
@@ -1634,6 +1641,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	if err := agent.SyncUserProfileSection(userContext, sessionConfig.Instructions); err != nil {
 		logging.Warnf("agent", "realtime", "Refresh user profile in realtime user context failed: %v", err)
 	}
+	// The opening time goes only to the provider. The stored user context
+	// keeps the stable instructions: a time in them would differ every
+	// session and rewrite the stored system message each time.
+	sessionConfig.Instructions = realtimeInstructionsWithSessionTime(sessionConfig.Instructions, time.Now(), cfg.TimezoneOrDefault())
 
 	providerName := realtimeProviderType(cfg)
 	logging.Infof("agent", "realtime", "Connecting: provider=%s model=%s region=%s workspace_configured=%t endpoint_override=%t",
@@ -1684,7 +1695,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	contextReplayer := session.ContextReplayer
 	canReplayContext := contextReplayer != nil
 	if supportsText && canReplayContext {
-		if err := replayRealtimeContext(ctx, contextReplayer, userContext, imageInput); err != nil {
+		if err := replayRealtimeContext(ctx, contextReplayer, userContext, tasks, imageInput, time.Now(), cfg.TimezoneOrDefault()); err != nil {
 			return markRealtimeProviderFailure(fmt.Errorf("restore realtime user context: %w", err))
 		}
 	}
@@ -3662,22 +3673,27 @@ func formatRealtimeTaskUpdates(tasks []agenttask.Task) string {
 	var output strings.Builder
 	output.WriteString("Private work-status update for the assistant. Present these outcomes naturally as your own work; never mention agents, background execution, queues, orchestration, tools, or task IDs. For pending_user_action, explain what the user must do on the device, ask them to say when it is complete, and then continue using the internal response action:\n")
 	for _, task := range tasks {
-		fmt.Fprintf(&output, "- task_id=%s status=%s task=%q", task.ID, task.Status, limitRealtimeTaskField(task.Prompt, 300))
-		if task.Result != "" {
-			fmt.Fprintf(&output, " result=%q", limitRealtimeTaskField(task.Result, 2000))
-		}
-		if task.Error != "" {
-			fmt.Fprintf(&output, " error=%q", limitRealtimeTaskField(task.Error, 500))
-		}
-		if task.PendingUserAction != nil {
-			fmt.Fprintf(&output, " pending_user_action={reason:%q details:%q suggested_action:%q}",
-				task.PendingUserAction.Reason,
-				task.PendingUserAction.Details,
-				task.PendingUserAction.SuggestedAction)
-		}
-		output.WriteByte('\n')
+		output.WriteString("- " + formatRealtimeTaskLine(task) + "\n")
 	}
 	return strings.TrimSpace(output.String())
+}
+
+// formatRealtimeTaskLine renders one task as a work update states it.
+func formatRealtimeTaskLine(task agenttask.Task) string {
+	line := fmt.Sprintf("task_id=%s status=%s task=%q", task.ID, task.Status, limitRealtimeTaskField(task.Prompt, 300))
+	if task.Result != "" {
+		line += fmt.Sprintf(" result=%q", limitRealtimeTaskField(task.Result, 2000))
+	}
+	if task.Error != "" {
+		line += fmt.Sprintf(" error=%q", limitRealtimeTaskField(task.Error, 500))
+	}
+	if task.PendingUserAction != nil {
+		line += fmt.Sprintf(" pending_user_action={reason:%q details:%q suggested_action:%q}",
+			task.PendingUserAction.Reason,
+			task.PendingUserAction.Details,
+			task.PendingUserAction.SuggestedAction)
+	}
+	return line
 }
 
 func appendRealtimeUserMessage(manager *contextmanager.ContextManager, content string) error {
@@ -3740,11 +3756,206 @@ func appendRealtimeToolExecution(manager *contextmanager.ContextManager, call re
 	return manager.AppendMessages(pair)
 }
 
-func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextReplayer, manager *contextmanager.ContextManager, imageInput bool) error {
+// realtimeInstructionsWithSessionTime tells the provider when the session
+// opened. Realtime sessions get no per-turn state, so without it the model
+// knows neither the date nor that time has passed since earlier turns.
+func realtimeInstructionsWithSessionTime(instructions string, now time.Time, timezone string) string {
+	return strings.TrimSpace(instructions) + "\n\nThis conversation session opened at " + agent.ControllerTimeState(now, timezone) +
+		". Use get_current_time for the exact time later in the session."
+}
+
+// lastRealtimeMessageTime returns when the latest non-system message was
+// written, or the zero time when there is none.
+func lastRealtimeMessageTime(recent []messages.Message) time.Time {
+	var last time.Time
+	for _, message := range recent {
+		if message.Role != messages.MessageRoleSystem && message.Timestamp.After(last) {
+			last = message.Timestamp
+		}
+	}
+	return last
+}
+
+// realtimeReplayTimeState tells the model when the earlier conversation ended
+// and what time it is now, so it can tell a reconnect from a conversation
+// resumed later. restored reports whether those messages were replayed.
+func realtimeReplayTimeState(last, now time.Time, timezone string, restored bool, work []string) string {
+	elapsed := now.Sub(last).Round(time.Minute)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	lead := "The messages above are restored from the earlier conversation."
+	if !restored {
+		lead = "The earlier conversation above ended long ago and is shown only as an old transcript."
+	}
+	state := lead + "\n" +
+		"last_message_time: " + agent.ControllerTimeState(last, timezone) + "\n" +
+		"current_time: " + agent.ControllerTimeState(now, timezone) + "\n" +
+		"elapsed: " + elapsed.String()
+	for _, line := range work {
+		state += "\nwork: " + line
+	}
+	return util.STag("state", state)
+}
+
+// replayedRealtimeWork describes, as of now, each piece of work started in the
+// restored turns. Those turns show only that it was accepted; it may since have
+// been stopped from a screen, which tells the conversation nothing, or lost to
+// a restart, since tasks live in memory. Without this the model reports work
+// as still in progress, or reports old work as new.
+func replayedRealtimeWork(recent []messages.Message, tasks *agenttask.Manager) []string {
+	if tasks == nil {
+		return nil
+	}
+	var work []string
+	for _, message := range recent {
+		if message.Role != messages.MessageRoleToolResult {
+			continue
+		}
+		for _, result := range message.ToolResults {
+			if result.Name != realtimeCreateTaskTool {
+				continue
+			}
+			var created agenttask.Task
+			if json.Unmarshal([]byte(result.Content), &created) != nil || created.ID == "" {
+				continue
+			}
+			current, ok := tasks.Query(created.ID)
+			if !ok {
+				goal := strconv.Quote(limitRealtimeTaskField(created.Prompt, 300))
+				if realtimeTaskOutcomeRecorded(recent, created.ID) {
+					work = append(work, goal+" finished and its result was reported earlier; it is not running.")
+				} else {
+					work = append(work, goal+" stopped without a result when the device restarted; it is not running.")
+				}
+				continue
+			}
+			// The goal may have been replaced since it was created.
+			goal := strconv.Quote(limitRealtimeTaskField(current.Prompt, 300))
+			switch current.Status {
+			case agenttask.StatusCancelled:
+				work = append(work, goal+" was stopped; it is not running.")
+			case agenttask.StatusCancelling:
+				work = append(work, goal+" is being stopped; the stop is not confirmed yet.")
+			default:
+				work = append(work, goal+" status="+string(current.Status)+".")
+			}
+		}
+	}
+	return work
+}
+
+// realtimeTaskOutcomeRecorded reports whether the restored turns hold a
+// finished result for the task: a work update or a query result giving that
+// task a terminal status. Tasks live in memory, so after a restart this is the
+// only sign that the work finished. A work update for a task waiting on the
+// user is not a result.
+func realtimeTaskOutcomeRecorded(recent []messages.Message, taskID string) bool {
+	for _, message := range recent {
+		switch message.Role {
+		case messages.MessageRoleNotice:
+			for _, status := range realtimeTaskOutcomeStatuses {
+				if strings.Contains(message.Content, "- task_id="+taskID+" status="+string(status)+" ") {
+					return true
+				}
+			}
+		case messages.MessageRoleToolResult:
+			for _, task := range realtimeQueriedTaskOutcomes(message) {
+				if task.ID == taskID {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// realtimeTaskOutcomeStatuses are the statuses that give a task its result.
+var realtimeTaskOutcomeStatuses = []agenttask.Status{agenttask.StatusCompleted, agenttask.StatusFailed, agenttask.StatusCancelled}
+
+// realtimeQueriedTaskOutcomes returns the tasks that query results in the
+// message report with a terminal status.
+func realtimeQueriedTaskOutcomes(message messages.Message) []agenttask.Task {
+	var outcomes []agenttask.Task
+	for _, result := range message.ToolResults {
+		if result.Name != realtimeQueryTaskTool {
+			continue
+		}
+		var listed struct {
+			Tasks []agenttask.Task `json:"tasks"`
+		}
+		if json.Unmarshal([]byte(result.Content), &listed) != nil {
+			continue
+		}
+		for _, task := range listed.Tasks {
+			if slices.Contains(realtimeTaskOutcomeStatuses, task.Status) {
+				outcomes = append(outcomes, task)
+			}
+		}
+	}
+	return outcomes
+}
+
+// realtimeEarlierConversation renders turns from a conversation that ended
+// long ago as one marked transcript. Recall searches only compacted chunks,
+// so these turns are kept whole: anything cut or dropped here is
+// unreachable. Replayed as live turns they would steer the model into
+// resuming an old topic.
+func realtimeEarlierConversation(recent []messages.Message) string {
+	var lines []string
+	for _, message := range recent {
+		content := strings.TrimSpace(message.Content)
+		switch message.Role {
+		case messages.MessageRoleUser:
+			if content != "" {
+				lines = append(lines, "user: "+content)
+			}
+		case messages.MessageRoleAssistant:
+			if content != "" {
+				lines = append(lines, "assistant: "+content)
+			}
+		case messages.MessageRoleNotice:
+			// A work update opens with instructions for the live turn. Only its
+			// task lines belong in the transcript.
+			for _, line := range strings.Split(content, "\n") {
+				if task, ok := strings.CutPrefix(strings.TrimSpace(line), "- "); ok && strings.HasPrefix(task, "task_id=") {
+					lines = append(lines, "work update: "+task)
+				}
+			}
+		case messages.MessageRoleToolResult:
+			// A queried result may be the only copy of a task's outcome, as
+			// when the device restarted before the reply was stored. Tool
+			// calls themselves are not restored.
+			for _, task := range realtimeQueriedTaskOutcomes(message) {
+				lines = append(lines, "work update: "+formatRealtimeTaskLine(task))
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return util.STag("earlier_conversation", "An old conversation, kept for reference only. It is finished: do not resume, repeat, or report anything from it unless the user brings it up.\n"+strings.Join(lines, "\n"))
+}
+
+func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextReplayer, manager *contextmanager.ContextManager, tasks *agenttask.Manager, imageInput bool, now time.Time, timezone string) error {
 	if session == nil || manager == nil {
 		return nil
 	}
 	recent := recentRealtimeContextMessages(manager.MessageListDump().Messages, realtimeContextReplayTurns)
+	last := lastRealtimeMessageTime(recent)
+	if last.IsZero() {
+		return nil
+	}
+	work := replayedRealtimeWork(recent, tasks)
+	if now.Sub(last) > realtimeContextReplayGap {
+		var items []realtimevoice.ContextItem
+		if earlier := realtimeEarlierConversation(recent); earlier != "" {
+			items = append(items, realtimevoice.ContextItem{Type: "message", Role: "user", Content: earlier})
+		}
+		items = append(items, realtimevoice.ContextItem{Type: "message", Role: "user",
+			Content: realtimeReplayTimeState(last, now, timezone, false, work)})
+		return session.ReplayContext(ctx, items)
+	}
 	toolStates := realtimeToolStateMessages(recent)
 	// Only the latest image is replayed: earlier screens are stale, and
 	// replaying every one would grow each restored context.
@@ -3791,10 +4002,18 @@ func replayRealtimeContext(ctx context.Context, session realtimevoice.ContextRep
 			continue
 		}
 		role := "user"
-		if message.Role == messages.MessageRoleAssistant {
+		switch message.Role {
+		case messages.MessageRoleAssistant:
 			role = "assistant"
+		case messages.MessageRoleNotice:
+			// Realtime providers have no notice role. The tag keeps an
+			// earlier work update from reading as something the user said.
+			content = util.STag("notice", content)
 		}
 		items = append(items, realtimevoice.ContextItem{Type: "message", Role: role, Content: content})
+	}
+	if len(items) > 0 {
+		items = append(items, realtimevoice.ContextItem{Type: "message", Role: "user", Content: realtimeReplayTimeState(last, now, timezone, true, work)})
 	}
 	return session.ReplayContext(ctx, items)
 }

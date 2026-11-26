@@ -26,6 +26,7 @@ import (
 	"aico-agent/internal/agenttask"
 	"aico-agent/internal/logging"
 	streamcontract "aico-agent/internal/stream"
+	"aico-agent/internal/util"
 
 	langtools "github.com/tmc/langchaingo/tools"
 )
@@ -838,10 +839,11 @@ func TestRealtimeVisualToolResultHandlesImages(t *testing.T) {
 	}
 	for _, imageInput := range []bool{false, true} {
 		replayer := &recordingContextReplayer{}
-		if err := replayRealtimeContext(context.Background(), replayer, manager, imageInput); err != nil {
+		if err := replayRealtimeContext(context.Background(), replayer, manager, nil, imageInput, time.Now(), "UTC"); err != nil {
 			t.Fatal(err)
 		}
-		if len(replayer.items) != 4 || replayer.items[1].Type != "function_call_output" ||
+		// The fifth item is the closing time note.
+		if len(replayer.items) != 5 || replayer.items[1].Type != "function_call_output" ||
 			replayer.items[3].Role != "user" || !strings.Contains(replayer.items[3].Content, "app_connected: true") {
 			t.Fatalf("imageInput=%t replayed = %+v", imageInput, replayer.items)
 		}
@@ -860,12 +862,126 @@ func TestRealtimeNoticePersistsAsNoticeInUserContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := appendRealtimeNoticeMessage(manager, "background task completed"); err != nil {
+	notice := formatRealtimeTaskUpdates([]agenttask.Task{{ID: "task_news", Status: agenttask.StatusCompleted, Prompt: "read the news", Result: "three headlines"}})
+	if err := appendRealtimeNoticeMessage(manager, notice); err != nil {
 		t.Fatal(err)
 	}
 	got := manager.MessageListDump().Messages
-	if len(got) != 2 || got[1].Role != messages.MessageRoleNotice || got[1].Content != "background task completed" {
+	if len(got) != 2 || got[1].Role != messages.MessageRoleNotice || got[1].Content != notice {
 		t.Fatalf("messages = %+v, want notice role", got)
+	}
+
+	// A recent conversation is replayed with the notice kept apart from user
+	// speech, then closed with the time since it ended.
+	replayer := &recordingContextReplayer{}
+	now := got[1].Timestamp.Add(10 * time.Minute)
+	if err := replayRealtimeContext(context.Background(), replayer, manager, nil, false, now, "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	if len(replayer.items) != 2 || replayer.items[0].Content != util.STag("notice", notice) {
+		t.Fatalf("replayed = %+v, want tagged notice then time note", replayer.items)
+	}
+	if note := replayer.items[1].Content; replayer.items[1].Role != "user" || !strings.Contains(note, "elapsed: 10m0s") ||
+		!strings.Contains(note, "current_time: "+agent.ControllerTimeState(now, "UTC")) {
+		t.Fatalf("time note = %q", note)
+	}
+
+	// A conversation resumed after a long gap is not replayed as live turns:
+	// it comes back as one transcript marked old, then the time note. The
+	// work update keeps its outcome, not its instructions for the live turn.
+	replayer = &recordingContextReplayer{}
+	if err := replayRealtimeContext(context.Background(), replayer, manager, nil, false, got[1].Timestamp.Add(2*time.Hour), "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	instructions, _, _ := strings.Cut(notice, "\n")
+	if len(replayer.items) != 2 || !strings.HasPrefix(replayer.items[0].Content, "<earlier_conversation>") ||
+		!strings.Contains(replayer.items[0].Content, `work update: task_id=task_news status=completed task="read the news" result="three headlines"`) ||
+		strings.Contains(replayer.items[0].Content, instructions) ||
+		!strings.Contains(replayer.items[1].Content, "elapsed: 2h0m0s") {
+		t.Fatalf("replayed after gap = %+v, want the old transcript then the time note", replayer.items)
+	}
+}
+
+// The restored turns only show that work was accepted, so replay closes with
+// what became of each piece: lost to a restart, finished before it, stopped,
+// or still going under its current goal.
+func TestRealtimeReplayReportsCurrentWorkStatus(t *testing.T) {
+	tasks := agenttask.NewManager(&fakeBackgroundTaskRunner{started: make(chan string, 2), release: make(chan struct{})})
+	defer tasks.Close()
+	live, err := tasks.Create("check the calendar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := tasks.Create("open the files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.CancelUnfinished(stopped.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Update(live.ID, "check the calendar for tomorrow"); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := contextmanager.NewContextManager(t.TempDir(), "system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, task := range []agenttask.Task{{ID: "task_gone", Prompt: "browse the feed"}, {ID: "task_done", Prompt: "read the news"}, live, stopped} {
+		call := realtimevoice.Event{CallID: fmt.Sprintf("call_%d", i), Name: realtimeCreateTaskTool, Arguments: `{}`}
+		output, _ := json.Marshal(task)
+		if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: task.Prompt}); err != nil {
+			t.Fatal(err)
+		}
+		if err := appendRealtimeToolExecution(manager, call, string(output), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Only a terminal status for that same task records an outcome: a
+	// user-action update, or a finished query result for another task whose
+	// goal mentions this one, does not.
+	if err := appendRealtimeNoticeMessage(manager, "- task_id=task_done status=completed task=\"read the news\" result=\"three headlines\"\n"+
+		"- task_id=task_gone status=running task=\"browse the feed\" pending_user_action=\"unlock the phone\""); err != nil {
+		t.Fatal(err)
+	}
+	query := realtimevoice.Event{CallID: "call_query", Name: realtimeQueryTaskTool, Arguments: `{}`}
+	if err := appendRealtimeToolExecution(manager, query, `{"tasks":[{"id":"task_other","prompt":"inspect task_gone","status":"completed","result":"no change"}]}`, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Long turns are kept whole in the old transcript: recall cannot reach them.
+	detail := strings.Repeat("keep every detail ", 30) + "end of request"
+	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: detail}); err != nil {
+		t.Fatal(err)
+	}
+	replayer := &recordingContextReplayer{}
+	if err := replayRealtimeContext(context.Background(), replayer, manager, tasks, false, time.Now(), "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	note := replayer.items[len(replayer.items)-1].Content
+	for _, want := range []string{
+		`work: "browse the feed" stopped without a result when the device restarted`,
+		`work: "open the files" was stopped; it is not running.`,
+		`work: "read the news" finished and its result was reported earlier`,
+		`work: "check the calendar for tomorrow" status=`,
+	} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("time note = %q, want %q", note, want)
+		}
+	}
+
+	// After a long gap a queried outcome stays in the old transcript, since
+	// it may be the only copy of that result.
+	replayer = &recordingContextReplayer{}
+	if err := replayRealtimeContext(context.Background(), replayer, manager, tasks, false, time.Now().Add(2*time.Hour), "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	transcript := replayer.items[0].Content
+	for _, want := range []string{
+		`work update: task_id=task_other status=completed task="inspect task_gone" result="no change"`,
+		"user: " + detail,
+	} {
+		if !strings.Contains(transcript, want) {
+			t.Fatalf("old transcript = %q, want %q", transcript, want)
+		}
 	}
 }
 
