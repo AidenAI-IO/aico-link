@@ -23,7 +23,7 @@ func (u *deviceStateUpdater) UpdateState() map[string]string {
 		"device_type":         cfg.DeviceTypeOrDefault(),
 		"device_platform":     cfg.DevicePlatformOrDefault(),
 		"device_pointer_mode": cfg.PointerModeOrDefault(),
-		"controller_time":     controllerTimeState(promptNow(), cfg.TimezoneOrDefault()),
+		"controller_time":     ControllerTimeState(promptNow(), cfg.TimezoneOrDefault()),
 		"controller_timezone": cfg.TimezoneOrDefault(),
 	}
 }
@@ -34,10 +34,10 @@ func ConfiguredTime(now time.Time, timezone string) time.Time {
 	return configuredTime(now, timezone)
 }
 
-// controllerTimeState renders the controller clock in the configured time
+// ControllerTimeState renders the controller clock in the configured time
 // zone. It rides on every user turn's state message, so the model always sees
 // the current date and time without a date in the cached system prompt.
-func controllerTimeState(now time.Time, timezone string) string {
+func ControllerTimeState(now time.Time, timezone string) string {
 	local := configuredTime(now, timezone)
 	return local.Format("2006-01-02 15:04:05 -07:00") + " (" + local.Weekday().String() + ")"
 }
