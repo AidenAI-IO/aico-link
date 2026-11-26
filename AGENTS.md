@@ -74,8 +74,8 @@ dependencies reproduce CI.
 
 ## Repository conventions
 
-- Write all documentation, documentation updates, and user-facing technical
-  explanations in English. Keep terminology and links consistent with the
+- Write all documentation outside `docs-zh/`, documentation updates, and
+  user-facing technical explanations in English. Keep terminology and links consistent with the
   existing documentation under `docs/`.
 - `docs-zh/` is the Simplified Chinese translation of `docs/` and mirrors it
   file for file: same paths, front matter keys, heading structure, code

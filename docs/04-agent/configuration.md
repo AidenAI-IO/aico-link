@@ -89,7 +89,7 @@ creating another top-level section.
 - [Directory layout](#directory-layout)
 - [Config Web: the device config page](#config-web-the-device-config-page)
 - [Minimal config examples](#minimal-config-examples)
-- [Top-level fields](#grouped-runtime-fields)
+- [Grouped runtime fields](#grouped-runtime-fields)
 - [`[basic_settings.device]`](#basic_settingsdevice)
 - [`[basic_settings.device.hid]`](#basic_settingsdevicehid)
 - [`[model_settings.model]`](#model_settingsmodel)
