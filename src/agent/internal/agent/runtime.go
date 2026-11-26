@@ -95,10 +95,10 @@ type Runtime struct {
 	runGate                 chan struct{}
 	preemptMu               sync.Mutex
 	activeCancel            context.CancelCauseFunc
+	pendingSessionClears    int // guarded by preemptMu
 	preemptHooks            []func()
 	lastPreemptTime         time.Time
-	userContextResetMu      sync.Mutex
-	userContextResetHook    func()
+	userContextResetHook    func(context.Context) error
 	userContextResetGen     uint64
 	storage                 *StorageManager
 	screenState             *screen.ScreenState
@@ -898,6 +898,10 @@ func (r *Runtime) Preempt() {
 		r.activeCancel(errRunPreempted)
 		r.lastPreemptTime = time.Now()
 	}
+	r.runPreemptHooksLocked()
+}
+
+func (r *Runtime) runPreemptHooksLocked() {
 	for i, hook := range r.preemptHooks {
 		func() {
 			defer func() {
@@ -1028,6 +1032,11 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 		runCtx = WithUserActionHandler(runCtx, req.UserActionHandler)
 	}
 	r.preemptMu.Lock()
+	if r.pendingSessionClears > 0 {
+		r.preemptMu.Unlock()
+		runCancel(nil)
+		return RunResult{}, context.Canceled
+	}
 	r.activeCancel = runCancel
 	r.preemptMu.Unlock()
 	defer func() {
@@ -1781,11 +1790,51 @@ func (r *Runtime) effectiveContextWindow() int {
 	return 0
 }
 
-func (r *Runtime) ClearMemory(ctx context.Context) error {
+// lockForSessionClear stops the active run and waits for it to finish writing
+// before allowing session rotation. A run that acquires the gate while a clear
+// is pending must exit without starting work on the old session.
+func (r *Runtime) lockForSessionClear(ctx context.Context) (func(), error) {
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.preemptMu.Lock()
+	r.pendingSessionClears++
+	if r.activeCancel != nil {
+		r.activeCancel(context.Canceled)
+	}
+	r.runPreemptHooksLocked()
+	resetUserContext := r.userContextResetHook
+	r.preemptMu.Unlock()
+
+	releaseClear := func() {
+		r.preemptMu.Lock()
+		r.pendingSessionClears--
+		r.preemptMu.Unlock()
+	}
+	if resetUserContext != nil {
+		if err := resetUserContext(ctx); err != nil {
+			releaseClear()
+			return nil, err
+		}
+	}
+	unlock, err := r.lockRun(ctx)
+	if err != nil {
+		releaseClear()
+		return nil, err
+	}
+	return func() {
+		releaseClear()
+		unlock()
+	}, nil
+}
+
+func (r *Runtime) ClearMemory(ctx context.Context) error {
+	unlock, err := r.lockForSessionClear(ctx)
+	if err != nil {
 		return err
 	}
-	r.resetActiveUserContext()
+	defer unlock()
+
 	userSystemPrompt, hasUserContext, err := r.currentUserContextSystemPrompt()
 	if err != nil {
 		return err
@@ -1808,36 +1857,24 @@ func (r *Runtime) ClearMemory(ctx context.Context) error {
 }
 
 // RegisterUserContextResetHook installs the active realtime-session reset
-// callback. Clearing conversation history cancels that live session so it
-// cannot continue writing to the previous user context after rotation.
-func (r *Runtime) RegisterUserContextResetHook(hook func()) func() {
-	if r == nil {
-		return func() {}
+// callback. The hook stops the session and waits for its final context writes
+// before clearing history, or returns an error if the clear request expires.
+func (r *Runtime) RegisterUserContextResetHook(hook func(context.Context) error) (func(), error) {
+	r.preemptMu.Lock()
+	defer r.preemptMu.Unlock()
+	if r.pendingSessionClears > 0 {
+		return nil, context.Canceled
 	}
-	r.userContextResetMu.Lock()
 	r.userContextResetGen++
 	generation := r.userContextResetGen
 	r.userContextResetHook = hook
-	r.userContextResetMu.Unlock()
 	return func() {
-		r.userContextResetMu.Lock()
+		r.preemptMu.Lock()
+		defer r.preemptMu.Unlock()
 		if r.userContextResetGen == generation {
 			r.userContextResetHook = nil
 		}
-		r.userContextResetMu.Unlock()
-	}
-}
-
-func (r *Runtime) resetActiveUserContext() {
-	if r == nil {
-		return
-	}
-	r.userContextResetMu.Lock()
-	hook := r.userContextResetHook
-	r.userContextResetMu.Unlock()
-	if hook != nil {
-		hook()
-	}
+	}, nil
 }
 
 func (r *Runtime) currentUserContextSystemPrompt() (string, bool, error) {
@@ -1903,7 +1940,12 @@ func (r *Runtime) reloadSkillsIfDirty() error {
 }
 
 func (r *Runtime) ClearAllMemory(ctx context.Context) error {
-	r.resetActiveUserContext()
+	unlock, err := r.lockForSessionClear(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	if err := r.memories.ClearAll(ctx, "default"); err != nil {
 		return err
 	}

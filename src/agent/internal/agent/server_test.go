@@ -3448,39 +3448,86 @@ func TestContextPageUsesSafeAttachmentHandlers(t *testing.T) {
 	}
 }
 
-func TestServerHandleClearRemovesRuntimeMemory(t *testing.T) {
-	configDir := t.TempDir()
-	memoryManager := NewMemoryManager(configDir)
-	// ClearMemory rotates the user context, so verify a context exists to rotate.
-	userFolder := agentpath.UserContextManagerSessionFolder(configDir)
-	if _, err := contextmanager.NewContextManager(userFolder, "system"); err != nil {
-		t.Fatalf("NewContextManager() error = %v", err)
-	}
-	oldSessionID := contextmanager.CurrentSessionID(userFolder)
-	if oldSessionID == "" {
-		t.Fatal("expected a current session before clear")
-	}
+func TestServerClearStopsRunsBeforeResettingSession(t *testing.T) {
+	for _, path := range []string{"/api/clear", "/api/clear-all"} {
+		t.Run(path, func(t *testing.T) {
+			configDir := t.TempDir()
+			userFolder := agentpath.UserContextManagerSessionFolder(configDir)
+			if _, err := contextmanager.NewContextManager(userFolder, "system"); err != nil {
+				t.Fatal(err)
+			}
+			oldUserSessionID := contextmanager.CurrentSessionID(userFolder)
+			model := &blockingFirstCallModel{firstCallStarted: make(chan struct{})}
+			runtime := NewRuntimeWithDeps(
+				withTestConfigDir(t, Config{ConfigDir: configDir, Model: ModelConfig{Provider: "fake"}}),
+				&testModelResolver{model: model},
+				NewMemoryManager(configDir),
+				NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
+				NewSkillIndex(),
+			)
+			server := &Server{logger: newTestLogger(), runtime: runtime}
+			handler := server.handleClear
+			if path == "/api/clear-all" {
+				handler = server.handleClearAll
+			}
 
-	server := &Server{logger: newTestLogger(),
-		runtime: NewRuntimeWithDeps(
-			withTestConfigDir(t, Config{ConfigDir: configDir, Model: ModelConfig{Provider: "fake"}}),
-			&testModelResolver{model: &scriptedModel{}},
-			memoryManager,
-			NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
-			NewSkillIndex(),
-		),
-	}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			chatCtx, cancelChat := context.WithCancel(ctx)
+			defer cancelChat()
+			if !server.registerActiveRun("waiting-chat", cancelChat) {
+				t.Fatal("failed to register chat request")
+			}
+			defer server.unregisterActiveRun("waiting-chat")
+			backendFolder := agentpath.ContextManagerSessionFolder(configDir)
+			var sessionAtRunCompletion string
+			runDone := make(chan error, 1)
+			go func() {
+				_, err := runtime.Run(ctx, RunRequest{
+					Input: "pending task",
+					OnRunComplete: func() {
+						sessionAtRunCompletion = contextmanager.CurrentSessionID(backendFolder)
+					},
+				})
+				runDone <- err
+			}()
+			select {
+			case <-model.firstCallStarted:
+			case <-ctx.Done():
+				t.Fatal("backend run did not reach the model")
+			}
+			oldBackendSessionID := contextmanager.CurrentSessionID(backendFolder)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/clear", nil)
-	rec := httptest.NewRecorder()
-	server.handleClear(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
-	}
-	newSessionID := contextmanager.CurrentSessionID(userFolder)
-	if newSessionID == "" || newSessionID == oldSessionID {
-		t.Fatalf("user context session not rotated: old=%q new=%q", oldSessionID, newSessionID)
+			rec := httptest.NewRecorder()
+			handler(rec, httptest.NewRequestWithContext(ctx, http.MethodPost, path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("clear returned status %d: %s", rec.Code, rec.Body.String())
+			}
+			if chatCtx.Err() != context.Canceled {
+				t.Fatal("clear did not cancel the registered chat request")
+			}
+			select {
+			case err := <-runDone:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("backend run returned %v, want context.Canceled", err)
+				}
+			case <-ctx.Done():
+				t.Fatal("clear did not stop the backend run")
+			}
+			if oldBackendSessionID == "" || sessionAtRunCompletion != oldBackendSessionID {
+				t.Fatalf("backend session changed before run cleanup: old=%q cleanup=%q", oldBackendSessionID, sessionAtRunCompletion)
+			}
+			if newID := contextmanager.CurrentSessionID(backendFolder); newID == "" || newID == oldBackendSessionID {
+				t.Fatalf("backend session did not rotate: old=%q new=%q", oldBackendSessionID, newID)
+			}
+			newUserSessionID := contextmanager.CurrentSessionID(userFolder)
+			if path == "/api/clear" && (newUserSessionID == "" || newUserSessionID == oldUserSessionID) {
+				t.Fatalf("user session did not rotate: old=%q new=%q", oldUserSessionID, newUserSessionID)
+			}
+			if path == "/api/clear-all" && newUserSessionID != "" {
+				t.Fatalf("user session was not removed: %q", newUserSessionID)
+			}
+		})
 	}
 }
 

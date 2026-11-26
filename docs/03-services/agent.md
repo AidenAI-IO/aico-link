@@ -40,6 +40,12 @@ voice start is refused. Typed chat keeps working and replies with text. The
 setting persists across configuration reloads, and `realtime` mode is not
 affected. The Agent logs one startup line when the flag is off.
 
+## Clearing the session
+
+In the Agent Web UI, **Clear session** and **Clear session & memory** stop
+active agent work before resetting the conversation. **Clear session & memory**
+also deletes long-term memory and the user profile.
+
 ## Task history
 
 In the Agent Web UI, open **Task history** under **Background tasks**.
