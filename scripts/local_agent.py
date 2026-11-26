@@ -21,6 +21,8 @@ import webbrowser
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# Allow the initial IME download (30s) and installation (120s), plus ADB setup.
+ADB_READY_TIMEOUT_SEC = 180
 MODES = {
     "android": ("Android", "local-android", 8080, 8000, 8899, 18083),
     "iphone-mirroring": ("iOS", "iphone-mirroring", 8081, 8001, 8897, 18084),
@@ -324,7 +326,8 @@ def launch(args, stopped):
                 except (OSError, ValueError):
                     raise RuntimeError("Existing bridge is unavailable; restore it before using --bridge-url") from None
             else:
-                health = processes.wait_http(endpoint + "/health").get("data", {})
+                timeout = ADB_READY_TIMEOUT_SEC if args.mode == "android" else 90
+                health = processes.wait_http(endpoint + "/health", timeout=timeout).get("data", {})
             expected = {"android": "adb_android", "iphone-mirroring": "iphone_mirroring", "ios": "ios_device"}[args.mode]
             if health.get("bridge_type") != expected:
                 raise RuntimeError("Bridge identity does not match the selected mode")

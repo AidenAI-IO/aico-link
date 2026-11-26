@@ -92,9 +92,10 @@ func TestNativeTextEnterTextNoIMEAndNoReplay(t *testing.T) {
 }
 
 func TestNativeTextOpenAppSearchAvoidsPhysicalKeys(t *testing.T) {
-	for _, mode := range []string{"ascii", "unicode", "spaces", "shorter_term", "partial_failure", "unverified", "probe_failure", "missing_field", "locate_failure"} {
+	for _, mode := range []string{"ascii", "unicode", "spaces", "shorter_term", "partial_failure", "unverified", "verification_failure", "probe_failure", "missing_field", "locate_failure"} {
 		t.Run(mode, func(t *testing.T) {
 			query, wantText, wantCalls := "WeChat", "WeChat", 1
+			wantVLMCalls := 2 // Locate the field, then verify the inserted text.
 			sink := &nativeInsertionStub{supported: true}
 			vision := &nativeVerificationStub{analysis: textInputScreenAnalysis{TargetMatched: true}}
 			wantOK := true
@@ -105,17 +106,24 @@ func TestNativeTextOpenAppSearchAvoidsPhysicalKeys(t *testing.T) {
 				query, wantText = "App Store", "App Store"
 			case "shorter_term":
 				query, wantText, wantCalls = "Aico Bridge", "Aico", 2
+				wantVLMCalls = 4
 			case "partial_failure":
 				sink.err = errors.New("WDA timed out after delivery")
 				wantOK = false
+				wantVLMCalls = 1
 			case "unverified":
 				vision.analysis.TargetMatched = false
+				wantOK = false
+			case "verification_failure":
+				vision.err = errors.New("model unavailable")
 				wantOK = false
 			case "probe_failure":
 				sink.probeErr = errors.New("WDA capabilities unavailable")
 				wantOK, wantCalls = false, 0
+				wantVLMCalls = 0
 			case "missing_field", "locate_failure":
 				wantOK, wantCalls = false, 0
+				wantVLMCalls = 1
 			}
 			keyboard := &recordingTextInputTool{name: "keyboard_text", out: "error: WDA does not support physical text keys"}
 			keys := &recordingTextInputTool{name: "keyboard_tap", out: "error: WDA does not support modifier chords"}
@@ -131,14 +139,14 @@ func TestNativeTextOpenAppSearchAvoidsPhysicalKeys(t *testing.T) {
 			focus := focusPointArgs{X: 500, Y: 572}
 			cfg := appSearchOpenFlowConfig{
 				hw: hw, vision: vision, entryTool: entry, platform: "ios", searchTerm: query, sleep: testNoWaitSleep,
-				checkSearchFieldFn: func(context.Context, screenshotResult, string) (searchFieldCheck, error) {
+				checkSearchFieldFn: func(context.Context, screenshotResult, string) (searchFieldCheck, int, error) {
 					if mode == "missing_field" {
-						return searchFieldCheck{}, nil
+						return searchFieldCheck{}, 1, nil
 					}
 					if mode == "locate_failure" {
-						return searchFieldCheck{}, errors.New("search field detection failed")
+						return searchFieldCheck{}, 1, errors.New("search field detection failed")
 					}
-					return searchFieldCheck{SearchField: &focus}, nil
+					return searchFieldCheck{SearchField: &focus}, 1, nil
 				},
 				findAppTapFn: func(_ context.Context, _ screenshotResult, term string) (bridgeSearchResult, error) {
 					lookups++
@@ -151,6 +159,9 @@ func TestNativeTextOpenAppSearchAvoidsPhysicalKeys(t *testing.T) {
 			out, err := runAppSearchOpenFlow(context.Background(), cfg)
 			if (err != nil) == wantOK || out.Opened != wantOK {
 				t.Fatalf("app search = %+v, %v", out, err)
+			}
+			if out.VLMCalls != wantVLMCalls {
+				t.Fatalf("vlm_calls = %d, want %d", out.VLMCalls, wantVLMCalls)
 			}
 			if sink.calls != wantCalls || (wantCalls > 0 && (sink.text != wantText || !sink.replace)) {
 				t.Fatalf("native insertion = %+v", sink)
@@ -177,7 +188,7 @@ func TestNativeTextOpenAppSearchAvoidsPhysicalKeys(t *testing.T) {
 			if !wantOK && lookups != 0 {
 				t.Fatalf("continued search after native input failure: %+v", out)
 			}
-			if mode == "partial_failure" || mode == "unverified" {
+			if mode == "partial_failure" || mode == "unverified" || mode == "verification_failure" {
 				if !strings.Contains(err.Error(), "Text may already be present") {
 					t.Fatalf("missing inspection guidance: %v", err)
 				}
@@ -198,9 +209,9 @@ func TestNativeTextAppSearchKeepsQuickQueryWhenUnsupported(t *testing.T) {
 			vision := &nativeVerificationStub{}
 			engine := newTextInputEngineWithSleep(*hw, vision, testNoWaitSleep)
 			cfg := appSearchOpenFlowConfig{hw: hw, platform: "ios", entryTool: &EnterTextTool{engine: engine}}
-			entered, err := enterSearchQuery(context.Background(), cfg, engine, "WeChat", false, true)
-			if err != nil || entered != searchQueryQuick || len(keyboard.calls) != 1 || len(keys.calls) != 2 {
-				t.Fatalf("entry=%v err=%v keyboard=%v keys=%v", entered, err, keyboard.calls, keys.calls)
+			entered, calls, err := enterSearchQuery(context.Background(), cfg, engine, "WeChat", false, true)
+			if err != nil || entered != searchQueryQuick || calls != 0 || len(keyboard.calls) != 1 || len(keys.calls) != 2 {
+				t.Fatalf("entry=%v calls=%d err=%v keyboard=%v keys=%v", entered, calls, err, keyboard.calls, keys.calls)
 			}
 		})
 	}

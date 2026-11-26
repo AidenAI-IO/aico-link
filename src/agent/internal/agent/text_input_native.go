@@ -55,12 +55,12 @@ func (e *textInputEngine) runNativeTextInsertionWithFocus(ctx context.Context, a
 		return textInputResult{Reason: err.Error(), TextMayBeInserted: true}, true
 	}
 	args.VerifyTextSuffix = false
-	analysis, _, err := e.analyzeScreen(ctx, e.hw.platform(), args, nil)
+	analysis, calls, err := e.analyzeScreen(ctx, e.hw.platform(), args, nil)
 	if err != nil {
-		return textInputResult{Reason: fmt.Sprintf("text was sent but verification failed: %v", err), TextMayBeInserted: true}, true
+		return textInputResult{VLMCalls: calls, Reason: fmt.Sprintf("text was sent but verification failed: %v", err), TextMayBeInserted: true}, true
 	}
 	committed, fieldText := evaluateFieldCommit(analysis)
 	committed = committed && !analysis.CompositionPending
-	return textInputResult{OK: committed, Committed: committed, FieldText: fieldText,
+	return textInputResult{VLMCalls: calls, OK: committed, Committed: committed, FieldText: fieldText,
 		TextMayBeInserted: true, Reason: "native text was sent; inspect the field before retrying"}, true
 }

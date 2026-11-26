@@ -178,7 +178,7 @@ type appSearchOpenFlowConfig struct {
 	checkSearchOpenFn func(context.Context, screenshotResult) (androidSearchCheck, error)
 	searchEntries     *androidSearchEntryStore
 	// checkSearchFieldFn replaces the empty-search-field check in tests.
-	checkSearchFieldFn func(context.Context, screenshotResult, string) (searchFieldCheck, error)
+	checkSearchFieldFn func(context.Context, screenshotResult, string) (searchFieldCheck, int, error)
 	// checkPopupFn replaces the after-open dialog check in tests.
 	checkPopupFn func(context.Context, screenshotResult, string) (popupCheck, error)
 }
@@ -299,7 +299,8 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 				return result, err
 			}
 		}
-		entered, err := enterSearchQuery(ctx, cfg, engine, term, index > 0 && !previousQuick, attempts[index].allowQuick)
+		entered, calls, err := enterSearchQuery(ctx, cfg, engine, term, index > 0 && !previousQuick, attempts[index].allowQuick)
+		result.VLMCalls += calls
 		quick := entered == searchQueryQuick
 		previousQuick = quick
 		if err != nil {
@@ -437,7 +438,8 @@ const (
 	searchQueryPasted
 )
 
-func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, term string, clearFirst, allowQuick bool) (searchQueryEntry, error) {
+func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, term string, clearFirst, allowQuick bool) (searchQueryEntry, int, error) {
+	vlmCalls := 0
 	// Native bridges replace the focused query directly. Probe before any
 	// clipboard, Select All, or quick pinyin input: WDA cannot execute those
 	// physical-key shortcuts. A failed insertion must not replay via HID.
@@ -447,7 +449,8 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *
 	}, func(ctx context.Context) (focusPointArgs, error) {
 		// Spotlight can place its field above the keyboard instead of at
 		// the top. A fixed tap can open a search result before text is sent.
-		field, _, err := checkSearchField(ctx, cfg, engine)
+		field, calls, err := checkSearchField(ctx, cfg, engine)
+		vlmCalls += calls
 		if err != nil {
 			return focusPointArgs{}, err
 		}
@@ -456,42 +459,43 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *
 		}
 		return *field.SearchField, nil
 	}); handled {
+		vlmCalls += result.VLMCalls
 		if !result.OK {
 			logging.Warnf("agent", "app_search", "native query input failed: %s", result.Reason)
-			return searchQueryTyped, fmt.Errorf("enter search query: %s", enterTextFailureSuggestion(result))
+			return searchQueryTyped, vlmCalls, fmt.Errorf("enter search query: %s", enterTextFailureSuggestion(result))
 		}
 		logging.Infof("agent", "app_search", "query input route=native_text")
-		return searchQueryTyped, nil
+		return searchQueryTyped, vlmCalls, nil
 	}
 	if clearFirst {
 		if err := engine.clearField(ctx, cfg.resolvedPlatform()); err != nil {
-			return searchQueryTyped, err
+			return searchQueryTyped, vlmCalls, err
 		}
 	}
 	route, err := pasteSearchQuery(ctx, cfg, term)
 	attempted := route != ""
 	if err := ctx.Err(); err != nil {
-		return searchQueryTyped, err
+		return searchQueryTyped, vlmCalls, err
 	}
 	if attempted && err == nil {
 		logging.Infof("agent", "app_search", "query input route=%s", route)
-		return searchQueryPasted, nil
+		return searchQueryPasted, vlmCalls, nil
 	}
 	if attempted {
 		logging.Infof("agent", "app_search", "query input route=local_hid clipboard_error=%v", err)
 		// A failed paste may have inserted text. Clear it without Escape,
 		// which could dismiss Spotlight, before the existing local input path.
 		if err := clearSearchQueryText(ctx, engine); err != nil {
-			return searchQueryTyped, err
+			return searchQueryTyped, vlmCalls, err
 		}
 	}
 	if allowQuick {
 		typed, err := typeQuickSearchQuery(ctx, cfg, engine, term)
 		if err != nil {
-			return searchQueryTyped, err
+			return searchQueryTyped, vlmCalls, err
 		}
 		if typed {
-			return searchQueryQuick, nil
+			return searchQueryQuick, vlmCalls, nil
 		}
 	}
 
@@ -501,16 +505,16 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *
 	}
 	out, err := cfg.entryTool.enterTextInner(ctx, jsonString(input), enterTextOptions{disableBridge: true, replaceField: true})
 	if err != nil {
-		return searchQueryTyped, err
+		return searchQueryTyped, vlmCalls, err
 	}
 	var result enterTextToolResult
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		return searchQueryTyped, fmt.Errorf("parse search entry result: %w", err)
+		return searchQueryTyped, vlmCalls, fmt.Errorf("parse search entry result: %w", err)
 	}
 	if !result.OK {
-		return searchQueryTyped, &searchQueryUnverifiedError{suggestion: strings.TrimSpace(result.Suggestion)}
+		return searchQueryTyped, vlmCalls, &searchQueryUnverifiedError{suggestion: strings.TrimSpace(result.Suggestion)}
 	}
-	return searchQueryTyped, nil
+	return searchQueryTyped, vlmCalls, nil
 }
 
 // searchFieldCheck identifies the visible system search field and its state.
@@ -564,8 +568,7 @@ func checkSearchField(ctx context.Context, cfg appSearchOpenFlowConfig, engine *
 		return searchFieldCheck{}, 0, err
 	}
 	if cfg.checkSearchFieldFn != nil {
-		check, err := cfg.checkSearchFieldFn(ctx, shot, cfg.resolvedPlatform())
-		return check, 0, err
+		return cfg.checkSearchFieldFn(ctx, shot, cfg.resolvedPlatform())
 	}
 	modelVision, ok := cfg.vision.(*llmTextInputVision)
 	if !ok || modelVision == nil {
