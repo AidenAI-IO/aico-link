@@ -9,7 +9,7 @@ width=${FRAME_SERVICE_WIDTH:-1920}
 height=${FRAME_SERVICE_HEIGHT:-1080}
 warmup_frames=${FRAME_SERVICE_WARMUP_FRAMES:-}
 allow_uniform_frames=${FRAME_SERVICE_ALLOW_UNIFORM_FRAMES:-1}
-pixel_format=${FRAME_SERVICE_PIXEL_FORMAT:-nv12}
+pixel_format=${FRAME_SERVICE_PIXEL_FORMAT:-auto}
 requested_subdev=${FRAME_SERVICE_SUBDEV:-}
 requested_force=${FRAME_SERVICE_FORCE_TRIGGER:-auto}
 requested_edid=${FRAME_SERVICE_EDID:-auto}
@@ -78,7 +78,7 @@ case "${requested_force}" in
     *) echo "Invalid FRAME_SERVICE_FORCE_TRIGGER=${requested_force}" >&2; exit 1 ;;
 esac
 case "${pixel_format}" in
-    nv12|nv16|uyvy|yuyv) ;;
+    auto|nv16-to-nv12|nv12|nv16|uyvy|yuyv) ;;
     *) echo "Invalid FRAME_SERVICE_PIXEL_FORMAT=${pixel_format}" >&2; exit 1 ;;
 esac
 case "${allow_uniform_frames}" in

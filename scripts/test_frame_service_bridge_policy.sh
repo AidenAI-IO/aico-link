@@ -10,12 +10,10 @@ frame_source="$repo_root/src/frame_camera_capture_source.cpp"
 
 # Debian is the maintained deployment target. Buildroot overlays are outside
 # the supported solution and intentionally are not asserted here.
-grep -q '^FRAME_SERVICE_PIXEL_FORMAT=nv12$' "$debian_config"
 grep -q '^FRAME_SERVICE_JPEG_ENCODER=hardware$' "$debian_config"
 grep -q '^# FRAME_SERVICE_VENC_CHANNEL=63$' "$debian_config"
 grep -q '^FRAME_SERVICE_WARMUP_FRAMES=$' "$debian_config"
 grep -q '^FRAME_SERVICE_ALLOW_UNIFORM_FRAMES=1$' "$debian_config"
-grep -q -- 'FRAME_SERVICE_PIXEL_FORMAT:-nv12' "$debian_start"
 grep -q -- '--pixel-format "${pixel_format}"' "$debian_start"
 grep -q '^configured_keep_streamon() {' "$debian_start"
 grep -q -- '--keep-streamon' "$debian_start"
@@ -47,11 +45,11 @@ SOCKET_PATH="$mock_root/frame.sock" \
 FRAME_SERVICE_SUBDEV= \
 FRAME_SERVICE_FORCE_TRIGGER=auto \
 FRAME_SERVICE_EDID=auto \
-FRAME_SERVICE_PIXEL_FORMAT=nv12 \
+FRAME_SERVICE_PIXEL_FORMAT= \
     "$debian_start"
 grep -q -- '--auto-subdev' "$mock_root/args"
 grep -q -- '--no-force-trigger' "$mock_root/args"
-grep -q -- '--pixel-format nv12' "$mock_root/args"
+grep -q -- '--pixel-format auto' "$mock_root/args"
 grep -q -- '--pause-between-captures' "$mock_root/args"
 grep -q -- '--allow-uniform-frames' "$mock_root/args"
 

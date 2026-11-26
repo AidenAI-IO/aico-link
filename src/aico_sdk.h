@@ -192,6 +192,10 @@ public:
     // Get a single frame with timeout and copy it into a caller-owned buffer.
     bool capture_frame_timeout(VideoFrame& frame, std::vector<uint8_t>& buffer, int timeout_ms);
 
+    // For NV16 capture, optionally downsample directly from the mapped buffer.
+    bool capture_frame_timeout(VideoFrame& frame, std::vector<uint8_t>& buffer, int timeout_ms,
+                               bool nv16_to_nv12);
+
     // Dequeue and release a single frame without copying it.
     bool discard_frame_timeout(int timeout_ms);
 

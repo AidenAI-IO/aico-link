@@ -34,9 +34,7 @@ struct Options {
         // transitional output after STREAMON without rejecting valid content.
         camera.reject_uniform_frames = false;
         device_name = camera.device_name;
-        // C1 keeps the general SDK/direct-capture default compatible while
-        // making the frame service's capture boundary native NV12.
-        pixel_format = "nv12";
+        pixel_format = "auto";
         subdev_device = camera.subdev_device;
         sync();
     }

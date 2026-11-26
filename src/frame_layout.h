@@ -24,13 +24,16 @@ bool capture_payload_bounds(size_t mapped_length,
                             uint32_t size_image,
                             CapturePayloadBounds* bounds);
 
-// Convert a single-plane NV12 buffer with an arbitrary row stride into the
+enum class ChromaLayout { NV12, NV16 };
+
+// Convert a single-plane NV12 or NV16 buffer with an arbitrary row stride into the
 // tight layout used by frame_service and its raw-frame consumers.
 bool compact_nv12(const uint8_t* source,
                   size_t source_size,
                   uint32_t width,
                   uint32_t height,
                   uint32_t stride,
-                  std::vector<uint8_t>* compact);
+                  std::vector<uint8_t>* compact,
+                  ChromaLayout source_layout = ChromaLayout::NV12);
 
 }  // namespace aico

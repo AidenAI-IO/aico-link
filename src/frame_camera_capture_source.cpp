@@ -1,6 +1,7 @@
 #include "frame_camera_capture_source.h"
 #include "aico_log.h"
 #include "rk628_hdmi_mode.h"
+#include "frame_service_defaults.h"
 #include <chrono>
 #include <dirent.h>
 #include <errno.h>
@@ -34,7 +35,8 @@ static std::string subdev_sysfs_device_path(const std::string& subdev_device) {
 FrameCameraCaptureSource::FrameCameraCaptureSource(const CameraConfig& config)
     : config_(config),
       device_name_(config.device_name ? config.device_name : "/dev/video0"),
-      pixel_format_(config.pixel_format ? config.pixel_format : "nv12"),
+      requested_format_(config.pixel_format ? config.pixel_format : "auto"),
+      downsample_nv16_(false),
       subdev_device_(config.subdev_device && strcmp(config.subdev_device, "auto") != 0
                          ? config.subdev_device : ""),
       edid_path_(config.edid_path ? config.edid_path : ""),
@@ -96,7 +98,7 @@ std::string FrameCameraCaptureSource::detect_hdmi_subdev(std::string* name) {
 
 void FrameCameraCaptureSource::sync_config_strings() {
     config_.device_name = device_name_.c_str();
-    config_.pixel_format = pixel_format_.c_str();
+    config_.pixel_format = downsample_nv16_ ? "nv16" : output_format_.c_str();
     config_.subdev_device = auto_subdev_ && subdev_device_.empty()
         ? nullptr : subdev_device_.c_str();
     config_.edid_path = edid_path_.empty() ? nullptr : edid_path_.c_str();
@@ -107,10 +109,10 @@ bool FrameCameraCaptureSource::open() {
     const std::chrono::steady_clock::time_point open_started =
         std::chrono::steady_clock::now();
     AICO_LOG_INFO("camera_source", "open_started",
-                   "attempt=%llu video_device=%s configured_subdev=%s auto_subdev=%d pixel_format=%s width=%d height=%d",
+                   "attempt=%llu video_device=%s configured_subdev=%s auto_subdev=%d requested_format=%s width=%d height=%d",
                    static_cast<unsigned long long>(open_attempt),
                    device_name_.c_str(), subdev_device_.c_str(),
-                   auto_subdev_ ? 1 : 0, pixel_format_.c_str(),
+                   auto_subdev_ ? 1 : 0, requested_format_.c_str(),
                    config_.width, config_.height);
     std::string bridge_name;
     config_.allow_edid_fallback = !periodic_force_enabled_;
@@ -149,6 +151,9 @@ bool FrameCameraCaptureSource::open() {
             fclose(file);
         }
     }
+    const std::string mode = frame_service_capture_mode(requested_format_, bridge_name);
+    downsample_nv16_ = mode == "nv16-to-nv12";
+    output_format_ = downsample_nv16_ ? "nv12" : mode;
     const std::string bridge_sysfs_device =
         subdev_sysfs_device_path(subdev_device_);
     AICO_LOG_INFO("camera_source", "bridge_selected",
@@ -283,9 +288,9 @@ bool FrameCameraCaptureSource::open() {
     }
 
     AICO_LOG_INFO("camera_source", "camera_init_started",
-                   "attempt=%llu video_device=%s subdev=%s",
+                   "attempt=%llu video_device=%s subdev=%s pixel_format=%s",
                    static_cast<unsigned long long>(open_attempt),
-                   device_name_.c_str(), subdev_device_.c_str());
+                   device_name_.c_str(), subdev_device_.c_str(), config_.pixel_format);
     errno = 0;
     const bool opened = camera_.init(config_);
     const int init_errno = opened ? 0 : errno;
@@ -338,36 +343,36 @@ bool FrameCameraCaptureSource::capture(CapturedFrame* frame) {
 
     VideoFrame video_frame{};
     std::vector<uint8_t> buffer;
-    if (!camera_.capture_frame_timeout(video_frame, buffer, 500)) {
+    if (!camera_.capture_frame_timeout(video_frame, buffer, 500, downsample_nv16_)) {
         return false;
     }
 
     frame->metadata.capture_ts_ns = video_frame.timestamp * 1000ULL;
     frame->metadata.width = video_frame.width;
     frame->metadata.height = video_frame.height;
-    frame->metadata.pixel_format = pixel_format_;
+    frame->metadata.pixel_format = output_format_;
     frame->metadata.bytes = buffer.size();
-    if (pixel_format_ == "nv12") {
+    if (output_format_ == "nv12") {
         frame->metadata.stride = video_frame.width;
     } else if (video_frame.stride > 0) {
         frame->metadata.stride = video_frame.stride;
-    } else if (pixel_format_ == "uyvy" || pixel_format_ == "yuyv" || pixel_format_ == "nv16") {
+    } else if (output_format_ == "uyvy" || output_format_ == "yuyv" || output_format_ == "nv16") {
         frame->metadata.stride = video_frame.width * 2U;
     } else {
         frame->metadata.stride = video_frame.width;
     }
     frame->metadata.planes.clear();
-    if (pixel_format_ == "nv12" || pixel_format_ == "nv16") {
+    if (output_format_ == "nv12" || output_format_ == "nv16") {
         const uint64_t y_bytes_u64 = static_cast<uint64_t>(video_frame.width) *
             video_frame.height;
-        const uint64_t uv_bytes_u64 = pixel_format_ == "nv12"
+        const uint64_t uv_bytes_u64 = output_format_ == "nv12"
             ? y_bytes_u64 / 2U : y_bytes_u64;
         if (y_bytes_u64 > std::numeric_limits<uint32_t>::max() ||
             uv_bytes_u64 > std::numeric_limits<uint32_t>::max() ||
             y_bytes_u64 + uv_bytes_u64 > buffer.size()) {
             AICO_LOG_ERROR("camera", "frame_layout_incomplete",
                             "format=%s width=%u height=%u bytes=%zu expected=%llu",
-                            pixel_format_.c_str(), video_frame.width, video_frame.height,
+                            output_format_.c_str(), video_frame.width, video_frame.height,
                             buffer.size(),
                             static_cast<unsigned long long>(y_bytes_u64 + uv_bytes_u64));
             return false;
