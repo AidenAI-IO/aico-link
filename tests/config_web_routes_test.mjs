@@ -38,43 +38,19 @@ const rootCMake = await fs.readFile(path.join(repositoryRoot, 'CMakeLists.txt'),
 assert.equal(rootCMake.includes('add_executable(config_web'), false, 'legacy C++ config_web target returned');
 
 // Every script the settings pages and the LLM log viewer ship.
-const webAssets = path.join(repositoryRoot, 'src/config_web/web/assets/js');
+const webAssets = path.join(repositoryRoot, 'src/config_web/src');
 async function scripts(dir) {
   const entries = await fs.readdir(dir, {withFileTypes: true});
   const nested = await Promise.all(entries.map((entry) => {
     const full = path.join(dir, entry.name);
     return entry.isDirectory() ? scripts(full) : [full];
   }));
-  return nested.flat().filter((file) => file.endsWith('.js'));
+  return nested.flat().filter((file) => /\.(ts|tsx)$/.test(file));
 }
 const sources = await Promise.all((await scripts(webAssets)).map((file) => fs.readFile(file, 'utf8')));
 const bundle = sources.join('\n');
 
-for (const route of [
-  '/api/config',
-  '/api/config/schema',
-  '/api/config/application',
-  '/api/config/locale',
-  '/api/config/test',
-  '/api/models?',
-  '/api/storage/status',
-  '/api/storage/format',
-  '/api/storage/eject',
-  '/api/device/snapshot',
-  '/api/device/reboot',
-  '/api/network/wifi/scan',
-  '/api/network/wifi/connection',
-  '/api/ota/status',
-  '/api/ota/updates',
-  '/api/logs/llm',
-  '/api/logs/support',
-  '/api/logs/agent',
-  '/api/device/status',
-  '/llm-logs',
-]) {
-  assert.ok(bundle.includes(route), `missing canonical frontend route: ${route}`);
-}
-
+// URL matching and API behavior are exercised by the typed frontend tests.
 assert.equal(bundle.includes('agentRequest'), false, 'Config Web still contains Agent cross-port requests');
 assert.equal(bundle.includes("port='8080'"), false, 'Config Web still hard-codes the Agent port');
 

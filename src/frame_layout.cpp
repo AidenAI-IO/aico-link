@@ -65,7 +65,8 @@ bool compact_nv12(const uint8_t* source,
                   uint32_t width,
                   uint32_t height,
                   uint32_t stride,
-                  std::vector<uint8_t>* compact) {
+                  std::vector<uint8_t>* compact,
+                  ChromaLayout source_layout) {
     if (!source || !compact || width == 0 || height == 0 ||
         (width & 1U) != 0 || (height & 1U) != 0 || stride < width) {
         return false;
@@ -77,7 +78,9 @@ bool compact_nv12(const uint8_t* source,
         return false;
     }
     size_t source_required = 0;
-    if (!checked_add(source_y_bytes, source_y_bytes / 2U, &source_required)) {
+    const size_t uv_row_step = source_layout == ChromaLayout::NV16 ? 2U : 1U;
+    const size_t source_uv_bytes = (source_y_bytes / 2U) * uv_row_step;
+    if (!checked_add(source_y_bytes, source_uv_bytes, &source_required)) {
         return false;
     }
     if (source_size < source_required) {
@@ -93,7 +96,7 @@ bool compact_nv12(const uint8_t* source,
     if (!checked_add(compact_y_bytes, compact_y_bytes / 2U, &compact_size)) {
         return false;
     }
-    compact->assign(compact_size, 0);
+    compact->resize(compact_size);
     const uint8_t* y_source = source;
     const uint8_t* uv_source = source + source_y_bytes;
     uint8_t* y_compact = compact->data();
@@ -106,7 +109,7 @@ bool compact_nv12(const uint8_t* source,
     }
     for (uint32_t y = 0; y < height / 2U; ++y) {
         std::memcpy(uv_compact + static_cast<size_t>(y) * width,
-                    uv_source + static_cast<size_t>(y) * stride,
+                    uv_source + static_cast<size_t>(y) * uv_row_step * stride,
                     width);
     }
     return true;

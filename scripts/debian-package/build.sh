@@ -21,6 +21,7 @@ grep -qx 'status=pass' "${APPS_OUTPUT}/apps-audit/summary.txt" || {
     exit 1
 }
 mkdir -p "${OUTPUT_DIR}"
+bash "${REPO_ROOT}/scripts/build-config-web.sh" "${OUTPUT_DIR}/config-web"
 docker image inspect "${IMAGE}" >/dev/null
 docker run --rm \
     -e "AICO_BUSINESS_VERSION=${AICO_BUSINESS_VERSION}" \
@@ -33,6 +34,7 @@ docker run --rm \
     -v "${REPO_ROOT}:/work:ro" \
     -v "${APPS_OUTPUT}/apps:/apps:ro" \
     -v "${OUTPUT_DIR}:/out" \
+    -v "${OUTPUT_DIR}/config-web:/config-web:ro" \
     -w /work "${IMAGE}" bash scripts/debian-package/container-build.sh
 
 cp "${OUTPUT_DIR}/aico-business_${AICO_BUSINESS_VERSION}-${AICO_BUSINESS_REVISION}_armhf.deb" \

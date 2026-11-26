@@ -177,9 +177,8 @@ endif()
 
 add_test(NAME aico_tests COMMAND $<TARGET_FILE:aico_tests>)
 
-# Config Web is implemented by the Go Agent binary. Its Go package tests replace
-# the legacy E2E driver that launched the retired C++ server. Focused Node tests
-# cover the modular frontend instead of retaining source checks for that server.
+# Config Web is implemented by the Go Agent binary. Its Go package tests cover
+# the server, while the web manifest suite runs the frontend tests with npm.
 find_program(GO_EXECUTABLE go)
 if(GO_EXECUTABLE)
     add_test(NAME config_web_go
@@ -203,40 +202,6 @@ add_test(NAME wifi_proxy_init_watchdog
 add_test(NAME board_low_level_smoke_scripts
     COMMAND sh ${CMAKE_SOURCE_DIR}/scripts/test_board_low_level_smoke.sh
 )
-
-find_program(NODE_EXECUTABLE node)
-if(NODE_EXECUTABLE)
-    add_test(NAME config_web_i18n
-        COMMAND ${NODE_EXECUTABLE} --experimental-vm-modules ${CMAKE_CURRENT_SOURCE_DIR}/config_web_i18n_test.mjs
-    )
-    add_test(NAME config_web_api
-        COMMAND ${NODE_EXECUTABLE} --experimental-vm-modules ${CMAKE_CURRENT_SOURCE_DIR}/config_web_api_test.mjs
-    )
-    add_test(NAME config_web_routes
-        COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/config_web_routes_test.mjs
-    )
-    add_test(NAME config_web_tokens
-        COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/config_web_tokens_test.mjs
-    )
-    add_test(NAME config_web_ota_progress
-        COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/config_web_ota_progress_test.mjs
-    )
-    add_test(NAME config_web_settings_shell
-        COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/config_web_settings_shell_test.mjs
-    )
-    add_test(NAME config_web_ui_components
-        COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/config_web_ui_components_test.mjs
-    )
-    add_test(NAME config_web_router
-        COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/config_web_router_test.mjs
-    )
-    add_test(NAME config_web_wifi_service
-        COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/config_web_wifi_service_test.mjs
-    )
-    add_test(NAME llm_logs_anthropic
-        COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/llm_logs_anthropic_test.mjs
-    )
-endif()
 
 add_test(NAME debian_ext4_canonicalizer
     COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/test_debian_ext4_canonicalizer.sh

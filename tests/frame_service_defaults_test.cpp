@@ -20,3 +20,16 @@ TEST_CASE("frame_service library defaults avoid unconditional EDID retriggering"
     CHECK(aico::default_frame_service_warmup_frames(false) == 0);
     CHECK(aico::default_frame_service_warmup_frames(true) == 6);
 }
+
+TEST_CASE("automatic capture format follows the detected bridge on each open") {
+    using aico::frame_service_capture_mode;
+    const std::string rk628 = "m00_b_rk628-csi 4-0050";
+    const std::string tc358743 = "tc358743 4-000f";
+
+    CHECK(frame_service_capture_mode("auto", rk628) == "nv16-to-nv12");
+    CHECK(frame_service_capture_mode("auto", tc358743) == "nv12");
+    CHECK(frame_service_capture_mode("auto", "") == "nv12");
+    CHECK(frame_service_capture_mode("nv12", rk628) == "nv12");
+    CHECK(frame_service_capture_mode("nv16-to-nv12", tc358743) == "nv16-to-nv12");
+    CHECK(frame_service_capture_mode("uyvy", tc358743) == "uyvy");
+}

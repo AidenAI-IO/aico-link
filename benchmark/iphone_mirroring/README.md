@@ -91,9 +91,10 @@ are not silently replaced with weaker single-file synchronization.
 To configure models and other host settings, start the same binary:
 
 ```bash
+bash ../../scripts/build-config-web.sh
 /absolute/path/to/agent config-web --local-agent \
   --config /absolute/path/to/mirror-agent-data/agent.toml \
-  --web-root /absolute/path/to/repository/src/config_web/web \
+  --web-root /absolute/path/to/repository/src/config_web/dist \
   --agent-url http://127.0.0.1:8080
 ```
 

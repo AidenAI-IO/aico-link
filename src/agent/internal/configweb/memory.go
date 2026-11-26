@@ -64,6 +64,7 @@ func (s *Server) proxyAgentReset(w http.ResponseWriter, r *http.Request, agentPa
 	}
 	response, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
 	if err != nil {
+		s.invalidateAgentEndpoint(base)
 		writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("agent %s request failed: %v", action, err))
 		return false
 	}

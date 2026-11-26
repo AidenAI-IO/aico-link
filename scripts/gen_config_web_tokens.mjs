@@ -6,11 +6,11 @@
  *   node scripts/gen_config_web_tokens.mjs --check   # verify they are in sync
  *
  * Outputs:
- *   src/config_web/web/assets/css/tokens.css    CSS custom properties for the web UI
+ *   src/config_web/src/styles/tokens.css    CSS custom properties for the web UI
  *   src/config_web/design/tokens.native.js      React Native values for the companion app
  *
- * Both outputs are committed so the Debian packaging step can keep rsyncing
- * `src/config_web/web/` without running Node. `tests/config_web_tokens_test.mjs`
+ * Both outputs are committed and consumed by the frontend build and companion
+ * app. `tests/config_web_tokens_test.mjs`
  * fails when a generated file drifts from `design/tokens.mjs`.
  */
 
@@ -20,7 +20,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourcePath = path.join(repositoryRoot, 'src/config_web/design/tokens.mjs');
-const cssPath = path.join(repositoryRoot, 'src/config_web/web/assets/css/tokens.css');
+const cssPath = path.join(repositoryRoot, 'src/config_web/src/styles/tokens.css');
 const nativePath = path.join(repositoryRoot, 'src/config_web/design/tokens.native.js');
 
 const HEADER =
