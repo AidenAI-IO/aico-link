@@ -17,6 +17,32 @@ device-management calls are served directly by Config Web on port `80`. The
 page does not construct cross-port Agent URLs, so Docker host-port overrides
 and USB-ECM access use the same API behavior.
 
+## Frontend Development
+
+The frontend uses React, TypeScript, Jotai and Vite. Build static assets with
+`bash scripts/build-config-web.sh` from the repository root, then serve
+`src/config_web/dist` with `agent config-web --web-root`. The Docker build pins
+Node and installs the npm lockfile; the device requires no frontend runtime.
+Debian packaging and development launchers build the assets automatically.
+See the [frontend guide](../../src/config_web/README.md) for local development,
+formatting, validation and the retained editor compatibility boundary.
+
+The shell, navigation and live views consume one shared store. Visible device
+tabs observe storage every three seconds, configuration application and OTA
+every two seconds, and firmware every ten seconds. Agent process status is read
+on the overview, Agent log and container voice routes that need it. USB Internet,
+LAN/password and installed MCP status refresh every five seconds on their
+routes. Lightweight polling continues while OTA is idle, so externally started
+updates are detected. Full logs are polled only on firmware and OTA log routes.
+All pollers pause while the tab is
+hidden and refresh on return or browser network recovery. Saves invalidate
+older reads; persisted-file revision changes refresh configuration summaries
+even when the Agent is offline or has not applied an external edit. Saves also
+refresh canonical validation errors. Static schema is shared across editors,
+and local Agent endpoint discovery is shared for up to thirty seconds, with
+rediscovery after connection failure. Polling preserves open dialogs, focused
+controls and editor drafts; observation timestamps do not invalidate UI views.
+
 ## Default Parameters
 
 | Parameter | Default Value |
@@ -61,6 +87,14 @@ and logs without initializing board services. Launcher containers use
 `--container-agent`, adding both Realtime and Classic voice provider settings,
 screen/notification memory retention, memory reset, and Agent support-log export.
 The shared voice pages retain STT/TTS credentials, models, and Extra settings.
+Voice tabs select a configuration view in frontend memory without planning,
+saving, or applying a mode change. The selection survives subpage navigation and
+background observations; reloading restores the saved device mode. Explicit
+provider selection or saving the selected provider's credentials can apply the
+previewed mode through the backend's plan and save validation. Realtime requires
+a saved voice credential; Classic requires both STT and TTS provider selections.
+Incomplete provider selections save without enabling their mode. Board and PC
+profiles share this distinction between the selected tab and saved device mode.
 Device audio, board-microphone speaker enrollment, Wi-Fi, GPIO, storage
 maintenance, firmware, and system-service controls remain unavailable through
 the PC profile's pages and API. Full TOML editing and backup/restore remain
@@ -133,7 +167,7 @@ actions and adopts saved settings without overwriting proxy drafts.
 The header switch saves only the top-level `locale` through
 `PUT /api/config/locale`. The UI updates immediately and rolls back if
 persistence fails. The last confirmed value is cached in `localStorage` for
-first paint, but `GET /api/device/snapshot` remains authoritative. The next Agent task
+first paint, but `GET /api/config` remains authoritative. The next Agent task
 creates a new context session when the locale-specific system prompt changes; it does not rewrite the previous session. `locale` is intentionally
 separate from `[voice_settings.classic.stt].language`, which only configures speech recognition.
 

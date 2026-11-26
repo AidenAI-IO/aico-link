@@ -289,11 +289,17 @@ class RuntimeConfigTests(unittest.TestCase):
         (apps / "metadata/ekho-files.sha256").write_text("".join(
             f"{hashlib.sha256((apps / relative).read_bytes()).hexdigest()}  {relative}\n"
             for relative in ["bin/ekho", *ekho_files]))
+        config_web = self.root / "config-web"
+        (config_web / "assets").mkdir(parents=True)
+        (config_web / "index.html").write_text("<!doctype html><title>Config Web fixture</title>\n")
+        (config_web / "assets/app.js").write_text("console.log('Config Web fixture');\n")
         output = self.root / "production-output"
         output.mkdir()
         script = (ROOT / "scripts/debian-package/container-build.sh").read_text()
         script = script.replace("REPO_ROOT=/work APPS_DIR=/apps OUTPUT_DIR=/out",
                                 f'REPO_ROOT="{ROOT}" APPS_DIR="{apps}" OUTPUT_DIR="{output}"')
+        script = script.replace("rsync -aH --chown=0:0 /config-web/",
+                                f'rsync -aH --chown=0:0 "{config_web}/"')
         env = {**self.env, "AICO_BUSINESS_VERSION": "0.0.9"}
         voice = apps / "share/ekho-data/pinyin.voice"
         voice.write_text("corrupt voice\n")
@@ -308,6 +314,11 @@ class RuntimeConfigTests(unittest.TestCase):
         subprocess.run(["dpkg-deb", "--extract", str(package), str(extracted)], check=True)
         self.assertTrue((extracted / "usr/lib/aico/ekho").stat().st_mode & 0o111)
         self.assertTrue((extracted / "usr/lib/aico/device-cli").stat().st_mode & 0o111)
+        installed_web = extracted / "usr/share/aico/config-web"
+        self.assertEqual((installed_web / "index.html").read_text(),
+                         "<!doctype html><title>Config Web fixture</title>\n")
+        self.assertEqual((installed_web / "assets/app.js").read_text(),
+                         "console.log('Config Web fixture');\n")
         for relative, content in ekho_files.items():
             installed = relative.replace("share/ekho-data/", "usr/share/aico/ekho-data/")
             installed = installed.replace("share/doc/ekho/", "usr/share/doc/aico-business/ekho/")

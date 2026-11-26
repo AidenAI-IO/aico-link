@@ -1779,11 +1779,19 @@ bool CameraCapture::capture_frame(VideoFrame& frame, std::vector<uint8_t>& buffe
 }
 
 bool CameraCapture::capture_frame_timeout(VideoFrame& frame, std::vector<uint8_t>& buffer, int timeout_ms) {
+    return capture_frame_timeout(frame, buffer, timeout_ms, false);
+}
+
+bool CameraCapture::capture_frame_timeout(VideoFrame& frame, std::vector<uint8_t>& buffer,
+                                         int timeout_ms, bool nv16_to_nv12) {
     if (!impl_->initialized || impl_->running) {
         return false;
     }
 
     CameraConfig retry_config = impl_->config;
+    if (nv16_to_nv12 && (!retry_config.pixel_format || strcmp(retry_config.pixel_format, "nv16") != 0)) {
+        return false;
+    }
     const int max_attempts = retry_config.capture_retries + 1;
 
     for (int attempt = 0; attempt < max_attempts; ++attempt) {
@@ -1802,14 +1810,14 @@ bool CameraCapture::capture_frame_timeout(VideoFrame& frame, std::vector<uint8_t
                            "attempt=%d max_attempts=%d error=%s", attempt + 1,
                            max_attempts, strerror(errno));
         } else {
-            if (retry_config.pixel_format &&
-                strcmp(retry_config.pixel_format, "nv12") == 0) {
-                std::vector<uint8_t> compact;
+            if (nv16_to_nv12 || (retry_config.pixel_format &&
+                                 strcmp(retry_config.pixel_format, "nv12") == 0)) {
+                const ChromaLayout layout = nv16_to_nv12 ? ChromaLayout::NV16 : ChromaLayout::NV12;
                 const uint32_t stride = frame.stride ? frame.stride : frame.width;
                 const size_t readable = std::min<size_t>(
                     frame.buffer_capacity, static_cast<size_t>(frame.length));
                 if (!compact_nv12(static_cast<const uint8_t*>(frame.data), readable,
-                                  frame.width, frame.height, stride, &compact)) {
+                                  frame.width, frame.height, stride, &buffer, layout)) {
                     AICO_LOG_WARN("camera", "nv12_compact_failed",
                                    "width=%u height=%u stride=%u bytes_used=%u size_image=%u mapped=%llu",
                                    frame.width, frame.height, stride, frame.length,
@@ -1819,7 +1827,6 @@ bool CameraCapture::capture_frame_timeout(VideoFrame& frame, std::vector<uint8_t
                     continue;
                 }
                 release_frame();
-                buffer.swap(compact);
                 frame.length = static_cast<uint32_t>(buffer.size());
                 frame.stride = frame.width;
                 frame.size_image = frame.length;

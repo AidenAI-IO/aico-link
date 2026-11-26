@@ -164,7 +164,7 @@ def classify(path, policy):
                 and not any(fnmatch.fnmatchcase(relative, p) for p in CONFIG_BOUNDARY["exclude"])):
             return "config"
     shipped_content = ("overlay-debian/", "src/agent/config/skills/",
-                       "src/agent/internal/agent/web_ui/", "src/config_web/web/",
+                       "src/agent/internal/agent/web_ui/", "src/config_web/public/",
                        "assets/business/")
     if ((path.endswith(".md") or path == ".gitignore" or path.endswith("/.gitignore"))
             and not path.startswith(shipped_content)):

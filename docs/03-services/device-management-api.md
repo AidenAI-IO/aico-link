@@ -34,8 +34,9 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Storage | `GET /api/storage/status` | Read SD/eMMC state and formatting tasks |
 | Storage | `POST /api/storage/format` | Format the SD card asynchronously |
 | Storage | `POST /api/storage/eject` | Sync and safely eject the SD card |
-| Device | `GET /api/device/snapshot` | Read the aggregated initial-page model: configuration, Wi-Fi, device, firmware/component versions, and storage summaries |
+| Device | `GET /api/device/snapshot` | Read the aggregated device model: configuration, Wi-Fi, device, firmware/component versions, and storage summaries |
 | Device | `GET /api/device/status` | Read the device, firmware/component versions, Agent process, USB/HID, and capability summary |
+| Device | `GET /api/device/firmware` | Read firmware/component and business package versions without probing Agent readiness |
 | Device | `POST /api/device/reboot` | Reboot the device |
 | Agent | `POST /api/agent/restart` | Restart the Agent process; Config Web and the USB link stay up |
 | Security | `GET /api/security/lan-access` | Read the LAN access switch and whether a device password is set |
@@ -54,7 +55,7 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Network | `DELETE /api/network/wifi/connection?ssid=...` | Forget a network without relying on a DELETE request body |
 | System | `GET/PUT /api/system/environment` | Read/save environment and report whether Agent restart is needed |
 | System | `POST /api/system/environment/apply` | Explicitly apply saved environment and restart Agent |
-| OTA | `GET /api/ota/status` | Read the current state, progress, and log summary |
+| OTA | `GET /api/ota/status` | Read state, progress and log summary; `?logs=0` omits logs for background polling |
 | OTA | `POST /api/ota/updates` | Create an OTA task and return its `task_id` |
 | Logs | `GET /api/logs/agent` | Read the Agent log summary |
 | Logs | `GET /api/logs/llm` | List available LLM HTTP log files |
@@ -149,7 +150,13 @@ A successful `PATCH /api/config` persists the file and queues runtime applicatio
 ```
 
 Poll `GET /api/config/application` for `state`, `pending`, `applied`,
-`reboot_required`, `revision`, `applied_revision`, and optional `error`.
+`reboot_required`, `revision`, `applied_revision`, `persisted_revision`, and optional `error`.
+`persisted_revision` identifies the file currently on disk independently of the
+runtime's last requested `revision`. It is also included in HTTP 503 responses
+when Agent status is unavailable, so clients can still observe external edits.
+Clients must retain the unavailable runtime state on such errors. A changed file
+revision invalidates cached config and validation; matching runtime status alone
+does not establish that the current file has been applied.
 `persisted` confirms the atomic file write; `applied` confirms all settings in
 that revision are active. Revisions are opaque 64-bit values; browser clients
 should use the returned state rather than perform numeric revision arithmetic.
@@ -507,11 +514,11 @@ bearer token stays valid until it expires or the key is replaced.
 `GET /api/auth/session` returns `{"ok": true, "via_usb": false,
 "password_set": true, "authenticated": true}`.
 
-The board serves plain HTTP, so anyone who can capture traffic on the local
-network can capture the password and the token. Turn LAN access on only on
-trusted networks. The same applies to MCP access tokens, which travel over
-Wi-Fi even while LAN access is off: create them only on trusted networks and
-revoke any you no longer use.
+The Config Web HTTP endpoint is plain text, so anyone who can capture traffic
+on the local network can capture a password or session token. Use the Config
+Web HTTPS MCP endpoint for Wi-Fi clients and trust the board's local TLS CA.
+Direct Agent HTTP MCP is accepted only over USB or loopback. Turn LAN access on
+only on trusted networks and revoke any MCP tokens you no longer use.
 
 ### MCP Access Tokens
 
@@ -523,7 +530,8 @@ access stays off. Creating a token, which needs an admitted client (a USB one
 while no device password is set), is what
 opens MCP. An MCP access token:
 
-- reaches only `POST /mcp` on port 8080. It is refused everywhere else,
+- reaches only MCP `POST /mcp`, through the Config Web HTTPS reverse proxy or
+  directly on Agent port 8080 over USB. It is refused everywhere else,
   including `/api/tools/*` (which would bypass the MCP tool allowlist and the
   `mcp_shell_enabled` gate), Config Web, backup, the terminal, and SSH;
 - does not expire, and survives the password being changed or cleared and LAN
@@ -555,8 +563,8 @@ The secret is returned once and is not stored: the board keeps only its
 SHA-256 hash. A name is 1 to 64 characters on one line (`400` otherwise); the
 number of tokens is not limited. Revoking an unknown ID returns `404`. A
 missing or damaged token file accepts no token. Clients send the secret as
-`Authorization: Bearer <secret>`; see [MCP](../04-agent/mcp.md#authentication)
-for client configuration.
+`Authorization: Bearer <secret>`; use the Config Web HTTPS URL for Wi-Fi and
+see [MCP](../04-agent/mcp.md#authentication) for client configuration.
 
 ## API Boundary
 
@@ -564,8 +572,11 @@ Retired routes such as `/api/wifi/*`, `/api/system/env`,
 `/api/ota/update`, `/api/reboot`, `/api/agent/*`, and `/api/llm-logs/*` have
 been removed and return `404 Not Found`; no compatibility adapters are
 provided. Clients must use the canonical resources in the table above.
-`GET /api/config` has only configuration semantics; use
-`/api/device/snapshot` for the aggregated initial page load.
+`GET /api/config` has only configuration semantics and uses the canonical editor
+loader and credential-free DTO in process. It includes the persisted revision,
+validation state and config path. The frontend reads configuration, firmware,
+Wi-Fi and storage independently so a slow status probe cannot delay unrelated
+summaries. `/api/device/snapshot` remains available to aggregate these resources.
 
 ## Internal Agent Reload
 

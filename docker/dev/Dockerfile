@@ -82,6 +82,13 @@ RUN apt-get update \
         echo "$sha256  /out/ttyd" | sha256sum -c -; \
         chmod 0755 /out/ttyd
 
+FROM --platform=$BUILDPLATFORM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS config-web-builder
+WORKDIR /web
+COPY src/config_web/package.json src/config_web/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY src/config_web/ ./
+RUN npm run typecheck && npm run build
+
 FROM ${BASE_IMAGE} AS runtime-base
 
 RUN apt-get update \
@@ -140,7 +147,7 @@ COPY --from=ttyd-builder /out/ttyd /usr/local/bin/ttyd
 COPY --from=runtime-tools-builder /out/fq /usr/bin/fq
 COPY --from=runtime-tools-builder /out/rg /usr/bin/rg
 COPY --from=runtime-tools-builder /out/yq /usr/bin/yq
-COPY src/config_web/web/ /usr/share/aico/config-web/
+COPY --from=config-web-builder /web/dist/ /usr/share/aico/config-web/
 COPY src/agent/config/skills/ /usr/share/aico/skills/
 COPY benchmark/ios_device/quick_actions.json /usr/share/aico/quick-actions/ios_device.json
 COPY benchmark/iphone_mirroring/quick_actions.json /usr/share/aico/quick-actions/iphone_mirroring.json

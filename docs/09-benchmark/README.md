@@ -563,11 +563,15 @@ device. Real benchmark execution comes from the daily schedule on the default
 branch or a manual `workflow_dispatch` on any repository branch. Manual
 dispatch remains unavailable to pull request and fork refs.
 
+Use the `model` dropdown when manually dispatching the workflow to select the
+Agent model for that run. Manual dispatch defaults to
+`google/gemini-3.5-flash-lite`, which is also the model used by scheduled runs.
+
 The workflow expects these GitHub configuration values. GitHub-facing names omit
 the `AICO_` prefix; the workflow maps them to the runner variables documented
 below.
 
-- Variables: `BENCHMARK_REPEATS`, `BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,
+- Variables: `BENCHMARK_REPEATS`, `BENCHMARK_AGENT_PROVIDER`,
   `BENCHMARK_AGENT_BASE_URL`, `BENCHMARK_JUDGE_MODEL`,
   `BENCHMARK_JUDGE_BASE_URL`, `DAEMON_IMAGE`, `BENCHMARK_ANDROID_SERIAL`,
   `BENCHMARK_ANDROID_SDK_DIR`,

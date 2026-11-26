@@ -38,6 +38,7 @@ func (s *Server) handleMCPServers(w http.ResponseWriter, r *http.Request, name s
 	defer client.CloseIdleConnections()
 	response, err := client.Do(req)
 	if err != nil {
+		s.invalidateAgentEndpoint(base)
 		writeJSONError(w, 503, "Agent unavailable; start Agent and retry")
 		return
 	}

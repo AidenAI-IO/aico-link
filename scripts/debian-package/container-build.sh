@@ -22,7 +22,7 @@ test -s "${APPS_DIR}/share/doc/ekho/build.txt" || { echo "missing Ekho build pro
 (cd "${APPS_DIR}" && sha256sum -c metadata/ekho-files.sha256 >/dev/null)
 rsync -aH --chown=0:0 "${APPS_DIR}/share/ekho-data/" "${PKG_ROOT}/usr/share/aico/ekho-data/"
 rsync -aH --chown=0:0 "${APPS_DIR}/share/doc/ekho/" "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}/ekho/"
-rsync -aH --chown=0:0 "${REPO_ROOT}/src/config_web/web/" "${PKG_ROOT}/usr/share/aico/config-web/"
+rsync -aH --chown=0:0 /config-web/ "${PKG_ROOT}/usr/share/aico/config-web/"
 rsync -aH --chown=0:0 "${REPO_ROOT}/src/agent/config/skills/" "${PKG_ROOT}/usr/share/aico/skills/"
 install -m 0644 "${REPO_ROOT}/src/agent/internal/agent/quick_actions.json" "${PKG_ROOT}/usr/share/aico/quick_actions.json"
 install -d -m 0755 "${PKG_ROOT}/usr/share/aico/agent-tools"

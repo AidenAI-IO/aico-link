@@ -4,7 +4,7 @@
  * Both consumers are generated from this file by
  * `scripts/gen_config_web_tokens.mjs`:
  *
- *   - src/config_web/web/assets/css/tokens.css   (CSS custom properties)
+ *   - src/config_web/src/styles/tokens.css   (CSS custom properties)
  *   - src/config_web/design/tokens.native.js     (React Native StyleSheet values)
  *
  * Values are plain numbers/strings/arrays on purpose. The generator is the only

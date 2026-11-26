@@ -132,11 +132,11 @@ reported_agent_port="$(
 )"
 test "$reported_agent_port" -eq "$agent_port"
 case "$config_page" in
-    *'<!DOCTYPE html>'*) ;;
+    *'<!doctype html>'*|*'<!DOCTYPE html>'*) ;;
     *) printf 'Config Web did not return HTML.\n' >&2; exit 1 ;;
 esac
 case "$agent_page" in
-    *'<!DOCTYPE html>'*) ;;
+    *'<!doctype html>'*|*'<!DOCTYPE html>'*) ;;
     *) printf 'Agent Web did not return HTML.\n' >&2; exit 1 ;;
 esac
 case "$terminal_page" in

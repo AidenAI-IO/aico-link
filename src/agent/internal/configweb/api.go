@@ -46,6 +46,7 @@ const (
 	apiSystemEnvironmentPut
 	apiSystemEnvironmentApply
 	apiDeviceStatus
+	apiFirmwareStatus
 	apiAgentLogs
 	apiOTAStatus
 	apiOTAUpdate
@@ -128,6 +129,7 @@ var apiRoutes = []apiRoute{
 	{apiSystemEnvironmentPut, routeVariant{http.MethodPut, apiPrefix + "/system/environment"}},
 	{apiSystemEnvironmentApply, routeVariant{http.MethodPost, apiPrefix + "/system/environment/apply"}},
 	{apiDeviceStatus, routeVariant{http.MethodGet, apiPrefix + "/device/status"}},
+	{apiFirmwareStatus, routeVariant{http.MethodGet, apiPrefix + "/device/firmware"}},
 	{apiAgentLogs, routeVariant{http.MethodGet, apiPrefix + "/logs/agent"}},
 	{apiOTAStatus, routeVariant{http.MethodGet, apiPrefix + "/ota/status"}},
 	{apiOTAUpdate, routeVariant{http.MethodPost, apiPrefix + "/ota/updates"}},
@@ -317,6 +319,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSystemEnv(w, r)
 	case apiSystemEnvironmentApply:
 		s.handleApplySystemEnv(w, r)
+	case apiFirmwareStatus:
+		s.handleFirmwareStatus(w, r)
 	case apiDeviceStatus:
 		s.handleAgentStatus(w, r)
 	case apiAgentLogs:

@@ -17,7 +17,7 @@ import {promisify} from 'node:util';
 const run = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const designRoot = path.join(repositoryRoot, 'src/config_web/design');
-const webRoot = path.join(repositoryRoot, 'src/config_web/web');
+const webRoot = path.join(repositoryRoot, 'src/config_web');
 
 const {tokens} = await import(pathToFileURL(path.join(designRoot, 'tokens.mjs')).href);
 
@@ -31,7 +31,7 @@ try {
   );
 }
 
-const css = await fs.readFile(path.join(webRoot, 'assets/css/tokens.css'), 'utf8');
+const css = await fs.readFile(path.join(webRoot, 'src/styles/tokens.css'), 'utf8');
 const native = await fs.readFile(path.join(designRoot, 'tokens.native.js'), 'utf8');
 
 // 2. Every colour and size token reaches the stylesheet.
