@@ -717,7 +717,7 @@ export function DecisionPage(props: PageProps) {
                 'model.decision_openrouter_model_help',
                 '留空默认使用 Jev；输入时显示模型建议，也可填写其他模型 ID',
               )}
-              suggestions={catalog.data?.models.map((model) => model.id)}
+              suggestions={catalog.data?.models || []}
               onCommit={(value) =>
                 saver.change('decision.model', { decision: { model: value || null } })
               }

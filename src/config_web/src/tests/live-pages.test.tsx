@@ -241,6 +241,95 @@ describe('live React views', () => {
     expect(classic.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tab', { name: '实时模式' }).tabIndex).toBe(-1);
   });
+  it.each([
+    { container: false, mode: 'realtime', label: '实时模式' },
+    { container: true, mode: 'realtime', label: '实时模式' },
+    { container: false, mode: 'stt', label: '经典模式' },
+    { container: true, mode: 'stt', label: '经典模式' },
+  ])(
+    'applies the configured $mode preview only on request (container: $container)',
+    async ({ container, mode, label }) => {
+      let config: Configuration = {
+        agent: { input_mode: mode === 'stt' ? 'realtime' : 'stt' },
+        voice_model: { provider: 'demo' },
+        voice_model_providers: { demo: { type: 'qwen', has_api_key: true } },
+        stt: { provider: 'speech' },
+        tts: { provider: 'voice' },
+      };
+      let finish!: (result: unknown) => void;
+      const send = vi.fn(async (path: string, options?: RequestInit) => {
+        if (path === '/api/config/schema') return { sections: [] };
+        if (path === '/api/config/plan')
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        if (path === '/api/config') {
+          if (options?.method === 'PATCH') {
+            const patch = JSON.parse(String(options.body)).config;
+            config = { ...config, agent: { ...config.agent, ...patch.agent } };
+          }
+          return { config, config_valid: true, apply: 'live' };
+        }
+        return { state: 'applied' };
+      });
+      window.history.replaceState({}, '', '/voice');
+      const value = model(send, false, container);
+      mount(value, <App model={value} />);
+      await act(flush);
+      expect(screen.queryByRole('button', { name: '应用' })).toBe(null);
+      fireEvent.click(screen.getByRole('tab', { name: label }));
+      expect(send.mock.calls.some(([, options]) => options?.method)).toBe(false);
+      const apply = screen.getByRole('button', { name: '应用' }) as HTMLButtonElement;
+      fireEvent.click(apply);
+      expect(apply.disabled).toBe(true);
+      fireEvent.click(apply);
+      await act(async () => {
+        finish({ apply: 'live' });
+        await flush();
+      });
+      expect(send.mock.calls.filter(([path]) => path === '/api/config/plan')).toHaveLength(1);
+      const writes = send.mock.calls.filter(([, options]) => options?.method === 'PATCH');
+      expect(writes).toHaveLength(1);
+      expect(JSON.parse(String(writes[0][1]?.body))).toEqual({
+        config: { agent: { input_mode: mode } },
+      });
+      expect(value.store.get(value.config)?.agent?.input_mode).toBe(mode);
+      expect(screen.queryByRole('button', { name: '应用' })).toBe(null);
+    },
+  );
+  it('keeps incomplete voice previews disabled and rejects an invalid mode without persisting', async () => {
+    const config: Configuration = { agent: { input_mode: 'stt' } };
+    const send = vi.fn(async (path: string) => {
+      if (path === '/api/config') return { config, config_valid: true };
+      if (path === '/api/config/schema') return { sections: [] };
+      if (path === '/api/config/plan')
+        throw { status: 400, error: 'Invalid realtime configuration' };
+      return { state: 'applied' };
+    });
+    window.history.replaceState({}, '', '/voice');
+    const value = model(send);
+    mount(value, <App model={value} />);
+    await act(flush);
+    fireEvent.click(screen.getByRole('tab', { name: '实时模式' }));
+    const apply = screen.getByRole('button', { name: '应用' }) as HTMLButtonElement;
+    expect(apply.disabled).toBe(true);
+    fireEvent.click(apply);
+    act(() =>
+      value.store.set(value.config, {
+        ...config,
+        voice_model: { provider: 'demo' },
+        voice_model_providers: { demo: { type: 'qwen', has_api_key: true } },
+      }),
+    );
+    expect(apply.disabled).toBe(false);
+    fireEvent.click(apply);
+    await act(flush);
+    expect(screen.getByText('Invalid realtime configuration')).toBeTruthy();
+    expect(value.store.get(value.config)?.agent?.input_mode).toBe('stt');
+    expect(value.store.get(value.voiceMode)).toBe('realtime');
+    expect(send.mock.calls.filter(([path]) => path === '/api/config')).toHaveLength(1);
+    expect(apply.disabled).toBe(false);
+  });
   it.each([false, true])(
     'retains voice tabs across subpages and navigation without saving (container: %s)',
     async (container) => {

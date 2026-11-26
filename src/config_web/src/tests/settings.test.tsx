@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { Provider } from 'jotai';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -221,7 +222,7 @@ it('keeps model suggestions optional and publishes persisted values without eras
   );
   mount(<DecisionPage {...props} />);
   await act(flush);
-  const input = screen.getByLabelText('Decision model') as HTMLInputElement;
+  const input = screen.getByRole('combobox', { name: 'Decision model' }) as HTMLInputElement;
   const url = screen.getByLabelText('Decision model Base URL') as HTMLInputElement;
   fireEvent.change(input, { target: { value: 'custom/model' } });
   fireEvent.blur(input);
@@ -250,6 +251,68 @@ it('keeps model suggestions optional and publishes persisted values without eras
   expect(writes[1]).toEqual({ decision: { base_url: null } });
   model.dispose();
 });
+it.each(['click', 'keyboard'] as const)(
+  'selects an inline decision model by %s while keeping custom input and focus',
+  async (method) => {
+    let config = { decision: { provider: 'openrouter', model: 'old' } };
+    const writes: unknown[] = [];
+    const { model, props, mount } = setup(async (path, options) => {
+      if (path.startsWith('/api/models'))
+        return {
+          models: [
+            { id: '~typesafe/jev-latest', name: 'Jev Latest' },
+            { id: '~typesafe/jev-1.14', name: 'Jev 1.14' },
+          ],
+        };
+      if (path === '/api/config/plan') return { apply: 'live' };
+      if (path === '/api/config' && options?.method === 'PATCH') {
+        const patch = JSON.parse(String(options.body)).config;
+        writes.push(patch);
+        config = { decision: { ...config.decision, ...patch.decision } };
+      }
+      return { config, config_valid: true, apply: 'live' };
+    }, config);
+    mount(<DecisionPage {...props} />);
+    const user = userEvent.setup();
+    await act(flush);
+    const input = screen.getByRole('combobox', { name: 'Decision model' }) as HTMLInputElement;
+    await user.click(input);
+    await user.clear(input);
+    await user.type(input, 'Jev');
+    const list = screen.getByRole('listbox', { name: 'Decision model' });
+    expect(list.classList.contains('ds-suggestions')).toBe(true);
+    expect(screen.getByRole('option', { name: 'Jev Latest ~typesafe/jev-latest' })).toBeTruthy();
+    fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    expect(writes).toEqual([]);
+    expect(input.getAttribute('aria-activedescendant')).toBe(null);
+    if (method === 'click') {
+      await user.click(screen.getByRole('option', { name: 'Jev 1.14 ~typesafe/jev-1.14' }));
+    } else {
+      await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+    }
+    await act(flush);
+    expect(writes).toEqual([{ decision: { model: '~typesafe/jev-1.14' } }]);
+    expect(input.value).toBe('~typesafe/jev-1.14');
+    expect(document.activeElement).toBe(input);
+    expect(screen.queryByRole('listbox')).toBe(null);
+    await user.clear(input);
+    await user.type(input, 'Jev');
+    await user.keyboard('{ArrowUp}');
+    expect(screen.getByRole('option', { selected: true }).textContent).toContain('Jev 1.14');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).toBe(null);
+    expect(document.activeElement).toBe(input);
+    await user.clear(input);
+    await user.type(input, 'custom/model{Enter}');
+    await act(flush);
+    expect(writes).toEqual([
+      { decision: { model: '~typesafe/jev-1.14' } },
+      { decision: { model: 'custom/model' } },
+    ]);
+    model.dispose();
+  },
+);
 it('omits blank stored secrets and follows schema visibility in provider forms', async () => {
   const writes: unknown[] = [];
   const { model, props, mount } = setup(

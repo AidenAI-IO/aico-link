@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAtom, useAtomValue } from 'jotai';
 import type { Configuration, PageProps, VoiceMode } from '../types';
-import { useSettings, section } from '../hooks/settings';
+import { useSettings, section, usePageHeader } from '../hooks/settings';
 import type { Settings } from '../hooks/settings';
 import { useQuery, useSchema } from '../hooks/query';
 import { matches, optionLabel, placeholderFor, sectionFields } from '../lib/schema';
@@ -96,13 +96,42 @@ function hasModePrerequisites(config: Configuration, mode: string) {
   return !!section(config, 'stt').provider && !!section(config, 'tts').provider;
 }
 export function VoicePage(props: PageProps) {
-  const saver = useSettings(props, msg('ui.nav_voice', '语音'));
+  const title = msg('ui.nav_voice', '语音');
+  const saver = useSettings(props, title, undefined, false);
+  const [applying, setApplying] = useState(false);
+  const applyingRef = useRef(false);
   const snapshot = useAtomValue(props.model.current);
   const schema = useSchema(props.model);
   const [mode, setMode] = useAtom(props.model.voiceMode);
   const saved = saver.config.agent?.input_mode;
   const disabled = props.model.container && snapshot.agent_status?.classic_voice_enabled === false;
   const kinds: VoiceKind[] = mode === 'realtime' ? ['realtime'] : ['stt', 'tts'];
+  const preview = mode !== saved;
+  const ready = hasModePrerequisites(saver.config, mode);
+  async function applyMode() {
+    if (applyingRef.current || saver.busy || !ready || !preview) return;
+    applyingRef.current = true;
+    setApplying(true);
+    try {
+      await saver.apply('agent.input_mode', { agent: { input_mode: mode } });
+    } finally {
+      applyingRef.current = false;
+      setApplying(false);
+    }
+  }
+  usePageHeader(
+    props,
+    title,
+    preview || saver.dirty,
+    preview ? applyMode : saver.commit,
+    saver.level,
+    undefined,
+    true,
+    {
+      actionLabel: preview ? msg('voice.apply_mode', '应用') : undefined,
+      disabled: applying || saver.busy || (preview && !ready),
+    },
+  );
   return (
     <div className="ds-screen">
       <QueryError {...schema} />
@@ -160,13 +189,17 @@ export function VoicePage(props: PageProps) {
           </button>
         ))}
       </div>
-      {mode !== saved && (
+      {preview && (
         <p className="ds-group__note" role="status">
           <Text
-            value={msg(
-              'voice.configure_before_enable',
-              '此模式尚未启用。切换标签仅预览配置，保存提供商配置后才会应用此模式。',
-            )}
+            value={
+              ready
+                ? msg('voice.apply_to_enable', '此模式尚未启用，点击右上角“应用”即可启用。')
+                : msg(
+                    'voice.configure_before_enable',
+                    '此模式尚未启用，请先配置提供商，再点击右上角“应用”。',
+                  )
+            }
           />
         </p>
       )}
