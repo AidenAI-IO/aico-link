@@ -6,12 +6,15 @@ import argparse
 import base64
 import hashlib
 import hmac
+import html
 import json
 import os
 import time
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 def _sign(secret: str, timestamp: str) -> str:
@@ -20,91 +23,189 @@ def _sign(secret: str, timestamp: str) -> str:
     return base64.b64encode(hmac.new(key, digestmod=hashlib.sha256).digest()).decode()
 
 
+CAPABILITY_LABELS = {
+    "Memory": "记忆",
+    "Experience reflection": "经验复盘",
+    "Visual grounding": "视觉定位",
+    "UI operation": "界面操作",
+    "Device integration": "设备集成",
+    "Shell utilities": "Shell 工具",
+    "Realtime collaboration": "实时协作",
+    "Other": "其他",
+}
+
+
 def _format_rate(value: float | None) -> str:
-    return "—" if value is None else f"{value * 100:.1f}%"
+    return "暂无" if value is None else f"{value:.1%}"
 
 
-def _format_cost(value: float | None) -> str:
-    return "—" if value is None else f"${value:.3f}"
+def _format_count(value: float | None) -> str:
+    return "未知" if value is None else f"{value:,.0f}"
 
 
-def _format_change(row: dict[str, Any]) -> str:
-    """Descriptive percentage-point change from the previous seven days."""
-    change = row.get("change")
+def _format_change(change: float | None) -> str:
     if change is None:
         return ""
-    points = change * 100
-    if round(points, 1) == 0:
-        return " <font color='grey'>±0.0pp</font>"
-    return f" <font color='{'green' if points > 0 else 'red'}'>{points:+.1f}pp</font>"
+    points = round(change * 100, 1)
+    if points == 0:
+        return " <font color='grey'>0.0 pp</font>"
+    color = "green" if points > 0 else "red"
+    return f" <font color='{color}'>{points:+.1f} pp</font>"
+
+
+def _date(timestamp: str, fmt: str = "%m/%d %H:%M") -> str:
+    return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone(
+        ZoneInfo("Asia/Shanghai")
+    ).strftime(fmt)
+
+
+def _markdown(content: str, **options: Any) -> dict[str, Any]:
+    return {"tag": "markdown", "content": content, **options}
+
+
+def _columns(*groups: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"tag": "column_set", "columns": [
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_spacing": "4px", "elements": group}
+        for group in groups
+    ]}
+
+
+def _change(current: float | None, previous: float | None) -> str:
+    return _format_change(current - previous if current is not None and previous is not None else None)
+
+
+def _metric(label: str, current: float | None, previous: float | None, counts: str) -> list[dict[str, Any]]:
+    baseline = f"上周 {_format_rate(previous)}{_change(current, previous)}"
+    return [
+        _markdown(f"**{label}**"),
+        _markdown(f"**{_format_rate(current)}**", text_size="heading-0"),
+        _markdown(f"{counts}\n{baseline}", text_size="notation"),
+    ]
+
+
+def _suite_line(suite: dict[str, Any]) -> str:
+    name = html.escape(suite["suite"])
+    rate = suite["pass_at_1"]
+    if rate is None:
+        last = suite.get("last_valid")
+        result = "本周暂无有效评测"
+        if last:
+            result += f" · 上次有效 {_format_rate(last['pass_at_1'])}（{_date(last['timestamp'], '%m/%d')}）"
+    else:
+        counts = f"{_format_count(suite['passed'])}/{_format_count(suite['eligible_tasks'])}"
+        result = f"**{_format_rate(rate)}**（{counts}）{_format_change(suite.get('change'))}"
+    if suite.get("new"):
+        result += " · 新增"
+    return f"- {name} · {result} · 覆盖 {_format_rate(suite.get('coverage'))}"
+
+
+def _capability_panel(capability: dict[str, Any], suites: list[dict[str, Any]]) -> dict[str, Any]:
+    label = CAPABILITY_LABELS.get(capability["capability"], capability["capability"])
+    rate = capability["pass_at_1"]
+    title = (f"**{html.escape(label)}** · {len(suites)} 个数据集 · **{_format_rate(rate)}**"
+             f"{_change(rate, capability.get('previous_pass_at_1'))}"
+             f" · 覆盖 {_format_rate(capability.get('coverage'))}")
+    return {
+        "tag": "collapsible_panel",
+        "expanded": False,
+        "header": {
+            "title": _markdown(title),
+            "icon": {"tag": "standard_icon", "token": "down-small-ccm_outlined", "size": "16px 16px"},
+            "icon_position": "right",
+            "icon_expanded_angle": 180,
+        },
+        "elements": [_markdown("\n".join(_suite_line(suite) for suite in suites))],
+    }
+
+
+def _link_button(label: str, url: str, *, primary: bool = False) -> dict[str, Any]:
+    return {
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": label},
+        "type": "primary" if primary else "default",
+        "behaviors": [{"type": "open_url", "default_url": url}],
+    }
 
 
 def _build_card(data: dict[str, Any], dashboard_url: str, weekly_report_url: str | None = None) -> dict[str, Any]:
-    """Build a Lark card summarizing the last seven days and their change; details live in the dashboard."""
+    """Build a Lark card with separate score and coverage trends."""
     weekly = data["weekly"]
-    suites = weekly["suites"]
+    if "coverage" not in weekly["totals"] and "history" in data:
+        # Saved dashboards already contain the records needed to rebuild the report.
+        from ci.weekly_report import summarize_weekly
+
+        weekly = summarize_weekly(data["history"], end=datetime.fromisoformat(weekly["end"]))
     week = weekly["totals"]
+    previous = weekly.get("previous_totals", {})
+    suites = weekly["suites"]
+    branches = {row.get("git_branch") for row in data.get("history", [])}
+    branch = branches.pop() if len(branches) == 1 else None
+    period = f"{_date(weekly['start'])} – {_date(weekly['end'])} · 北京时间"
+    if branch:
+        period += f" · {html.escape(branch)}"
 
-    overview = (f"**Runs:** {week.get('run_count', len(data.get('runs', [])))} workflow runs, {week['suite_runs']} dataset runs\n"
-                f"**pass@1:** {_format_rate(week['pass_at_1'])}{_format_change(weekly)}"
-                f" ({week['passed']:.0f}/{week['eligible_tasks']:.0f} eligible tasks)")
-    if week["cost_usd_sum"] is not None:
-        overview += f"\n**Cost:** {_format_cost(week['cost_usd_sum'])}"
+    passed = _format_count(week["passed"])
+    eligible = _format_count(week["eligible_tasks"])
+    recorded = _format_count(week.get("tasks"))
     elements = [
-        {"tag": "markdown", "content": f"{weekly['start'][:10]} to {weekly['end'][:10]} (UTC)"},
-        {"tag": "markdown", "content": overview},
+        _markdown(period, text_size="notation"),
+        _columns(
+            _metric("有效评测通过率", week["pass_at_1"], previous.get("pass_at_1"), f"{passed} / {eligible} 项通过"),
+            _metric("评测覆盖率", week.get("coverage"), previous.get("coverage"), f"{eligible} / {recorded} 项有效"),
+        ),
     ]
+    failures = week.get("failure_counts", {})
+    if failures and any(value is not None for value in failures.values()):
+        labels = {"evaluation": "评测错误", "environment": "环境错误", "skipped": "跳过"}
+        elements.append(_markdown(" · ".join(f"**{_format_count(failures.get(kind))}** 次{label}"
+                                             for kind, label in labels.items())))
+    run_count = week.get("run_count", len(data.get("runs", [])))
+    runs = f"{run_count} 次工作流运行 · {week['suite_runs']} 次数据集运行"
+    if week.get("cost_usd_sum") is not None:
+        runs += f" · 成本 ${week['cost_usd_sum']:.3f}"
+    elements.append(_markdown(runs, text_size="notation"))
 
-    # Group datasets under their primary test objective; diagnostics stay separate.
     capabilities = weekly.get("capabilities", [])
     if capabilities:
-        elements.append({"tag": "hr"})
-    for cap in capabilities:
-        names = set(cap["suites"])
-        lines = [f"- {suite['suite']}: {_format_rate(suite['pass_at_1'])}{_format_change(suite)}"
-                 for suite in sorted((suite for suite in suites if suite["suite"] in names),
-                                     key=lambda suite: (suite["pass_at_1"] is None,
-                                                        suite["pass_at_1"] or 0.0, suite["suite"]))]
-        header = f"**{cap['capability']}**: {_format_rate(cap['pass_at_1'])}{_format_change(cap)}"
-        elements.append({"tag": "markdown", "content": "\n".join([header, *lines])})
+        elements.extend([{"tag": "hr"}, _markdown("**按能力查看** · 通过率较上周")])
+        for capability in capabilities:
+            names = set(capability["suites"])
+            rows = [suite for suite in suites if suite["suite"] in names]
+            elements.append(_capability_panel(capability, rows))
 
-    if weekly.get("diagnostics"):
-        lines = [f"{s['suite']}: skill read {_format_rate(s['rate'])}{_format_change(s)}"
-                 for s in weekly["diagnostics"]]
-        elements.append({"tag": "markdown", "content": "**Diagnostics** (skill read observation, not task pass@1)\n" + "\n".join(lines)})
+    compared = weekly.get("compared_pass_at_1")
+    if compared and weekly["compared_datasets"]:
+        elements.append(_markdown(
+            f"相同 {weekly['compared_datasets']} 个数据集的通过率 · "
+            f"{_format_rate(compared['previous'])} → {_format_rate(compared['current'])}"
+            f"{_format_change(weekly['change'])}", text_size="notation"
+        ))
+    changed = sum(s.get("change") is not None and bool(s.get("config_changes")) for s in suites)
+    if changed:
+        elements.append(_markdown(f"{changed} 个可比数据集的配置与上周不同。", text_size="notation"))
 
-    if suites:
-        changed = sum(s.get("change") is not None and bool(s.get("config_changes")) for s in suites)
-        note = ("Changes compare datasets measured in both weeks; "
-                "they are descriptive, not statistical significance claims.")
-        if changed:
-            noun = "comparison" if changed == 1 else "comparisons"
-            verb = "has" if changed == 1 else "have"
-            note += f" {changed} dataset {noun} {verb} configuration changes."
-            if weekly_report_url:
-                note += f" [View weekly comparisons]({weekly_report_url})."
-        elements.append({"tag": "markdown", "content": note})
+    diagnostics = [row for row in weekly.get("diagnostics", []) if row["rate"] is not None]
+    if diagnostics:
+        lines = [f"{html.escape(row['suite'])} · 技能读取 {_format_rate(row['rate'])}"
+                 f"{_format_change(row.get('change'))}" for row in diagnostics]
+        elements.append(_markdown("**诊断观测**\n" + "\n".join(lines), text_size="notation"))
 
-    if data.get("warnings"):
-        elements.append({"tag": "markdown", "content": "⚠️ Some data is incomplete; see the dashboard."})
+    if any(not warning.endswith("missing or invalid metrics: evaluation_coverage.")
+           for warning in data.get("warnings", [])):
+        elements.append(_markdown("部分数据缺失，详情见 Dashboard。", text_size="notation"))
 
-    elements += [{"tag": "hr"}, {
-        "tag": "action",
-        "actions": [{
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "Open Dashboard"},
-            "type": "primary",
-            "url": dashboard_url,
-        }],
-    }]
-
+    buttons = [_link_button("打开 Dashboard", dashboard_url, primary=True)]
+    if weekly_report_url:
+        buttons.append(_link_button("查看周报", weekly_report_url))
+    elements += [{"tag": "hr"}, _columns(*([button] for button in buttons))]
     return {
-        "config": {"wide_screen_mode": True},
+        "schema": "2.0",
+        "config": {"update_multi": True},
         "header": {
             "template": "blue",
-            "title": {"tag": "plain_text", "content": "Benchmark Weekly Report"},
+            "title": {"tag": "plain_text", "content": "Benchmark 周报"},
         },
-        "elements": elements,
+        "body": {"elements": elements},
     }
 
 

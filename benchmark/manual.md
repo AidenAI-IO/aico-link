@@ -1292,21 +1292,22 @@ workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai). It reads
 history from the workflow's branch in Langfuse by default, writes `weekly-report.md`
 to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
 Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
-`BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card summarizes the
-last seven days (runs, overall pass@1, known cost), then groups datasets under
-their test areas. Each area retains its pass@1 and change from the previous
-seven days, and each dataset occupies one line with its name, pass@1, and
-change, ordered by pass@1 within each area. A change compares only datasets
-measured in both windows, so adding or retiring a suite cannot move it. Color
-indicates direction only (green up, red down, grey unchanged), not statistical
-significance. A suite that ran in several execution environments in the report
-history is listed once per environment, for example
-`adb_android_text_editing [adb_aidenbridge]`. The card links
-to the dashboard and counts
-datasets with configuration changes. When configurations differ, the card links
-directly to the workflow summary's weekly comparisons. The dashboard button
-continues to open the per-run results. Run counts and the distinct configuration
-values in each window are available in the weekly report.
+`BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card shows effective
+pass@1 and evaluation coverage side by side, with their changes from the
+previous seven days and counts of evaluation errors, environment errors, and
+skips. Expand a test area to see each dataset's pass@1, change, and coverage.
+A dataset with no usable first attempts can display its most recent usable
+result and date from the fetched history. The historical result is excluded
+from the current window's totals and changes. A suite measured in multiple
+execution environments appears once per environment, for example
+`adb_android_text_editing [adb_aidenbridge]`.
+
+The card's headline and test-area changes compare each window's own totals.
+It also shows a pass@1 change restricted to datasets with a usable rate in
+both windows. Positive and negative changes indicate direction. Coverage and
+configuration changes help interpret differences between the two windows.
+The card links to the run dashboard and the workflow summary, which lists
+the distinct configuration values for each dataset.
 Historical data comes
 from Langfuse v4 experiments and scores. Only suites present in the current
 CI catalog are included, so retired or renamed suite names do not appear as
@@ -1326,8 +1327,9 @@ as data availability warnings. Unknown metrics remain unknown rather than
 becoming zero.
 For compatibility with older publishers, absent environment and evaluation
 failure counts default to zero. Explicit invalid or nonzero failure counts
-still prevent a complete capability measurement; missing task counts and
-capability scores remain unavailable.
+still prevent a complete per-run capability measurement. Weekly aggregation
+retains the usable first attempts in partially evaluated runs. Missing or
+invalid result counts remain unavailable.
 
 The dashboard focuses on individual datasets (each published benchmark suite
 maps to a Langfuse dataset). The default **Latest results** tab shows one
@@ -1454,17 +1456,15 @@ branch, or `*` to include all branches. The workflow publishes the report and
 sends its Lark notification using the configured webhook. For a report preview,
 set `send_notification` to `false` when dispatching manually.
 
-The report includes each
-suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the
-previous seven days in percentage points. Rates describe each window's datasets;
-changes for test areas and the total compare only datasets measured in both
-windows. Configuration differences include every recorded value in each window, not
-just the final run's settings. These comparisons are not matched-run estimates:
-a change is unknown when either window has no measured rate. Changes are
-descriptive and do not claim statistical significance. Cost and token totals are reported only
-when every included suite run supplies them with sample counts covering every
-eligible attempt. The report is included in the Actions job
-summary.
+The report includes each suite's runs, eligible tasks, pass@1, coverage, and
+cost. Pass@1 is the number of first-attempt passes divided by eligible first
+attempts. Coverage is the number of eligible first attempts divided by all
+recorded first attempts. The card's error and skip counts include all attempts
+if a suite configured retries. The Actions summary reports changes in
+percentage points and labels comparisons restricted to datasets measured in
+both windows as matched changes. Configuration differences include every
+recorded value in each window. Comparisons are descriptive. Cost and token
+totals require complete sample coverage of eligible attempts.
 
 To generate reports locally, configure `LANGFUSE_PUBLIC_KEY`,
 `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL` as for `publish-langfuse`:
