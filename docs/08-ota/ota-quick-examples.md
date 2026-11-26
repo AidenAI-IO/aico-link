@@ -11,7 +11,9 @@ self-hosted HTTP(S) endpoint; the build does not publish to GitHub.
 
 ## Example 1: Local Development
 
-Serve the generated files from a host that the device can reach:
+Serve the generated files from a host that the device can reach. The server
+runs in the background from a subshell, so the following steps still run from
+the repository root:
 
 ```bash
 VERSION="dev-$(date +%Y%m%d-%H%M%S)"
@@ -29,8 +31,7 @@ OTA_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 OTA_BASE_URL="$BASE_URL" \
 ./debian_build.sh
 
-cd output/debian/image
-python3 -m http.server 8000 --bind 0.0.0.0
+(cd output/debian/image && python3 -m http.server 8000 --bind 0.0.0.0) &
 ```
 
 Copy the public key to the device:
@@ -48,6 +49,9 @@ ota update \
   --public-key /userdata/ota/dev_pubkey.pem \
   --dry-run
 ```
+
+Keep the server running until the dry run finishes, then stop it on the host
+with `kill %1`.
 
 ## Example 2: Self-Hosted HTTP(S)
 
@@ -91,6 +95,7 @@ OTA_PRIVATE_KEY_PATH="$PWD/ota_private_key.pem" \
 OTA_PUBLIC_KEY_PATH="$PWD/ota_public_key.pem" \
 AGENT_CONFIG_PATH="$PWD/agent.toml" \
 OTA_REPO="$REPO" \
+OTA_BASE_URL="https://github.com/$REPO/releases/download/$TAG" \
 OTA_CHANNEL=custom \
 OTA_BUILD_VERSION="$TAG" \
 OTA_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

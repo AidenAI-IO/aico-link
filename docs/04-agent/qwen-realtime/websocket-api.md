@@ -64,10 +64,10 @@ Authorization is validated during the WebSocket handshake. If the API key is inv
 
 The Qwen-Audio Realtime API supports three interaction modes, configured through the `turn_detection.type` parameter in the `session.update` event:
 
-| **Mode** | **turn\\_detection.type** | **Description** | **Use cases** |
+| **Mode** | **turn_detection.type** | **Description** | **Use cases** |
 | --- | --- | --- | --- |
-| **server\\_vad** | `server_vad` | Server-side VAD detects speech boundaries and automatically triggers inference. | Hands-free conversations, voice assistants |
-| **smart\\_turn** | `smart_turn` | Combines acoustic perception and semantic understanding to identify turn boundaries rather than relying solely on voice signals. Sounds without semantic meaning (such as "um" or "ah") do not trigger a conversation turn or interrupt model speech. | Low-latency natural conversations, high-quality interruption handling |
+| **server_vad** | `server_vad` | Server-side VAD detects speech boundaries and automatically triggers inference. | Hands-free conversations, voice assistants |
+| **smart_turn** | `smart_turn` | Combines acoustic perception and semantic understanding to identify turn boundaries rather than relying solely on voice signals. Sounds without semantic meaning (such as "um" or "ah") do not trigger a conversation turn or interrupt model speech. | Low-latency natural conversations, high-quality interruption handling |
 | **push-to-talk** | — (set `turn_detection` itself to `null`) | The client manually submits audio and triggers inference. | Push-to-talk, precise control |
 
 ## **Interaction flows**
@@ -217,12 +217,12 @@ sequenceDiagram
 
 ## **Operation constraints by mode**
 
-| **Operation** | **push-to-talk** | **server\\_vad** | **smart\\_turn** |
+| **Operation** | **push-to-talk** | **server_vad** | **smart_turn** |
 | --- | --- | --- | --- |
 | session.update | All fields editable in IDLE; some restricted outside IDLE | All fields editable in IDLE; some restricted outside IDLE | All fields editable in IDLE; some restricted outside IDLE |
-| input\\_audio\\_buffer.append | Allowed  | Allowed  | Allowed  |
-| input\\_audio\\_buffer.commit | Allowed  | Ignored  | Ignored  |
-| input\\_audio\\_buffer.clear | Allowed  | Ignored  | Ignored  |
+| input_audio_buffer.append | Allowed  | Allowed  | Allowed  |
+| input_audio_buffer.commit | Allowed  | Ignored  | Ignored  |
+| input_audio_buffer.clear | Allowed  | Ignored  | Ignored  |
 | response.create | Allowed (first commit buffered audio with `input_audio_buffer.commit`; cannot retrigger while a response is being generated) | Allowed when no response is being generated; cannot retrigger while a response is being generated | Allowed while waiting for the user's next input; cannot retrigger during an active turn (between receiving `input_audio_buffer.speech_started` and `response.done`) |
 | response.cancel | Allowed (during inference) | Allowed (during inference) | Allowed (during inference) |
 | conversation.item.create/delete/retrieve | Allowed  | Allowed  | Allowed  |
@@ -235,5 +235,5 @@ sequenceDiagram
 
 | **Type** | **Behavior** | **Examples** |
 | --- | --- | --- |
-| Client error (`invalid_request_error`) | Connection remains open; notification only | Invalid parameters, disallowed state, duplicate item\\_id |
+| Client error (`invalid_request_error`) | Connection remains open; notification only | Invalid parameters, disallowed state, duplicate item_id |
 | Server error (`server_error`) | Connection terminated | LLM connection failure, storage failure |

@@ -54,6 +54,8 @@ uv run --project skillopt python -m skillopt \
   --output /tmp/device-operator-best.md
 ```
 
+请传入 `start-mobilegym-env` 输出的 `environment_url`；在原生 Linux 上它是 Docker 网桥网关，而不是 `127.0.0.1`。
+
 应用前先审阅：
 
 ```bash

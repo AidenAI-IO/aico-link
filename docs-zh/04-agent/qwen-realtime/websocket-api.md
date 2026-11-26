@@ -64,10 +64,10 @@ Authorization 在 WebSocket 握手阶段校验。如果 API key 无效或缺失�
 
 Qwen-Audio Realtime API 支持三种交互模式，通过 `session.update` 事件中的 `turn_detection.type` 参数配置：
 
-| **模式** | **turn\\_detection.type** | **说明** | **适用场景** |
+| **模式** | **turn_detection.type** | **说明** | **适用场景** |
 | --- | --- | --- | --- |
-| **server\\_vad** | `server_vad` | 服务端 VAD 检测语音边界并自动触发推理。 | 免提对话、语音助手 |
-| **smart\\_turn** | `smart_turn` | 结合声学感知与语义理解识别轮次边界，而不是只依赖语音信号。没有语义的声音（例如“嗯”“啊”）不会触发对话轮次，也不会打断模型说话。 | 低延迟的自然对话、高质量打断处理 |
+| **server_vad** | `server_vad` | 服务端 VAD 检测语音边界并自动触发推理。 | 免提对话、语音助手 |
+| **smart_turn** | `smart_turn` | 结合声学感知与语义理解识别轮次边界，而不是只依赖语音信号。没有语义的声音（例如“嗯”“啊”）不会触发对话轮次，也不会打断模型说话。 | 低延迟的自然对话、高质量打断处理 |
 | **push-to-talk** | —（将 `turn_detection` 本身设置为 `null`） | 客户端手动提交音频并触发推理。 | 按键说话、精确控制 |
 
 ## **交互流程**
@@ -217,12 +217,12 @@ sequenceDiagram
 
 ## **各模式下的操作约束**
 
-| **操作** | **push-to-talk** | **server\\_vad** | **smart\\_turn** |
+| **操作** | **push-to-talk** | **server_vad** | **smart_turn** |
 | --- | --- | --- | --- |
 | session.update | IDLE 状态下所有字段均可修改；非 IDLE 状态下部分字段受限 | IDLE 状态下所有字段均可修改；非 IDLE 状态下部分字段受限 | IDLE 状态下所有字段均可修改；非 IDLE 状态下部分字段受限 |
-| input\\_audio\\_buffer.append | 允许  | 允许  | 允许  |
-| input\\_audio\\_buffer.commit | 允许  | 忽略  | 忽略  |
-| input\\_audio\\_buffer.clear | 允许  | 忽略  | 忽略  |
+| input_audio_buffer.append | 允许  | 允许  | 允许  |
+| input_audio_buffer.commit | 允许  | 忽略  | 忽略  |
+| input_audio_buffer.clear | 允许  | 忽略  | 忽略  |
 | response.create | 允许（需先用 `input_audio_buffer.commit` 提交缓冲音频；正在生成回复时不能再次触发） | 没有回复正在生成时允许；正在生成回复时不能再次触发 | 等待用户下一次输入时允许；活跃轮次期间（收到 `input_audio_buffer.speech_started` 到 `response.done` 之间）不能再次触发 |
 | response.cancel | 允许（推理期间） | 允许（推理期间） | 允许（推理期间） |
 | conversation.item.create/delete/retrieve | 允许  | 允许  | 允许  |
@@ -235,5 +235,5 @@ sequenceDiagram
 
 | **类型** | **行为** | **示例** |
 | --- | --- | --- |
-| 客户端错误（`invalid_request_error`） | 连接保持打开；仅发送通知 | 参数无效、当前状态不允许、item\\_id 重复 |
+| 客户端错误（`invalid_request_error`） | 连接保持打开；仅发送通知 | 参数无效、当前状态不允许、item_id 重复 |
 | 服务端错误（`server_error`） | 连接被终止 | LLM 连接失败、存储失败 |

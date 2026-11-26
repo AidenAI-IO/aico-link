@@ -80,6 +80,9 @@ uv run --project skillopt python -m skillopt \
   --output /tmp/device-operator-best.md
 ```
 
+Pass the `environment_url` printed by `start-mobilegym-env`; on native Linux it
+is the Docker bridge gateway rather than `127.0.0.1`.
+
 MobileGym runs use isolated benchmark daemon workers and route each task through
 the environment bridge with a stable `benchmark-task-id`. The CLI logs
 `Max iterations`, `Max edits / iteration`, and `min_delta` before launching the

@@ -10,7 +10,7 @@ GitHub。
 
 ## 示例 1：本地开发
 
-在设备可以访问的主机上提供生成的文件：
+在设备可以访问的主机上提供生成的文件。服务器在子 shell 中后台运行，因此后续步骤仍在仓库根目录下执行：
 
 ```bash
 VERSION="dev-$(date +%Y%m%d-%H%M%S)"
@@ -28,8 +28,7 @@ OTA_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 OTA_BASE_URL="$BASE_URL" \
 ./debian_build.sh
 
-cd output/debian/image
-python3 -m http.server 8000 --bind 0.0.0.0
+(cd output/debian/image && python3 -m http.server 8000 --bind 0.0.0.0) &
 ```
 
 将公钥复制到设备：
@@ -47,6 +46,8 @@ ota update \
   --public-key /userdata/ota/dev_pubkey.pem \
   --dry-run
 ```
+
+在 dry run 完成之前保持服务器运行，完成后在主机上用 `kill %1` 停止它。
 
 ## 示例 2：自托管 HTTP(S)
 
@@ -88,6 +89,7 @@ OTA_PRIVATE_KEY_PATH="$PWD/ota_private_key.pem" \
 OTA_PUBLIC_KEY_PATH="$PWD/ota_public_key.pem" \
 AGENT_CONFIG_PATH="$PWD/agent.toml" \
 OTA_REPO="$REPO" \
+OTA_BASE_URL="https://github.com/$REPO/releases/download/$TAG" \
 OTA_CHANNEL=custom \
 OTA_BUILD_VERSION="$TAG" \
 OTA_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

@@ -393,6 +393,10 @@ uv run python -m desktop.scripts.start_bridge \
   --bridge-host 172.17.0.1 --allow-private-bind --bridge-port 8898
 ```
 
+> **Warning:** The bridge does not authenticate clients. Any process that can
+> reach `172.17.0.1:8898`, including other containers on this host, can drive
+> this desktop. Run it only on a trusted host.
+
 ```bash
 AICO_DEVICE_TYPE=linux \
 AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:8898 \

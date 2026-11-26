@@ -327,6 +327,9 @@ uv run python -m desktop.scripts.start_bridge \
   --bridge-host 172.17.0.1 --allow-private-bind --bridge-port 8898
 ```
 
+> **警告：** 桥接不对客户端做任何认证。任何能访问 `172.17.0.1:8898` 的进程，
+> 包括这台主机上的其他容器，都能操控这台桌面。只在可信主机上运行。
+
 ```bash
 AICO_DEVICE_TYPE=linux \
 AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:8898 \
