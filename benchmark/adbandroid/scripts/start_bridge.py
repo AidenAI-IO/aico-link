@@ -22,6 +22,8 @@ from adbandroid.bridge.adb import (
     ADBCommandError,
     DEFAULT_JPEG_QUALITY,
     DEFAULT_SCREENSHOT_MAX_WIDTH,
+    DEFAULT_UNICODE_INPUT_METHOD,
+    SUPPORTED_UNICODE_INPUT_METHODS,
 )
 from adbandroid.bridge.server import ADBBridgeServer
 
@@ -41,6 +43,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bridge-port", type=int, default=0)
     parser.add_argument("--screenshot-max-width", type=int, default=DEFAULT_SCREENSHOT_MAX_WIDTH)
     parser.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY)
+    parser.add_argument(
+        "--unicode-input-method",
+        choices=SUPPORTED_UNICODE_INPUT_METHODS,
+        default=DEFAULT_UNICODE_INPUT_METHOD,
+        help="Unicode text input path (default: adbkeyboard)",
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     args = parser.parse_args(argv)
 
@@ -49,11 +57,20 @@ def main(argv: list[str] | None = None) -> int:
         adb_path=args.adb_path,
         screenshot_max_width=args.screenshot_max_width,
         jpeg_quality=args.jpeg_quality,
+        unicode_input_method=args.unicode_input_method,
     )
     try:
         device.check_device()
     except ADBCommandError as exc:
         print(f"warning: adb device not ready yet: {exc}", file=sys.stderr, flush=True)
+    else:
+        try:
+            installed = device.ensure_unicode_input_method_installed()
+        except ADBCommandError as exc:
+            print(f"error: could not install the selected input method: {exc}", file=sys.stderr, flush=True)
+            return 1
+        if installed:
+            print(f"Installed selected input method: {args.unicode_input_method}", file=sys.stderr, flush=True)
 
     server = ADBBridgeServer(device, host=args.bridge_host, port=args.bridge_port)
     environment_url = server.start()
@@ -71,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
                     "environment_url": environment_url,
                     "docker_environment_url": docker_environment_url,
                     "adb_serial": args.adb_serial,
+                    "unicode_input_method": args.unicode_input_method,
                     "agent_daemon_command": agent_daemon_command,
                 },
                 ensure_ascii=False,
@@ -82,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"environment_url={environment_url}", flush=True)
         print(f"docker_environment_url={docker_environment_url}", flush=True)
         print(f"adb_serial={args.adb_serial}", flush=True)
+        print(f"unicode_input_method={args.unicode_input_method}", flush=True)
         print(f"agent_daemon_command={agent_daemon_command}", flush=True)
 
     stop_event = threading.Event()

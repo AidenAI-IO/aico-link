@@ -125,9 +125,18 @@ Unknown or ambiguous permission prompts remain visible. See the
 512-UTF-16-unit input limits, and secure-surface restrictions. Android supports
 committed Unicode through the optional
 [ADBKeyBoard setup](../../benchmark/adbandroid/README.md#unicode-text-with-adbkeyboard).
-The bridge temporarily selects that IME for Base64 input and restores the
-original keyboard; devices without it retain the ASCII fallback. Mirroring
-supports committed Unicode through the Mac.
+ADBKeyBoard is the default: the bridge temporarily selects it for Base64 input
+and restores the original keyboard. To use Appium Settings' UnicodeIME instead,
+start Android mode with `--unicode-input-method appium`. The bridge automatically
+installs the selected IME if it is missing and the device is ready at startup.
+If that installation fails, startup stops before the bridge server starts.
+If the device is not ready, installation is deferred until the device responds
+to a later capability probe or text insertion. A running bridge retains ASCII
+input when the selected IME cannot be installed. The Appium path sends modified
+UTF-7 through `adb input text`; it cannot send literal `%s`. The two paths are selected when
+the bridge starts and do not fall back to each other. See the
+[Appium UnicodeIME setup](../../benchmark/adbandroid/README.md#appium-unicodeime-alternative).
+Mirroring supports committed Unicode through the Mac.
 
 In USB/WDA mode, the Agent sends the original Unicode through native
 `insert_text` and verifies the result from screenshots. Direct bridge

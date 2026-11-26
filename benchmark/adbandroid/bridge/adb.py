@@ -10,10 +10,17 @@ translate those into protocol responses.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import re
 import subprocess
+import tempfile
+import threading
 import time
+import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from mnk_provider import validate_insert_text
@@ -29,10 +36,49 @@ PREFERRED_ASCII_INPUT_METHODS = (
 DEFAULT_TEXT_RESTORE_WAIT_SEC = 0.08
 ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
 ADB_KEYBOARD_PACKAGE = "com.android.adbkeyboard"
+ADB_KEYBOARD_INPUT_METHOD = "adbkeyboard"
+APPIUM_INPUT_METHOD = "appium"
+DEFAULT_UNICODE_INPUT_METHOD = ADB_KEYBOARD_INPUT_METHOD
+SUPPORTED_UNICODE_INPUT_METHODS = (ADB_KEYBOARD_INPUT_METHOD, APPIUM_INPUT_METHOD)
+APPIUM_UNICODE_IME = "io.appium.settings/.UnicodeIME"
+# Keep the APK sources and digests pinned so automatic installation only
+# accepts the selected helper from its upstream release.
+MAX_UNICODE_IME_APK_BYTES = 16 * 1024 * 1024
+UNICODE_IME_DOWNLOAD_TIMEOUT_SEC = 30
+UNICODE_IME_INSTALL_TIMEOUT_SEC = 120
+
+
+@dataclass(frozen=True)
+class UnicodeIMEPackage:
+    name: str
+    ime_id: str
+    url: str
+    sha256: str
+
+
+UNICODE_IME_PACKAGES = {
+    ADB_KEYBOARD_INPUT_METHOD: UnicodeIMEPackage(
+        name="ADBKeyBoard",
+        ime_id=ADB_KEYBOARD_IME,
+        url="https://github.com/senzhk/ADBKeyBoard/releases/download/v2.5-dev/keyboardservice-debug.apk",
+        sha256="41a8a0996d7397a2390d1ca16a75cb66c4a7bdaa89cf4e63600a4d3fb346fbbb",
+    ),
+    APPIUM_INPUT_METHOD: UnicodeIMEPackage(
+        name="Appium Settings",
+        ime_id=APPIUM_UNICODE_IME,
+        url="https://github.com/appium/io.appium.settings/releases/download/v8.2.1/settings_apk-debug.apk",
+        sha256="e4024b3ee348929252bcaf5eb422bcab9e4ace96703499a84f3332281c03375f",
+    ),
+}
+
+# Appium Settings 3.4.0's AppiumIME does not decode modified UTF-7.
+# UnicodeIME needs time to bind after selection and to commit before restore.
+APPIUM_IME_BIND_WAIT_SEC = 1.0
+APPIUM_TEXT_COMMIT_WAIT_SEC = 0.3
 
 # Characters adb `input text` can type reliably on a US keyboard layout.
 # Deliberately excludes newline/tab (input text cannot type them) and any
-# non-ASCII text (handled separately by insert_text through ADBKeyBoard).
+# non-ASCII text (handled separately by insert_text through the selected IME).
 ADB_TEXT_CHARS = set(
     "abcdefghijklmnopqrstuvwxyz"
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -55,6 +101,25 @@ class ADBCommandError(RuntimeError):
     """An adb command failed or timed out."""
 
 
+def _download_verified_ime_apk(package: UnicodeIMEPackage) -> bytes:
+    request = urllib.request.Request(
+        package.url,
+        headers={"User-Agent": "aico-link-adb-bridge"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=UNICODE_IME_DOWNLOAD_TIMEOUT_SEC) as response:
+            apk_data = response.read(MAX_UNICODE_IME_APK_BYTES + 1)
+    except OSError as exc:
+        raise ADBCommandError(f"could not download {package.name}: {exc}") from exc
+
+    if not apk_data or len(apk_data) > MAX_UNICODE_IME_APK_BYTES:
+        raise ADBCommandError(f"downloaded {package.name} APK has an invalid size")
+    digest = hashlib.sha256(apk_data).hexdigest()
+    if digest != package.sha256:
+        raise ADBCommandError(f"downloaded {package.name} APK failed SHA-256 verification")
+    return apk_data
+
+
 class ADBAndroidDevice:
     """Thin wrapper over the adb CLI for a single device serial."""
 
@@ -65,17 +130,24 @@ class ADBAndroidDevice:
         timeout_sec: float = 10,
         screenshot_max_width: int = DEFAULT_SCREENSHOT_MAX_WIDTH,
         jpeg_quality: int = DEFAULT_JPEG_QUALITY,
+        unicode_input_method: str = DEFAULT_UNICODE_INPUT_METHOD,
     ):
         self.serial = str(serial).strip()
         if not self.serial:
             raise ValueError("adb serial is required")
+        if unicode_input_method not in SUPPORTED_UNICODE_INPUT_METHODS:
+            choices = ", ".join(SUPPORTED_UNICODE_INPUT_METHODS)
+            raise ValueError(f"unicode_input_method must be one of: {choices}")
         self.adb_path = adb_path
         self.timeout_sec = timeout_sec
         self.screenshot_max_width = max(1, int(screenshot_max_width))
         self.jpeg_quality = min(95, max(1, int(jpeg_quality)))
+        self.unicode_input_method = unicode_input_method
         self._screen_size: tuple[int, int] | None = None
         self._supports_keycombination: bool | None = None
         self._preferred_ime: str | None = None
+        self._unicode_ime_install_lock = threading.Lock()
+        self._pending_input_method_restore: str | None = None
 
     # ---- low-level -------------------------------------------------------
 
@@ -203,33 +275,75 @@ class ADBAndroidDevice:
             )
         if text == "":
             raise ValueError("text is required")
+        self._recover_pending_input_method_restore()
         restore_ime = self._switch_to_ascii_input_method()
-        try:
+
+        def send_text() -> None:
             self._run(["shell", "input", "text", escape_adb_text(text)])
-        finally:
-            self._restore_input_method(restore_ime)
+
+        if restore_ime:
+            self._run_with_input_method_restore(restore_ime, send_text)
+        else:
+            send_text()
 
     def supports_text_insertion(self) -> bool:
-        """Probe enabled IMEs each time so installation needs no bridge restart."""
-        return ADB_KEYBOARD_IME in self.list_input_methods()
+        """Ensure the selected Unicode IME is installed before advertising it."""
+        try:
+            self.ensure_unicode_input_method_installed()
+        except ADBCommandError:
+            return False
+        return True
+
+    def ensure_unicode_input_method_installed(self) -> bool:
+        """Install the selected pinned APK if its IME component is missing."""
+        package = UNICODE_IME_PACKAGES[self.unicode_input_method]
+        if package.ime_id in self._installed_input_methods():
+            return False
+
+        with self._unicode_ime_install_lock:
+            if package.ime_id in self._installed_input_methods():
+                return False
+            apk_data = _download_verified_ime_apk(package)
+            with tempfile.TemporaryDirectory(prefix="aico-unicode-ime-") as directory:
+                apk_path = Path(directory) / "input-method.apk"
+                apk_path.write_bytes(apk_data)
+                output = self._run_text(
+                    ["install", "-r", str(apk_path)],
+                    timeout=UNICODE_IME_INSTALL_TIMEOUT_SEC,
+                )
+            if "failure" in output.lower() or not re.search(r"\bsuccess\b", output, re.I):
+                raise ADBCommandError(f"installing {package.name} failed: {output.strip()}")
+            if package.ime_id not in self._installed_input_methods():
+                raise ADBCommandError(f"{package.name} installed but {package.ime_id} was not registered")
+            return True
+
+    def _installed_input_methods(self) -> set[str]:
+        output = self._run_text(["shell", "ime", "list", "-a", "-s"], timeout=5)
+        return {line.strip() for line in output.splitlines() if line.strip()}
 
     def insert_text(self, text: str, replace: bool = False) -> None:
-        """Commit Unicode once through ADBKeyBoard, restoring the user's IME.
+        """Commit Unicode once through the configured IME and restore the user's IME.
 
-        Broadcast completion is not proof that an editor accepted the text;
-        callers must verify the field and must not replay an ambiguous failure.
+        Delivery success is not proof that an editor accepted the text; callers
+        must verify the field and must not replay an ambiguous failure.
         """
         validate_insert_text(text)
         if not isinstance(replace, bool):
             raise ValueError("replace must be a boolean")
-        if not self.supports_text_insertion():
-            raise ADBCommandError(
-                "Install ADBKeyBoard and enable com.android.adbkeyboard/.AdbIME before Unicode input"
-            )
+        self._recover_pending_input_method_restore()
+        if self.unicode_input_method == ADB_KEYBOARD_INPUT_METHOD:
+            self._insert_text_with_adbkeyboard(text, replace)
+        else:
+            self._insert_text_with_appium(text, replace)
+
+    def _insert_text_with_adbkeyboard(self, text: str, replace: bool) -> None:
+        self.ensure_unicode_input_method_installed()
         original_ime = self.current_input_method()
         if not original_ime or original_ime.lower() == "null":
             raise ADBCommandError("cannot determine the input method to restore; no text was sent")
-        try:
+        self._ensure_input_method_enabled(ADB_KEYBOARD_IME)
+
+        def send_text() -> None:
             if original_ime != ADB_KEYBOARD_IME:
                 self.set_input_method(ADB_KEYBOARD_IME)
             if self.current_input_method() != ADB_KEYBOARD_IME:
@@ -239,16 +353,87 @@ class ADBAndroidDevice:
                 self._keyboard_broadcast("ADB_CLEAR_TEXT")
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             self._keyboard_broadcast("ADB_INPUT_B64", ["--es", "msg", encoded])
-        finally:
-            if original_ime != ADB_KEYBOARD_IME:
-                try:
-                    self.set_input_method(original_ime)
-                    if self.current_input_method() != original_ime:
-                        raise ADBCommandError("input method did not change")
-                except ADBCommandError:
-                    raise ADBCommandError(
-                        "could not restore the original input method; inspect the field before retrying"
-                    ) from None
+
+        if original_ime != ADB_KEYBOARD_IME:
+            self._run_with_input_method_restore(original_ime, send_text)
+        else:
+            send_text()
+
+    def _insert_text_with_appium(self, text: str, replace: bool) -> None:
+        if "%s" in text:
+            raise ValueError('text must not contain "%s": adb input text types it as a space')
+        self.ensure_unicode_input_method_installed()
+        original_ime = self.current_input_method()
+        if not original_ime or original_ime.lower() == "null":
+            raise ADBCommandError("cannot determine the input method to restore; no text was sent")
+        self._ensure_input_method_enabled(APPIUM_UNICODE_IME)
+
+        def send_text() -> None:
+            if original_ime != APPIUM_UNICODE_IME:
+                self.set_input_method(APPIUM_UNICODE_IME)
+                if self.current_input_method() != APPIUM_UNICODE_IME:
+                    raise ADBCommandError("Appium UnicodeIME selection failed; no text was sent")
+                time.sleep(APPIUM_IME_BIND_WAIT_SEC)
+            if replace:
+                self.keycombination(["KEYCODE_CTRL_LEFT", "KEYCODE_A"])
+                self.keyevent("KEYCODE_DEL")
+            encoded = encode_modified_utf7(text)
+            try:
+                self._run(["shell", "input", "text", escape_adb_text(encoded)])
+            except ADBCommandError:
+                raise ADBCommandError(
+                    "Appium UnicodeIME input failed or timed out; inspect the field before retrying"
+                ) from None
+            time.sleep(APPIUM_TEXT_COMMIT_WAIT_SEC)
+
+        if original_ime != APPIUM_UNICODE_IME:
+            self._run_with_input_method_restore(original_ime, send_text)
+        else:
+            send_text()
+
+    def _run_with_input_method_restore(
+        self,
+        original_ime: str,
+        action: Callable[[], None],
+        restore_wait_sec: float = DEFAULT_TEXT_RESTORE_WAIT_SEC,
+    ) -> None:
+        def restore() -> None:
+            if restore_wait_sec > 0:
+                time.sleep(restore_wait_sec)
+            self._restore_text_input_method(original_ime)
+
+        try:
+            action()
+        except Exception as input_error:
+            try:
+                restore()
+            except ADBCommandError as restore_error:
+                raise ADBCommandError(f"{input_error}; {restore_error}") from input_error
+            raise
+        restore()
+
+    def _recover_pending_input_method_restore(self) -> None:
+        if self._pending_input_method_restore:
+            self._restore_text_input_method(self._pending_input_method_restore)
+
+    def _restore_text_input_method(self, original_ime: str) -> None:
+        self._pending_input_method_restore = original_ime
+        try:
+            self.set_input_method(original_ime)
+            if self.current_input_method() != original_ime:
+                raise ADBCommandError("input method did not change")
+        except ADBCommandError:
+            raise ADBCommandError(
+                "could not restore the original input method; inspect the field before retrying"
+            ) from None
+        self._pending_input_method_restore = None
+
+    def _ensure_input_method_enabled(self, ime_id: str) -> None:
+        if ime_id in self.list_input_methods():
+            return
+        output = self._run_text(["shell", "ime", "enable", ime_id], timeout=5)
+        if "error" in output.lower() or "unknown" in output.lower() or ime_id not in self.list_input_methods():
+            raise ADBCommandError(f"could not enable installed input method {ime_id!r}: {output.strip()}")
 
     def _wait_for_adb_keyboard(self) -> None:
         deadline = time.monotonic() + 3
@@ -349,15 +534,6 @@ class ADBAndroidDevice:
             (ime for ime in PREFERRED_ASCII_INPUT_METHODS if ime in enabled_imes), ""
         )
         return self._preferred_ime
-
-    def _restore_input_method(self, ime_id: str) -> None:
-        if not ime_id or ime_id.lower() == "null":
-            return
-        time.sleep(DEFAULT_TEXT_RESTORE_WAIT_SEC)
-        try:
-            self.set_input_method(ime_id)
-        except ADBCommandError:
-            pass
 
     def start_settings(self) -> None:
         self._run(["shell", "am", "start", "-a", "android.settings.SETTINGS"])
@@ -492,6 +668,27 @@ class ADBAndroidDevice:
 
 def unsupported_adb_text_chars(text: str) -> str:
     return "".join(ch for ch in text if ch not in ADB_TEXT_CHARS)
+
+
+def encode_modified_utf7(text: str) -> str:
+    """Encode Unicode for Appium UnicodeIME's modified UTF-7 decoder."""
+    out: list[str] = []
+    pending: list[str] = []
+
+    def flush() -> None:
+        if pending:
+            encoded = base64.b64encode("".join(pending).encode("utf-16-be")).decode("ascii")
+            out.append("&" + encoded.rstrip("=").replace("/", ",") + "-")
+            pending.clear()
+
+    for ch in text:
+        if 0x20 <= ord(ch) <= 0x7E:
+            flush()
+            out.append("&-" if ch == "&" else ch)
+        else:
+            pending.append(ch)
+    flush()
+    return "".join(out)
 
 
 def escape_adb_text(text: str) -> str:
