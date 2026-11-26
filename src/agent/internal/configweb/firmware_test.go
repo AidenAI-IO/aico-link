@@ -1,10 +1,43 @@
 package configweb
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestFirmwareEndpointDoesNotProbeAgent(t *testing.T) {
+	options := testOptions(t)
+	marker := filepath.Join(t.TempDir(), "agent-probed")
+	options.AgentInitScript = filepath.Join(t.TempDir(), "agent-status")
+	if err := os.WriteFile(options.AgentInitScript, []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	options.OTAConfigPath = filepath.Join(t.TempDir(), "ota-config.json")
+	if err := os.WriteFile(options.OTAConfigPath, []byte(`{"factory_version":"factory-test"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{options: options}
+	response := httptest.NewRecorder()
+	server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/device/firmware", nil))
+	var payload struct {
+		Firmware struct {
+			Version string `json:"version"`
+		} `json:"firmware"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || payload.Firmware.Version != "factory-test" {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("firmware read probed the Agent: %v", err)
+	}
+}
 
 func TestFirmwareInfoBeforeFirstOTA(t *testing.T) {
 	options := testOptions(t)

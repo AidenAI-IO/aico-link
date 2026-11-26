@@ -142,10 +142,11 @@ at a single endpoint on the device.
 
 URL examples:
 
-- Wi-Fi: `http://<board-ip>:8080/mcp`
-- USB ECM: `http://192.168.42.1:8080/mcp`
+- Wi-Fi: `https://<board-ip>:443/mcp` (Config Web HTTPS reverse proxy)
+- USB ECM: `https://192.168.42.1:443/mcp`
+- Direct USB fallback when Config Web HTTPS is disabled: `http://192.168.42.1:8080/mcp`
 
-Point an external MCP client at that URL. If the board IP changes (DHCP), update the client URL. Bypass HTTP proxies for the device address (`NO_PROXY` / `no_proxy`).
+Config Web HTTPS must be enabled for Wi-Fi clients. Install and trust the board's local TLS CA before connecting. The HTTPS endpoint proxies MCP to the loopback Agent, so LAN access does not need to be enabled. If the board IP changes (DHCP), update the client URL. Bypass HTTP proxies for the device address (`NO_PROXY` / `no_proxy`).
 
 ## Enable / disable
 
@@ -171,8 +172,9 @@ for the API.
 
 | Client | Needs |
 | --- | --- |
-| Same Wi-Fi (`http://<board-ip>:8080/mcp`), LAN access on or off | MCP access token |
-| Plugged straight into Aico Link (`http://192.168.42.1:8080/mcp`) | MCP access token |
+| Same Wi-Fi (`https://<board-ip>:443/mcp`), LAN access on or off | Trusted board TLS CA and MCP access token |
+| Plugged straight into Aico Link (`https://192.168.42.1:443/mcp`) | Trusted board TLS CA and MCP access token |
+| Direct USB fallback (`http://192.168.42.1:8080/mcp`) | Physical USB connection and MCP access token |
 | Docker or host runs without `-lan-guard` | Nothing |
 
 Without a valid token `/mcp` returns `401` with `"error": "mcp_token_required"`.
@@ -183,7 +185,7 @@ pair (USB).
 Claude Code:
 
 ```bash
-claude mcp add --transport http aico http://<board-ip>:8080/mcp \
+claude mcp add --transport http aico https://<board-ip>:443/mcp \
   --header "Authorization: Bearer aico_mcp_..."
 ```
 
@@ -194,7 +196,7 @@ Clients configured with JSON:
   "mcpServers": {
     "aico": {
       "type": "http",
-      "url": "http://<board-ip>:8080/mcp",
+      "url": "https://<board-ip>:443/mcp",
       "headers": {"Authorization": "Bearer aico_mcp_..."}
     }
   }

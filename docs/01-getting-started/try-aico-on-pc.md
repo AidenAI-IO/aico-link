@@ -186,16 +186,17 @@ directory once you no longer need it.
 ## Configure a Native Local Agent
 
 For an Agent running directly on macOS or Linux, use Config Web's host profile.
-Build the native binary, then start the portal from the repository root:
+Build the native binary and the static frontend, then start the portal from the repository root:
 
 ```bash
 (cd src/agent && go build -o /absolute/path/to/agent ./cmd/daemon)
+bash scripts/build-config-web.sh
 ```
 
 ```bash
 /absolute/path/to/agent config-web --local-agent \
   --config /absolute/path/to/agent-data/agent.toml \
-  --web-root "$PWD/src/config_web/web" \
+  --web-root "$PWD/src/config_web/dist" \
   --agent-url http://127.0.0.1:8080
 ```
 

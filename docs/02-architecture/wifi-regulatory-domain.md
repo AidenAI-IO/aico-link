@@ -36,7 +36,7 @@ The main implementation is distributed across:
 | Configuration loading and normalization | `src/agent/internal/configweb/wifi.go` |
 | Country-code driver integration | `src/agent/internal/wifiregion/` |
 | Driver and service startup | `overlay-debian/usr/lib/aico/aico-wifi-driver` and the related systemd unit |
-| Configuration UI | `src/config_web/web/assets/js/config/wifi.js` |
+| Configuration UI | `src/config_web/src/pages/WiFi.tsx` |
 | Persistent Wi-Fi configuration | `/userdata/debian/wifi/wpa_supplicant-wlan0.conf` |
 
 The region endpoints are:

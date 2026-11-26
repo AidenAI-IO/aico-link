@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"aico-agent/internal/agent"
+	"aico-agent/internal/localtls"
 	"aico-agent/internal/wifiproxy"
 	"aico-agent/internal/wifiregion"
 )
@@ -242,6 +244,37 @@ func TestServerServesStaticAssetsAndRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestMCPRequiresHTTPSAndProxiesThroughTheLoopbackAgent(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mcp" || r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Errorf("proxied request path=%q authorization=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("event: message\\ndata: ok\\n\\n"))
+	}))
+	defer upstream.Close()
+	options := testOptions(t)
+	options.AgentHTTPBaseURL = upstream.URL
+	server, err := NewServer(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := httptest.NewRecorder()
+	server.ServeHTTP(plain, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}")))
+	if plain.Code != http.StatusUpgradeRequired {
+		t.Fatalf("plain HTTP status=%d body=%s", plain.Code, plain.Body.String())
+	}
+	secureRequest := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
+	secureRequest.TLS = &tls.ConnectionState{}
+	secureRequest.Header.Set("Authorization", "Bearer test-token")
+	secureRequest.Header.Set("Accept", "text/event-stream")
+	secure := httptest.NewRecorder()
+	server.ServeHTTP(secure, secureRequest)
+	if secure.Code != http.StatusAccepted || !strings.Contains(secure.Body.String(), "data: ok") {
+		t.Fatalf("HTTPS proxy status=%d body=%q", secure.Code, secure.Body.String())
+	}
+}
+
 func TestServerServesSettingsRoutesOnlyForKnownSections(t *testing.T) {
 	server, err := NewServer(testOptions(t))
 	if err != nil {
@@ -288,6 +321,98 @@ func TestRestartAndPlanRejectCrossSiteRequests(t *testing.T) {
 		if resp.Code != http.StatusForbidden {
 			t.Errorf("cross-site POST %s: status=%d, want 403", path, resp.Code)
 		}
+	}
+}
+
+func TestConfigReadWithoutAgentBinary(t *testing.T) {
+	options := testOptions(t)
+	options.AgentBinary = filepath.Join(t.TempDir(), "missing-agent")
+	server := &Server{options: options}
+	for _, inputMode := range []string{"stt", "realtime", "unsupported"} {
+		config := fmt.Sprintf(`[voice_settings.mode]
+input_mode = %q
+[model_settings.providers.main]
+type = "openai"
+api_key = "do-not-expose"
+`, inputMode)
+		if err := os.WriteFile(options.AgentConfigPath, []byte(config), 0600); err != nil {
+			t.Fatal(err)
+		}
+		response := httptest.NewRecorder()
+		server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+		var payload struct {
+			Config struct {
+				Agent struct {
+					InputMode string `json:"input_mode"`
+				} `json:"agent"`
+			} `json:"config"`
+			Revision     uint64                        `json:"revision"`
+			ConfigValid  bool                          `json:"config_valid"`
+			ConfigErrors []agent.ConfigValidationError `json:"config_errors"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || payload.Config.Agent.InputMode != inputMode || payload.Revision != agent.ConfigFileRevision(options.AgentConfigPath) {
+			t.Fatalf("config read status=%d mode=%s revision=%d", response.Code, payload.Config.Agent.InputMode, payload.Revision)
+		}
+		if strings.Contains(response.Body.String(), "do-not-expose") {
+			t.Fatal("configuration read exposed a credential")
+		}
+		if inputMode == "unsupported" && (payload.ConfigValid || len(payload.ConfigErrors) == 0) {
+			t.Fatal("configuration read omitted runtime validation errors")
+		}
+	}
+	if err := os.WriteFile(options.AgentConfigPath, []byte("[broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unreadable config status=%d", response.Code)
+	}
+}
+
+func TestConfigReadReportsHTTPSPortOnlyWhenAuthorityIsReady(t *testing.T) {
+	options := testOptions(t)
+	options.HTTPSPort = 443
+	server := &Server{options: options}
+	read := func() map[string]any {
+		t.Helper()
+		response := httptest.NewRecorder()
+		server.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("config status=%d body=%s", response.Code, response.Body.String())
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload
+	}
+	if _, ok := read()["https_port"]; ok {
+		t.Fatal("HTTPS port reported without a ready authority")
+	}
+	server.authority = &localtls.Authority{}
+	if got := read()["https_port"]; got != float64(443) {
+		t.Fatalf("HTTPS port=%v, want 443", got)
+	}
+}
+
+func TestMCPProxyFailureInvalidatesDiscoveredEndpoint(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	endpoint := upstream.URL
+	upstream.Close()
+	server := &Server{agentEndpointURL: endpoint, agentEndpointExpires: time.Now().Add(time.Minute)}
+	req := httptest.NewRequest(http.MethodGet, "https://device/mcp", nil)
+	req.TLS = &tls.ConnectionState{}
+	response := httptest.NewRecorder()
+	server.serveMCP(response, req)
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("proxy status=%d body=%s", response.Code, response.Body.String())
+	}
+	if server.agentEndpointURL != "" {
+		t.Fatalf("failed endpoint remains cached: %s", server.agentEndpointURL)
 	}
 }
 
@@ -380,7 +505,7 @@ input_mode = "stt"
 	state := func() (bool, agent.ConfigValidationError) {
 		t.Helper()
 		resp := httptest.NewRecorder()
-		server.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/device/snapshot", nil))
+		server.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/config", nil))
 		if resp.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 		}

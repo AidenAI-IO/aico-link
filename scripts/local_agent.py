@@ -39,6 +39,7 @@ def arguments(argv=None):
     parser.add_argument("--permission-policy", type=Path, help="Explicit permission rules for ios")
     parser.add_argument("--request-permissions", action="store_true", help="Request macOS Mirroring permissions and exit; approve them yourself")
     parser.add_argument("--agent-binary", type=Path, help="Use an existing native Agent instead of building")
+    parser.add_argument("--rebuild-web", action="store_true", help="Rebuild Config Web even when dist already exists")
     parser.add_argument("--python", type=Path, help="Prepared bridge Python; otherwise install isolated dependencies with uv")
     parser.add_argument("--agent-port", type=int)
     parser.add_argument("--config-port", type=int)
@@ -267,6 +268,14 @@ class Processes:
             child.wait()
 
 
+def build_config_web(force=False):
+    """Reuse built Config Web unless missing or explicitly rebuilt."""
+    web_root = ROOT / "src/config_web/dist"
+    if force or not (web_root / "index.html").is_file():
+        subprocess.run(["bash", str(ROOT / "scripts/build-config-web.sh")], check=True)
+    return web_root
+
+
 def launch(args, stopped):
     with target_directory(args) as directory:
         if args.request_permissions:
@@ -276,13 +285,14 @@ def launch(args, stopped):
             return
         check_ports(args)
         binary = agent_binary(args)
+        web_root = build_config_web(args.rebuild_web)
         python = None if args.bridge_url else bridge_python(args)
         env = dict(os.environ, AICO_SHARE_DIR=str(directory / "shared"),
                    AICO_SHARE_ADDR=f"127.0.0.1:{args.share_port}", AICO_SYSTEM_ENV=str(directory / "system.env"))
         processes = Processes(directory, stopped)
         try:
             processes.start("config-web", [binary, "config-web", "--local-agent", "--port", str(args.config_port),
-                            "--config", str(directory / "agent.toml"), "--web-root", str(ROOT / "src/config_web/web"),
+                            "--config", str(directory / "agent.toml"), "--web-root", str(web_root),
                             "--agent-url", args.agent_url], env)
             processes.wait_http(args.config_url + "/", decode_json=False)
             print(f"Mode: {args.mode}\nConfig Web: {args.config_url}\nData/logs: {directory}\nCtrl-C stops this launch.", flush=True)
