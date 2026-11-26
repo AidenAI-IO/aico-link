@@ -10,6 +10,8 @@ from typing import Any
 BENCHMARK_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATALOG_PATH = Path(__file__).with_name("suites.json")
 DEFAULT_SUITES_DIR = BENCHMARK_ROOT / "suites"
+# Tasks that must pass before baseline code is accepted; see load_gate.
+DEFAULT_GATE_PATH = Path(__file__).with_name("baseline_gate_v1.json")
 ENVIRONMENTS = {"isolated", "mobilegym", "adb", "external"}
 # ADB cases use the CI emulator. They are runnable automatically while still
 # belonging to the hardware profile and sharing its exclusive device lock.
@@ -145,12 +147,7 @@ def load_catalog(
     for case in cases:
         if not case.task_ids:
             continue
-        path = suites_dir / case.suite.removeprefix("suites/")
-        try:
-            tasks = json.loads(path.read_text(encoding="utf-8"))["tasks"]
-            by_id = {task["id"]: task for task in tasks}
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            raise CatalogError(f"cannot read tasks for {case.id}: {exc}") from exc
+        by_id = _suite_tasks(suites_dir, case)
         for task_id in case.task_ids:
             if task_id not in by_id:
                 raise CatalogError(f"unknown task {task_id!r} for {case.id}")
@@ -158,6 +155,64 @@ def load_catalog(
             if platforms and case.target_platform != "auto" and case.target_platform not in platforms:
                 raise CatalogError(f"task {task_id!r} does not support {case.target_platform} for {case.id}")
     return Catalog(cases=cases)
+
+
+def _suite_tasks(suites_dir: Path, case: SuiteCase) -> dict[str, Any]:
+    path = suites_dir / case.suite.removeprefix("suites/")
+    try:
+        tasks = json.loads(path.read_text(encoding="utf-8"))["tasks"]
+        return {task["id"]: task for task in tasks}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise CatalogError(f"cannot read tasks for {case.id}: {exc}") from exc
+
+
+def load_gate(
+    catalog: Catalog,
+    *,
+    gate_path: Path = DEFAULT_GATE_PATH,
+    suites_dir: Path = DEFAULT_SUITES_DIR,
+) -> tuple[SuiteCase, ...]:
+    """Return catalog cases narrowed to the gate's must-pass tasks.
+
+    A gate entry names a catalog case and a subset of its tasks, so gated tasks
+    keep the case's environment, concurrency and scoring contract unchanged.
+    """
+    try:
+        raw = json.loads(gate_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CatalogError(f"cannot read gate {gate_path}: {exc}") from exc
+    if not isinstance(raw, dict) or raw.get("version") != 1:
+        raise CatalogError("gate version must be 1")
+    entries = raw.get("cases")
+    if not isinstance(entries, list) or not entries:
+        raise CatalogError("gate cases must be a non-empty array")
+    by_case = {case.id: case for case in catalog.cases}
+    selected: list[SuiteCase] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict) or set(entry) != {"case", "task_ids"}:
+            raise CatalogError(f"gate entry {index} must have exactly case and task_ids")
+        case = by_case.get(entry["case"])
+        if case is None:
+            raise CatalogError(f"gate references unknown case: {entry['case']!r}")
+        if any(item.id == case.id for item in selected):
+            raise CatalogError(f"duplicate gate case: {case.id}")
+        if case.environment not in RUNNABLE_ENVIRONMENTS:
+            # The gate runs unattended on the benchmark runner.
+            raise CatalogError(f"gate case {case.id} needs external hardware")
+        task_ids = entry["task_ids"]
+        if (
+            not isinstance(task_ids, list)
+            or not task_ids
+            or not all(isinstance(task_id, str) and task_id for task_id in task_ids)
+            or len(set(task_ids)) != len(task_ids)
+        ):
+            raise CatalogError(f"gate task_ids for {case.id} must be unique non-empty IDs")
+        available = set(case.task_ids) or set(_suite_tasks(suites_dir, case))
+        unknown = [task_id for task_id in task_ids if task_id not in available]
+        if unknown:
+            raise CatalogError(f"gate tasks not in case {case.id}: {', '.join(unknown)}")
+        selected.append(dc.replace(case, task_ids=list(task_ids)))
+    return tuple(selected)
 
 
 def select_cases(
@@ -218,14 +273,21 @@ def cli(argv: list[str] | None = None) -> int:
     matrix = subparsers.add_parser("matrix")
     matrix.add_argument("--profile", choices=sorted(PROFILES), required=True)
     matrix.add_argument("--suite", default="")
+    gate_matrix = subparsers.add_parser("gate-matrix")
+    gate_matrix.add_argument("--gate", type=Path, default=DEFAULT_GATE_PATH)
     args = parser.parse_args(argv)
 
     try:
         catalog = load_catalog()
         if args.command == "validate":
+            gated = load_gate(catalog)
             print(f"benchmark CI catalog covers {len(_suite_paths(DEFAULT_SUITES_DIR))} suites")
+            print(f"baseline gate covers {sum(len(case.task_ids) for case in gated)} tasks")
             return 0
-        cases = select_cases(catalog, profile=args.profile, suite=args.suite)
+        if args.command == "gate-matrix":
+            cases = load_gate(catalog, gate_path=args.gate)
+        else:
+            cases = select_cases(catalog, profile=args.profile, suite=args.suite)
     except CatalogError as exc:
         parser.error(str(exc))
     print(json.dumps({"include": [case.matrix_entry() for case in cases]}, separators=(",", ":")))

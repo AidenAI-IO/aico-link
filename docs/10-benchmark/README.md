@@ -516,6 +516,8 @@ The execution policy is based only on whether CI can prepare the environment:
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (16 cases) |
 | Manual dispatch | `adb` | Native Android comparisons, built-in app workflows, and Bridge capabilities on the configured emulator |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
+| Push to `main` changing `src/agent/`, `benchmark/`, or the workflow | `baseline-gate` | Must-pass tasks from `benchmark/ci/baseline_gate_v1.json` |
+| Manual dispatch | `baseline-gate` | The same must-pass tasks on any repository branch, such as a pull request branch before merging |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
 case whose environment is `isolated`, `mobilegym`, or `adb` and whose catalog
@@ -569,6 +571,39 @@ do not receive Agent/Judge/Langfuse secrets and therefore do not operate a
 device. Real benchmark execution comes from the daily schedule on the default
 branch or a manual `workflow_dispatch` on any repository branch. Manual
 dispatch remains unavailable to pull request and fork refs.
+
+### Baseline gate
+
+`benchmark/ci/baseline_gate_v1.json` lists the tasks that baseline code must
+keep passing. Each entry names a catalog case and a subset of its `task_ids`, so
+a gated task keeps its case's environment, concurrency, and scoring contract.
+`plan.py validate` checks that every entry refers to an automatic catalog case
+and an existing task, so renaming or removing a gated task fails the `CI`
+workflow until the gate is updated.
+
+The tasks were chosen from the per-task results of the scheduled and dispatched
+runs between 2026-11-12 and 2026-11-25. A task qualified when it passed every
+scored attempt on `main` (at least five), at least 90% of scored attempts on all
+branches, and every attempt after the switch to `google/gemini-3.5-flash-lite`.
+Two `memory-admission` tasks with one failure in 13 attempts on `main` are also
+included. Recalibrate the list when the Agent model or a gated suite changes.
+
+The `baseline-gate` profile runs each gated task once, with `BENCHMARK_REPEATS`
+forced to 1. `ci.gate_verdict` then reruns only the tasks that did not pass, and
+fails the job (check name `baseline-gate`) when a task passes in neither run.
+The job summary marks each such task as a `regression` when a run scored it as
+failed, or as `unverified` when no run produced a score (judge error, timeout,
+skipped, or missing result). A gate run is not published to Langfuse and does
+not generate a dashboard, so task subsets never appear as suite regressions.
+
+The self-hosted runner never runs pull request events. To check a change before
+merging, dispatch the workflow on the pull request branch:
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f profile=baseline-gate
+```
+
+The result is reported on the branch's head commit as the `baseline-gate` check.
 
 Use the `model` dropdown when manually dispatching the workflow to select the
 Agent model for that run. Manual dispatch defaults to

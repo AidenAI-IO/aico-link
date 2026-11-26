@@ -4,6 +4,18 @@ on:
   schedule:
     # 02:07 Asia/Shanghai daily (UTC 18:07 previous day).
     - cron: '7 18 * * *'
+  # Baseline gate: every merge into main that can change Agent behavior must
+  # keep the must-pass tasks in benchmark/ci/baseline_gate_v1.json passing.
+  # Pull requests cannot run here (self-hosted runner on a public repository);
+  # dispatch the baseline-gate profile on a pull request branch to check it
+  # before merging.
+  push:
+    branches:
+      - main
+    paths:
+      - src/agent/**
+      - benchmark/**
+      - .github/workflows/benchmark.yml
   workflow_dispatch:
     inputs:
       profile:
@@ -16,6 +28,7 @@ on:
           - hardware
           - adb
           - all
+          - baseline-gate
       suite:
         description: Optional suite path or comma-separated paths, for example suites/memory_v1.json,suites/quick_capture_v1.json
         required: false
@@ -41,7 +54,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: benchmark-${{ github.ref }}
+  # A separate group keeps a queued gate run from replacing a queued full run
+  # on the same branch. Each gate run checks a cumulative main, so a newer
+  # pending gate run may replace an older pending one.
+  group: benchmark-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.profile == 'baseline-gate') && 'gate' || 'full' }}
   cancel-in-progress: false
 
 jobs:
@@ -66,6 +82,8 @@ jobs:
             profile="${DISPATCH_PROFILE:-runnable}"
           elif [[ "$EVENT_NAME" == "schedule" ]]; then
             profile="runnable"
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            profile="baseline-gate"
           else
             echo "Unsupported benchmark workflow event: $EVENT_NAME" >&2
             exit 1
@@ -76,6 +94,7 @@ jobs:
             hardware) timeout_minutes=4320 ;;
             adb) timeout_minutes=1440 ;;
             all) timeout_minutes=5760 ;;
+            baseline-gate) timeout_minutes=240 ;;
             *) echo "Unsupported benchmark profile: $profile" >&2; exit 1 ;;
           esac
           echo "timeout_minutes=$timeout_minutes" >> "$GITHUB_OUTPUT"
@@ -86,7 +105,13 @@ jobs:
           SUITE: ${{ inputs.suite }}
         run: |
           set -euo pipefail
-          if [[ -n "$SUITE" ]]; then
+          if [[ "$PROFILE" == "baseline-gate" ]]; then
+            if [[ -n "$SUITE" ]]; then
+              echo "The baseline-gate profile runs the tasks in benchmark/ci/baseline_gate_v1.json; leave suite empty" >&2
+              exit 1
+            fi
+            matrix="$(python3 benchmark/ci/plan.py gate-matrix)"
+          elif [[ -n "$SUITE" ]]; then
             matrix="$(python3 benchmark/ci/plan.py matrix --profile "$PROFILE" --suite "$SUITE")"
           else
             matrix="$(python3 benchmark/ci/plan.py matrix --profile "$PROFILE")"
@@ -103,10 +128,14 @@ jobs:
           cases = json.loads(os.environ["MATRIX"])["include"]
           print(f"## Benchmark plan: {os.environ['PROFILE']}")
           print(f"\n{len(cases)} case(s): " + ", ".join(case["id"] for case in cases))
+          if os.environ["PROFILE"] == "baseline-gate":
+              print(f"\n{sum(len(case['task_ids']) for case in cases)} gated task(s)")
           PY
 
   run:
     needs: plan
+    # A distinct check name lets the gate become a required status check.
+    name: ${{ needs.plan.outputs.profile == 'baseline-gate' && 'baseline-gate' || 'run' }}
     if: ${{ startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
     runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
     # One runner serves this label, so a job matrix could never start a second job:
@@ -119,7 +148,9 @@ jobs:
     env:
       MATRIX: ${{ needs.plan.outputs.matrix }}
       BENCHMARK_CI_MAX_PARALLEL: '4'
-      BENCHMARK_REPEATS: ${{ inputs.repeats || vars.BENCHMARK_REPEATS || '1' }}
+      # The gate retries unpassed tasks itself, so each pass runs every task once.
+      BENCHMARK_REPEATS: ${{ needs.plan.outputs.profile == 'baseline-gate' && '1' || inputs.repeats || vars.BENCHMARK_REPEATS || '1' }}
+      GATE: ${{ needs.plan.outputs.profile == 'baseline-gate' && '1' || '0' }}
       BENCHMARK_AGENT_PROVIDER: ${{ startsWith(inputs.model, 'internal/') && 'openai' || vars.BENCHMARK_AGENT_PROVIDER }}
       DOCKER_BUILDKIT: 1
       BENCHMARK_AGENT_MODEL: ${{ inputs.model || 'google/gemini-3.5-flash-lite' }}
@@ -535,6 +566,10 @@ jobs:
       - name: Run benchmark cases
         # Each run is published to Langfuse as soon as its case finishes, while
         # later cases still run; the step ends once those publications finish.
+        # Gate runs are not published: their task subsets would read as suite
+        # regressions in the dashboard and weekly report. In a gate run an
+        # incomplete case is judged by the gate steps below instead.
+        continue-on-error: ${{ env.GATE == '1' }}
         working-directory: benchmark
         env:
           MATRIX: ${{ needs.plan.outputs.matrix }}
@@ -549,9 +584,46 @@ jobs:
           --matrix-json "$MATRIX"
           --run-id-prefix "$RUN_ID_PREFIX"
           --max-parallel "$BENCHMARK_CI_MAX_PARALLEL"
-          --publish-langfuse
+          ${{ env.GATE != '1' && '--publish-langfuse' || '' }}
           --publish-max-parallel 8
           --publish-run-timeout-sec 300
+      - name: Judge baseline gate first pass
+        id: gate_first
+        if: ${{ !cancelled() && env.GATE == '1' }}
+        working-directory: benchmark
+        env:
+          RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          uv run python -m ci.gate_verdict
+          --run-id-prefix "$RUN_ID_PREFIX"
+          --github-output "$GITHUB_OUTPUT"
+      - name: Retry unpassed gate tasks
+        # Agent and judge calls are nondeterministic; a task fails the gate
+        # only if it also fails this single rerun.
+        if: ${{ !cancelled() && env.GATE == '1' && steps.gate_first.outputs.failed != '0' }}
+        continue-on-error: true
+        working-directory: benchmark
+        env:
+          MATRIX: ${{ steps.gate_first.outputs.retry_matrix }}
+          RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}-retry
+          ANDROID_SERIAL: ${{ steps.android_devices.outputs.serials || env.ANDROID_SERIAL }}
+          AIDENBRIDGE_READY: ${{ (steps.aidenbridge_install.outcome == 'failure' || steps.aidenbridge_routing.outcome == 'failure') && '0' || '1' }}
+        run: >-
+          uv run python -m ci.run_cases
+          --matrix-json "$MATRIX"
+          --run-id-prefix "$RUN_ID_PREFIX"
+          --max-parallel "$BENCHMARK_CI_MAX_PARALLEL"
+      - name: Enforce baseline gate
+        if: ${{ !cancelled() && env.GATE == '1' }}
+        working-directory: benchmark
+        env:
+          RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          uv run python -m ci.gate_verdict
+          --run-id-prefix "$RUN_ID_PREFIX"
+          --run-id-prefix "$RUN_ID_PREFIX-retry"
+          --summary-path "$GITHUB_STEP_SUMMARY"
+          --enforce
       - name: Clean up benchmark services
         if: ${{ always() }}
         env:
@@ -628,7 +700,7 @@ jobs:
           done
           wait
       - name: Publish runs missed during the cases
-        if: ${{ always() }}
+        if: ${{ always() && env.GATE != '1' }}
         # "Run benchmark cases" publishes each run when its case finishes and
         # marks it published. This step only publishes runs without that
         # marker: a failed publication, or every run when the case step was
@@ -652,7 +724,7 @@ jobs:
           --run-timeout-sec 300
           --summary-path "$GITHUB_STEP_SUMMARY"
       - name: Generate benchmark dashboard
-        if: ${{ always() }}
+        if: ${{ always() && env.GATE != '1' }}
         # The dashboard is a reporting side channel: losing it must not turn a
         # passing benchmark into a failed job.
         continue-on-error: true
