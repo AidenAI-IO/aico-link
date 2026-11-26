@@ -438,6 +438,12 @@ operations. `max_tool_calls` still caps outer model calls. Shell text alone does
 not count as a nested operation. For injected failures, assert the bridge's
 recorded failure and the final outcome rather than requiring the failed action
 to succeed.
+
+When ConAct folds a subtask, the runner recovers tool exchanges from the
+request-scoped episode for tool metrics and assertions. The fold marker itself
+is excluded from tool counts. Assistant reply text is never counted as a tool
+call.
+
 Use `$one_of` in an input matcher for equivalent values, such as an app name
 and its canonical package ID.
 

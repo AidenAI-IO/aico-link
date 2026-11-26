@@ -5,7 +5,7 @@ from pathlib import Path
 from runner.judge import JudgeConfig, judge_task, check_preconditions
 from runner.suite import RubricItem, load_suite
 from runner.report import now_iso
-from runner.trace import extract_trace, apply_episode_tool_evidence
+from runner.trace import apply_episode_tool_evidence, extract_trace, tool_execution_history
 
 
 def _refresh_screenshot_evidence(trace: dict, attempt_dir: Path) -> bool:
@@ -13,10 +13,11 @@ def _refresh_screenshot_evidence(trace: dict, attempt_dir: Path) -> bool:
     history_path = attempt_dir / "history.json"
     if not history_path.exists():
         return False
-    refreshed = extract_trace(json.loads(history_path.read_text("utf-8")))
+    history = json.loads(history_path.read_text("utf-8"))
     episode_path = attempt_dir / "episode.json"
-    if episode_path.exists():
-        apply_episode_tool_evidence(refreshed, json.loads(episode_path.read_text("utf-8")))
+    episode = json.loads(episode_path.read_text("utf-8")) if episode_path.exists() else None
+    refreshed = extract_trace(tool_execution_history(history, episode))
+    apply_episode_tool_evidence(refreshed, episode)
     recorded = trace.get("tool_calls", [])
     if len(recorded) != len(refreshed.tool_calls) or any(
         old.get("tool") != new.tool for old, new in zip(recorded, refreshed.tool_calls)

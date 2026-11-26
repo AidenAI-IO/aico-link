@@ -3,7 +3,7 @@ import json
 import pytest
 
 from runner.models import ToolCall, Trace
-from runner.trace import extract_trace, extract_step_screenshots, trace_has_skill_read
+from runner.trace import extract_trace, extract_step_screenshots, tool_execution_history, trace_has_skill_read
 
 HISTORY = [
     {"type": "user", "content": "请打开设置"},
@@ -23,6 +23,38 @@ def test_extract_trace_collects_tool_calls_in_order():
     assert trace.tool_calls[1].tool == "touch_gesture"
     assert trace.tool_calls[1].input == {"type": "tap", "point": {"x": 540, "y": 1200}}
     assert trace.final_response == "已打开。"
+
+def test_folded_trace_uses_episode_order_and_keeps_surviving_screenshot():
+    def shell_exchange(command):
+        return [
+            {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+            {"type": "tool_result", "tool_name": "shell", "content": "ok"},
+        ]
+
+    first, second, latest = (shell_exchange(f"device-cli tap {x} 100") for x in (100, 200, 300))
+    pending = shell_exchange("device-cli back")[0]
+    fold = {"type": "conact_fold", "tool_name": "fold_subtask"}
+    episode = {"events": first + [fold] + second + [fold] + latest}
+    history = first + latest + [
+        {"type": "state", "content": "Device CLI screenshot.", "attachments": [{"kind": "image"}]},
+        pending,
+        {"type": "assistant", "content": "<command>device-cli home</command>"},
+    ]
+    trace = extract_trace(tool_execution_history(history, episode))
+
+    assert trace.total_tool_calls == 4
+    assert [tc.input for tc in trace.tool_calls] == [
+        json.loads(event["tool_input"]) for event in (first[0], second[0], latest[0], pending)
+    ]
+    assert [tc.has_screenshot for tc in trace.tool_calls] == [False, False, True, False]
+    assert not trace.tool_calls[-1].has_result
+    assert trace.final_response == history[-1]["content"]
+
+    # The recorder may finish an execution before its result reaches history.
+    trace = extract_trace(tool_execution_history(first + latest[:1], episode))
+    assert trace.total_tool_calls == 3
+    assert trace.tool_calls[-1].has_result
+
 
 def test_extract_trace_marks_has_screenshot_when_data_present():
     trace = extract_trace(HISTORY)

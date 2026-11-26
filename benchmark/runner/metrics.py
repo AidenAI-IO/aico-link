@@ -235,6 +235,7 @@ def derive_episode_metrics(episode: Mapping[str, Any] | None) -> dict[str, Any]:
     direct_action_calls = 0
     cli_action_count = 0
     cli_evidence_seen = False
+    fold_seen = False
     tool_errors = 0
     replan_count = 0
     replan_seen = False
@@ -248,6 +249,7 @@ def derive_episode_metrics(episode: Mapping[str, Any] | None) -> dict[str, Any]:
             replan_seen = True
             replan_count += int(bool(event.get("needs_replan")))
         tool_name = str(event.get("tool_name") or "")
+        fold_seen |= event.get("type") == "conact_fold"
         if event.get("type") == "tool_call":
             last_tool_inputs[tool_name] = event.get("tool_input")
             direct_action_calls += int(_is_device_action(tool_name, event.get("tool_input")))
@@ -280,7 +282,7 @@ def derive_episode_metrics(episode: Mapping[str, Any] | None) -> dict[str, Any]:
                 first_error_ref = f"episode.json#/events/{index}"
                 first_error_stage = ("device_execution" if is_device_action or any(c.is_error for c in cli_actions)
                                      else "unknown")
-    if cli_evidence_seen:
+    if cli_evidence_seen or fold_seen:
         metrics["device_actions"] = direct_action_calls + cli_action_count
     metrics["device_execution_ms"] = (
         device_execution_ms

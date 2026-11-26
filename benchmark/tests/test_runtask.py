@@ -1852,7 +1852,7 @@ def test_required_calls_use_episode_evidence_when_it_aligns(tmp_path: Path):
     assert result.metrics["episode_tool_evidence"] == "applied"
 
 
-@pytest.mark.parametrize("mode", ["legacy", "cli", "shell_error", "skipped", "unrecorded", "mixed_shell", "forbidden_action"])
+@pytest.mark.parametrize("mode", ["legacy", "cli", "folded", "shell_error", "skipped", "unrecorded", "mixed_shell", "forbidden_action"])
 def test_device_action_evidence_reaches_hard_assertions_and_judge(tmp_path, monkeypatch, mode):
     command = 'device-cli tap 100 200 && device-cli type "send café\ntext"'
     tap = {"type": "tap", "point": {"x": 100, "y": 200}}
@@ -1877,10 +1877,14 @@ def test_device_action_evidence_reaches_hard_assertions_and_judge(tmp_path, monk
         events[-1]["metadata"] = {"device_cli_calls": nested}
         history.append({"type": "state", "content": "Device CLI screenshot sheet.",
                         "attachments": [{"kind": "image"}]})
+    if mode == "folded":
+        events.append({"type": "conact_fold", "tool_name": "fold_subtask"})
+        history = [{"type": "state", "content": "Subtask memory", "attachments": [{"kind": "image"}]}]
     history.append({"type": "assistant", "content": "Done"})
     task = TaskSpec(
         id="task", category="device", prompt="Tap, then enter text", description_for_judge="Tap then type",
         hard_assertions=HardAssertions(
+            min_tool_calls=2 if mode == "folded" else 0,
             max_tool_calls=2 if mode == "legacy" else 1,
             forbidden_tools=["shell", "enter_text"] if mode == "forbidden_action" else ["shell"],
             allow_device_cli=True,
@@ -1905,13 +1909,15 @@ def test_device_action_evidence_reaches_hard_assertions_and_judge(tmp_path, monk
     )
     assert result.metrics["tool_calls"] == len(calls)
     assert result.metrics["device_actions"] == (0 if mode in {"skipped", "unrecorded"} else 2)
-    assert result.hard_assertions.forbidden_tools == (mode not in {"unrecorded", "mixed_shell", "forbidden_action"})
+    assert result.hard_assertions.forbidden_tools == (mode != "forbidden_action")
     assert result.hard_assertions.required_tool_calls == (mode not in {"skipped", "unrecorded"})
-    assert result.status == ("passed" if mode in {"legacy", "cli", "shell_error"} else "failed")
-    if mode in {"cli", "shell_error"}:
+    assert result.hard_assertions.prohibited_actions == (mode not in {"unrecorded", "mixed_shell"})
+    assert result.status == ("passed" if mode in {"legacy", "cli", "folded", "shell_error"} else "failed")
+    if mode in {"cli", "folded", "shell_error"}:
         assert judged[0]["tool_calls"][0]["device_cli_calls"][1]["input"] == text
+        assert len(judged[0]["tool_results"]) == 1
         assert result.metrics["device_execution_ms"] == 10  # not the whole shell
-        assert result.metrics["screenshots_taken"] == 1
+        assert result.metrics["screenshots_taken"] == (0 if mode == "folded" else 1)
     if mode == "skipped":
         assert result.metrics["first_failure_stage"] == "device_execution"
         assert result.metrics["device_execution_ms"] == 0

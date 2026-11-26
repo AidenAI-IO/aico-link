@@ -26,6 +26,51 @@ def tool_result_failed(message: dict[str, Any], content: Any = None) -> bool:
     return isinstance(content, dict) and (bool(content.get("is_error")) or content.get("ok") is False)
 
 
+def tool_execution_history(
+    history: list[dict[str, Any]], episode: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Recover tool exchanges removed from public history by a successful fold."""
+    events = episode.get("events") if isinstance(episode, dict) else None
+    if not isinstance(events, list):
+        return history
+    events = [event for event in events if isinstance(event, dict)]
+    last_fold = next((i for i in reversed(range(len(events))) if events[i].get("type") == "conact_fold"), None)
+    if last_fold is None:
+        return history
+
+    tool_types = {"tool_call", "tool_result"}
+    before_fold = [event for event in events[:last_fold] if event.get("type") in tool_types]
+    after_fold = [event for event in events[last_fold + 1:] if event.get("type") in tool_types]
+    positions = [i for i, message in enumerate(history) if message.get("type") in tool_types]
+
+    # The episode records completed executions. Keep a trailing unfinished call
+    # from history, but only use history's completed exchanges when they align
+    # with the episode suffix. This preserves surviving screenshot observations.
+    pending = None
+    if positions and history[positions[-1]].get("type") == "tool_call" and (
+        not after_fold or after_fold[-1].get("type") == "tool_result"
+    ):
+        pending = positions.pop()
+    if after_fold and len(positions) >= len(after_fold):
+        suffix = positions[-len(after_fold):]
+        if all(
+            history[i].get("type") == event.get("type")
+            and history[i].get("tool_name") == event.get("tool_name")
+            and (event.get("type") != "tool_call"
+                 or _safe_loads(history[i].get("tool_input", "")) == _safe_loads(event.get("tool_input", "")))
+            for i, event in zip(suffix, after_fold)
+        ):
+            return before_fold + history[suffix[0]:]
+
+    # A fold marker is bookkeeping and does not represent a normal tool exchange.
+    # Keep the assistant reply and rely on the episode for recorded executions.
+    reply = [message for message in history if message.get("type") == "assistant"]
+    # If the suffix could not be aligned, a pending history call could be one
+    # of the executions already recorded in the episode.
+    unfinished = [history[pending]] if not after_fold and pending is not None else []
+    return before_fold + after_fold + unfinished + reply[-1:]
+
+
 def extract_trace(history: list[dict[str, Any]]) -> Trace:
     tool_calls: list[ToolCall] = []
     final_response = ""
