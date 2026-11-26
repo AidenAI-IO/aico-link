@@ -204,8 +204,7 @@ def test_ime_download_rejects_unexpected_sha256(monkeypatch):
 
 
 @pytest.mark.parametrize("json_output", [False, True])
-@pytest.mark.parametrize("install_fails", [False, True])
-def test_start_bridge_installs_selected_ime_before_serving(monkeypatch, capsys, json_output, install_fails):
+def test_start_bridge_defers_ime_provisioning(monkeypatch, capsys, json_output):
     calls = []
 
     class FakeDevice:
@@ -216,10 +215,7 @@ def test_start_bridge_installs_selected_ime_before_serving(monkeypatch, capsys, 
             calls.append("device-ready")
 
         def ensure_unicode_input_method_installed(self):
-            calls.append("install-selected")
-            if install_fails:
-                raise ADBCommandError("installation failed")
-            return True
+            pytest.fail("IME provisioning must not block bridge startup")
 
     class FakeServer:
         def __init__(self, device, **kwargs):
@@ -250,17 +246,9 @@ def test_start_bridge_installs_selected_ime_before_serving(monkeypatch, capsys, 
     result = start_bridge.main(args)
     captured = capsys.readouterr()
 
-    if install_fails:
-        assert result == 1
-        assert "server-created" not in calls
-        assert captured.out == ""
-        assert "installation failed" in captured.err
-        return
-
     assert result == 0
-    assert calls.index("install-selected") < calls.index("server-created")
+    assert calls.index("device-ready") < calls.index("server-started")
     assert ("device", "appium") in calls
-    assert "Installed selected input method: appium" in captured.err
     if json_output:
         startup = json.loads(captured.out)
         assert startup["environment_url"] == "http://127.0.0.1:12345"

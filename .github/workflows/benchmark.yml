@@ -718,6 +718,7 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/runner.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/auto-agent-setup.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/ci-case.log
+            benchmark/runs/cli-services/adb-android-ci-${{ github.run_id }}-${{ github.run_attempt }}-*/adb-android-env.log
           if-no-files-found: warn
           retention-days: 14
           compression-level: 9
@@ -761,6 +762,7 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/runner.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/auto-agent-setup.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/ci-case.log
+            benchmark/runs/cli-services/adb-android-ci-${{ github.run_id }}-${{ github.run_attempt }}-*/adb-android-env.log
           if-no-files-found: warn
           retention-days: 14
           compression-level: 9
