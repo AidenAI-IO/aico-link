@@ -132,7 +132,9 @@ run_suite() {
     name="$1"
     shift
     # The counts come from this log: without it a run could not be judged.
-    if ! log="$(mktemp "${TMPDIR:-/tmp}/aico_hw_suite.XXXXXX")"; then
+    # The log and the exit status live in a private directory: a path next to
+    # a mktemp file is predictable, and the status is written as root.
+    if ! work="$(mktemp -d "${TMPDIR:-/tmp}/aico_hw_suite.XXXXXX")"; then
         printf '[FAIL] %s: cannot create a temporary log in %s; suite not run\n' "$name" "${TMPDIR:-/tmp}" | tee -a "$REPORT"
         hw_event FAIL "$name: cannot create a temporary log; suite not run"
         SUMMARY="$SUMMARY$(printf '%-12s %-5s not run (no temporary log)' "$name" FAIL)
@@ -140,7 +142,8 @@ run_suite() {
         OVERALL=1
         return 0
     fi
-    rc_file="$log.rc"
+    log="$work/log"
+    rc_file="$work/rc"
     printf '\n################ %s ################\n' "$name" | tee -a "$REPORT"
     # The suites read prompts from /dev/tty, so tee does not block them.
     if [ "$name" = "lowlevel" ]; then
@@ -181,7 +184,7 @@ run_suite() {
     SUMMARY="$SUMMARY$(printf '%-12s %-5s pass=%-3s warn=%-3s fail=%-3s skip=%s' "$name" "$result" "$passes" "$warns" "$fails" "$skips")
 "
     hw_event SUITE "$name $result pass=$passes warn=$warns fail=$fails skip=$skips exit=$rc"
-    rm -f "$log" "$rc_file"
+    rm -rf "$work"
 }
 
 {

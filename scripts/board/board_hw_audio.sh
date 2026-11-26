@@ -97,8 +97,12 @@ ORIGINAL_VOLUME=""
 
 restore() {
     if [ -n "$ORIGINAL_VOLUME" ] && [ -n "$AUDIO_CLI" ] && [ "$SERVICE_STOPPED" = "0" ]; then
-        "$AUDIO_CLI" --socket "$AUDIO_SOCKET" set-volume --volume "$ORIGINAL_VOLUME" >/dev/null 2>&1
-        ORIGINAL_VOLUME=""
+        if "$AUDIO_CLI" --socket "$AUDIO_SOCKET" set-volume --volume "$ORIGINAL_VOLUME" >/dev/null 2>&1; then
+            ORIGINAL_VOLUME=""
+        else
+            # Keep the value so a later exit trap tries again.
+            fail "could not restore the audio_service volume to $ORIGINAL_VOLUME; set it with: $AUDIO_CLI set-volume --volume $ORIGINAL_VOLUME"
+        fi
     fi
     if [ "$SERVICE_STOPPED" = "1" ] && [ -n "$AUDIO_UNIT" ]; then
         if systemctl start "$AUDIO_UNIT" >/dev/null 2>&1; then
@@ -238,15 +242,19 @@ if [ -n "$AUDIO_CLI" ] && [ "$SERVICE_STOPPED" = "0" ]; then
         for volume in $VOLUME_STEPS; do
             "$AUDIO_CLI" --socket "$AUDIO_SOCKET" set-volume --volume "$volume" >/dev/null 2>&1
             json="$(hw_artifact_path "volume_$volume.json")"
+            # Exit status 1 also means SNR below --min-snr-db, which is normal at
+            # the low steps, so the level decides; the output stays as evidence.
+            step_log="$(hw_artifact_path "volume_$volume.log")"
             python3 "$HW_TOOLS" audio-loopback --player service --audio-cli "$AUDIO_CLI" --audio-socket "$AUDIO_SOCKET" \
                 --capture-device "$CAPTURE_DEVICE" --rate "$RATE" --channels "$CHANNELS" --freqs 1000 \
-                --json "$json" >/dev/null 2>&1
+                --json "$json" >"$step_log" 2>&1
+            step_rc=$?
             level="$(python3 -c 'import json,sys
     d=json.load(open(sys.argv[1]))
     v=[t["level_dbfs"] for c in d["channels"] for t in c["tones"] if not t.get("missing")]
     print(max(v) if v else "")' "$json" 2>/dev/null)"
             if [ -z "$level" ]; then
-                fail "volume $volume: 1 kHz not detected"
+                fail "volume $volume: 1 kHz not detected (audio-loopback exit $step_rc, see $step_log)"
                 monotonic=0
                 continue
             fi

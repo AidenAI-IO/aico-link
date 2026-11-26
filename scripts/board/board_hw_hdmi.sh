@@ -318,14 +318,16 @@ fi
 MODE_RESTORE_PENDING=0
 # restore_mode - put back the input-mode selection found before --modes.
 # Returns nonzero when the selection could not be restored.
+# The pending flag is cleared only once restoration succeeds, so an exit or
+# signal trap retries a failed or interrupted restoration.
 restore_mode() {
     [ "$MODE_RESTORE_PENDING" = "1" ] || return 0
-    MODE_RESTORE_PENDING=0
     if [ -n "$ORIGINAL_MODE" ]; then
-        "$HDMI_MODE_BIN" "$ORIGINAL_MODE" >/dev/null 2>&1
+        "$HDMI_MODE_BIN" "$ORIGINAL_MODE" >/dev/null 2>&1 || return 1
     else
-        rm -f "$HDMI_MODE_FILE" && systemctl restart aico-frame.service >/dev/null 2>&1
+        { rm -f "$HDMI_MODE_FILE" && systemctl restart aico-frame.service >/dev/null 2>&1; } || return 1
     fi
+    MODE_RESTORE_PENDING=0
 }
 
 if [ -n "$MODES" ]; then
@@ -379,7 +381,8 @@ if [ -n "$MODES" ]; then
         else
             fail "restored the original selection (${ORIGINAL_MODE:-default}) but capture did not recover within ${SETTLE_SECONDS}s"
         fi
-        trap - INT TERM HUP EXIT
+        # After a failed restoration the traps stay, so exit retries it.
+        [ "$MODE_RESTORE_PENDING" = "1" ] || trap - INT TERM HUP EXIT
     fi
 fi
 

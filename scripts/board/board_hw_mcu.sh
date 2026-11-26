@@ -206,12 +206,16 @@ else
         fi
     else
         fail "set_wakeup_timer failed: $set_reply"
-        # A lost acknowledgement can leave the timer armed: reconcile it.
-        if [ "$(json_get "$(mcu get_wakeup_timer)" timer.active)" = "true" ]; then
-            cancel_test_timer && warn "set_wakeup_timer reported failure but armed the timer; cancelled it" \
-                || fail "a test wake-up timer may still be armed; cancel it with the MCU service"
-        else
+        # A lost acknowledgement can leave the timer armed: reconcile it. Only
+        # an OK reply with timer.active=false proves nothing is armed;
+        # otherwise the flag stays so the exit cleanup still cancels it.
+        reconcile="$(mcu get_wakeup_timer)"
+        if [ "$(json_get "$reconcile" status)" = "OK" ] && [ "$(json_get "$reconcile" timer.active)" = "false" ]; then
             TIMER_ARMED=0
+        elif cancel_test_timer; then
+            warn "set_wakeup_timer reported failure but may have armed the timer; cancelled it"
+        else
+            fail "a test wake-up timer may still be armed; cancel it with the MCU service"
         fi
     fi
 fi

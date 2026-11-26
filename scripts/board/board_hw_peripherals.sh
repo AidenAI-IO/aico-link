@@ -197,11 +197,14 @@ d=json.load(sys.stdin); print(round(d["end"]["sum_received"]["bits_per_second"]/
 
 # Scratch directories made with mktemp -d (private to the owner), so a file
 # planted under a shared or removable mount cannot redirect a root write.
+# scratch_dir sets SCRATCH instead of printing it: called in a command
+# substitution, its SCRATCH_DIRS update would be lost in the subshell and the
+# test data would outlive the run.
 SCRATCH_DIRS=""
+SCRATCH=""
 scratch_dir() {
-    scratch="$(mktemp -d "$1/.aico_hw_test.XXXXXX" 2>/dev/null)" || return 1
-    SCRATCH_DIRS="$SCRATCH_DIRS $scratch"
-    printf '%s\n' "$scratch"
+    SCRATCH="$(mktemp -d "$1/.aico_hw_test.XXXXXX" 2>/dev/null)" || { SCRATCH=""; return 1; }
+    SCRATCH_DIRS="$SCRATCH_DIRS $SCRATCH"
 }
 remove_scratch() {
     for scratch in $SCRATCH_DIRS; do rm -rf "$scratch"; done
@@ -426,11 +429,11 @@ group_storage() {
     fi
     free_mb="$(df -Pm "$STORAGE_DIR" 2>/dev/null | awk 'NR==2{print $4}')"
     if [ -n "$free_mb" ] && [ "$free_mb" -gt $((STORAGE_MB * 3)) ]; then
-        if ! test_dir="$(scratch_dir "$STORAGE_DIR")"; then
+        if ! scratch_dir "$STORAGE_DIR"; then
             fail "cannot create a private test directory in $STORAGE_DIR"
             return 0
         fi
-        test_file="$test_dir/data"
+        test_file="$SCRATCH/data"
         bytes=$((STORAGE_MB * 1048576))
         t0="$(now_ms)"
         if dd if=/dev/urandom of="$test_file" bs=1M count="$STORAGE_MB" conv=fsync 2>/dev/null; then
@@ -485,9 +488,9 @@ group_storage() {
         pass "TF card detected: /dev/$sd (~${size_gb} GB, $(cat "/sys/block/$sd/device/name" 2>/dev/null))"
         mnt="$(grep "^/dev/$sd" /proc/mounts | awk '{print $2}' | head -n 1)"
         if [ -n "$mnt" ]; then
-            if ! tf_dir="$(scratch_dir "$mnt")"; then
+            if ! scratch_dir "$mnt"; then
                 fail "cannot write to the TF card at $mnt (read-only or I/O error)"
-            elif dd if=/dev/urandom of="$tf_dir/data" bs=1M count=4 conv=fsync 2>/dev/null; then
+            elif tf_dir="$SCRATCH" && dd if=/dev/urandom of="$tf_dir/data" bs=1M count=4 conv=fsync 2>/dev/null; then
                 a="$(md5_of "$tf_dir/data")"
                 sync; { echo 3 > /proc/sys/vm/drop_caches; } 2>/dev/null
                 b="$(md5_of "$tf_dir/data")"

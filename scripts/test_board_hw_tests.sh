@@ -193,11 +193,15 @@ while True:
         elif op == "get_battery":
             resp = {"status": "OK", "battery": {"percent": 76, "millivolts": 3920, "charge_state": "charging",
                                                  "raw_percent": 76, "raw_millivolts": 3920}}
+        # With <socket>.lost-ack present, set_wakeup_timer arms the timer but
+        # loses its reply, and reads fail while that timer is armed.
+        elif op == "get_wakeup_timer" and os.path.exists(path + ".lost-ack") and timer["active"]:
+            resp = {"status": "UNAVAILABLE", "error": "uart busy"}
         elif op == "get_wakeup_timer":
             resp = {"status": "OK", "timer": dict(timer)}
         elif op == "set_wakeup_timer":
             timer.update(active=True, remaining_s=req["delay_s"] - 1)
-            resp = {"status": "OK"}
+            resp = {"status": "TIMEOUT"} if os.path.exists(path + ".lost-ack") else {"status": "OK"}
         elif op == "cancel_wakeup_timer":
             timer.update(active=False, remaining_s=0)
             resp = {"status": "OK"}
@@ -211,6 +215,8 @@ while True:
             resp = {"status": "UNSUPPORTED", "error": op}
         data = json.dumps(resp).encode()
         conn.sendall(struct.pack("<IQ", len(data), 0) + data)
+        with open(path + ".timer", "w") as handle:
+            json.dump(timer, handle)
 PY
 SERVER_PID=$!
 i=0
@@ -273,6 +279,14 @@ out="$(sh "$SCRIPT_DIR/board_hw_mcu.sh" --socket "$WORK/missing.sock" --run-id e
 FAILURES="$AICO_LOW_LEVEL_ARTIFACT_DIR/aico_hw_evidence-fail/failures.txt"
 grep -qE '^\[FAIL\] [0-9T:-]+Z \(uptime [0-9.?]+ s\) mcu / ' "$FAILURES" || { cat "$FAILURES" >&2; fail "failures.txt entry header"; }
 expect_line "details with context in failures.txt" "$out"
+
+# 6d. A lost set_wakeup_timer reply plus a failed read-back must not leave the
+#     test's timer armed: the suite cancels it rather than assuming it is idle.
+: >"$SOCK.lost-ack"
+out="$(sh "$SCRIPT_DIR/board_hw_mcu.sh" --socket "$SOCK" --battery-samples 1 --run-id lost-ack 2>&1)" || true
+rm -f "$SOCK.lost-ack"
+expect_line "[WARN] set_wakeup_timer reported failure but may have armed the timer; cancelled it" "$out"
+grep -q '"active": false' "$SOCK.timer" || { cat "$SOCK.timer" >&2; fail "the test wake-up timer was left armed"; }
 
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
@@ -366,6 +380,14 @@ expect_line "[FAIL] no Wi-Fi interface (aicotest0)" "$out"
 
 out="$(sh "$SCRIPT_DIR/board_hw_peripherals.sh" --only wifi,nosuch 2>&1)" && fail "unknown peripheral group should be rejected"
 expect_line "unknown group: nosuch" "$out"
+
+# 8a. The storage throughput file is removed after the run, so the test data
+#     does not stay on /userdata or the TF card.
+STORE="$WORK/storage"
+mkdir -p "$STORE"
+sh "$SCRIPT_DIR/board_hw_peripherals.sh" --only storage --storage-dir "$STORE" --storage-mb 1 --run-id storage >/dev/null 2>&1 || true
+leftover="$(find "$STORE" -mindepth 1 2>/dev/null)"
+[ -z "$leftover" ] || fail "storage test left files behind: $leftover"
 
 # 9. Suite discovery: a new board_hw_<name>.sh with a header line is picked up
 #    by the entry point without editing it.
