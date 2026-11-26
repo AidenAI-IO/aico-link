@@ -4,7 +4,7 @@ import type { Configuration, PageProps, VoiceMode } from '../types';
 import { useSettings, section, usePageHeader } from '../hooks/settings';
 import type { Settings } from '../hooks/settings';
 import { useQuery, useSchema } from '../hooks/query';
-import { matches, optionLabel, placeholderFor, sectionFields } from '../lib/schema';
+import { matches, optionLabel, optionsFor, placeholderFor, sectionFields } from '../lib/schema';
 import { msg, resolve } from '../lib/i18n';
 import { apiError } from '../api/client';
 import { ConfigField, QueryError } from '../components/fields';
@@ -15,6 +15,7 @@ import { CONNECTION_KEYS, ProviderForm, recordsOf, deleteProvider } from './Mode
 import { SwipeRow } from '../components/SwipeRow';
 import { Loading } from '../components/Loading';
 import { isInitialLoading } from '../state/resource';
+import { modelScope, withModelHistory } from '../state/model-history';
 export const KINDS = {
   realtime: {
     records: 'voice_model_providers',
@@ -418,6 +419,7 @@ export function VoiceProviderEdit(props: PageProps) {
 }
 
 export function VoiceOptions(props: PageProps) {
+  const history = useAtomValue(props.model.modelHistory);
   const mode = useAtomValue(props.model.voiceMode);
   const kind = kindOf(props),
     spec = KINDS[kind];
@@ -477,6 +479,17 @@ export function VoiceOptions(props: PageProps) {
               value={record[field.key]}
               ctx={ctx}
               type={record.type}
+              suggestions={
+                field.key === 'model'
+                  ? withModelHistory(
+                      optionsFor(field, record.type).map((option) => ({
+                        id: option.value,
+                        name: resolve(optionLabel(spec.records, field.key, option)),
+                      })),
+                      history[modelScope(spec.records, name, record)],
+                    )
+                  : undefined
+              }
               save={(value) =>
                 saver.change(`${spec.records}.${name}.${field.key}`, {
                   [spec.records]: { [name]: { [field.key]: value } },

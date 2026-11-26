@@ -117,6 +117,12 @@ Generated design tokens are excluded from Prettier; regenerate them with
 - OpenRouter Decisions model suggestions use an inline list inside the settings
   card, with model names and IDs, keyboard navigation, and free-text entry.
   Catalog failures leave custom model entry available.
+- Confirmed model IDs join the main, decision and voice model choices. A shared
+  Jotai history retains previous choices across navigation and browser reloads
+  using local browser storage, scoped by profile, provider record and endpoint.
+  Drafts and rejected saves are excluded. Catalog entries keep their names and
+  order, and duplicate IDs appear only once. Unavailable storage falls back to
+  in-memory history without blocking configuration saves.
 - `src/lib/backup.ts` retains maintenance sessions, stable retry request IDs,
   chunked SHA-256 transfers, restore validation and interrupted-job recovery.
   Its Jotai view survives navigation while a job runs. The LLM viewer streams

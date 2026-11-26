@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { Provider } from 'jotai';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createDeviceState } from '../state/device';
-import type { PageProps, Transport } from '../types';
-import { DecisionPage, ProviderForm } from '../pages/Models';
+import type { Configuration, PageProps, Transport } from '../types';
+import { DecisionPage, ModelPicker, ProviderForm } from '../pages/Models';
+import { VoiceOptions } from '../pages/Voice';
 import { RawConfigPage } from '../pages/Advanced';
 import { ValueField } from '../components/fields';
 import { ChoiceRow, Dropdown } from '../components/choices';
@@ -37,6 +38,7 @@ function setup(send: Transport, config: import('../types').Configuration = {}) {
   };
 }
 beforeEach(() => {
+  localStorage.clear();
   applyLocale('en-US');
 });
 afterEach(() => {
@@ -251,6 +253,121 @@ it('keeps model suggestions optional and publishes persisted values without eras
   expect(writes[1]).toEqual({ decision: { base_url: null } });
   model.dispose();
 });
+it('retains saved custom main models after switching, recreating the app and a catalog failure', async () => {
+  let config = {
+    model: { provider: 'account', model: 'listed' },
+    model_providers: { account: { type: 'openai', base_url: 'https://one.example' } },
+  };
+  let offline = false;
+  const send: Transport = async (path, options) => {
+    if (path.startsWith('/api/models')) {
+      if (offline) throw new Error('catalog offline');
+      return { models: [{ id: 'listed', name: 'Listed model' }] };
+    }
+    if (path === '/api/config/plan') return { apply: 'live' };
+    if (options?.method === 'PATCH')
+      config = {
+        ...config,
+        model: { ...config.model, ...JSON.parse(String(options.body)).config.model },
+      };
+    return { config, config_valid: true, apply: 'live' };
+  };
+  const app = setup(send, config);
+  app.props.route.path = '/model/models';
+  const view = app.mount(<ModelPicker {...app.props} />);
+  await act(flush);
+  expect(screen.getAllByRole('button', { name: 'Listed model listed' })).toHaveLength(1);
+  fireEvent.change(screen.getByLabelText('Other model'), { target: { value: 'custom/saved' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Use' }));
+  await act(flush);
+  expect(screen.getByRole('button', { name: 'custom/saved custom/saved' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Listed model listed' }));
+  await act(flush);
+  view.unmount();
+  app.model.dispose();
+
+  offline = true;
+  const fresh = setup(send, config);
+  fresh.props.route.path = '/model/models';
+  fresh.mount(<ModelPicker {...fresh.props} />);
+  await act(flush);
+  const custom = screen.getByRole('button', { name: 'custom/saved custom/saved' });
+  expect(screen.getByText('catalog offline')).toBeTruthy();
+  fireEvent.click(custom);
+  await act(flush);
+  expect(config.model.model).toBe('custom/saved');
+  config = {
+    ...config,
+    model_providers: { account: { type: 'openai', base_url: 'https://two.example' } },
+    model: { ...config.model, model: 'different-endpoint-model' },
+  };
+  act(() => fresh.model.publishSave({ config }));
+  await act(flush);
+  expect(screen.queryByRole('button', { name: 'custom/saved custom/saved' })).toBe(null);
+  fresh.model.dispose();
+});
+it('excludes rejected custom models from saved choices', async () => {
+  const config = { model: { provider: 'demo', model: 'original' } };
+  const send: Transport = async (path) => {
+    if (path.startsWith('/api/models')) return { models: [] };
+    if (path === '/api/config/plan') throw { status: 400, error: 'rejected' };
+    return { config, config_valid: true };
+  };
+  const app = setup(send, config);
+  app.mount(<ModelPicker {...app.props} />);
+  await act(flush);
+  fireEvent.change(screen.getByLabelText('Other model'), { target: { value: 'custom/rejected' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Use' }));
+  await act(flush);
+  expect(screen.queryByRole('button', { name: 'custom/rejected custom/rejected' })).toBe(null);
+  expect(JSON.stringify(app.model.store.get(app.model.modelHistory))).not.toContain(
+    'custom/rejected',
+  );
+  app.model.dispose();
+});
+it.each(['voice', 'decision'])(
+  'adds confirmed custom %s models to suggestions and keeps them after switching',
+  async (kind) => {
+    let config: Configuration =
+      kind === 'voice'
+        ? {
+            voice_model: { provider: 'demo' },
+            voice_model_providers: { demo: { type: 'qwen', model: 'custom/first' } },
+          }
+        : { decision: { provider: 'openrouter', model: 'custom/first' } };
+    const app = setup(async (path) => {
+      if (path.startsWith('/api/models')) return { models: [] };
+      if (path === '/api/config/schema')
+        return {
+          sections: [
+            {
+              name: 'voice_model_providers',
+              fields: [{ key: 'model', label: 'Voice model', widget: 'text' }],
+            },
+          ],
+        };
+      return { config, config_valid: true };
+    }, config);
+    app.props.route =
+      kind === 'voice'
+        ? { path: '/voice/model', query: { kind: 'realtime' } }
+        : { path: '/model/decision' };
+    app.mount(kind === 'voice' ? <VoiceOptions {...app.props} /> : <DecisionPage {...app.props} />);
+    await act(flush);
+    config =
+      kind === 'voice'
+        ? { ...config, voice_model_providers: { demo: { type: 'qwen', model: 'custom/second' } } }
+        : { decision: { provider: 'openrouter', model: 'custom/second' } };
+    act(() => app.model.publishSave({ config }));
+    await act(flush);
+    const input = screen.getByRole('combobox');
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: '' } });
+    expect(screen.getByRole('option', { name: 'custom/first' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'custom/second' })).toBeTruthy();
+    app.model.dispose();
+  },
+);
 it.each(['click', 'keyboard'] as const)(
   'selects an inline decision model by %s while keeping custom input and focus',
   async (method) => {

@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { JsonValue, TextSpec } from '../types';
 import type { SaveOutcome } from '../hooks/settings';
 import type { Field } from '../lib/schema';
+import type { ModelOption } from '../state/model-history';
 import {
   fieldLabel,
   fieldHelp,
@@ -115,7 +116,7 @@ export function ValueField({
   multiline?: boolean;
   placeholder?: string;
   action?: string;
-  suggestions?: { id: string; name?: string }[];
+  suggestions?: ModelOption[];
   inline?: boolean;
   wide?: boolean;
   inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
@@ -142,11 +143,9 @@ export function ValueField({
   }, [confirmed]);
   const text = draft ?? confirmed;
   const query = text.trim().toLowerCase();
-  const matches = query
-    ? (suggestions || []).filter((entry) =>
-        `${entry.id} ${entry.name || ''}`.toLowerCase().includes(query),
-      )
-    : [];
+  const matches = (suggestions || []).filter((entry) =>
+    `${entry.id} ${entry.name || ''}`.toLowerCase().includes(query),
+  );
   const expanded = showSuggestions && matches.length > 0;
   const active = expanded ? matches[activeSuggestion] : undefined;
   useEffect(() => {
@@ -331,6 +330,7 @@ export function ConfigField({
   save,
   label: labelOverride,
   description,
+  suggestions,
 }: {
   section: string;
   field: Field;
@@ -340,6 +340,7 @@ export function ConfigField({
   save: (value: JsonValue) => Promise<SaveOutcome | void>;
   label?: TextSpec;
   description?: TextSpec;
+  suggestions?: ModelOption[];
 }) {
   const [draft, setDraft] = useState<JsonValue | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -375,7 +376,11 @@ export function ConfigField({
         />
       </Row>
     );
-  const options = field.range ? rangeOptions(field) : optionsFor(field, type);
+  const options = field.range
+    ? rangeOptions(field)
+    : suggestions
+      ? suggestions.map((entry) => ({ value: entry.id, label: entry.name || entry.id }))
+      : optionsFor(field, type);
   if (
     field.widget === 'select' ||
     field.range ||
@@ -421,6 +426,7 @@ export function ConfigField({
             : value
       }
       onCommit={save}
+      suggestions={suggestions}
     />
   );
 }
