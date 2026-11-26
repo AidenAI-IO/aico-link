@@ -7,6 +7,33 @@ from typing import Any
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp
 
+
+def _is_count(value: Any) -> bool:
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and value >= 0 and float(value).is_integer())
+
+
+def _has_result_counts(record: dict[str, Any]) -> bool:
+    # An evaluation or fixture error makes the run partial. The publisher still
+    # counts its usable first attempts, and the reader validates those counts.
+    if set(record.get("missing_metrics") or ()) - {"evaluation_coverage"}:
+        return False
+    passed, eligible, tasks = (record.get(key) for key in ("passed", "eligible_tasks", "tasks"))
+    return all(_is_count(value) for value in (passed, eligible, tasks)) and passed <= eligible <= tasks
+
+
+def _failure_counts(records: list[dict[str, Any]]) -> dict[str, float | None]:
+    kinds = ("evaluation", "environment", "skipped")
+    if not records or not all(_has_result_counts(r) for r in records):
+        return dict.fromkeys(kinds)
+    counts = {}
+    for kind in kinds:
+        # Older publishers omitted zero-count classes.
+        values = [(r.get("failure_classes") or {}).get(kind, 0) for r in records]
+        counts[kind] = sum(values) if all(_is_count(value) for value in values) else None
+    return counts
+
+
 def _complete_resource_sum(records: list[dict[str, Any]], metric: str) -> float | None:
     # Run sums contain only measured eligible attempts. A present sum alone
     # does not establish full coverage of the window's attempts.
@@ -21,13 +48,12 @@ def _complete_resource_sum(records: list[dict[str, Any]], metric: str) -> float 
 
 
 def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
-    measured = [r for r in records if not r.get("missing_metrics")
-                and r.get("eligible_tasks") is not None and r.get("passed") is not None]
+    measured = [r for r in records if _has_result_counts(r)]
     eligible = sum(r["eligible_tasks"] for r in measured)
-    # eligible_tasks sums every run in the window. task_count is the distinct
-    # task count (each suite's latest run) and run_count the workflow runs, so
-    # readers can tell many tasks from many repetitions.
-    # Repeated attempts of a task share one count: each dataset's latest run.
+    passed = sum(r["passed"] for r in measured)
+    tasks = sum(r["tasks"] for r in records) if all(_is_count(r.get("tasks")) for r in records) else None
+    # Count repeated first attempts across the window. For distinct tasks,
+    # use each dataset's latest eligible-task count.
     latest: dict[str, dict[str, Any]] = {}
     for r in measured:
         key = r.get("dataset", r["suite"])
@@ -36,14 +62,14 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "suite_runs": len(records),
         "measured_suite_runs": len(measured),
-        "tasks": sum(r["tasks"] for r in measured),
+        "tasks": tasks,
         "eligible_tasks": eligible,
         "task_count": sum(r["eligible_tasks"] for r in latest.values()),
         "run_count": len({(r["workflow_run_id"], r.get("workflow_run_attempt")) if r.get("workflow_run_id")
-                          else (r.get("run_id") or r["timestamp"], None) for r in measured}),
-        "passed": sum(r["passed"] for r in measured),
-        "pass_at_1": sum(r["passed"] for r in measured) / eligible
-            if eligible and len(measured) == len(records) else None,
+                          else (r.get("run_id") or r["timestamp"], None) for r in records}),
+        "passed": passed,
+        "pass_at_1": passed / eligible if eligible else None,
+        "coverage": eligible / tasks if tasks else None,
         # Missing cost/token measurements must not silently become zero.
         **{f"{metric}_sum": _complete_resource_sum(records, metric)
            for metric in ("cost_usd", "total_tokens")},
@@ -85,7 +111,8 @@ def _comparison(current: list[dict[str, Any]], previous: list[dict[str, Any]]) -
     now = _totals([r for r in current if r["dataset"] in common])
     before = _totals([r for r in previous if r["dataset"] in common])
     change = _change(now["pass_at_1"], before["pass_at_1"])
-    return {"change": change, "compared_datasets": len(common)}
+    return {"change": change, "compared_datasets": len(common),
+            "compared_pass_at_1": {"current": now["pass_at_1"], "previous": before["pass_at_1"]}}
 
 
 def _change(current: float | None, previous: float | None) -> float | None:
@@ -207,8 +234,10 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     previous_start = start - timedelta(days=7)
     history = _label_datasets(history)
     current = [r for r in history if start <= parse_timestamp(r["timestamp"]) < end]
-    previous = [r for r in history if previous_start <= parse_timestamp(r["timestamp"]) < start]
+    earlier = [r for r in history if parse_timestamp(r["timestamp"]) < start]
+    previous = [r for r in earlier if previous_start <= parse_timestamp(r["timestamp"])]
     previous_by_suite = _by_suite(previous)
+    earlier_by_suite = _by_suite(earlier)
     suites = []
     diagnostics = []
     for name, group in _by_suite(current).items():
@@ -220,7 +249,15 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
             diagnostics.append({"suite": name, **observation,
                                 "change": _change(observation["rate"], previous_observation["rate"])})
             continue
+        past = earlier_by_suite.get(name, [])
+        last_valid = None
+        if totals["pass_at_1"] is None:
+            last = max((r for r in past if _has_result_counts(r) and r["eligible_tasks"]),
+                       key=lambda r: parse_timestamp(r["timestamp"]), default=None)
+            if last is not None:
+                last_valid = {"timestamp": last["timestamp"], "pass_at_1": last["passed"] / last["eligible_tasks"]}
         suites.append({"suite": name, **totals, "previous_pass_at_1": _totals(prior)["pass_at_1"],
+                       "new": not past, "last_valid": last_valid,
                        **_comparison(group, prior),
                        "config_changes": _config_changes(group, prior)})
     # Weakest suites first; unknown rates last.
@@ -237,7 +274,7 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
                              "suites": sorted({r["dataset"] for r in group})})
     scored_current = [r for r in current if r["suite"] not in DIAGNOSTIC_SUITES]
     scored_previous = [r for r in previous if r["suite"] not in DIAGNOSTIC_SUITES]
-    totals = _totals(scored_current)
+    totals = {**_totals(scored_current), "failure_counts": _failure_counts(scored_current)}
     previous_totals = _totals(scored_previous)
     return {"start": start.isoformat(), "end": end.isoformat(), "previous_start": previous_start.isoformat(),
             "totals": totals, "previous_totals": previous_totals,
@@ -251,6 +288,10 @@ def _pct(value: float | None) -> str:
 
 def _pp(value: float | None) -> str:
     return "—" if value is None else f"{value * 100:+.1f} pp"
+
+
+def _count(value: float | None) -> str:
+    return "—" if value is None else f"{value:.0f}"
 
 
 def _cell(value: Any) -> str:
@@ -273,31 +314,33 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         f"UTC window: {report['start']} to {report['end']} (end exclusive).", "",
         "History source: Langfuse v4 experiments and scores.",
         "Only successfully published experiments are available as historical data; missing uploads cannot be counted.", "",
-        "| Suite runs | Measured runs | Measured eligible / total tasks | pass@1 | Change vs previous 7 days | Cost (USD) | Tokens |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-        f"| {totals['suite_runs']} | {totals['measured_suite_runs']} | {totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | "
-        f"{_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
-        "", "Rates are descriptive totals over each window's datasets. Changes compare only datasets measured in both windows;",
+        "| Suite runs | Runs with usable counts | Eligible / recorded first attempts | Coverage | pass@1 | Matched change | Cost (USD) | Tokens |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        f"| {totals['suite_runs']} | {totals['measured_suite_runs']} | {totals['eligible_tasks']:.0f} / {_count(totals['tasks'])} | "
+        f"{_pct(totals['coverage'])} | {_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
+        "", "Pass@1 uses eligible first attempts, including usable results from partially evaluated runs. "
+        "Coverage is eligible first attempts divided by all recorded first attempts.",
+        "Matched changes compare only datasets measured in both windows;",
         "changes are descriptive, not statistical significance claims.",
         "Configuration changes compare all recorded values in the two windows.", "",
         "### By test area", "",
-        "| Test area | Suites | Tasks | Runs | Eligible first attempts | pass@1 | Previous 7 days | Change |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Test area | Suites | Tasks | Runs | Eligible first attempts | pass@1 | Previous 7 days | Matched change | Coverage |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         *[f"| {_cell(c['capability'])} | {_cell(', '.join(c['suites']))} | {c['task_count']:.0f} | "
           f"{c['run_count']} | {c['eligible_tasks']:.0f} | "
-          f"{_pct(c['pass_at_1'])} | {_pct(c['previous_pass_at_1'])} | {_pp(c['change'])} |"
+          f"{_pct(c['pass_at_1'])} | {_pct(c['previous_pass_at_1'])} | {_pp(c['change'])} | {_pct(c['coverage'])} |"
           for c in report.get("capabilities", [])],
         "", "### By suite", "",
-        "| Suite | Runs | Eligible tasks | pass@1 | Previous 7 days | Change | Configuration changes | Cost (USD) |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
+        "| Suite | Runs | Eligible tasks | pass@1 | Previous 7 days | Change | Configuration changes | Cost (USD) | Coverage |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
     ]
     for suite in report["suites"]:
         lines.append(f"| {_cell(suite['suite'])} | {suite['suite_runs']} | {suite['eligible_tasks']:.0f} | "
                      f"{_pct(suite['pass_at_1'])} | {_pct(suite['previous_pass_at_1'])} | {_pp(suite['change'])} | "
                      f"{_cell(describe_config_changes(suite.get('config_changes') or [])) or '—'} | "
-                     f"{_resources(suite)[0]} |")
+                     f"{_resources(suite)[0]} | {_pct(suite['coverage'])} |")
     if not report["suites"]:
-        lines.append("| No benchmark runs in this window | | | — | — | — | — | — |")
+        lines.append("| No benchmark runs in this window | | | — | — | — | — | — | — |")
     if report.get("diagnostics"):
         lines.extend(["", "### Diagnostics", "", "Skill discovery is an observation, not UI task pass@1. Excluded from test-area and overall pass rates.", ""])
         for diagnostic in report["diagnostics"]:

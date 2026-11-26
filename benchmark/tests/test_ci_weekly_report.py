@@ -49,20 +49,53 @@ def test_missing_metrics_or_cost_are_visible_without_false_zero():
     assert report["totals"]["cost_usd_sum"] is None
     markdown = render_weekly(report, ["Missing scores"])
     assert "Missing scores" in markdown
-    assert "| 1 | 0 | 0 / 0 | — | — | — |" in markdown
+    assert report["totals"]["coverage"] == 0
+    assert report["totals"]["tasks"] == 10
+    assert report["totals"]["failure_counts"]["evaluation"] is None
+    assert "| 1 | 0 | 0 / 10 | 0.0% | — | — | — |" in markdown
 
 
-def test_matched_comparison_excludes_a_dataset_with_an_incomplete_window():
+def test_matched_comparison_keeps_eligible_attempts_from_partial_runs():
     report = summarize_weekly([
-        _record(suite="mixed"),
-        _record(suite="mixed", missing_metrics=["evaluation_coverage"]),
-        _record(suite="mixed", timestamp="2026-10-01T00:00:00+00:00"),
-        _record(suite="complete", passed=6),
-        _record(suite="complete", timestamp="2026-10-01T00:00:00+00:00", passed=4),
+        _record(passed=6),
+        _record(eligible_tasks=2, passed=0, missing_metrics=["evaluation_coverage"],
+                failure_classes={"evaluation": 5, "environment": 2, "skipped": 1}),
+        _record("2026-10-01T00:00:00+00:00", passed=4),
+        _record(suite="new", passed=8),
     ], end=END)
     assert report["compared_datasets"] == 1
-    assert report["change"] == pytest.approx(0.25)
-    assert report["totals"]["pass_at_1"] is None
+    assert report["change"] == pytest.approx(0.1)
+    assert report["compared_pass_at_1"] == {"current": 0.6, "previous": 0.5}
+    assert report["totals"]["pass_at_1"] == pytest.approx(14 / 18)
+    assert report["totals"]["coverage"] == pytest.approx(18 / 30)
+    assert report["totals"]["failure_counts"] == {"evaluation": 5, "environment": 2, "skipped": 1}
+
+
+def test_invalid_first_attempt_counts_cannot_inflate_the_rate_or_supply_missing_coverage():
+    report = summarize_weekly([
+        _record(),
+        _record(tasks=None, missing_metrics=["tasks"]),
+        _record(eligible_tasks=2, passed=8, missing_metrics=["evaluation_coverage"]),
+    ], end=END)
+    assert report["totals"]["pass_at_1"] == 0.5
+    assert report["totals"]["eligible_tasks"] == 8
+    assert report["totals"]["tasks"] is None
+    assert report["totals"]["coverage"] is None
+
+
+def test_last_valid_result_is_dated_and_never_crosses_environments_or_enters_totals():
+    old = "2026-09-25T00:00:00+00:00"
+    report = summarize_weekly([
+        _record(execution_environment="adb", eligible_tasks=0, passed=0),
+        _record(old, execution_environment="adb", passed=3),
+        _record("2026-10-01T00:00:00+00:00", execution_environment="adb", missing_metrics=["passed"]),
+        _record("2026-10-05T00:00:00+00:00", execution_environment="mobilegym", passed=8),
+    ], end=END)
+    suite, = report["suites"]
+    assert suite["last_valid"] == {"timestamp": old, "pass_at_1": 3 / 8}
+    assert suite["pass_at_1"] is None and suite["change"] is None
+    assert report["totals"]["eligible_tasks"] == 0
+    assert report["compared_datasets"] == 0
 
 
 def test_markdown_escapes_untrusted_suite_names():
@@ -176,7 +209,7 @@ def test_capability_counts_separate_tasks_from_repetitions():
     runs = [("2026-10-10T00:00:00+00:00", "1"), ("2026-10-11T00:00:00+00:00", "2"),
             ("2026-10-12T00:00:00+00:00", "3")]
     report = summarize_weekly([
-        _record(timestamp, suite=suite, workflow_run_id=run, eligible_tasks=size, passed=size)
+                _record(timestamp, suite=suite, workflow_run_id=run, tasks=size, eligible_tasks=size, passed=size)
         for timestamp, run in runs for suite, size in (("memory_v1", 16), ("quick_capture_v1", 10))
     ], end=END)
     memory = report["capabilities"][0]
