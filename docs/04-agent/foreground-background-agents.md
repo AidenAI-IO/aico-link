@@ -38,8 +38,9 @@ something the user said.
 
 When the last message is more than 30 minutes old, the earlier turns are not
 replayed as live turns. They are sent as one `<earlier_conversation>`
-transcript of user, assistant, and work-update text, marked as finished and for
-reference only, followed by the state message. Replayed turns steer the model
+transcript, marked as finished and for reference only, followed by the state
+message. The transcript holds the user and assistant text in full and each task
+outcome from work updates and task queries; tool calls are not restored. Replayed turns steer the model
 more strongly than its instructions, so an old topic, answer, or work update
 would otherwise carry on into a conversation resumed hours later. The
 transcript is kept rather than dropped because `recall_session_chunks` searches

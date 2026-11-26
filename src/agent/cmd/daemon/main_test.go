@@ -944,7 +944,12 @@ func TestRealtimeReplayReportsCurrentWorkStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	query := realtimevoice.Event{CallID: "call_query", Name: realtimeQueryTaskTool, Arguments: `{}`}
-	if err := appendRealtimeToolExecution(manager, query, `{"id":"task_other","prompt":"inspect task_gone","status":"completed"}`, nil); err != nil {
+	if err := appendRealtimeToolExecution(manager, query, `{"tasks":[{"id":"task_other","prompt":"inspect task_gone","status":"completed","result":"no change"}]}`, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Long turns are kept whole in the old transcript: recall cannot reach them.
+	detail := strings.Repeat("keep every detail ", 30) + "end of request"
+	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: detail}); err != nil {
 		t.Fatal(err)
 	}
 	replayer := &recordingContextReplayer{}
@@ -960,6 +965,22 @@ func TestRealtimeReplayReportsCurrentWorkStatus(t *testing.T) {
 	} {
 		if !strings.Contains(note, want) {
 			t.Fatalf("time note = %q, want %q", note, want)
+		}
+	}
+
+	// After a long gap a queried outcome stays in the old transcript, since
+	// it may be the only copy of that result.
+	replayer = &recordingContextReplayer{}
+	if err := replayRealtimeContext(context.Background(), replayer, manager, tasks, false, time.Now().Add(2*time.Hour), "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	transcript := replayer.items[0].Content
+	for _, want := range []string{
+		`work update: task_id=task_other status=completed task="inspect task_gone" result="no change"`,
+		"user: " + detail,
+	} {
+		if !strings.Contains(transcript, want) {
+			t.Fatalf("old transcript = %q, want %q", transcript, want)
 		}
 	}
 }

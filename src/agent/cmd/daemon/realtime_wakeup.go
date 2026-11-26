@@ -3673,22 +3673,27 @@ func formatRealtimeTaskUpdates(tasks []agenttask.Task) string {
 	var output strings.Builder
 	output.WriteString("Private work-status update for the assistant. Present these outcomes naturally as your own work; never mention agents, background execution, queues, orchestration, tools, or task IDs. For pending_user_action, explain what the user must do on the device, ask them to say when it is complete, and then continue using the internal response action:\n")
 	for _, task := range tasks {
-		fmt.Fprintf(&output, "- task_id=%s status=%s task=%q", task.ID, task.Status, limitRealtimeTaskField(task.Prompt, 300))
-		if task.Result != "" {
-			fmt.Fprintf(&output, " result=%q", limitRealtimeTaskField(task.Result, 2000))
-		}
-		if task.Error != "" {
-			fmt.Fprintf(&output, " error=%q", limitRealtimeTaskField(task.Error, 500))
-		}
-		if task.PendingUserAction != nil {
-			fmt.Fprintf(&output, " pending_user_action={reason:%q details:%q suggested_action:%q}",
-				task.PendingUserAction.Reason,
-				task.PendingUserAction.Details,
-				task.PendingUserAction.SuggestedAction)
-		}
-		output.WriteByte('\n')
+		output.WriteString("- " + formatRealtimeTaskLine(task) + "\n")
 	}
 	return strings.TrimSpace(output.String())
+}
+
+// formatRealtimeTaskLine renders one task as a work update states it.
+func formatRealtimeTaskLine(task agenttask.Task) string {
+	line := fmt.Sprintf("task_id=%s status=%s task=%q", task.ID, task.Status, limitRealtimeTaskField(task.Prompt, 300))
+	if task.Result != "" {
+		line += fmt.Sprintf(" result=%q", limitRealtimeTaskField(task.Result, 2000))
+	}
+	if task.Error != "" {
+		line += fmt.Sprintf(" error=%q", limitRealtimeTaskField(task.Error, 500))
+	}
+	if task.PendingUserAction != nil {
+		line += fmt.Sprintf(" pending_user_action={reason:%q details:%q suggested_action:%q}",
+			task.PendingUserAction.Reason,
+			task.PendingUserAction.Details,
+			task.PendingUserAction.SuggestedAction)
+	}
+	return line
 }
 
 func appendRealtimeUserMessage(manager *contextmanager.ContextManager, content string) error {
@@ -3846,31 +3851,18 @@ func replayedRealtimeWork(recent []messages.Message, tasks *agenttask.Manager) [
 // only sign that the work finished. A work update for a task waiting on the
 // user is not a result.
 func realtimeTaskOutcomeRecorded(recent []messages.Message, taskID string) bool {
-	terminal := []agenttask.Status{agenttask.StatusCompleted, agenttask.StatusFailed, agenttask.StatusCancelled}
 	for _, message := range recent {
 		switch message.Role {
 		case messages.MessageRoleNotice:
-			for _, status := range terminal {
+			for _, status := range realtimeTaskOutcomeStatuses {
 				if strings.Contains(message.Content, "- task_id="+taskID+" status="+string(status)+" ") {
 					return true
 				}
 			}
 		case messages.MessageRoleToolResult:
-			for _, result := range message.ToolResults {
-				if result.Name != realtimeQueryTaskTool {
-					continue
-				}
-				var listed struct {
-					Tasks []agenttask.Task `json:"tasks"`
-				}
-				var single agenttask.Task
-				if json.Unmarshal([]byte(result.Content), &listed) != nil || json.Unmarshal([]byte(result.Content), &single) != nil {
-					continue
-				}
-				for _, task := range append(listed.Tasks, single) {
-					if task.ID == taskID && slices.Contains(terminal, task.Status) {
-						return true
-					}
+			for _, task := range realtimeQueriedTaskOutcomes(message) {
+				if task.ID == taskID {
+					return true
 				}
 			}
 		}
@@ -3878,37 +3870,66 @@ func realtimeTaskOutcomeRecorded(recent []messages.Message, taskID string) bool 
 	return false
 }
 
+// realtimeTaskOutcomeStatuses are the statuses that give a task its result.
+var realtimeTaskOutcomeStatuses = []agenttask.Status{agenttask.StatusCompleted, agenttask.StatusFailed, agenttask.StatusCancelled}
+
+// realtimeQueriedTaskOutcomes returns the tasks that query results in the
+// message report with a terminal status.
+func realtimeQueriedTaskOutcomes(message messages.Message) []agenttask.Task {
+	var outcomes []agenttask.Task
+	for _, result := range message.ToolResults {
+		if result.Name != realtimeQueryTaskTool {
+			continue
+		}
+		var listed struct {
+			Tasks []agenttask.Task `json:"tasks"`
+		}
+		if json.Unmarshal([]byte(result.Content), &listed) != nil {
+			continue
+		}
+		for _, task := range listed.Tasks {
+			if slices.Contains(realtimeTaskOutcomeStatuses, task.Status) {
+				outcomes = append(outcomes, task)
+			}
+		}
+	}
+	return outcomes
+}
+
 // realtimeEarlierConversation renders turns from a conversation that ended
 // long ago as one marked transcript. Recall searches only compacted chunks,
-// so dropping these turns would leave them unreachable; replayed as live
-// turns they would steer the model into resuming an old topic.
+// so these turns are kept whole: anything cut or dropped here is
+// unreachable. Replayed as live turns they would steer the model into
+// resuming an old topic.
 func realtimeEarlierConversation(recent []messages.Message) string {
 	var lines []string
 	for _, message := range recent {
 		content := strings.TrimSpace(message.Content)
-		if content == "" {
-			continue
-		}
-		var speaker string
 		switch message.Role {
 		case messages.MessageRoleUser:
-			speaker = "user"
+			if content != "" {
+				lines = append(lines, "user: "+content)
+			}
 		case messages.MessageRoleAssistant:
-			speaker = "assistant"
+			if content != "" {
+				lines = append(lines, "assistant: "+content)
+			}
 		case messages.MessageRoleNotice:
 			// A work update opens with instructions for the live turn. Only its
-			// task lines belong in the transcript; cut as a whole, the update
-			// would keep the instructions and lose every task.
+			// task lines belong in the transcript.
 			for _, line := range strings.Split(content, "\n") {
-				if task, ok := strings.CutPrefix(strings.TrimSpace(line), "- task_id="); ok {
-					lines = append(lines, "work update: task_id="+limitRealtimeTaskField(task, 300))
+				if task, ok := strings.CutPrefix(strings.TrimSpace(line), "- "); ok && strings.HasPrefix(task, "task_id=") {
+					lines = append(lines, "work update: "+task)
 				}
 			}
-			continue
-		default:
-			continue
+		case messages.MessageRoleToolResult:
+			// A queried result may be the only copy of a task's outcome, as
+			// when the device restarted before the reply was stored. Tool
+			// calls themselves are not restored.
+			for _, task := range realtimeQueriedTaskOutcomes(message) {
+				lines = append(lines, "work update: "+formatRealtimeTaskLine(task))
+			}
 		}
-		lines = append(lines, speaker+": "+limitRealtimeTaskField(content, 300))
 	}
 	if len(lines) == 0 {
 		return ""
