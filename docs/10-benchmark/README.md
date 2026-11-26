@@ -585,8 +585,14 @@ The tasks were chosen from the per-task results of the scheduled and dispatched
 runs between 2026-11-12 and 2026-11-25. A task qualified when it passed every
 scored attempt on `main` (at least five), at least 90% of scored attempts on all
 branches, and every attempt after the switch to `google/gemini-3.5-flash-lite`.
-Two `memory-admission` tasks with one failure in 13 attempts on `main` are also
-included. Recalibrate the list when the Agent model or a gated suite changes.
+From the 66 qualifying tasks the gate keeps one to three per capability and
+drops near-duplicates (for example `episode_reflection_v1`, whose cases
+`episode_reflection_v2` repeats, the Aico App text-entry variants of the same
+Settings search, and most of the fourteen similar PersonaMem recalls). It also
+leaves out the cases whose setup dominates their runtime: the built-in Android
+app workflows and the Aico App cases. The 18 tasks in 10 cases keep a gate run
+to about five minutes. Recalibrate the list when the Agent model or a gated
+suite changes.
 
 The `baseline-gate` profile runs each gated task once, with `BENCHMARK_REPEATS`
 forced to 1. `ci.gate_verdict` then reruns only the tasks that did not pass, and

@@ -4,9 +4,6 @@
     {
       "case": "memory",
       "task_ids": [
-        "avoid_saving_ephemeral_fact",
-        "no_recall_when_in_context",
-        "no_save_for_ephemeral_chat",
         "update_changed_preference",
         "use_filtered_subset"
       ]
@@ -14,16 +11,8 @@
     {
       "case": "memory-admission",
       "task_ids": [
-        "apply_saved_preference_in_new_conversation",
         "apply_saved_profile_fact_in_new_conversation",
-        "apply_saved_rule_in_english",
-        "broad_recall_does_not_reveal_sensitive_memory",
         "direct_question_returns_sensitive_memory",
-        "skip_ordinary_request",
-        "skip_pleasantry_english",
-        "skip_secret_after_unrelated_request",
-        "skip_secret_when_request_withdrawn",
-        "skip_temporary_state",
         "skip_when_user_declines"
       ]
     },
@@ -34,112 +23,50 @@
       ]
     },
     {
-      "case": "episode-reflection-v1",
-      "task_ids": [
-        "recorded_success_without_proof_is_not_trusted",
-        "successful_workaround_is_extracted",
-        "transient_value_is_not_memorized"
-      ]
-    },
-    {
       "case": "episode-reflection-v2",
       "task_ids": [
-        "duplicate_attempts_are_compacted",
-        "missing_result_pair_does_not_create_procedure",
-        "one_time_token_is_not_memorized",
         "success_claim_without_proof_is_unknown",
-        "successful_lesson_has_assessment_evidence",
-        "transient_ip_is_not_memorized",
         "verified_success_procedure_applies"
       ]
     },
     {
       "case": "notification-memory",
       "task_ids": [
-        "notification_batch_cursor_drain",
         "notification_noise_is_filtered"
       ]
     },
     {
       "case": "personamem-recall",
       "task_ids": [
-        "personamem_book_recommendation_preference",
-        "personamem_cooking_generalization",
         "personamem_family_relations_update_reason",
-        "personamem_food_fusion_cuisine",
-        "personamem_music_creative_getaway",
-        "personamem_music_recall_fact",
-        "personamem_online_shopping_preference",
-        "personamem_sports_recommendation_preference",
-        "personamem_study_consultation_generalization",
-        "personamem_therapy_games_dislike",
-        "personamem_therapy_yoga_acknowledge",
-        "personamem_travel_planning_preference",
-        "personamem_writing_style_discrimination"
+        "personamem_music_recall_fact"
       ]
     },
     {
       "case": "quick-capture",
       "task_ids": [
         "find_old_snapshot_in_large_history",
-        "prefer_latest_snapshot",
-        "preserve_duplicate_snapshots",
-        "route_screen_memory_away_from_session"
+        "prefer_latest_snapshot"
       ]
     },
     {
       "case": "perception",
       "task_ids": [
-        "find_settings_iphone",
         "select_exact_appointment_slot",
-        "task_5081",
-        "task_5174"
-      ]
-    },
-    {
-      "case": "mobilegym-basic",
-      "task_ids": [
-        "swipe_scroll_list"
+        "task_5081"
       ]
     },
     {
       "case": "phone-control-mobilegym",
       "task_ids": [
-        "open_clock",
-        "open_notification_shade",
         "open_settings",
-        "swipe_between_pages",
-        "toggle_wifi_on",
         "type_long_mixed_text"
       ]
     },
     {
       "case": "adb_android_basic",
       "task_ids": [
-        "about_device_and_back",
-        "open_app_drawer",
-        "quick_action_home",
-        "quick_action_notification_center"
-      ]
-    },
-    {
-      "case": "adb_android_text_editing",
-      "task_ids": [
-        "clear_search_query"
-      ]
-    },
-    {
-      "case": "adb_android_builtin_apps",
-      "task_ids": [
-        "files_preview_camera_image",
-        "maps_open_walking_steps"
-      ]
-    },
-    {
-      "case": "adb_android_text_editing-aidenbridge",
-      "task_ids": [
-        "clear_search_query",
-        "replace_search_query"
+        "quick_action_home"
       ]
     }
   ]
