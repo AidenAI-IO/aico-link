@@ -460,6 +460,12 @@ type EpisodeListResponse struct {
 	Episodes []EpisodeListEntry `json:"episodes"`
 }
 
+type MemoryDebugListResponse struct {
+	Plane string            `json:"plane"`
+	Items []MemoryDebugItem `json:"items"`
+	Total int               `json:"total"`
+}
+
 type ToolCatalogResponse struct {
 	Tools []ToolDescriptor `json:"tools"`
 }
@@ -617,6 +623,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/context/attachment", s.handleContextAttachment)
 	mux.HandleFunc("/api/episodes", s.handleEpisodes)
 	mux.HandleFunc("/api/episodes/", s.handleEpisodes)
+	mux.HandleFunc("/api/memory/debug", s.handleMemoryDebug)
 	mux.HandleFunc("/api/agent-tasks/history", s.handleTaskHistory)
 	mux.HandleFunc("/api/agent-tasks/history/", s.handleTaskHistory)
 	mux.HandleFunc("/api/agent-tasks", s.handleAgentTasks)
@@ -3275,6 +3282,80 @@ func (s *Server) handleEpisodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(EpisodeResponse{Episode: episode})
+}
+
+func (s *Server) handleMemoryDebug(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	plane := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("plane")))
+	needle := strings.TrimSpace(r.URL.Query().Get("q"))
+	limit := memoryDebugListMaxItems
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			http.Error(w, "Invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	memoryDir := strings.TrimSpace(s.userFilesMemoryDir)
+	configDir := ""
+	if s.runtime != nil {
+		configDir = s.runtime.ConfigSnapshot().ConfigDir
+		if memoryDir == "" && configDir != "" {
+			memoryDir = filepath.Join(configDir, "memory")
+		}
+	}
+	if memoryDir == "" && configDir == "" {
+		http.Error(w, "Memory store is not configured", http.StatusNotFound)
+		return
+	}
+
+	var (
+		items []MemoryDebugItem
+		err   error
+	)
+	switch plane {
+	case "long_term":
+		items, err = NewLongTermMemoryStore(filepath.Join(memoryDir, "long_term"), WithLifecycleDir(filepath.Join(memoryDir, "lifecycle"))).
+			ListForDebug(r.Context(), needle, limit)
+		for i := range items {
+			items[i].MemoryScope = "long_term"
+		}
+	case "temporary":
+		items, err = NewLongTermMemoryStore(filepath.Join(memoryDir, "temporary"), WithLifecycleDir(filepath.Join(memoryDir, "lifecycle"))).
+			ListForDebug(r.Context(), needle, limit)
+		for i := range items {
+			items[i].MemoryScope = "temporary"
+		}
+	case "device":
+		items, err = NewDeviceMemoryStore(filepath.Join(memoryDir, "device")).
+			ListForDebug(r.Context(), needle, limit)
+	case "chunks":
+		sessionFolder := ""
+		if configDir != "" {
+			sessionFolder = agentpath.ContextManagerSessionFolder(configDir)
+		}
+		items, err = listSessionChunksForDebug(sessionFolder, needle, limit)
+	default:
+		http.Error(w, "Invalid plane", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if items == nil {
+		items = []MemoryDebugItem{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(MemoryDebugListResponse{
+		Plane: plane,
+		Items: items,
+		Total: len(items),
+	})
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {

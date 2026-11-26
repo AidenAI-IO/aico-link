@@ -32,10 +32,12 @@
     .note a { color:var(--blue); }
     main { display:grid; grid-template-columns:1fr 1fr; gap:1px; min-height:calc(100vh - 148px); background:var(--line); }
     section { min-width:0; padding:22px; background:var(--panel); }
-    .title { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+    .title { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--line); }
     h2 { margin:0; font:600 13px ui-monospace,SFMono-Regular,Menlo,monospace; text-transform:uppercase; letter-spacing:.12em; }
     .longterm h2 { color:var(--blue); } .device h2 { color:var(--purple); } .chunks h2 { color:var(--green); } .episode h2 { color:var(--orange); }
     .count { color:var(--muted); font:11px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .filter { width:100%; margin:0 0 12px; border:1px solid var(--line); border-radius:5px; padding:8px 10px; background:var(--panel2); color:var(--text); font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .filter:focus { outline:none; border-color:var(--blue); }
     .item { margin:0 0 8px; border:1px solid var(--line); border-radius:6px; background:var(--panel2); overflow-wrap:anywhere; }
     .item > summary { list-style:none; display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:start; padding:10px 12px; cursor:pointer; }
     .item > summary::-webkit-details-marker { display:none; }
@@ -58,7 +60,7 @@
     .chip { padding:2px 7px; border-radius:999px; background:var(--chip); color:var(--muted); font:11px ui-monospace,SFMono-Regular,Menlo,monospace; }
     .empty, .error { color:var(--muted); font:13px ui-monospace,SFMono-Regular,Menlo,monospace; }
     .error { color:var(--orange); }
-    .episode-form { display:flex; gap:8px; margin-bottom:14px; }
+    .episode-form { display:flex; gap:8px; margin-bottom:12px; }
     .episode-form input { flex:1; min-width:0; border:1px solid var(--line); border-radius:5px; padding:8px 10px; background:var(--panel2); color:var(--text); font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
     .episode-form input:focus { outline:none; border-color:var(--blue); }
     .item.episode-item[open] { border-color:var(--orange); }
@@ -82,20 +84,23 @@
     <span>Refresh <strong id="statMs">—</strong></span>
   </div>
   <p class="note">
-    Read-only browse via existing memory tools. Sensitive memories stay hidden on empty browse.
+    Read-only inventory via debug list APIs (includes sensitive). Search filters the loaded list.
     Full conversation context: <a href="/web-ui/context.html" target="_blank" rel="noopener">Context</a>.
   </p>
   <main>
     <section class="longterm">
       <div class="title"><h2>Long-term / Temporary</h2><span class="count" id="memoryCount"></span></div>
+      <input class="filter" id="memoryFilter" type="search" placeholder="Search…" autocomplete="off" spellcheck="false">
       <div id="memoryList"></div>
     </section>
     <section class="device">
       <div class="title"><h2>Device</h2><span class="count" id="deviceCount"></span></div>
+      <input class="filter" id="deviceFilter" type="search" placeholder="Search…" autocomplete="off" spellcheck="false">
       <div id="deviceList"></div>
     </section>
     <section class="chunks">
       <div class="title"><h2>Session chunks</h2><span class="count" id="chunksCount"></span></div>
+      <input class="filter" id="chunksFilter" type="search" placeholder="Search…" autocomplete="off" spellcheck="false">
       <div id="chunksList"></div>
     </section>
     <section class="episode">
@@ -104,6 +109,7 @@
         <input id="episodeId" name="episodeId" type="text" placeholder="ep_…" autocomplete="off" spellcheck="false">
         <button class="action" type="submit">Load</button>
       </form>
+      <input class="filter" id="episodeFilter" type="search" placeholder="Search…" autocomplete="off" spellcheck="false">
       <div id="episodeList"></div>
     </section>
   </main>
@@ -111,6 +117,7 @@
     const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const copyStore = new Map();
     const episodeCache = new Map();
+    const caches = { memory: [], device: [], chunks: [], episode: [] };
     let copySeq = 0;
 
     function chips(values) {
@@ -173,26 +180,39 @@
       } catch (_) {}
     }
 
+    function matchesQuery(item, query) {
+      const needle = String(query || '').trim().toLowerCase();
+      if (!needle) return true;
+      const haystacks = [
+        item.id, item.chunk_id, item.type, item.status, item.title, item.summary, item.content,
+        item.memory_scope, item.source, item.session_id, item.app_name, item.user_goal,
+        ...(item.tags || []), ...(item.entities || []),
+      ];
+      return haystacks.some(value => String(value || '').toLowerCase().includes(needle));
+    }
+
     function itemCard(item) {
-      const id = item.id || item.ID || item.chunk_id || item.ChunkID || '';
-      const type = item.type || item.Type || '';
-      const scope = item.memory_scope || item.MemoryScope || item.source || item.Source || '';
-      const session = item.session_id || item.SessionID || '';
-      const title = item.title || item.Title || '';
-      const summary = item.summary || item.Summary || '';
-      const content = item.content || item.Content || '';
-      const created = item.created_at || item.CreatedAt || '';
-      const expires = item.expires_at || item.ExpiresAt || '';
+      const id = item.id || item.chunk_id || '';
+      const type = item.type || '';
+      const scope = item.memory_scope || item.source || '';
+      const session = item.session_id || '';
+      const title = item.title || '';
+      const summary = item.summary || '';
+      const content = item.content || '';
+      const created = item.created_at || '';
+      const expires = item.expires_at || '';
       const body = content || summary || '(empty)';
       const headline = title && title !== id ? title : (summary || body).split('\n')[0];
       const preview = (summary && title && title !== id) ? summary : body;
-      const badges = [type, scope || session].filter(Boolean)
+      const badges = [type, scope || session, item.sensitive ? 'sensitive' : '']
+        .filter(Boolean)
         .map(value => `<span class="badge">${esc(value)}</span>`).join('');
       const metaRows = [
         id && ['ID', id],
         created && ['Created', shortTime(created)],
         expires && ['Expires', shortTime(expires)],
         session && ['Session', session],
+        item.app_name && ['App', item.app_name],
       ].filter(Boolean).map(([label, value]) =>
         `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`
       ).join('');
@@ -208,55 +228,50 @@
         + '<div class="item-detail">'
         + (metaRows ? `<dl class="item-meta">${metaRows}</dl>` : '')
         + `<div class="item-body">${esc(body)}</div>`
-        + chips(item.tags || item.Tags)
-        + chips(item.entities || item.Entities)
+        + chips(item.tags)
+        + chips(item.entities)
         + '</div>'
         + '</details>';
     }
 
-    function renderList(targetId, countId, results, emptyText) {
+    function renderCachedList(kind, targetId, countId, filterId, emptyText) {
       const root = document.getElementById(targetId);
       const count = document.getElementById(countId);
-      const list = Array.isArray(results) ? results : [];
-      count.textContent = `${list.length} shown`;
+      const query = document.getElementById(filterId).value;
+      const all = caches[kind] || [];
+      const list = all.filter(item => matchesQuery(item, query));
+      count.textContent = query.trim()
+        ? `${list.length} / ${all.length}`
+        : `${all.length} total`;
       root.innerHTML = list.length
         ? list.map(itemCard).join('')
-        : `<div class="empty">${esc(emptyText)}</div>`;
+        : `<div class="empty">${esc(all.length ? 'No matches.' : emptyText)}</div>`;
       return list.length;
     }
 
-    function parseToolOutput(output) {
-      if (output == null || output === '') return { results: [] };
-      if (typeof output === 'object') return output;
-      try {
-        return JSON.parse(output);
-      } catch (_) {
-        return { raw: String(output) };
-      }
-    }
-
-    async function invokeTool(name, input) {
-      const res = await fetch(`/api/tools/${name}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input }),
-      });
-      if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
+    async function fetchDebugPlane(plane) {
+      const res = await fetch(`/api/memory/debug?plane=${encodeURIComponent(plane)}`);
+      if (!res.ok) throw new Error(`${plane}: HTTP ${res.status}`);
       const data = await res.json();
-      if (data.is_error) throw new Error(data.error || data.tool_error?.message || `${name} failed`);
-      return parseToolOutput(data.output);
+      return Array.isArray(data.items) ? data.items : [];
     }
 
-    function setSectionError(targetId, countId, message) {
-      document.getElementById(countId).textContent = 'error';
-      document.getElementById(targetId).innerHTML = `<div class="error">${esc(message)}</div>`;
-    }
-
-    function renderEpisodeList(entries, openId) {
+    function renderEpisodeList(entries, openId, query) {
       const root = document.getElementById('episodeList');
-      const list = Array.isArray(entries) ? entries : [];
+      const all = Array.isArray(entries) ? entries : [];
+      const list = all.filter(entry => matchesQuery({
+        id: entry.id,
+        status: entry.status,
+        summary: entry.summary,
+        user_goal: entry.user_goal,
+        tags: entry.tags,
+        entities: entry.entities,
+      }, query));
+      document.getElementById('episodeCount').textContent = query.trim()
+        ? `${list.length} / ${all.length}`
+        : `${all.length} recent`;
       if (!list.length) {
-        root.innerHTML = '<div class="empty">No recent episodes.</div>';
+        root.innerHTML = `<div class="empty">${esc(all.length ? 'No matches.' : 'No recent episodes.')}</div>`;
         return 0;
       }
       root.innerHTML = list.map(entry => {
@@ -285,7 +300,7 @@
     }
 
     async function loadEpisodeList() {
-      const res = await fetch('/api/episodes?limit=20');
+      const res = await fetch('/api/episodes?limit=50');
       if (!res.ok) throw new Error(`episodes list: HTTP ${res.status}`);
       const data = await res.json();
       return Array.isArray(data.episodes) ? data.episodes : [];
@@ -350,6 +365,10 @@
       return fillEpisodeDetail(trimmed);
     }
 
+    function rerenderEpisodes(openId) {
+      return renderEpisodeList(caches.episode, openId || document.getElementById('episodeId').value.trim(), document.getElementById('episodeFilter').value);
+    }
+
     async function loadMemory() {
       const status = document.getElementById('status');
       const started = performance.now();
@@ -362,64 +381,54 @@
       let episodeListCount = 0;
       let episodeCount = 0;
       let hadError = false;
-      let episodeEntries = [];
 
-      const memoryPromise = invokeTool('recall_memory', { tags: [], entities: [], types: [], limit: 20 })
-        .then(payload => {
-          if (payload.raw) {
-            document.getElementById('memoryCount').textContent = 'raw';
-            document.getElementById('memoryList').innerHTML = `<pre class="dump">${esc(payload.raw)}</pre>`;
-            memoryCount = 0;
-            return;
-          }
-          memoryCount = renderList('memoryList', 'memoryCount', payload.results, 'No long-term or temporary memories matched browse.');
+      const memoryPromise = Promise.all([fetchDebugPlane('long_term'), fetchDebugPlane('temporary')])
+        .then(([longTerm, temporary]) => {
+          caches.memory = [...longTerm, ...temporary];
+          memoryCount = renderCachedList('memory', 'memoryList', 'memoryCount', 'memoryFilter', 'No long-term or temporary memories.');
         })
         .catch(err => {
           hadError = true;
-          setSectionError('memoryList', 'memoryCount', err.message || err);
+          caches.memory = [];
+          document.getElementById('memoryCount').textContent = 'error';
+          document.getElementById('memoryList').innerHTML = `<div class="error">${esc(err.message || err)}</div>`;
         });
 
-      const devicePromise = invokeTool('recall_device_memory', { terms: [], tags: [], entities: [], types: [], limit: 5 })
-        .then(payload => {
-          if (payload.raw) {
-            document.getElementById('deviceCount').textContent = 'raw';
-            document.getElementById('deviceList').innerHTML = `<pre class="dump">${esc(payload.raw)}</pre>`;
-            deviceCount = 0;
-            return;
-          }
-          deviceCount = renderList('deviceList', 'deviceCount', payload.results, 'No device memories matched browse (tool limit 5).');
+      const devicePromise = fetchDebugPlane('device')
+        .then(items => {
+          caches.device = items;
+          deviceCount = renderCachedList('device', 'deviceList', 'deviceCount', 'deviceFilter', 'No device memories.');
         })
         .catch(err => {
           hadError = true;
-          setSectionError('deviceList', 'deviceCount', err.message || err);
+          caches.device = [];
+          document.getElementById('deviceCount').textContent = 'error';
+          document.getElementById('deviceList').innerHTML = `<div class="error">${esc(err.message || err)}</div>`;
         });
 
-      const chunksPromise = invokeTool('recall_session_chunks', { tags: [], entities: [], limit: 20 })
-        .then(payload => {
-          if (payload.raw) {
-            document.getElementById('chunksCount').textContent = 'raw';
-            document.getElementById('chunksList').innerHTML = `<pre class="dump">${esc(payload.raw)}</pre>`;
-            chunksCount = 0;
-            return;
-          }
-          chunksCount = renderList('chunksList', 'chunksCount', payload.results, 'No session chunks matched browse.');
+      const chunksPromise = fetchDebugPlane('chunks')
+        .then(items => {
+          caches.chunks = items;
+          chunksCount = renderCachedList('chunks', 'chunksList', 'chunksCount', 'chunksFilter', 'No session chunks.');
         })
         .catch(err => {
           hadError = true;
-          setSectionError('chunksList', 'chunksCount', err.message || err);
+          caches.chunks = [];
+          document.getElementById('chunksCount').textContent = 'error';
+          document.getElementById('chunksList').innerHTML = `<div class="error">${esc(err.message || err)}</div>`;
         });
 
       const episodeListPromise = loadEpisodeList()
         .then(entries => {
-          episodeEntries = entries;
+          caches.episode = entries;
           const preferred = document.getElementById('episodeId').value.trim()
             || (entries[0] && entries[0].id)
             || '';
-          episodeListCount = renderEpisodeList(entries, preferred);
-          document.getElementById('episodeCount').textContent = `${episodeListCount} recent`;
+          episodeListCount = renderEpisodeList(entries, preferred, document.getElementById('episodeFilter').value);
         })
         .catch(err => {
           hadError = true;
+          caches.episode = [];
           document.getElementById('episodeCount').textContent = 'error';
           document.getElementById('episodeList').innerHTML = `<div class="error">${esc(err.message || err)}</div>`;
         });
@@ -427,13 +436,13 @@
       await Promise.all([memoryPromise, devicePromise, chunksPromise, episodeListPromise]);
 
       const selected = document.getElementById('episodeId').value.trim()
-        || (episodeEntries[0] && episodeEntries[0].id)
+        || (caches.episode[0] && caches.episode[0].id)
         || '';
       episodeCount = selected ? await openEpisode(selected, { updateInput: true }) : 0;
 
-      document.getElementById('statMemory').textContent = String(memoryCount);
-      document.getElementById('statDevice').textContent = String(deviceCount);
-      document.getElementById('statChunks').textContent = String(chunksCount);
+      document.getElementById('statMemory').textContent = String(caches.memory.length);
+      document.getElementById('statDevice').textContent = String(caches.device.length);
+      document.getElementById('statChunks').textContent = String(caches.chunks.length);
       document.getElementById('statEpisode').textContent = episodeCount ? '1' : String(episodeListCount);
       document.getElementById('statMs').textContent = `${Math.round(performance.now() - started)} ms`;
       status.textContent = hadError ? 'loaded with errors' : 'loaded';
@@ -468,6 +477,19 @@
         if (node !== card) node.open = false;
       });
       fillEpisodeDetail(id);
+    });
+
+    document.getElementById('memoryFilter').addEventListener('input', () => {
+      renderCachedList('memory', 'memoryList', 'memoryCount', 'memoryFilter', 'No long-term or temporary memories.');
+    });
+    document.getElementById('deviceFilter').addEventListener('input', () => {
+      renderCachedList('device', 'deviceList', 'deviceCount', 'deviceFilter', 'No device memories.');
+    });
+    document.getElementById('chunksFilter').addEventListener('input', () => {
+      renderCachedList('chunks', 'chunksList', 'chunksCount', 'chunksFilter', 'No session chunks.');
+    });
+    document.getElementById('episodeFilter').addEventListener('input', () => {
+      rerenderEpisodes(document.getElementById('episodeId').value.trim());
     });
 
     document.getElementById('refreshBtn').addEventListener('click', () => { loadMemory(); });
