@@ -16,7 +16,12 @@ interface Confirmation {
 }
 const confirmation = atom<Confirmation | null>(null);
 const notice = atom('');
-const progress = atom<{ title: TextSpec; body: TextSpec; failed?: boolean } | null>(null);
+interface Progress {
+  title: TextSpec;
+  body: TextSpec;
+  failed?: boolean;
+}
+const progress = atom<Progress | null>(null);
 let noticeID = 0;
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 let openModalCount = 0;
@@ -66,39 +71,48 @@ export function showProgress(title: TextSpec, body: TextSpec) {
       }),
   };
 }
-export function Modal({
-  title,
+function Dialog({
   children,
   onClose,
   busy = false,
-  hideTitle = false,
+  titleID,
+  descriptionID,
+  className,
+  panelClassName,
+  scrimClassName,
+  initialFocus,
 }: {
-  title: TextSpec;
   children: ReactNode;
   onClose: () => void;
   busy?: boolean;
-  hideTitle?: boolean;
+  titleID: string;
+  descriptionID?: string;
+  className: string;
+  panelClassName: string;
+  scrimClassName?: string;
+  initialFocus?: string;
 }) {
   const panel = useRef<HTMLDivElement>(null);
-  const titleID = useId();
   useEffect(() => {
     const previous = document.activeElement;
     const releaseModalInert = acquireModalInert();
     const first = panel.current?.querySelector<HTMLElement>(
-      'input:not(:disabled),button:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex="0"]',
+      initialFocus ||
+        'input:not(:disabled),button:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex="0"]',
     );
     (first || panel.current?.querySelector<HTMLElement>('h2') || panel.current)?.focus();
     return () => {
       releaseModalInert();
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
-  }, []);
+  }, [initialFocus]);
   return createPortal(
     <div
-      className="ds-sheet"
+      className={className}
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleID}
+      aria-describedby={descriptionID}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !busy) {
           event.stopPropagation();
@@ -124,18 +138,97 @@ export function Modal({
         }
       }}
     >
-      <div className="ds-sheet__scrim ds-sheet__scrim--open" onClick={() => !busy && onClose()} />
-      <div ref={panel} tabIndex={-1} className="ds-sheet__panel ds-sheet__panel--open">
-        <div className="ds-sheet__grabber">
-          <div className="ds-sheet__handle" />
-        </div>
-        <h2 id={titleID} tabIndex={-1} className={hideTitle ? 'ds-sr-only' : 'ds-sheet__title'}>
-          <Text value={title} />
-        </h2>
-        <div className="ds-sheet__body">{children}</div>
+      {scrimClassName && <div className={scrimClassName} onClick={() => !busy && onClose()} />}
+      <div ref={panel} tabIndex={-1} className={panelClassName}>
+        {children}
       </div>
     </div>,
     document.body,
+  );
+}
+export function Modal({
+  title,
+  children,
+  onClose,
+  busy = false,
+  hideTitle = false,
+}: {
+  title: TextSpec;
+  children: ReactNode;
+  onClose: () => void;
+  busy?: boolean;
+  hideTitle?: boolean;
+}) {
+  const titleID = useId();
+  return (
+    <Dialog
+      titleID={titleID}
+      onClose={onClose}
+      busy={busy}
+      className="ds-sheet"
+      scrimClassName="ds-sheet__scrim ds-sheet__scrim--open"
+      panelClassName="ds-sheet__panel ds-sheet__panel--open"
+    >
+      <div className="ds-sheet__grabber">
+        <div className="ds-sheet__handle" />
+      </div>
+      <h2 id={titleID} tabIndex={-1} className={hideTitle ? 'ds-sr-only' : 'ds-sheet__title'}>
+        <Text value={title} />
+      </h2>
+      <div className="ds-sheet__body">{children}</div>
+    </Dialog>
+  );
+}
+function ConfirmationDialog({
+  ask,
+  finish,
+}: {
+  ask: Confirmation;
+  finish: (value: boolean) => void;
+}) {
+  const titleID = useId();
+  const bodyID = useId();
+  return (
+    <Dialog
+      titleID={titleID}
+      descriptionID={ask.body ? bodyID : undefined}
+      onClose={() => finish(false)}
+      className="ds-action-sheet"
+      scrimClassName="ds-action-sheet__scrim ds-action-sheet__scrim--open"
+      panelClassName="ds-action-sheet__panel ds-action-sheet__panel--open"
+      initialFocus='[data-action="cancel-confirm"]'
+    >
+      <div className="ds-action-sheet__group">
+        <div className="ds-action-sheet__header">
+          <h2 id={titleID} tabIndex={-1} className="ds-action-sheet__title">
+            <Text value={ask.title} />
+          </h2>
+          {ask.body && (
+            <p id={bodyID} className="ds-action-sheet__message">
+              <Text value={ask.body} />
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          data-action={ask.action || 'confirm'}
+          className={`ds-action-sheet__button ${ask.danger ? 'ds-action-sheet__button--danger' : ''}`}
+          onClick={() => finish(true)}
+        >
+          <Text value={ask.confirmLabel || msg('action.confirm', '确认')} />
+        </button>
+      </div>
+      <div className="ds-action-sheet__group ds-action-sheet__group--cancel">
+        <button
+          type="button"
+          data-action="cancel-confirm"
+          className="ds-action-sheet__button ds-action-sheet__button--cancel"
+          onClick={() => finish(false)}
+        >
+          <Text value={msg('action.cancel', '取消')} />
+        </button>
+      </div>
+    </Dialog>
   );
 }
 export function OverlayHost() {
@@ -159,25 +252,7 @@ export function OverlayHost() {
   };
   return (
     <>
-      {ask && (
-        <Modal title={ask.title} onClose={() => finish(false)}>
-          <p>
-            <Text value={ask.body} />
-          </p>
-          <div className="ds-button-pair">
-            <Button variant="secondary" onClick={() => finish(false)}>
-              <Text value={msg('action.cancel', '取消')} />
-            </Button>
-            <Button
-              action={ask.action}
-              variant={ask.danger ? 'danger' : 'primary'}
-              onClick={() => finish(true)}
-            >
-              <Text value={ask.confirmLabel || msg('action.confirm', '确认')} />
-            </Button>
-          </div>
-        </Modal>
-      )}
+      {ask && <ConfirmationDialog ask={ask} finish={finish} />}
       {text &&
         createPortal(
           <div className="ds-toast" role="status">
@@ -185,24 +260,41 @@ export function OverlayHost() {
           </div>,
           document.body,
         )}
-      {wait && (
-        <Modal
-          title={wait.title}
-          onClose={() => {
-            if (wait.failed) store.set(progress, null);
-          }}
-          busy={!wait.failed}
-        >
-          <p>
-            <Text value={wait.body} />
-          </p>
-          {wait.failed && (
-            <Button onClick={() => store.set(progress, null)}>
-              <Text value={msg('action.close', '关闭')} />
-            </Button>
-          )}
-        </Modal>
-      )}
+      {wait && <ProgressDialog wait={wait} />}
     </>
+  );
+}
+function ProgressDialog({ wait }: { wait: Progress }) {
+  const titleID = useId();
+  const bodyID = useId();
+  return (
+    <Dialog
+      titleID={titleID}
+      descriptionID={bodyID}
+      className="ds-restart"
+      panelClassName="ds-restart__panel"
+      onClose={() => {
+        if (wait.failed) store.set(progress, null);
+      }}
+      busy={!wait.failed}
+    >
+      {!wait.failed && <div className="ds-restart__spinner" aria-hidden="true" />}
+      <h2 id={titleID} tabIndex={-1} className="ds-restart__title">
+        <Text value={wait.title} />
+      </h2>
+      <p id={bodyID} className="ds-restart__body" role="status">
+        <Text value={wait.body} />
+      </p>
+      {wait.failed && (
+        <Button
+          variant="secondary"
+          block
+          action="close-restart"
+          onClick={() => store.set(progress, null)}
+        >
+          <Text value={msg('action.close', '关闭')} />
+        </Button>
+      )}
+    </Dialog>
   );
 }
