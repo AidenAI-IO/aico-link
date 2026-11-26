@@ -19,8 +19,8 @@ import (
 // listed here, since those are the capabilities the agent relies on.
 var modelSpecRegistry = map[string]model.ModelSpec{
 	// OpenAI GPT-5.x family (vision + tool calling). ContextWindow is the total
-	// advertised window; compaction logic uses (ContextWindow - MaxOutput) for
-	// the actual input budget.
+	// advertised window; MaxOutput is reserved from it only when the request
+	// sends it as the output limit (see defaultOutputReservation).
 	"openai/gpt-5.5":      {ContextWindow: 1_050_000, MaxOutput: 128_000, Reasoning: effortReasoning([]string{"none", "low", "medium", "high", "xhigh"}, true)},
 	"gpt-5.5":             {ContextWindow: 1_050_000, MaxOutput: 128_000, Reasoning: effortReasoning([]string{"none", "low", "medium", "high", "xhigh"}, true)},
 	"openai/gpt-5.5-pro":  {ContextWindow: 1_050_000, MaxOutput: 128_000, Reasoning: effortReasoning([]string{"medium", "high", "xhigh"}, true)},
