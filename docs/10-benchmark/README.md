@@ -593,7 +593,12 @@ forced to 1. `ci.gate_verdict` then reruns only the tasks that did not pass, and
 fails the job (check name `baseline-gate`) when a task passes in neither run.
 The job summary marks each such task as a `regression` when a run scored it as
 failed, or as `unverified` when no run produced a score (judge error, timeout,
-skipped, or missing result). A gate run is not published to Langfuse and does
+skipped, or missing result). A failed attempt that made no tool call but wrote
+tool-call markup such as `<parcel_call>` or `default_api:<tool>` into its reply
+is recorded as `model_format`. This is a model output defect, seen in about 5%
+of attempts with `google/gemini-3.5-flash-lite`, rather than a change in the
+Agent's decision. A task that fails only this way is reported as a warning
+and does not fail the gate. A gate run is not published to Langfuse and does
 not generate a dashboard, so task subsets never appear as suite regressions.
 
 The self-hosted runner never runs pull request events. To check a change before

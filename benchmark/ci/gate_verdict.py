@@ -6,6 +6,12 @@ calls are nondeterministic, so a task counts as passed when any pass over it
 succeeded; the workflow reruns only the tasks that did not pass, and a task
 fails the gate only when it never passes. A task without a result (setup
 failure, killed case) counts as not passed.
+
+A failed attempt whose model wrote its tool call as reply text instead of
+calling the tool is recorded as "model_format". That is a known model output
+defect (about 5% of attempts with google/gemini-3.5-flash-lite), not a change
+in what the Agent decided, so a task that only ever fails that way is reported
+as a warning instead of failing the gate.
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ from __future__ import annotations
 import argparse
 import dataclasses as dc
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -24,6 +31,10 @@ from ci.plan import (
     load_catalog,
     load_gate,
 )
+
+
+# Tool-call markup a model emitted as plain reply text.
+TEXT_TOOL_CALL = re.compile(r"<parcel_call\b|default_api:\w+")
 
 
 @dc.dataclass(frozen=True)
@@ -43,15 +54,39 @@ class TaskVerdict:
 
     @property
     def kind(self) -> str:
-        """Regression when a pass scored the task as failed, unverified when no
-        pass produced a score (judge error, timeout, skipped or missing)."""
-        return "regression" if "failed" in self.statuses else "unverified"
+        """Regression when a pass scored the task as failed; model_format when
+        every unscored-or-failed pass was a text tool call; otherwise
+        unverified (judge error, timeout, skipped or missing)."""
+        if "failed" in self.statuses:
+            return "regression"
+        if self.statuses and all(status == "model_format" for status in self.statuses):
+            return "model_format"
+        return "unverified"
+
+    @property
+    def blocking(self) -> bool:
+        return not self.passed and self.kind != "model_format"
 
 
-def _task_statuses(results_path: Path) -> dict[str, list[str]]:
+def _wrote_tool_call_as_text(run_dir: Path, row: dict) -> bool:
+    """True when the attempt made no tool call but its reply holds tool markup."""
+    artifact = str(row.get("artifact_dir") or "")
+    # artifact_dir is absolute on the runner; keep the part inside the run.
+    marker = f"/{run_dir.name}/"
+    relative = artifact.split(marker, 1)[1] if marker in artifact else f"tasks/{row['task_id']}"
+    try:
+        trace = json.loads((run_dir / relative / "trace.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(trace, dict) or trace.get("tool_calls"):
+        return False
+    return bool(TEXT_TOOL_CALL.search(str(trace.get("final_response") or "")))
+
+
+def _task_statuses(run_dir: Path) -> dict[str, list[str]]:
     statuses: dict[str, list[str]] = {}
     try:
-        lines = results_path.read_text(encoding="utf-8").splitlines()
+        lines = (run_dir / "results.jsonl").read_text(encoding="utf-8").splitlines()
     except OSError:
         return statuses
     for line in lines:
@@ -59,8 +94,12 @@ def _task_statuses(results_path: Path) -> dict[str, list[str]]:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(row, dict) and row.get("task_id"):
-            statuses.setdefault(str(row["task_id"]), []).append(str(row.get("status") or "unknown"))
+        if not isinstance(row, dict) or not row.get("task_id"):
+            continue
+        status = str(row.get("status") or "unknown")
+        if status == "failed" and _wrote_tool_call_as_text(run_dir, row):
+            status = "model_format"
+        statuses.setdefault(str(row["task_id"]), []).append(status)
     return statuses
 
 
@@ -73,7 +112,7 @@ def judge(
     verdicts: list[TaskVerdict] = []
     for case in cases:
         per_pass = [
-            _task_statuses(runs_dir / f"{prefix}-{case.id}" / "results.jsonl")
+            _task_statuses(runs_dir / f"{prefix}-{case.id}")
             for prefix in run_id_prefixes
         ]
         for task_id in case.task_ids:
@@ -115,6 +154,12 @@ def summary_markdown(verdicts: list[TaskVerdict], *, final: bool) -> str:
             f"| {v.case_id} | {v.task_id} | {v.kind} | {', '.join(v.statuses)} |"
             for v in failed
         ]
+        if any(v.kind == "model_format" for v in failed):
+            lines += [
+                "",
+                "model_format: the model wrote its tool call as reply text instead of "
+                "calling the tool. This is reported but does not fail the gate.",
+            ]
         if all(v.kind == "unverified" for v in failed):
             lines += [
                 "",
@@ -167,6 +212,7 @@ def cli(argv: list[str] | None = None) -> int:
 
     verdicts = judge(cases, runs_dir=args.runs_dir, run_id_prefixes=args.run_id_prefix)
     failed = [verdict for verdict in verdicts if not verdict.passed]
+    blocking = [verdict for verdict in failed if verdict.blocking]
     summary = summary_markdown(verdicts, final=args.enforce)
     print(summary, flush=True)
     _append(args.summary_path, summary)
@@ -175,14 +221,16 @@ def cli(argv: list[str] | None = None) -> int:
         args.github_output,
         f"failed={len(failed)}\nretry_matrix={json.dumps(matrix, separators=(',', ':'))}\n",
     )
-    if args.enforce and failed:
+    if args.enforce:
         for verdict in failed:
+            level = "error" if verdict.blocking else "warning"
             print(
-                f"::error title=Baseline gate {verdict.kind}::{verdict.case_id}/{verdict.task_id} "
+                f"::{level} title=Baseline gate {verdict.kind}::{verdict.case_id}/{verdict.task_id} "
                 f"did not pass ({', '.join(verdict.statuses)})",
                 flush=True,
             )
-        return 1
+        if blocking:
+            return 1
     return 0
 
 
