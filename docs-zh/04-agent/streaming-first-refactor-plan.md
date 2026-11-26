@@ -85,7 +85,7 @@ Web
 | TTS 兼容性 | [语音投影](../../src/agent/internal/agent/speech/text.go#L198) 解析开头的 `<tts>` 块；[OpenRouter TTS](../../src/agent/internal/agent/tts/adapters/openrouter/session.go#L195) 读取完整的 PCM 响应。 | 保留语音/显示分离。报告实际的流式粒度，而不是把每个适配器都宣传为等价的。 |
 | 实时 | [`realtimevoice.Session` 和事件](../../src/agent/internal/agent/realtimevoice/interface.go#L199) 已经对提供商行为做了规范化，并暴露可选能力。 | 复用注册表、原生适配器、托管重采样和能力检测。从守护进程编排中提取共享的生命周期策略，而不是提取提供商的线路协议逻辑。 |
 | 实时编排 | [守护进程事件循环](../../src/agent/cmd/daemon/realtime_wakeup.go#L1444) 负责准入、历史、播放、工具、通知和聊天桥接。 | 逐步把策略迁移到可测试的控制器中；保留响应 ID 过滤、取消确认、看门狗以及提供商特定的排序规则。 |
-| 开发板播放 | [`AudioPlaybackSession`](../../src/audio_playback_session.cpp#L66) 在收尾之前就播放分块；队列满时等待 200 毫秒，然后不重新检查上限就继续推入。 | 保留实际的流式能力；强制执行硬性的时长/字节上限，并明确饱和时的行为。 |
+| 开发板播放 | [`AudioPlaybackSession`](../../src/audio_playback_session.cpp#L66) 在收尾之前就播放分块。基线：队列满时等待 200 毫秒，然后不重新检查上限就继续推入。现已实现（见第 16 节）：等待后队列会重新检查分块数量和 PCM 字节上限，并在饱和持续时返回 `TIMEOUT`。 | 保留实际的流式能力；保持硬性的时长/字节上限及其明确的 `TIMEOUT` 饱和行为。 |
 | 采集队列 | [录音队列插入](../../src/audio_record_session.cpp#L241) 在达到 512 个分块的上限时会静默跳过新分块。 | 增加丢失计数、序列/时间元数据，以及明确的不连续处理策略。分块数量上限不等于延迟预算。 |
 | 现有桌面播放 | [`local_audio_playback.go`](../../src/agent/internal/agent/local_audio_playback.go#L64) 会先缓存一个 WAV，只在收尾时启动操作系统播放器。 | 把这个开发/回归测试输出端演进为实时 PCM；保留一个带标记的缓冲式回退。这并不意味着允许桌面麦克风输入。 |
 | Web 交付 | [聊天 fetch](../../src/agent/internal/agent/web_ui/scripts/chat.js#L33) 使用 NDJSON。[`EventBroadcaster`](../../src/agent/internal/agent/event_broadcaster.go#L21) 有意设计为尽力而为，订阅者通道已满时会丢弃事件。 | 保持 NDJSON/SSE 兼容性。增加标识、重新同步和丢失检测；不要把观察者广播器用作权威的媒体/控制路径。 |

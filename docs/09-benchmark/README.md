@@ -97,6 +97,10 @@ uv run python -m runner run \
   --auto-agent-setup
 ```
 
+Pass the `environment_url` printed by `start-mobilegym-env`. On macOS it is
+`http://127.0.0.1:<port>`; on native Linux the bridge binds the Docker bridge
+gateway instead of `127.0.0.1`.
+
 `--auto-agent-setup` ignores `--agent-url`, reads bridge capacity from
 `/api/concurrent`, and starts one isolated agent daemon per active task worker.
 
@@ -759,12 +763,13 @@ cases still run, and is marked as published. The separate publish step after
 the cases only publishes runs without that marker, such as a failed
 publication or every run after an interrupted case step.
 Every completed run uploads a 14-day diagnostic bundle containing its manifest,
-metrics, results, summary, HTML report, suite snapshot, setup/case logs, and an
-image-build log when an image had to be built. The upload is retried once after a
-transient failure. The per-task trace and screenshot tree is omitted to keep the
-bundle reliable on the self-hosted runner's constrained uplink. The bundle is
-sufficient to inspect statuses and retry `runner publish-langfuse`; generated
-worker configs are also excluded because they contain materialized Agent
+metrics, results, summary, HTML report, suite snapshot, setup/case and worker
+logs, an image-build log when an image had to be built, and per-task evidence:
+`trace.json`, `pre.jpg`/`post.jpg` screenshots, history, Judge results, setup,
+episode, environment-state, and collaboration/fixture/scenario event files. The
+upload is retried once after a transient failure with the same file list. The
+bundle is sufficient to inspect statuses and retry `runner publish-langfuse`;
+generated worker configs are excluded because they contain materialized Agent
 credentials.
 
 ## Runner and Local CLI Environment Variables

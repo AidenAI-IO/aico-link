@@ -166,7 +166,7 @@ Qwen-Audio Realtime API 的服务端事件参考。所有服务端事件都包�
 
 **说明**：回复中新增了一个输出项。普通回复使用 `message` 类型的输出项；Function Calling 使用 `function_call`。
 
-| **event\\_id** `*string*` 本事件的唯一标识。 | ``` { "event_id": "event_xxx", "type": "response.output_item.added", "response_id": "resp_xxx", "output_index": 0, "item": { "id": "item_xxx", "object": "realtime.item", "type": "message", "status": "in_progress", "role": "assistant", "content": [] } } ``` Function Call 输出项示例：对于函数调用输出项，`response.output_item.added` / `conversation.item.created` / `response.output_item.done` 中的 `item` 结构如下： ``` { "id": "item_xxx", "object": "realtime.item", "type": "function_call", "status": "completed", "call_id": "call_xxx", "name": "get_weather", "arguments": "{\\"city\\":\\"杭州\\"}" } ``` **注意** 一个回复可能包含多个 `function_call` 输出项，也可能同时包含普通 `message` 输出和 `function_call` 输出。Function Call 内容不会送入 TTS 播放。 |
+| **event\\_id** `*string*` 本事件的唯一标识。 | ``` { "event_id": "event_xxx", "type": "response.output_item.added", "response_id": "resp_xxx", "output_index": 0, "item": { "id": "item_xxx", "object": "realtime.item", "type": "message", "status": "in_progress", "role": "assistant", "content": [] } } ``` Function Call 输出项示例：对于函数调用输出项，`response.output_item.added` / `conversation.item.created` / `response.output_item.done` 中的 `item` 结构如下： ``` { "id": "item_xxx", "object": "realtime.item", "type": "function_call", "status": "completed", "call_id": "call_xxx", "name": "get_weather", "arguments": "{\"city\":\"杭州\"}" } ``` **注意** 一个回复可能包含多个 `function_call` 输出项，也可能同时包含普通 `message` 输出和 `function_call` 输出。Function Call 内容不会送入 TTS 播放。 |
 | --- | --- |
 | **type** `*string*` 事件类型，固定为 `response.output_item.added`。 |
 | **response\\_id** `*string*` 关联的回复 ID。 |
@@ -291,7 +291,7 @@ Qwen-Audio Realtime API 的服务端事件参考。所有服务端事件都包�
 
 **说明**：Function Calling 参数增量。当模型决定调用工具时，服务端先发送 `response.output_item.added`（`item.type=function_call`）及对应的 `conversation.item.created`，再通过此事件流式返回参数片段。
 
-| **event\\_id** `*string*` 本事件的唯一标识。 | ``` { "event_id": "event_xxx", "type": "response.function_call_arguments.delta", "response_id": "resp_xxx", "item_id": "item_xxx", "output_index": 0, "call_id": "call_xxx", "delta": "{\\"city" } ``` |
+| **event\\_id** `*string*` 本事件的唯一标识。 | ``` { "event_id": "event_xxx", "type": "response.function_call_arguments.delta", "response_id": "resp_xxx", "item_id": "item_xxx", "output_index": 0, "call_id": "call_xxx", "delta": "{\"city" } ``` |
 | --- | --- |
 | **type** `*string*` 事件类型，固定为 `response.function_call_arguments.delta`。 |
 | **response\\_id** `*string*` 关联的回复 ID。 |
@@ -304,7 +304,7 @@ Qwen-Audio Realtime API 的服务端事件参考。所有服务端事件都包�
 
 **说明**：Function Calling 参数输出完成。收到此事件后，客户端应执行对应的工具，用 `conversation.item.create` 提交 `function_call_output`，然后发送 `response.create` 触发第二次推理。
 
-| **event\\_id** `*string*` 本事件的唯一标识。 | ``` { "event_id": "event_xxx", "type": "response.function_call_arguments.done", "response_id": "resp_xxx", "item_id": "item_xxx", "output_index": 0, "call_id": "call_xxx", "name": "get_weather", "arguments": "{\\"city\\":\\"杭州\\"}" } ``` |
+| **event\\_id** `*string*` 本事件的唯一标识。 | ``` { "event_id": "event_xxx", "type": "response.function_call_arguments.done", "response_id": "resp_xxx", "item_id": "item_xxx", "output_index": 0, "call_id": "call_xxx", "name": "get_weather", "arguments": "{\"city\":\"杭州\"}" } ``` |
 | --- | --- |
 | **type** `*string*` 事件类型，固定为 `response.function_call_arguments.done`。 |
 | **response\\_id** `*string*` 关联的回复 ID。 |

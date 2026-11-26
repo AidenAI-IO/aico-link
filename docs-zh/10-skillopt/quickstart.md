@@ -73,7 +73,6 @@ uv run --project skillopt python -m skillopt \
   --budget 3 \
   --edit-budget 2 \
   --min-delta 0.03 \
-  --no-build-daemon-image \
   --output /tmp/device-operator-best.md
 ```
 

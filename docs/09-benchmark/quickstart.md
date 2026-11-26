@@ -91,6 +91,10 @@ uv run python -m runner run \
   --auto-agent-setup
 ```
 
+Pass the `environment_url` printed by `start-mobilegym-env`. On macOS it is
+`http://127.0.0.1:<port>`; on native Linux the bridge binds the Docker bridge
+gateway instead of `127.0.0.1`.
+
 The runner reads bridge capacity from `/api/concurrent`. If the suite has more
 tasks than the bridge capacity, extra tasks wait in the queue.
 

@@ -46,7 +46,7 @@ Notifications enter the `ble_service` event ring first. When the Agent enters an
 ```text
 Notification source → ble_service event ring
 Agent foreground task ends → wait 5 minutes idle
-                           → EpisodeProcessor (up to 5 Episodes)
+                           → EpisodeProcessor (up to 3 Episodes)
                            → NotificationProcessor
                                 → Consume / NotificationContext.append
                                 → Extract up to 10 notifications

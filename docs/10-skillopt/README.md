@@ -54,7 +54,6 @@ uv run --project skillopt python -m skillopt \
   --validation-suite skillopt/device-operator/device_operator_verification \
   --budget 3 \
   --edit-budget 2 \
-  --no-build-daemon-image \
   --output /tmp/device-operator-best.md
 ```
 

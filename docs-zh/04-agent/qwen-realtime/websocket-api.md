@@ -68,7 +68,7 @@ Qwen-Audio Realtime API 支持三种交互模式，通过 `session.update` 事�
 | --- | --- | --- | --- |
 | **server\\_vad** | `server_vad` | 服务端 VAD 检测语音边界并自动触发推理。 | 免提对话、语音助手 |
 | **smart\\_turn** | `smart_turn` | 结合声学感知与语义理解识别轮次边界，而不是只依赖语音信号。没有语义的声音（例如“嗯”“啊”）不会触发对话轮次，也不会打断模型说话。 | 低延迟的自然对话、高质量打断处理 |
-| **push-to-talk** | `null` | 客户端手动提交音频并触发推理。 | 按键说话、精确控制 |
+| **push-to-talk** | —（将 `turn_detection` 本身设置为 `null`） | 客户端手动提交音频并触发推理。 | 按键说话、精确控制 |
 
 ## **交互流程**
 
@@ -175,7 +175,21 @@ Qwen-Audio Realtime API 支持三种交互模式，通过 `session.update` 事�
 
 下图展示了 push-to-talk 模式下典型的交互时序：
 
-![111](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=)
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    loop While the user speaks
+        C->>S: input_audio_buffer.append
+    end
+    C->>S: input_audio_buffer.commit
+    S-->>C: input_audio_buffer.committed
+    S-->>C: conversation.item.created
+    C->>S: response.create
+    S-->>C: response.created
+    S-->>C: response.audio_transcript.delta / response.audio.delta
+    S-->>C: response.done
+```
 
 客户端与服务端按以下顺序交互：
 
@@ -192,7 +206,14 @@ Qwen-Audio Realtime API 支持三种交互模式，通过 `session.update` 事�
 
 客户端发送 `response.cancel` 取消当前回复，服务端返回 `response.done`（状态为 `cancelled`，原因为 `client_cancelled`）。下图展示了用户打断的时序：
 
-![111](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=)
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    S-->>C: response.audio.delta (streaming)
+    C->>S: response.cancel
+    S-->>C: response.done (status=cancelled, reason=client_cancelled)
+```
 
 ## **各模式下的操作约束**
 

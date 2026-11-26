@@ -68,7 +68,7 @@ The Qwen-Audio Realtime API supports three interaction modes, configured through
 | --- | --- | --- | --- |
 | **server\\_vad** | `server_vad` | Server-side VAD detects speech boundaries and automatically triggers inference. | Hands-free conversations, voice assistants |
 | **smart\\_turn** | `smart_turn` | Combines acoustic perception and semantic understanding to identify turn boundaries rather than relying solely on voice signals. Sounds without semantic meaning (such as "um" or "ah") do not trigger a conversation turn or interrupt model speech. | Low-latency natural conversations, high-quality interruption handling |
-| **push-to-talk** | `null` | The client manually submits audio and triggers inference. | Push-to-talk, precise control |
+| **push-to-talk** | — (set `turn_detection` itself to `null`) | The client manually submits audio and triggers inference. | Push-to-talk, precise control |
 
 ## **Interaction flows**
 
@@ -175,7 +175,21 @@ The client manually controls audio submission and inference triggering, suitable
 
 The following diagram shows a typical interaction sequence in push-to-talk mode:
 
-![111](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=)
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    loop While the user speaks
+        C->>S: input_audio_buffer.append
+    end
+    C->>S: input_audio_buffer.commit
+    S-->>C: input_audio_buffer.committed
+    S-->>C: conversation.item.created
+    C->>S: response.create
+    S-->>C: response.created
+    S-->>C: response.audio_transcript.delta / response.audio.delta
+    S-->>C: response.done
+```
 
 The client and server interact in the following order:
 
@@ -192,7 +206,14 @@ The client and server interact in the following order:
 
 The client sends `response.cancel` to cancel the current response, and the server returns `response.done` (with status `cancelled` and reason `client_cancelled`). The following diagram shows the user interruption sequence:
 
-![111](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=)
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    S-->>C: response.audio.delta (streaming)
+    C->>S: response.cancel
+    S-->>C: response.done (status=cancelled, reason=client_cancelled)
+```
 
 ## **Operation constraints by mode**
 

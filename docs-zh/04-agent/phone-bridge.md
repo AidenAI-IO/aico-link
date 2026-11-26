@@ -39,7 +39,7 @@ PiP Bridge 是一个范围很窄的例外。当 App 在后台上报 `pip_bridge_
 
 BLE Wake 为一组更小的命令提供按需的 iOS 后台路由：日历创建/查询/删除、联系人查询/创建，以及本地通知发送。剪贴板读写在 iOS 后台不可靠，联系人更新也不通过 BLE Wake 暴露；除非前台 Phone Bridge、PiP 或灵动岛恢复提供了其他可执行路由，这些调用会返回明确的 `app_backgrounded` 错误。每次 Agent 运行前，运行时能力过滤会检查 `ble_service` 是否报告有已连接的 Wake 订阅者，并只暴露可执行的工具和操作。随后命令被放入现有的 HTTP 队列，开发板尽力发起一次 `wake` 调用。BLE 只携带唤醒提示：App 使用其 `phone_id` 轮询，执行原生模块，并通过 HTTP 提交结构化结果。因此手机必须保持连接在开发板的 USB ECM 网络上；BLE 不是命令传输的替代品。如果 BLE 不可用，除非前台 Phone Bridge、PiP/FGS 轮询或灵动岛恢复等其他路由可用，否则这些仅限 App 的工具会被省略；Wake 通知失败永远不会移除已入队的命令。
 
-Android FGS Bridge 遵循相同的 HTTP 队列约定，不使用 WebSocket 作为后台传输。当 Android 前台服务以 `app_state=background` 和 `fgs_bridge_enabled=true` 轮询 `/api/phone-bridge/commands` 时，Agent 会保持 `open_app` 不可用，只将后台安全的数据工具路由到 HTTP 队列。在 PiP 和 FGS 两种模式下，`open_app` 的系统搜索都会通过该队列把查询词写入剪贴板，并粘贴到已获得焦点的搜索框中，而不是通过本地输入法键入；如果写入或粘贴失败，它会清空搜索框并回退到本地键盘输入。如果粘贴已发送但没有出现 App 结果，Agent 会检查搜索框是否仍为空；若为空，它会通过长按菜单再粘贴一次，如果搜索框仍为空，则在本地键入查询词，然后再尝试备用搜索词。
+Android FGS Bridge 遵循相同的 HTTP 队列约定，不使用 WebSocket 作为后台传输。当 Android 前台服务以 `app_state=background` 和 `fgs_bridge_enabled=true` 轮询 `/api/phone-bridge/commands` 时，Agent 会保持 Phone Bridge 的 `open_app` 启动命令不可用，只将后台安全的数据工具路由到 HTTP 队列；公开的 `open_app` 工具仍然暴露，并回退到系统搜索。在 PiP 和 FGS 两种模式下，`open_app` 的系统搜索都会通过该队列把查询词写入剪贴板，并粘贴到已获得焦点的搜索框中，而不是通过本地输入法键入；如果写入或粘贴失败，它会清空搜索框并回退到本地键盘输入。如果粘贴已发送但没有出现 App 结果，Agent 会检查搜索框是否仍为空；若为空，它会通过长按菜单再粘贴一次，如果搜索框仍为空，则在本地键入查询词，然后再尝试备用搜索词。
 
 Android 系统通知采集是一条独立的单向路径。用户授予通知使用权后，
 App 的原生监听器会通过 USB ECM 向 `/api/phone-notifications/events` 提交

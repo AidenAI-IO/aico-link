@@ -34,7 +34,7 @@ sidebar_position: 2
 - Pico Zero 通过 USB 向目标设备暴露 `/dev/hidg0`（键盘输入）、`/dev/hidg1`（指针/触控输入）以及 `/dev/hidg2`（Android 扩展按键或 Consumer Control 媒体按键）；
 - 音频通过 Pico Zero 板载的 codec / ALSA；网络通过 Wi-Fi 或 USB gadget 网络。
 
-若要通过 USB HID 控制 iOS 设备，请在目标设备上开启 `Settings > Accessibility > Zoom`，并关闭 `Settings > Accessibility > Touch > AssistiveTouch`。
+在当前固件上通过 USB HID 控制 iOS 设备时，请在目标设备上开启 `Settings > Accessibility > Zoom`，并关闭 `Settings > Accessibility > Touch > AssistiveTouch`。该组装方案对应的旧版固件则需要开启 AssistiveTouch；参见 [iOS HID 前提条件](hardware.md#ios-hid-前提条件)。
 
 ## 2. 烧录固件
 
@@ -114,12 +114,12 @@ Agent 的 HTTP 服务器和 Web UI 始终会启动。`input_mode` 决定是否�
 
 ### 目标设备设置（iPhone）
 
-若要通过 USB HID 控制 iPhone，请在目标设备上启用以下设置：
+在当前固件上通过 USB HID 控制 iPhone 时，请在目标设备上启用以下设置：
 
 1. **Settings > Accessibility > Zoom** - 开启。HID 触控输入需要它
 2. **Settings > Accessibility > Touch > AssistiveTouch** - 关闭。开启时 iOS 会忽略开发板的触控输入
 
-详情参见 [硬件与接线](hardware.md#ios-hid-前提条件)。
+旧版固件使用绝对坐标鼠标，需要改为开启 AssistiveTouch。详情参见 [硬件与接线](hardware.md#ios-hid-前提条件)。
 
 ### 验证
 

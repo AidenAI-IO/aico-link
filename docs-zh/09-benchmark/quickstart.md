@@ -90,6 +90,9 @@ uv run python -m runner run \
   --auto-agent-setup
 ```
 
+请传入 `start-mobilegym-env` 输出的 `environment_url`。在 macOS 上它是
+`http://127.0.0.1:<port>`；在原生 Linux 上，桥接绑定的是 Docker 网桥网关，而不是 `127.0.0.1`。
+
 runner 从 `/api/concurrent` 读取桥接的容量。如果套件中的任务数超过桥接容量，
 多出的任务会在队列中等待。
 

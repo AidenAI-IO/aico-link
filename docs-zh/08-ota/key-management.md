@@ -32,11 +32,13 @@ scripts/validate_ota_pubkey.sh ota_pubkey.pem
 ```bash
 OTA_PRIVATE_KEY_PATH=/path/to/ota_ed25519_private_key.pem \
 OTA_PUBLIC_KEY_PATH=/path/to/ota_pubkey.pem \
+OTA_TRUST_PUBLIC_KEY_PATH=/path/to/ota_pubkey.pem \
 AGENT_CONFIG_PATH=/path/to/agent.toml \
 ./debian_build.sh
 ```
 
-构建会校验两个密钥是否匹配，并将公钥打包到：
+请将 `OTA_TRUST_PUBLIC_KEY_PATH` 设为同一个公钥；否则构建会改为安装已提交的 `keys/ota_pubkey.pem`
+（参见[信任一个你无法代为签名的签名方](#信任一个你无法代为签名的签名方)）。构建会校验两个密钥是否匹配，并将受信任的公钥打包到：
 
 ```text
 /usr/share/keyrings/aico-ota.pem

@@ -197,8 +197,8 @@ ANCS 订阅独立于配套 App 的 Wake 订阅。Wake 是否可用只影响按�
 }
 ```
 
-接受 1-8 个 Android 通知事件，校验有长度限制的元数据字段，设置 `source=android` 和请求中的
-`device_id`，并返回已接受和重复的数量。该操作供 Agent HTTP 桥接使用，而不是供任意本地发布者调用。
+接受 1-8 个 Android 通知事件，校验有长度限制的元数据字段，设置 `source=android`，将存储事件的
+`device_id` 设为请求中的 `phone_id`，并返回已接受和重复的数量。该操作供 Agent HTTP 桥接使用，而不是供任意本地发布者调用。
 
 ### `pairing_start`
 

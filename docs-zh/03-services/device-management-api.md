@@ -444,7 +444,7 @@ token 数量不受限制。撤销未知 ID 会返回 `404`。token 文件缺失�
 
 ## API 边界
 
-已废弃的路由，例如 `/api/wifi/*`、`/api/system/env`、`/api/ota/update`、`/api/reboot`、`/api/agent/*`
+已废弃的路由，例如 `/api/wifi/*`、`/api/system/env`、`/api/ota/update`、`/api/reboot`、除 `POST /api/agent/restart` 之外的 `/api/agent/*`
 和 `/api/llm-logs/*`，已被移除并返回 `404 Not Found`；不提供任何兼容适配。客户端必须使用上表中的规范资源。
 `GET /api/config` 只具有配置语义，在进程内使用规范的编辑器加载器和不含凭据的 DTO。它包含已持久化的版本、
 校验状态和配置路径。前端分别独立读取配置、固件、Wi-Fi 和存储，因此一个缓慢的状态探测不会拖慢无关的摘要。

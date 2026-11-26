@@ -119,7 +119,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-启动后，访问 `http://localhost:3000`，创建 Organization / Project，并把 Public Key 和 Secret Key 复制到设备的环境变量中。如果想跳过这一步，可在首次启动前在 `.env` 中设置 `LANGFUSE_INIT_ORG_ID`、`LANGFUSE_INIT_PROJECT_ID` 以及项目密钥对；这样整套服务会在启动时自动创建该项目。
+启动后，访问 `http://localhost:3000`，创建 Organization / Project，并把 Public Key 和 Secret Key 写入设备 `agent.toml` 中 `[advanced_settings.runtime.telemetry]` 一节的 `public_key` 与 `secret_key`；Agent 不会从环境变量读取 Langfuse 密钥。如果想跳过手动创建项目，可在首次启动前在 `.env` 中设置 `LANGFUSE_INIT_ORG_ID`、`LANGFUSE_INIT_PROJECT_ID` 以及项目密钥对；这样整套服务会在启动时自动创建该项目，但仍需把这对密钥复制到 `agent.toml` 中。
 
 组件：Langfuse Web + Worker、Postgres、ClickHouse、Redis、MinIO（截图和事件 blob 存储）。
 

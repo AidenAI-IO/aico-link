@@ -46,7 +46,7 @@ Episode 和 Notification 的提议 schema、证据阈值和冲突解决仍保留
 ```text
 Notification source → ble_service event ring
 Agent foreground task ends → wait 5 minutes idle
-                           → EpisodeProcessor (up to 5 Episodes)
+                           → EpisodeProcessor (up to 3 Episodes)
                            → NotificationProcessor
                                 → Consume / NotificationContext.append
                                 → Extract up to 10 notifications

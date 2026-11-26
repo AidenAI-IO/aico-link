@@ -123,7 +123,10 @@ Debian 构建根据同一份布局约定推导目标槽位的下载上限。当�
 
 出厂基线必须区分槽位，因为 `boot_a.img` 和 `boot_b.img` 的哈希不同。缺少基线时 OTA 初始化必须失败；不应猜测当前分区的版本。
 
-注意：`generate_ota_device_config.sh` 生成的 `config.json` 还包含 `repo` 和 `channel` 字段，但这些字段仅供人阅读，OTA 代码不会读取它们。实际的通道校验来自清单本身。
+`generate_ota_device_config.sh` 生成的 `config.json` 还包含 `repo` 和 `channel` 字段，更新器会在运行时读取它们：
+
+- `repo` - 未设置 `manifest_url` 时用于发现 Release 的 GitHub 仓库（默认 `AidenAI-IO/aico-link`）
+- `channel` - 发布通道；对于受管的 `dev`、`staging` 和 `prod` 通道，更新器会发现该通道的最新 Release，并拒绝 `channel` 或版本前缀不匹配的签名清单
 
 ## 私有仓库 Token
 

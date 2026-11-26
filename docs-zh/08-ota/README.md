@@ -13,8 +13,8 @@ boot/rootfs A/B 槽位，每个 rootfs 槽位 1792 MiB，OTA 清单 schema 版�
 ## 范围
 
 - 目标硬件：Luckfox Pico Zero / RV1106 + eMMC。
-- 分发方式：手动触发的 dev/staging/prod GitHub Releases、本地构建产物，或手动托管的 HTTP(S)
-  目录。通道发布会根据源码变更选择发布业务软件包或完整的签名 OTA；参见
+- 分发方式：`main` 有变更时由每小时定时构建自动发布的 dev GitHub Releases、手动触发的
+  dev/staging/prod GitHub Releases、本地构建产物，或手动托管的 HTTP(S) 目录。通道发布会根据源码变更选择发布业务软件包或完整的签名 OTA；参见
   [通道发布](channel-release.md)。
 - 升级方式：设备端 `/usr/lib/aico/ota` 获取清单、校验签名、验证 SHA256、写入非活动槽位、切换 `misc` 并重启。
 - 回滚方式：Rockchip SPL A/B 元数据控制启动尝试次数；只有在应用健康确认之后才标记为成功。

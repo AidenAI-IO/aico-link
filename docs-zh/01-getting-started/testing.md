@@ -90,12 +90,23 @@ cat /tmp/record.pcm | audio_service_cli --socket /run/audio_service/audio_servic
 
 ## USB HID 验证
 
+`example_usb_hid` 不包含在设备镜像中。先用
+`scripts/debian-apps/build-apps.sh all` 构建，再临时复制到设备：
+
 ```bash
-sudo example_usb_hid setup composite
-sudo example_usb_hid keyboard tap ENTER
-sudo example_usb_hid keyboard text "hello from pico"
-sudo example_usb_hid touch click 16000 16000
+scp output/debian-apps/apps/bin/example_usb_hid root@<device-ip>:/userdata/example_usb_hid
 ```
+
+然后在设备上按复制后的路径运行：
+
+```bash
+sudo /userdata/example_usb_hid setup composite
+sudo /userdata/example_usb_hid keyboard tap ENTER
+sudo /userdata/example_usb_hid keyboard text "hello from pico"
+sudo /userdata/example_usb_hid touch click 16000 16000
+```
+
+测试完成后用 `sudo rm /userdata/example_usb_hid` 删除该副本。
 
 ## Agent 验证
 

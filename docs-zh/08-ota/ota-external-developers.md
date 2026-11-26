@@ -55,13 +55,24 @@ output/debian/image/
 
 ### 自定义分发方的 GitHub Releases
 
-官方受管通道使用通道工作流。独立的分发方可以手动发布自定义标签，并通过显式的清单 URL 更新：
+官方受管通道使用通道工作流。独立的分发方可以手动发布自定义标签，并通过显式的清单 URL 更新。签名清单会嵌入来自
+`OTA_BASE_URL` 的资源 URL，因此构建时应使用最终的 GitHub Release 下载 URL，而不是上文的静态托管 URL：
 
 ```bash
 TAG="$VERSION"
 REPO="YOUR_USERNAME/aico-link-firmware"
 
+OTA_PRIVATE_KEY_PATH="$PWD/ota_private_key.pem" \
+OTA_PUBLIC_KEY_PATH="$PWD/ota_public_key.pem" \
+AGENT_CONFIG_PATH="$PWD/agent.toml" \
+OTA_CHANNEL="$CHANNEL" \
+OTA_BUILD_VERSION="$VERSION" \
+OTA_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+OTA_BASE_URL="https://github.com/$REPO/releases/download/$TAG" \
+./debian_build.sh
+
 gh release create "$TAG" \
+  --repo "$REPO" \
   --title "Custom Firmware $TAG" \
   output/debian/image/boot_a.img.tar.gz \
   output/debian/image/boot_b.img.tar.gz \

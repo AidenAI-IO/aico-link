@@ -305,7 +305,7 @@ AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:<bridge-port> \
 
 ### 主机桌面
 
-若要让 Agent 操作运行基准测试的桌面会话，在 `benchmark/` 下启动主机桌面桥接：
+若要让 Agent 在 macOS 上操作运行基准测试的桌面会话，在 `benchmark/` 下启动主机桌面桥接：
 
 ```bash
 uv run python -m runner start-desktop-env --bridge-port 8898
@@ -318,6 +318,22 @@ AICO_DEVICE_TYPE=macOS \
 AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:8898 \
   docker compose up --build
 ```
+
+在原生 Linux 上，沙箱只能通过 Docker 网桥网关（通常是 `172.17.0.1`）访问主机，而无法访问
+`start-desktop-env` 绑定的回环地址。请改为在 `benchmark/` 下把桥接绑定到该网关，并使用 Linux 设备类型：
+
+```bash
+uv run python -m desktop.scripts.start_bridge \
+  --bridge-host 172.17.0.1 --allow-private-bind --bridge-port 8898
+```
+
+```bash
+AICO_DEVICE_TYPE=linux \
+AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:8898 \
+  docker compose up --build
+```
+
+可接受的绑定地址参见[桌面环境桥接](../../benchmark/desktop/README.md#bind-address)。
 
 该桥接使用 `pyautogui` 进行指针和键盘输入，所有指针操作都使用归一化的 0–1000 坐标。
 使用 `uv pip install pyautogui` 安装它，并在 macOS 上授予屏幕录制/辅助功能权限

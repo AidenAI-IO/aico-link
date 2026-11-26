@@ -84,7 +84,8 @@ scp output/debian-apps/apps/bin/frame_service root@<device-ip>:/usr/lib/aico/fra
 ssh root@<device-ip> 'chmod 0755 /usr/lib/aico/frame_service && systemctl start aico-frame.service'
 ```
 
-`audio_service`、`ble_service` 或 `agent` 也使用同样的方式。Agent 二进制文件还提供 `config-web` 子命令。
+`audio_service`、`ble_service` 或 `agent` 也使用同样的方式。Agent 二进制文件还提供 `config-web` 子命令，
+因此替换 `agent` 时，需要同时停止并在之后启动 `aico-agent.service` 和 `aico-config-web.service`。
 直接复制二进制文件只会修改当前活动的 rootfs 槽位，并且可能使 OTA 诊断所期望的出厂哈希失效，
 因此只应在短周期开发中使用。要进行可复现的部署，请重新构建并烧录完整镜像。
 

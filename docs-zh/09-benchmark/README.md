@@ -86,6 +86,9 @@ uv run python -m runner run \
   --auto-agent-setup
 ```
 
+请传入 `start-mobilegym-env` 输出的 `environment_url`。在 macOS 上它是
+`http://127.0.0.1:<port>`；在原生 Linux 上，桥接绑定的是 Docker 网桥网关，而不是 `127.0.0.1`。
+
 `--auto-agent-setup` 会忽略 `--agent-url`，从 `/api/concurrent` 读取桥接容量，
 并为每个活跃的任务 worker 启动一个隔离的 Agent 守护进程。
 
@@ -567,9 +570,10 @@ agent-daemon 路径都需要 Docker。一个作业只执行一次检出、依赖
 每次运行在其用例结束后会立即发布到 Langfuse（此时后续用例仍在运行），并被标记为已发布。用例结束后的独立发布步骤只发布没有该标记的运行，
 例如发布失败的运行，或用例步骤被中断后的所有运行。
 每个已完成的运行都会上传一个保留 14 天的诊断包，其中包含 manifest、指标、结果、摘要、HTML 报告、套件快照、
-setup/用例日志，以及在需要构建镜像时的镜像构建日志。临时失败后会重试上传一次。为了在自托管 runner 受限的上行带宽下保证诊断包可靠上传，
-每个任务的 trace 和截图目录树被省略。该诊断包足以检查状态并重试 `runner publish-langfuse`；生成的 worker
-配置也被排除在外，因为其中包含已实体化的 Agent 凭据。
+setup/用例日志和 worker 日志、在需要构建镜像时的镜像构建日志，以及每个任务的证据：`trace.json`、
+`pre.jpg`/`post.jpg` 截图、历史记录、Judge 结果、setup、episode、环境状态，以及协作/fixture/场景事件文件。
+临时失败后会以相同的文件列表重试上传一次。该诊断包足以检查状态并重试 `runner publish-langfuse`；生成的 worker
+配置被排除在外，因为其中包含已实体化的 Agent 凭据。
 
 ## Runner 与本地 CLI 环境变量
 

@@ -59,13 +59,25 @@ not that extra local copy.
 ### GitHub Releases for a Custom Distributor
 
 Official managed channels use the channel workflow. A separate distributor can
-publish a custom tag manually and update through an explicit manifest URL:
+publish a custom tag manually and update through an explicit manifest URL.
+The signed manifest embeds asset URLs from `OTA_BASE_URL`, so build with the
+final GitHub release download URL instead of the static hosting URL above:
 
 ```bash
 TAG="$VERSION"
 REPO="YOUR_USERNAME/aico-link-firmware"
 
+OTA_PRIVATE_KEY_PATH="$PWD/ota_private_key.pem" \
+OTA_PUBLIC_KEY_PATH="$PWD/ota_public_key.pem" \
+AGENT_CONFIG_PATH="$PWD/agent.toml" \
+OTA_CHANNEL="$CHANNEL" \
+OTA_BUILD_VERSION="$VERSION" \
+OTA_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+OTA_BASE_URL="https://github.com/$REPO/releases/download/$TAG" \
+./debian_build.sh
+
 gh release create "$TAG" \
+  --repo "$REPO" \
   --title "Custom Firmware $TAG" \
   output/debian/image/boot_a.img.tar.gz \
   output/debian/image/boot_b.img.tar.gz \

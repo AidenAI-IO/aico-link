@@ -166,7 +166,7 @@ Server event reference for the Qwen-Audio Realtime API. All server events includ
 
 **Description**: A new output item was added to the response. Regular replies use the `message` item type; Function Calling uses `function_call`.
 
-| **event\\_id** `*string*` Unique identifier of this event. | ``` { "event_id": "event_xxx", "type": "response.output_item.added", "response_id": "resp_xxx", "output_index": 0, "item": { "id": "item_xxx", "object": "realtime.item", "type": "message", "status": "in_progress", "role": "assistant", "content": [] } } ``` Function Call output item example: For function call output items, `item` in `response.output_item.added` / `conversation.item.created` / `response.output_item.done` has the following structure: ``` { "id": "item_xxx", "object": "realtime.item", "type": "function_call", "status": "completed", "call_id": "call_xxx", "name": "get_weather", "arguments": "{\\"city\\":\\"杭州\\"}" } ``` **Note** A response may contain multiple `function_call` items, or both regular `message` output and `function_call` output. Function Call content is not sent to TTS for playback. |
+| **event\\_id** `*string*` Unique identifier of this event. | ``` { "event_id": "event_xxx", "type": "response.output_item.added", "response_id": "resp_xxx", "output_index": 0, "item": { "id": "item_xxx", "object": "realtime.item", "type": "message", "status": "in_progress", "role": "assistant", "content": [] } } ``` Function Call output item example: For function call output items, `item` in `response.output_item.added` / `conversation.item.created` / `response.output_item.done` has the following structure: ``` { "id": "item_xxx", "object": "realtime.item", "type": "function_call", "status": "completed", "call_id": "call_xxx", "name": "get_weather", "arguments": "{\"city\":\"杭州\"}" } ``` **Note** A response may contain multiple `function_call` items, or both regular `message` output and `function_call` output. Function Call content is not sent to TTS for playback. |
 | --- | --- |
 | **type** `*string*` Event type, fixed to `response.output_item.added`. |
 | **response\\_id** `*string*` Associated response ID. |
@@ -291,7 +291,7 @@ Server event reference for the Qwen-Audio Realtime API. All server events includ
 
 **Description**: Incremental Function Calling arguments. When the model decides to call a tool, the server first sends `response.output_item.added` (`item.type=function_call`) and the corresponding `conversation.item.created`, then streams argument fragments through this event.
 
-| **event\\_id** `*string*` Unique identifier of this event. | ``` { "event_id": "event_xxx", "type": "response.function_call_arguments.delta", "response_id": "resp_xxx", "item_id": "item_xxx", "output_index": 0, "call_id": "call_xxx", "delta": "{\\"city" } ``` |
+| **event\\_id** `*string*` Unique identifier of this event. | ``` { "event_id": "event_xxx", "type": "response.function_call_arguments.delta", "response_id": "resp_xxx", "item_id": "item_xxx", "output_index": 0, "call_id": "call_xxx", "delta": "{\"city" } ``` |
 | --- | --- |
 | **type** `*string*` Event type, fixed to `response.function_call_arguments.delta`. |
 | **response\\_id** `*string*` Associated response ID. |
@@ -304,7 +304,7 @@ Server event reference for the Qwen-Audio Realtime API. All server events includ
 
 **Description**: Function Calling argument output is complete. On receiving this event, the client should execute the corresponding tool, submit `function_call_output` using `conversation.item.create`, and then send `response.create` to trigger a second inference.
 
-| **event\\_id** `*string*` Unique identifier of this event. | ``` { "event_id": "event_xxx", "type": "response.function_call_arguments.done", "response_id": "resp_xxx", "item_id": "item_xxx", "output_index": 0, "call_id": "call_xxx", "name": "get_weather", "arguments": "{\\"city\\":\\"杭州\\"}" } ``` |
+| **event\\_id** `*string*` Unique identifier of this event. | ``` { "event_id": "event_xxx", "type": "response.function_call_arguments.done", "response_id": "resp_xxx", "item_id": "item_xxx", "output_index": 0, "call_id": "call_xxx", "name": "get_weather", "arguments": "{\"city\":\"杭州\"}" } ``` |
 | --- | --- |
 | **type** `*string*` Event type, fixed to `response.function_call_arguments.done`. |
 | **response\\_id** `*string*` Associated response ID. |

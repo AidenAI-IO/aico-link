@@ -13,7 +13,7 @@ Aico Link 使用 AIC8800 驱动的自管理监管域路径。`/userdata/debian/w
 
 1. 迁移服务创建默认的 `country=CN` 配置。
 2. Wi-Fi 驱动服务加载驱动。
-3. Agent 将持久化的国家代码应用到每个 Wi-Fi PHY。
+3. Agent 将持久化的国家代码应用到 `wlan0` 对应的 wiphy。
 4. 在 PHY 国家代码应用之后，`wpa_supplicant` 才启动。
 5. 运行时变更会更新候选配置、将其应用到 PHY、在需要时重启 supplicant，并且只有在操作成功后才提交配置。
 

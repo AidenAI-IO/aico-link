@@ -438,7 +438,7 @@ frame_socket = "/run/frame_service/frame_service.sock"
 | `voice_speaker_max_profiles`    | `1`                                                         | Classic 仅支持单个机主。匹配使用最新注册的档案；重新注册会写入标准 id `speaker`，然后删除旧版多余档案。大于 1 的值会被忽略 |
 | `voice_streaming_tts_enabled`   | `true`                                                      | 将 LLM 的流式输出逐句送入 TTS，缩短第一句播放前的等待时间 |
 | `voice_tool_call_speech`        | `true`                                                      | 是否异步朗读工具调用事件的 `content`；该内容只来自同一次 LLM 工具调用响应中的 assistant 内容，缺失时保持静默 |
-| `voice_progress_speech_enabled` | `true`                                                      | todo 项进入 `in_progress` 时是否播报一条简短的进度消息；todo 状态仍会发送到 UI/trace |
+| `voice_progress_speech_enabled` | `true`                                                      | 会被解析、填充默认值并出现在配置快照中，但运行时没有任何代码读取它，因此对语音播报没有影响；todo 状态仍会发送到 UI/trace |
 
 Classic STT 的 Agent 轮次使用主模型的 `max_response_tokens` 输出限制；没有单独的语音输出 token 设置。升级后，已有的 `voice_max_response_tokens` 键会被忽略，因此如果需要控制语音输出限制，请设置 `model_settings.model.max_response_tokens`（默认不发送任何限制，原生 Anthropic 除外，它使用模型公布的输出上限）。语音回复仍应通过语音指令保持简短，而不是依赖第二个 token 上限。
 

@@ -320,7 +320,7 @@ memory/
 
 | Processor | 触发方式 | 批次 | 输出 |
 | --- | --- | --- | --- |
-| EpisodeProcessor | 共享的 Agent 空闲窗口 | 5 个 Episode / 1 次 LLM 调用 | 设备记忆 |
+| EpisodeProcessor | 共享的 Agent 空闲窗口 | 3 个 Episode / 1 次 LLM 调用 | 设备记忆 |
 | NotificationProcessor | 共享的 Agent 空闲窗口 | 10 个事件 / 1 次 LLM 调用 | 临时记忆或长期记忆 |
 
 通知持久化不会启动 30 秒计时器。一次 Notification Processor 运行会先消费 BLE 事件环，再检查其持久化的待处理游标；没有待处理工作时直接返回，不会再次轮询。

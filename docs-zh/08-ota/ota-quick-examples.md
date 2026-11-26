@@ -32,6 +32,13 @@ cd output/debian/image
 python3 -m http.server 8000 --bind 0.0.0.0
 ```
 
+将公钥复制到设备：
+
+```bash
+DEVICE_IP="192.168.42.1"
+scp ota_public_key.pem "root@$DEVICE_IP:/userdata/ota/dev_pubkey.pem"
+```
+
 在设备上验证下载和签名，但不切换槽位：
 
 ```bash
@@ -70,7 +77,7 @@ ota update \
 
 ## 示例 3：自定义 GitHub Release
 
-官方的 dev/staging/prod 发布使用 [手动通道工作流](channel-release.md)。本示例发布到一个单独的
+官方的 dev/staging/prod 发布使用 [通道发布工作流](channel-release.md)。本示例发布到一个单独的
 自定义仓库，并使用为该自定义源配置的测试设备。
 
 ```bash
@@ -87,6 +94,7 @@ OTA_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 ./debian_build.sh
 
 gh release create "$TAG" \
+  --repo "$REPO" \
   --title "Custom Firmware $TAG" \
   output/debian/image/boot_a.img.tar.gz \
   output/debian/image/boot_b.img.tar.gz \

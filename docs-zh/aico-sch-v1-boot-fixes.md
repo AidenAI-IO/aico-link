@@ -7,7 +7,7 @@
 
 | 功能 | RV1106 引脚 / 复用 | 此前的冲突 |
 | --- | --- | --- |
-| WL_EN | 引脚 3，GPIO3_C5，外部上拉到 V_WIFI_1V8 | Linux 不得驱动由 MCU 控制的电源轨 |
+| WL_EN | 引脚 3，GPIO3_C5，无外部上拉 | Linux 不得驱动由 MCU 控制的电源轨 |
 | BT 唤醒 | 引脚 4，GPIO3_C6 | 活动指示 LED 也驱动同一电气网络（net） |
 | CPU AVS | 引脚 74，GPIO1_A2，PWM0 M0 | 固定稳压器和 BT 主机 IRQ |
 | RK628 I2C | 引脚 93/92，GPIO1_C2/C3，I2C4 M1 | I2C3 M1 连到了 MCU UART |

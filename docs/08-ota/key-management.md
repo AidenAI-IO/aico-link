@@ -33,11 +33,15 @@ Agent configuration. Pass them to the Debian build entrypoint:
 ```bash
 OTA_PRIVATE_KEY_PATH=/path/to/ota_ed25519_private_key.pem \
 OTA_PUBLIC_KEY_PATH=/path/to/ota_pubkey.pem \
+OTA_TRUST_PUBLIC_KEY_PATH=/path/to/ota_pubkey.pem \
 AGENT_CONFIG_PATH=/path/to/agent.toml \
 ./debian_build.sh
 ```
 
-The build validates that both keys match and packages the public key into:
+Set `OTA_TRUST_PUBLIC_KEY_PATH` to the same public key; otherwise the build
+installs the committed `keys/ota_pubkey.pem` instead (see
+[Trusting a Signer You Cannot Sign For](#trusting-a-signer-you-cannot-sign-for)).
+The build validates that both keys match and packages the trusted public key into:
 
 ```text
 /usr/share/keyrings/aico-ota.pem

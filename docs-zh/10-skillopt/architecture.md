@@ -135,12 +135,16 @@ SkillOpt 将每个基准测试 `TaskResult` 转换为一个 rollout 分数：
 | `hard` | 任务状态为 `passed` 时为 `1`，否则为 `0`。 |
 | `soft` | 通过的评分细则条目数除以评分细则总数；没有评分细则时等于 `hard`。 |
 
-阶段分数是所有任务的平均值：
+阶段分数是计入评分的任务上各任务分数的加权平均值：
 
 ```text
-hard = fully passed tasks / total tasks
-soft = passed rubric items / total rubric items
+hard = sum(weight_i * hard_i) / sum(weight_i)
+soft = sum(weight_i * soft_i) / sum(weight_i)
 ```
+
+每个任务的样本质量决定其权重：正常结果权重为 `1`，超时为 `0.35`，外部阻碍（登录墙、App 不可用等）为 `0.5`。
+系统错误和 Agent 格式错误（没有工具调用、空回复或输出内部 JSON 计划）不计入两个求和。
+如果没有任务计入，两个分数都为 `0`。
 
 验证闸门以 `hard` 作为主要分数。只有当候选在当前验证 hard 分数基础上的提升超过
 `--min-delta` 时，才会被接受。
