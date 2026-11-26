@@ -178,7 +178,7 @@ func TestSearchQueryDoesNotRestoreCompanionOrUseUnsupportedClipboardRoute(t *tes
 					},
 				},
 			}
-			if _, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, newFastTextInputEngine(*hw, vision), "Aico", false, false); err != nil {
+			if _, _, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, newFastTextInputEngine(*hw, vision), "Aico", false, false); err != nil {
 				t.Fatal(err)
 			}
 			if len(keyboard.calls) != 2 {
@@ -213,7 +213,7 @@ func TestSearchQueryPastesThroughAndroidFGSClipboard(t *testing.T) {
 			},
 		},
 	}
-	entered, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, newFastTextInputEngine(*hw, vision), "备忘录", false, true)
+	entered, _, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, newFastTextInputEngine(*hw, vision), "备忘录", false, true)
 	if err != nil || entered != searchQueryPasted {
 		t.Fatalf("entered=%v err=%v, want the pasted query", entered, err)
 	}
@@ -520,13 +520,13 @@ func androidFGSSearchFlow(t *testing.T, found func(call int) bool, fields ...sea
 	cfg.confirmAppOpenFn = func(context.Context, screenshotResult, string) (bridgeAppOpenResult, error) {
 		return bridgeAppOpenResult{Opened: true}, nil
 	}
-	cfg.checkSearchFieldFn = func(context.Context, screenshotResult, string) (searchFieldCheck, error) {
+	cfg.checkSearchFieldFn = func(context.Context, screenshotResult, string) (searchFieldCheck, int, error) {
 		check := fields[len(fields)-1]
 		if fieldChecks < len(fields) {
 			check = fields[fieldChecks]
 		}
 		fieldChecks++
-		return check, nil
+		return check, 0, nil
 	}
 	return cfg, h, &fieldChecks
 }

@@ -1182,7 +1182,10 @@ export const messages: Record<string, Record<string, string>> = {
     'voice.mode_classic': 'Classic',
     'voice.mode_realtime': 'Realtime',
     'voice.configure_before_enable':
-      'This mode is not enabled yet. Tabs only preview settings; save the provider configuration to apply this mode.',
+      'This mode is not enabled yet. Configure the providers first, then choose Apply in the top right.',
+    'voice.apply_mode': 'Apply',
+    'voice.apply_to_enable':
+      'This mode is not enabled yet. Choose Apply in the top right to enable it.',
     'voice.classic_disabled':
       'Classic voice is disabled in this container, so Classic mode supports text chat only. STT/TTS settings remain editable; choose Realtime for browser voice.',
     'voice.type_alicloud': 'Alibaba Cloud',
@@ -2454,8 +2457,9 @@ export const messages: Record<string, Record<string, string>> = {
     'voice.mode_off': '语音尚未启用，配置好以下提供商后即可使用',
     'voice.mode_classic': '经典模式',
     'voice.mode_realtime': '实时模式',
-    'voice.configure_before_enable':
-      '此模式尚未启用。切换标签仅预览配置，保存提供商配置后才会应用此模式。',
+    'voice.configure_before_enable': '此模式尚未启用，请先配置提供商，再点击右上角“应用”。',
+    'voice.apply_mode': '应用',
+    'voice.apply_to_enable': '此模式尚未启用，点击右上角“应用”即可启用。',
     'voice.classic_disabled':
       '当前容器未启用 Classic 语音，Classic 模式仅支持文字对话。你仍可编辑 STT/TTS 配置；使用浏览器语音请选择 Realtime。',
     'voice.type_alicloud': '阿里云',

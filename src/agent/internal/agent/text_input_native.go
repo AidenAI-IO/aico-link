@@ -9,6 +9,11 @@ import (
 )
 
 func (e *textInputEngine) runNativeTextInsertion(ctx context.Context, args textInputArgs) (textInputResult, bool) {
+	return e.runNativeTextInsertionWithFocus(ctx, args, nil)
+}
+
+// resolveFocus runs only after native insertion is supported, before any input.
+func (e *textInputEngine) runNativeTextInsertionWithFocus(ctx context.Context, args textInputArgs, resolveFocus func(context.Context) (focusPointArgs, error)) (textInputResult, bool) {
 	if e.hw.textInsertion == nil {
 		return textInputResult{}, false
 	}
@@ -24,6 +29,12 @@ func (e *textInputEngine) runNativeTextInsertion(ctx context.Context, args textI
 	}
 	if e.vision == nil || e.hw.screenshot == nil {
 		return textInputResult{Reason: "native text verification is not configured"}, true
+	}
+	if resolveFocus != nil {
+		args.Focus, err = resolveFocus(ctx)
+		if err != nil {
+			return textInputResult{Reason: err.Error()}, true
+		}
 	}
 	if err := e.applyFocus(ctx, args.Focus); err != nil {
 		return textInputFailure(err), true
@@ -44,12 +55,12 @@ func (e *textInputEngine) runNativeTextInsertion(ctx context.Context, args textI
 		return textInputResult{Reason: err.Error(), TextMayBeInserted: true}, true
 	}
 	args.VerifyTextSuffix = false
-	analysis, _, err := e.analyzeScreen(ctx, e.hw.platform(), args, nil)
+	analysis, calls, err := e.analyzeScreen(ctx, e.hw.platform(), args, nil)
 	if err != nil {
-		return textInputResult{Reason: fmt.Sprintf("text was sent but verification failed: %v", err), TextMayBeInserted: true}, true
+		return textInputResult{VLMCalls: calls, Reason: fmt.Sprintf("text was sent but verification failed: %v", err), TextMayBeInserted: true}, true
 	}
 	committed, fieldText := evaluateFieldCommit(analysis)
 	committed = committed && !analysis.CompositionPending
-	return textInputResult{OK: committed, Committed: committed, FieldText: fieldText,
+	return textInputResult{VLMCalls: calls, OK: committed, Committed: committed, FieldText: fieldText,
 		TextMayBeInserted: true, Reason: "native text was sent; inspect the field before retrying"}, true
 }

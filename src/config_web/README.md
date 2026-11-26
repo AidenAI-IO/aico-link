@@ -97,6 +97,9 @@ Generated design tokens are excluded from Prettier; regenerate them with
   dialogs, full backup and restore, raw TOML recovery, and the LLM log viewer.
   Keyed rows preserve controls and focus. Dialogs use portals and trap focus.
   A removed list control is refocused only when focus belonged to that list.
+  Confirmations share the inset action sheet with a separate Cancel group and
+  red destructive actions; restart progress uses a centered blocking panel.
+  Both retain the form sheets' focus containment and restoration behavior.
 - `src/hooks/settings.tsx` plans saves against the backend, saves live changes
   immediately, and confirms staged changes before persisting and restarting.
   Per-field sequences reject obsolete results. Forms retain their own drafts
@@ -109,9 +112,20 @@ Generated design tokens are excluded from Prettier; regenerate them with
 - Voice tabs keep a separate selection in the application's Jotai store. Browsing
   either mode, entering subpages, and returning do not save or apply a mode.
   The selection survives navigation and background observations, and a full
-  reload restores the saved device mode. Explicit provider selection or saving
-  the selected provider's credentials can apply the previewed mode after
+  reload restores the saved device mode. For a previewed mode with configured
+  providers, the header's Apply action validates and saves that mode without
+  editing its credentials. Incomplete modes keep the action disabled. Explicit
+  provider selection or saving the selected provider's credentials can apply the previewed mode after
   canonical validation succeeds. This behavior is shared by board and PC profiles.
+- OpenRouter Decisions model suggestions use an inline list inside the settings
+  card, with model names and IDs, keyboard navigation, and free-text entry.
+  Catalog failures leave custom model entry available.
+- Confirmed model IDs join the main, decision and voice model choices. A shared
+  Jotai history retains previous choices across navigation and browser reloads
+  using local browser storage, scoped by profile, provider record and endpoint.
+  Drafts and rejected saves are excluded. Catalog entries keep their names and
+  order, and duplicate IDs appear only once. Unavailable storage falls back to
+  in-memory history without blocking configuration saves.
 - `src/lib/backup.ts` retains maintenance sessions, stable retry request IDs,
   chunked SHA-256 transfers, restore validation and interrupted-job recovery.
   Its Jotai view survives navigation while a job runs. The LLM viewer streams

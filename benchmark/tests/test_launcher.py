@@ -551,6 +551,9 @@ def test_build_overrides_only_configured_sources(tmp_path: Path, build_settings,
         ("adb_android", {"serial": "emulator-5554"}, "darwin", "127.0.0.1",
          {"python": "launcher", "module": "adbandroid.scripts.start_bridge", "bind": "127.0.0.1", "route_flag": None,
           "device": "Android", "preset": None}),
+        ("adb_android", {"serial": "emulator-5554", "unicode_input_method": "appium"}, "darwin", "127.0.0.1",
+         {"python": "launcher", "module": "adbandroid.scripts.start_bridge", "bind": "127.0.0.1", "route_flag": None,
+          "device": "Android", "preset": None}),
         ("desktop", {"confirm_control": True}, "darwin", "127.0.0.1",
          {"python": "venv", "module": "desktop.scripts.start_bridge", "bind": "127.0.0.1", "route_flag": None,
           "device": "macOS", "preset": None}),
@@ -592,6 +595,10 @@ def test_host_bridges_start_with_route_python_and_bind_host(
     route = f"launcher-{created['id']}"
     if expected["route_flag"]:
         assert argv[argv.index(expected["route_flag"]) + 1] == route
+    if bridge_type == "adb_android":
+        selected = config.get("unicode_input_method", "adbkeyboard")
+        assert argv[argv.index("--unicode-input-method") + 1] == selected
+        assert Store(app.state_dir).instance(created["id"])["bridge"]["config"]["unicode_input_method"] == selected
     if bridge_type == "desktop":
         assert argv[argv.index("--bridge-host") + 1] == expected["bind"]
         assert ("--allow-private-bind" in argv) == (bind_host != "127.0.0.1")
@@ -607,6 +614,11 @@ def test_host_bridges_start_with_route_python_and_bind_host(
     renews = bridge_type in {"desktop", "iphone_mirroring", "ios_device"}
     expected_posts = [(f"http://{expected['bind']}:{port}/api/setup", {"benchmark-task-id": route})]
     assert fake.posts == (expected_posts if renews else [])
+
+
+def test_adb_input_method_rejects_unknown_selection(app: Launcher):
+    with pytest.raises(validation.ValidationError, match="Unicode input method"):
+        app.instances.create(body("Phone", "adb_android", {"serial": "emulator-5554", "unicode_input_method": "other"}))
 
 
 def test_required_checkbox_must_be_confirmed(app: Launcher, fake: FakeSystem):

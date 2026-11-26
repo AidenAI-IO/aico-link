@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { JsonValue, TextSpec } from '../types';
 import type { SaveOutcome } from '../hooks/settings';
 import type { Field } from '../lib/schema';
+import type { ModelOption } from '../state/model-history';
 import {
   fieldLabel,
   fieldHelp,
@@ -115,7 +116,7 @@ export function ValueField({
   multiline?: boolean;
   placeholder?: string;
   action?: string;
-  suggestions?: string[];
+  suggestions?: ModelOption[];
   inline?: boolean;
   wide?: boolean;
   inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
@@ -124,8 +125,11 @@ export function ValueField({
   const input = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(-1);
   const sequence = useRef(0);
   const pending = useRef(0);
+  const submission = useRef<{ text: string } | null>(null);
   const staged = useRef(false);
   const confirmed = secret ? '' : Array.isArray(saved) ? saved.join('\n') : String(saved ?? '');
   useEffect(() => {
@@ -138,25 +142,45 @@ export function ValueField({
     });
   }, [confirmed]);
   const text = draft ?? confirmed;
-  async function commit() {
+  const query = text.trim().toLowerCase();
+  const matches = (suggestions || []).filter((entry) =>
+    `${entry.id} ${entry.name || ''}`.toLowerCase().includes(query),
+  );
+  const expanded = showSuggestions && matches.length > 0;
+  const active = expanded ? matches[activeSuggestion] : undefined;
+  useEffect(() => {
+    if (active)
+      document
+        .getElementById(`${id}-option-${activeSuggestion}`)
+        ?.scrollIntoView?.({ block: 'nearest' });
+  }, [active, activeSuggestion, id]);
+  function closeSuggestions() {
+    setShowSuggestions(false);
+    setActiveSuggestion(-1);
+  }
+  async function commit(submitted = text) {
     if (
-      draft === null ||
-      (text === confirmed && !staged.current && pending.current === 0) ||
-      (secret && !text)
+      submission.current?.text === submitted ||
+      (draft === null && submitted === confirmed) ||
+      (submitted === confirmed && !staged.current && pending.current === 0) ||
+      (secret && !submitted)
     )
       return;
-    const value = parse(text.trim());
+    const value = parse(submitted.trim());
     if (value === undefined) {
       setError(resolve(msg('config.invalid_value', '无效值')));
       return;
     }
     const id = ++sequence.current;
+    const attempt = { text: submitted };
+    submission.current = attempt;
     pending.current++;
     setError('');
-    const submitted = text;
     try {
       const result = await onCommit(value);
-      if (sequence.current === id) staged.current = result === 'staged';
+      // Later edits do not release ownership of a patch still queued by the hook.
+      if (result === 'staged') staged.current = true;
+      else if (result === 'saved' || result === undefined) staged.current = false;
       if (sequence.current === id && result !== 'staged' && result !== 'superseded') {
         if (result === 'failed' || result === 'invalid')
           setError(resolve(msg('basic.save_failed', '保存失败')));
@@ -166,6 +190,7 @@ export function ValueField({
       setError(error instanceof Error ? error.message : String(error));
     } finally {
       pending.current--;
+      if (submission.current === attempt) submission.current = null;
     }
   }
   const common = {
@@ -179,8 +204,13 @@ export function ValueField({
     onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       sequence.current++;
       setDraft(event.target.value);
+      setShowSuggestions(true);
+      setActiveSuggestion(-1);
     },
-    onBlur: () => void commit(),
+    onBlur: () => {
+      closeSuggestions();
+      void commit();
+    },
     placeholder,
     autoComplete: 'off',
     spellCheck: false,
@@ -195,18 +225,70 @@ export function ValueField({
       aria-label={resolve(label)}
       inputMode={inputMode}
       type={secret ? 'password' : 'text'}
-      list={suggestions ? `${id}-suggestions` : undefined}
+      role={suggestions ? 'combobox' : undefined}
+      aria-autocomplete={suggestions ? 'list' : undefined}
+      aria-expanded={suggestions ? expanded : undefined}
+      aria-controls={suggestions ? `${id}-suggestions` : undefined}
+      aria-activedescendant={active ? `${id}-option-${activeSuggestion}` : undefined}
+      onFocus={() => setShowSuggestions(true)}
       onKeyDown={(event) => {
-        if (event.key === 'Enter' && !event.nativeEvent.isComposing) event.currentTarget.blur();
+        if (event.nativeEvent.isComposing) return;
+        if (suggestions && ['ArrowDown', 'ArrowUp'].includes(event.key) && matches.length) {
+          event.preventDefault();
+          setShowSuggestions(true);
+          setActiveSuggestion(
+            (expanded ? activeSuggestion : -1) < 0
+              ? event.key === 'ArrowDown'
+                ? 0
+                : matches.length - 1
+              : (activeSuggestion + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) %
+                  matches.length,
+          );
+        } else if (event.key === 'Escape' && expanded) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeSuggestions();
+        } else if (event.key === 'Enter') {
+          event.preventDefault();
+          if (active) chooseSuggestion(active.id);
+          else event.currentTarget.blur();
+        }
       }}
     />
   );
+  function chooseSuggestion(value: string) {
+    sequence.current++;
+    setDraft(value);
+    closeSuggestions();
+    void commit(value);
+  }
   const options = suggestions && (
-    <datalist id={`${id}-suggestions`}>
-      {suggestions.map((value) => (
-        <option key={value} value={value} />
+    <div
+      id={`${id}-suggestions`}
+      className="ds-suggestions"
+      role="listbox"
+      aria-label={resolve(label)}
+      hidden={!expanded}
+    >
+      {matches.map((entry, index) => (
+        <button
+          key={entry.id}
+          id={`${id}-option-${index}`}
+          type="button"
+          role="option"
+          tabIndex={-1}
+          aria-selected={index === activeSuggestion}
+          className={`ds-suggestion ${index === activeSuggestion ? 'ds-suggestion--active' : ''}`}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => chooseSuggestion(entry.id)}
+        >
+          <span className="ds-suggestion__name">{entry.name || entry.id}</span>
+          {entry.name && entry.name !== entry.id && (
+            <span className="ds-suggestion__id">{entry.id}</span>
+          )}
+        </button>
       ))}
-    </datalist>
+    </div>
   );
   return inline ? (
     <div
@@ -250,6 +332,7 @@ export function ConfigField({
   save,
   label: labelOverride,
   description,
+  suggestions,
 }: {
   section: string;
   field: Field;
@@ -259,6 +342,7 @@ export function ConfigField({
   save: (value: JsonValue) => Promise<SaveOutcome | void>;
   label?: TextSpec;
   description?: TextSpec;
+  suggestions?: ModelOption[];
 }) {
   const [draft, setDraft] = useState<JsonValue | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -294,7 +378,11 @@ export function ConfigField({
         />
       </Row>
     );
-  const options = field.range ? rangeOptions(field) : optionsFor(field, type);
+  const options = field.range
+    ? rangeOptions(field)
+    : suggestions
+      ? suggestions.map((entry) => ({ value: entry.id, label: entry.name || entry.id }))
+      : optionsFor(field, type);
   if (
     field.widget === 'select' ||
     field.range ||
@@ -340,6 +428,7 @@ export function ConfigField({
             : value
       }
       onCommit={save}
+      suggestions={suggestions}
     />
   );
 }

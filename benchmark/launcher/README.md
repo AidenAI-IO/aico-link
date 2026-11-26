@@ -125,6 +125,18 @@ only screen and input requests; companion App status, WebSocket connections,
 and HTTP command queues are handled locally. Companion App features require a
 phone-to-Agent network path; see [Phone Bridge](../../docs/04-agent/phone-bridge.md#desktop-agent-with-adb-reverse).
 
+For Unicode text, choose **Unicode input method** in the instance's Android
+settings. **ADBKeyBoard** is the default and uses Base64 broadcasts.
+**Appium UnicodeIME** uses Appium Settings with modified UTF-7 input. Install
+the selected method automatically when the Android bridge starts if it is not
+already installed. The bridge verifies the selected APK's SHA-256 and does not
+grant additional Android permissions.
+Both paths restore the original keyboard after insertion. Appium cannot type
+literal `%s`; replacement also requires Android's `input keycombination`.
+Existing instances use ADBKeyBoard until you edit the selection. Stop an
+instance before editing, then save and start to apply the change. See
+[Unicode setup](../adbandroid/README.md#unicode-text-with-adbkeyboard).
+
 Each instance claims its own bridge route with the task and episode id
 `launcher-<id>`; bridges that claim a route at startup (iPhone Mirroring, iOS
 device, virtual iPhone) get the same id. Stopping an instance stops the Agent

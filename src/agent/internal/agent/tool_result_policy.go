@@ -349,7 +349,7 @@ func toolResultSoftLimit(input ToolResultPrepareInput) int {
 	if contextWindow <= 0 {
 		return -1
 	}
-	maxResponseTokens := input.ModelSpec.MaxOutput
+	maxResponseTokens := defaultOutputReservation(input.ModelSpec)
 	var options llms.CallOptions
 	for _, option := range input.CallOptions {
 		if option != nil {
@@ -391,6 +391,21 @@ func activePromptTokens(manager *contextmanager.ContextManager, options llms.Cal
 		tokens += tokencounter.EstimateToolSchemaTokens(options)
 	}
 	return tokens
+}
+
+// defaultOutputReservation is the output room the input budget keeps free when
+// no output limit is configured: the limit the request actually sends. Native
+// Anthropic requires max_tokens and sends the model's output limit, so that
+// limit is reserved. Other backends send no limit, and the provider lets the
+// reply use whatever room the input leaves. Compaction runs at a fraction of
+// the input budget, which keeps that room free, so nothing is reserved. The
+// advertised maximum is only an upper bound for one reply and can be most of
+// the window (OpenRouter reports 90% of it when a provider declares none).
+func defaultOutputReservation(spec model.ModelSpec) int {
+	if normalizedProviderName(spec.Provider) == "anthropic" {
+		return spec.MaxOutput
+	}
+	return 0
 }
 
 func inputContextBudget(contextWindow, maxResponseTokens int) int {

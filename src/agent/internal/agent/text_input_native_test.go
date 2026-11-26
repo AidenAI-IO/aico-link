@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 type nativeInsertionStub struct {
 	supported bool
+	probeErr  error
 	err       error
 	calls     int
 	text      string
@@ -18,7 +20,7 @@ type nativeInsertionStub struct {
 }
 
 func (p *nativeInsertionStub) SupportsTextInsertion(context.Context) (bool, error) {
-	return p.supported, nil
+	return p.supported, p.probeErr
 }
 func (p *nativeInsertionStub) InsertText(_ context.Context, text string, replace bool) error {
 	p.calls++
@@ -90,6 +92,132 @@ func TestNativeTextEnterTextNoIMEAndNoReplay(t *testing.T) {
 			if mode != "partial_failure" && (vision.calls != 1 || (vision.request.Focus == nil) != (mode == "already_focused") || vision.request.MatchTextSuffix ||
 				(vision.request.InsertionBefore != nil) != (mode != "replace")) {
 				t.Fatalf("verification = %+v", vision)
+			}
+		})
+	}
+}
+
+func TestNativeTextOpenAppSearchAvoidsPhysicalKeys(t *testing.T) {
+	for _, mode := range []string{"ascii", "unicode", "spaces", "shorter_term", "partial_failure", "unverified", "verification_failure", "probe_failure", "missing_field", "locate_failure"} {
+		t.Run(mode, func(t *testing.T) {
+			query, wantText, wantCalls := "WeChat", "WeChat", 1
+			wantVLMCalls := 2 // Locate the field, then verify the inserted text.
+			sink := &nativeInsertionStub{supported: true}
+			vision := &nativeVerificationStub{analysis: textInputScreenAnalysis{TargetMatched: true}}
+			wantOK := true
+			switch mode {
+			case "unicode":
+				query, wantText = "微信", "微信"
+			case "spaces":
+				query, wantText = "App Store", "App Store"
+			case "shorter_term":
+				query, wantText, wantCalls = "Aico Bridge", "Aico", 2
+				wantVLMCalls = 4
+			case "partial_failure":
+				sink.err = errors.New("WDA timed out after delivery")
+				wantOK = false
+				wantVLMCalls = 1
+			case "unverified":
+				vision.analysis.TargetMatched = false
+				wantOK = false
+			case "verification_failure":
+				vision.err = errors.New("model unavailable")
+				wantOK = false
+			case "probe_failure":
+				sink.probeErr = errors.New("WDA capabilities unavailable")
+				wantOK, wantCalls = false, 0
+				wantVLMCalls = 0
+			case "missing_field", "locate_failure":
+				wantOK, wantCalls = false, 0
+				wantVLMCalls = 1
+			}
+			keyboard := &recordingTextInputTool{name: "keyboard_text", out: "error: WDA does not support physical text keys"}
+			keys := &recordingTextInputTool{name: "keyboard_tap", out: "error: WDA does not support modifier chords"}
+			quick := &recordingTextInputTool{name: "quick_action", out: `{"ok":true}`}
+			touch := &recordingTextInputTool{name: "touch_gesture", out: "ok"}
+			hw := &textInputHardwareDeps{
+				textInsertion: sink, deviceTypeFn: func() string { return "ios" },
+				keyboardText: keyboard, keyboardTap: keys, touchGesture: touch, quickAction: quick,
+				screenshot: textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
+			}
+			entry := &EnterTextTool{engine: newTextInputEngineWithSleep(*hw, vision, testNoWaitSleep)}
+			lookups := 0
+			focus := focusPointArgs{X: 500, Y: 572}
+			cfg := appSearchOpenFlowConfig{
+				hw: hw, vision: vision, entryTool: entry, platform: "ios", searchTerm: query, sleep: testNoWaitSleep,
+				checkSearchFieldFn: func(context.Context, screenshotResult, string) (searchFieldCheck, int, error) {
+					if mode == "missing_field" {
+						return searchFieldCheck{}, 1, nil
+					}
+					if mode == "locate_failure" {
+						return searchFieldCheck{}, 1, errors.New("search field detection failed")
+					}
+					return searchFieldCheck{SearchField: &focus}, 1, nil
+				},
+				findAppTapFn: func(_ context.Context, _ screenshotResult, term string) (bridgeSearchResult, error) {
+					lookups++
+					return bridgeSearchResult{Found: term == wantText, TapPoint: &focusPointArgs{X: 200, Y: 300}}, nil
+				},
+				confirmAppOpenFn: func(context.Context, screenshotResult, string) (bridgeAppOpenResult, error) {
+					return bridgeAppOpenResult{Opened: true}, nil
+				},
+			}
+			out, err := runAppSearchOpenFlow(context.Background(), cfg)
+			if (err != nil) == wantOK || out.Opened != wantOK {
+				t.Fatalf("app search = %+v, %v", out, err)
+			}
+			if out.VLMCalls != wantVLMCalls {
+				t.Fatalf("vlm_calls = %d, want %d", out.VLMCalls, wantVLMCalls)
+			}
+			if sink.calls != wantCalls || (wantCalls > 0 && (sink.text != wantText || !sink.replace)) {
+				t.Fatalf("native insertion = %+v", sink)
+			}
+			if len(keyboard.calls) != 0 || len(keys.calls) != 0 {
+				t.Fatalf("physical keyboard input: text=%v keys=%v", keyboard.calls, keys.calls)
+			}
+			if wantCalls > 0 {
+				var tap struct {
+					Point focusPointArgs `json:"point"`
+				}
+				if len(touch.calls) == 0 {
+					t.Fatal("native input did not focus the detected search field")
+				}
+				if err := json.Unmarshal([]byte(touch.calls[0]), &tap); err != nil || tap.Point != focus {
+					t.Fatalf("search field focus = %s, %v", touch.calls[0], err)
+				}
+			} else if len(touch.calls) != 0 {
+				t.Fatalf("touched the screen before native input was ready: %v", touch.calls)
+			}
+			if len(quick.calls) != 1 || !strings.Contains(quick.calls[0], "spotlight_search") {
+				t.Fatalf("quick actions = %v, want only Spotlight", quick.calls)
+			}
+			if !wantOK && lookups != 0 {
+				t.Fatalf("continued search after native input failure: %+v", out)
+			}
+			if mode == "partial_failure" || mode == "unverified" || mode == "verification_failure" {
+				if !strings.Contains(err.Error(), "Text may already be present") {
+					t.Fatalf("missing inspection guidance: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestNativeTextAppSearchKeepsQuickQueryWhenUnsupported(t *testing.T) {
+	for _, mode := range []string{"no_provider", "unsupported"} {
+		t.Run(mode, func(t *testing.T) {
+			keyboard := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
+			keys := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
+			hw := &textInputHardwareDeps{keyboardText: keyboard, keyboardTap: keys}
+			if mode == "unsupported" {
+				hw.textInsertion = &nativeInsertionStub{supported: false}
+			}
+			vision := &nativeVerificationStub{}
+			engine := newTextInputEngineWithSleep(*hw, vision, testNoWaitSleep)
+			cfg := appSearchOpenFlowConfig{hw: hw, platform: "ios", entryTool: &EnterTextTool{engine: engine}}
+			entered, calls, err := enterSearchQuery(context.Background(), cfg, engine, "WeChat", false, true)
+			if err != nil || entered != searchQueryQuick || calls != 0 || len(keyboard.calls) != 1 || len(keys.calls) != 2 {
+				t.Fatalf("entry=%v calls=%d err=%v keyboard=%v keys=%v", entered, calls, err, keyboard.calls, keys.calls)
 			}
 		})
 	}

@@ -1,14 +1,16 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { Provider } from 'jotai';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createDeviceState } from '../state/device';
-import type { PageProps, Transport } from '../types';
-import { DecisionPage, ProviderForm } from '../pages/Models';
+import type { Configuration, PageProps, Transport } from '../types';
+import { DecisionPage, ModelPicker, ProviderForm } from '../pages/Models';
+import { VoiceOptions } from '../pages/Voice';
 import { RawConfigPage } from '../pages/Advanced';
 import { ValueField } from '../components/fields';
 import { ChoiceRow, Dropdown } from '../components/choices';
-import { OverlayHost, Modal, toast } from '../components/overlays';
+import { OverlayHost, Modal, confirmSheet, showProgress, toast } from '../components/overlays';
 import { useSettings } from '../hooks/settings';
 import { applyLocale } from '../lib/i18n';
 const flush = async () => {
@@ -36,6 +38,7 @@ function setup(send: Transport, config: import('../types').Configuration = {}) {
   };
 }
 beforeEach(() => {
+  localStorage.clear();
   applyLocale('en-US');
 });
 afterEach(() => {
@@ -221,7 +224,7 @@ it('keeps model suggestions optional and publishes persisted values without eras
   );
   mount(<DecisionPage {...props} />);
   await act(flush);
-  const input = screen.getByLabelText('Decision model') as HTMLInputElement;
+  const input = screen.getByRole('combobox', { name: 'Decision model' }) as HTMLInputElement;
   const url = screen.getByLabelText('Decision model Base URL') as HTMLInputElement;
   fireEvent.change(input, { target: { value: 'custom/model' } });
   fireEvent.blur(input);
@@ -250,6 +253,183 @@ it('keeps model suggestions optional and publishes persisted values without eras
   expect(writes[1]).toEqual({ decision: { base_url: null } });
   model.dispose();
 });
+it('retains saved custom main models after switching, recreating the app and a catalog failure', async () => {
+  let config = {
+    model: { provider: 'account', model: 'listed' },
+    model_providers: { account: { type: 'openai', base_url: 'https://one.example' } },
+  };
+  let offline = false;
+  const send: Transport = async (path, options) => {
+    if (path.startsWith('/api/models')) {
+      if (offline) throw new Error('catalog offline');
+      return { models: [{ id: 'listed', name: 'Listed model' }] };
+    }
+    if (path === '/api/config/plan') return { apply: 'live' };
+    if (options?.method === 'PATCH')
+      config = {
+        ...config,
+        model: { ...config.model, ...JSON.parse(String(options.body)).config.model },
+      };
+    return { config, config_valid: true, apply: 'live' };
+  };
+  const app = setup(send, config);
+  app.props.route.path = '/model/models';
+  const view = app.mount(<ModelPicker {...app.props} />);
+  await act(flush);
+  expect(screen.getAllByRole('button', { name: 'Listed model listed' })).toHaveLength(1);
+  fireEvent.change(screen.getByLabelText('Other model'), { target: { value: 'custom/saved' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Use' }));
+  await act(flush);
+  expect(screen.getByRole('button', { name: 'custom/saved custom/saved' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Listed model listed' }));
+  await act(flush);
+  view.unmount();
+  app.model.dispose();
+
+  offline = true;
+  const fresh = setup(send, config);
+  fresh.props.route.path = '/model/models';
+  fresh.mount(<ModelPicker {...fresh.props} />);
+  await act(flush);
+  const custom = screen.getByRole('button', { name: 'custom/saved custom/saved' });
+  expect(screen.getByText('catalog offline')).toBeTruthy();
+  fireEvent.click(custom);
+  await act(flush);
+  expect(config.model.model).toBe('custom/saved');
+  config = {
+    ...config,
+    model_providers: { account: { type: 'openai', base_url: 'https://two.example' } },
+    model: { ...config.model, model: 'different-endpoint-model' },
+  };
+  act(() => fresh.model.publishSave({ config }));
+  await act(flush);
+  expect(screen.queryByRole('button', { name: 'custom/saved custom/saved' })).toBe(null);
+  fresh.model.dispose();
+});
+it('excludes rejected custom models from saved choices', async () => {
+  const config = { model: { provider: 'demo', model: 'original' } };
+  const send: Transport = async (path) => {
+    if (path.startsWith('/api/models')) return { models: [] };
+    if (path === '/api/config/plan') throw { status: 400, error: 'rejected' };
+    return { config, config_valid: true };
+  };
+  const app = setup(send, config);
+  app.mount(<ModelPicker {...app.props} />);
+  await act(flush);
+  fireEvent.change(screen.getByLabelText('Other model'), { target: { value: 'custom/rejected' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Use' }));
+  await act(flush);
+  expect(screen.queryByRole('button', { name: 'custom/rejected custom/rejected' })).toBe(null);
+  expect(JSON.stringify(app.model.store.get(app.model.modelHistory))).not.toContain(
+    'custom/rejected',
+  );
+  app.model.dispose();
+});
+it.each(['voice', 'decision'])(
+  'adds confirmed custom %s models to suggestions and keeps them after switching',
+  async (kind) => {
+    let config: Configuration =
+      kind === 'voice'
+        ? {
+            voice_model: { provider: 'demo' },
+            voice_model_providers: { demo: { type: 'qwen', model: 'custom/first' } },
+          }
+        : { decision: { provider: 'openrouter', model: 'custom/first' } };
+    const app = setup(async (path) => {
+      if (path.startsWith('/api/models')) return { models: [] };
+      if (path === '/api/config/schema')
+        return {
+          sections: [
+            {
+              name: 'voice_model_providers',
+              fields: [{ key: 'model', label: 'Voice model', widget: 'text' }],
+            },
+          ],
+        };
+      return { config, config_valid: true };
+    }, config);
+    app.props.route =
+      kind === 'voice'
+        ? { path: '/voice/model', query: { kind: 'realtime' } }
+        : { path: '/model/decision' };
+    app.mount(kind === 'voice' ? <VoiceOptions {...app.props} /> : <DecisionPage {...app.props} />);
+    await act(flush);
+    config =
+      kind === 'voice'
+        ? { ...config, voice_model_providers: { demo: { type: 'qwen', model: 'custom/second' } } }
+        : { decision: { provider: 'openrouter', model: 'custom/second' } };
+    act(() => app.model.publishSave({ config }));
+    await act(flush);
+    const input = screen.getByRole('combobox');
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: '' } });
+    expect(screen.getByRole('option', { name: 'custom/first' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'custom/second' })).toBeTruthy();
+    app.model.dispose();
+  },
+);
+it.each(['click', 'keyboard'] as const)(
+  'selects an inline decision model by %s while keeping custom input and focus',
+  async (method) => {
+    let config = { decision: { provider: 'openrouter', model: 'old' } };
+    const writes: unknown[] = [];
+    const { model, props, mount } = setup(async (path, options) => {
+      if (path.startsWith('/api/models'))
+        return {
+          models: [
+            { id: '~typesafe/jev-latest', name: 'Jev Latest' },
+            { id: '~typesafe/jev-1.14', name: 'Jev 1.14' },
+          ],
+        };
+      if (path === '/api/config/plan') return { apply: 'live' };
+      if (path === '/api/config' && options?.method === 'PATCH') {
+        const patch = JSON.parse(String(options.body)).config;
+        writes.push(patch);
+        config = { decision: { ...config.decision, ...patch.decision } };
+      }
+      return { config, config_valid: true, apply: 'live' };
+    }, config);
+    mount(<DecisionPage {...props} />);
+    const user = userEvent.setup();
+    await act(flush);
+    const input = screen.getByRole('combobox', { name: 'Decision model' }) as HTMLInputElement;
+    await user.click(input);
+    await user.clear(input);
+    await user.type(input, 'Jev');
+    const list = screen.getByRole('listbox', { name: 'Decision model' });
+    expect(list.classList.contains('ds-suggestions')).toBe(true);
+    expect(screen.getByRole('option', { name: 'Jev Latest ~typesafe/jev-latest' })).toBeTruthy();
+    fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    expect(writes).toEqual([]);
+    expect(input.getAttribute('aria-activedescendant')).toBe(null);
+    if (method === 'click') {
+      await user.click(screen.getByRole('option', { name: 'Jev 1.14 ~typesafe/jev-1.14' }));
+    } else {
+      await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+    }
+    await act(flush);
+    expect(writes).toEqual([{ decision: { model: '~typesafe/jev-1.14' } }]);
+    expect(input.value).toBe('~typesafe/jev-1.14');
+    expect(document.activeElement).toBe(input);
+    expect(screen.queryByRole('listbox')).toBe(null);
+    await user.clear(input);
+    await user.type(input, 'Jev');
+    await user.keyboard('{ArrowUp}');
+    expect(screen.getByRole('option', { selected: true }).textContent).toContain('Jev 1.14');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).toBe(null);
+    expect(document.activeElement).toBe(input);
+    await user.clear(input);
+    await user.type(input, 'custom/model{Enter}');
+    await act(flush);
+    expect(writes).toEqual([
+      { decision: { model: '~typesafe/jev-1.14' } },
+      { decision: { model: 'custom/model' } },
+    ]);
+    model.dispose();
+  },
+);
 it('omits blank stored secrets and follows schema visibility in provider forms', async () => {
   const writes: unknown[] = [];
   const { model, props, mount } = setup(
@@ -468,6 +648,66 @@ it('saves only the staged entries whose restart level was confirmed', async () =
   expect(screen.getByText(/reboot/i)).toBeTruthy();
   model.dispose();
 });
+it('replaces a staged field after a duplicate submission and a revert during another commit', async () => {
+  let releasePlan!: (value: { apply: string }) => void;
+  const send = vi.fn(async (path: string, options?: RequestInit) => {
+    const patch = JSON.parse(String(options?.body)).config;
+    if (path === '/api/config/plan') {
+      if (patch.model?.model === 'B')
+        return new Promise<{ apply: string }>((resolve) => (releasePlan = resolve));
+      return { apply: patch.agent ? 'agent_restart' : 'live' };
+    }
+    return { apply: 'live', config: { model: { model: 'A' }, ...patch } };
+  });
+  const { model, props, mount } = setup(send, { model: { model: 'A' } });
+  function Form() {
+    const saver = useSettings(props, 'Settings');
+    return (
+      <>
+        <ValueField
+          label="Model"
+          saved={saver.config.model?.model}
+          onCommit={(value) => saver.change('model', { model: { model: String(value) } })}
+        />
+        <button onClick={() => void saver.change('agent', { agent: { input_mode: 'stt' } })}>
+          Stage agent
+        </button>
+        <button onClick={() => void saver.commit()}>Commit</button>
+      </>
+    );
+  }
+  mount(<Form />);
+  fireEvent.click(screen.getByText('Stage agent'));
+  await act(flush);
+  const input = screen.getByLabelText('Model') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'B' } });
+  fireEvent.blur(input);
+  fireEvent.change(input, { target: { value: 'C' } });
+  fireEvent.change(input, { target: { value: 'B' } });
+  fireEvent.blur(input);
+  expect(send.mock.calls.filter(([path]) => path === '/api/config/plan')).toHaveLength(2);
+  fireEvent.click(screen.getByText('Commit'));
+  await act(flush);
+  await act(async () => {
+    releasePlan({ apply: 'live' });
+    await flush();
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  await act(flush);
+  fireEvent.change(input, { target: { value: 'A' } });
+  fireEvent.blur(input);
+  await act(flush);
+  expect(input.value).toBe('A');
+  fireEvent.click(screen.getByText('Commit'));
+  await act(flush);
+  fireEvent.click(screen.getByRole('button', { name: 'Save & Restart' }));
+  await act(flush);
+  const writes = send.mock.calls
+    .filter(([path, options]) => path === '/api/config' && options?.method === 'PATCH')
+    .map(([, options]) => JSON.parse(String(options?.body)).config);
+  expect(writes).toEqual([{ model: { model: 'A' } }, { agent: { input_mode: 'stt' } }]);
+  model.dispose();
+});
 it('keeps raw TOML recovery writable only after a successful read and preserves failed edits', async () => {
   let offline = true;
   vi.stubGlobal('fetch', async () => {
@@ -524,6 +764,70 @@ it('traps dialog focus and restores its opener on close', () => {
   fireEvent.keyDown(input, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBe(null);
   expect(document.activeElement).toBe(opener);
+});
+it.each(['cancel', 'escape', 'scrim', 'confirm'])(
+  'keeps confirmation focus contained and settles through %s',
+  async (action) => {
+    render(
+      <>
+        <button>Open confirmation</button>
+        <OverlayHost />
+      </>,
+    );
+    const opener = screen.getByRole('button', { name: 'Open confirmation' });
+    opener.focus();
+    let result!: Promise<boolean>;
+    act(() => {
+      result = confirmSheet({
+        title: 'Update?',
+        body: 'Services may restart.',
+        confirmLabel: 'Update',
+      });
+    });
+    const dialog = screen.getByRole('dialog', { name: 'Update?' });
+    expect(document.getElementById(dialog.getAttribute('aria-describedby')!)?.textContent).toBe(
+      'Services may restart.',
+    );
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    const confirm = screen.getByRole('button', { name: 'Update' });
+    expect(document.activeElement).toBe(cancel);
+    fireEvent.keyDown(cancel, { key: 'Tab' });
+    expect(document.activeElement).toBe(confirm);
+    fireEvent.keyDown(confirm, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(cancel);
+    if (action === 'escape') fireEvent.keyDown(cancel, { key: 'Escape' });
+    else if (action === 'scrim') fireEvent.click(dialog.querySelector('.ds-action-sheet__scrim')!);
+    else fireEvent.click(action === 'confirm' ? confirm : cancel);
+    await expect(result).resolves.toBe(action === 'confirm');
+    expect(screen.queryByRole('dialog')).toBe(null);
+    expect(document.activeElement).toBe(opener);
+  },
+);
+it('keeps restart progress modal until completion or a dismissible failure', () => {
+  render(
+    <>
+      <button>Restart</button>
+      <OverlayHost />
+    </>,
+  );
+  const opener = screen.getByRole('button', { name: 'Restart' });
+  opener.focus();
+  let progress!: ReturnType<typeof showProgress>;
+  act(() => {
+    progress = showProgress('Restarting', 'Waiting for the device.');
+  });
+  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+  expect(screen.getByRole('dialog', { name: 'Restarting' })).toBeTruthy();
+  act(() => progress.fail('Device unavailable.'));
+  expect(screen.getByRole('status').textContent).toBe('Device unavailable.');
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('dialog')).toBe(null);
+  expect(document.activeElement).toBe(opener);
+  act(() => {
+    progress = showProgress('Restarting', 'Waiting for the device.');
+  });
+  act(() => progress.remove());
+  expect(screen.queryByRole('dialog')).toBe(null);
 });
 it('restores app interactivity only after the last overlapping modal closes', () => {
   const app = document.createElement('div');

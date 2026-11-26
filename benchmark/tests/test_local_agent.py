@@ -9,6 +9,7 @@ import socket
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -70,6 +71,26 @@ def test_target_config_is_preserved_and_cannot_be_shared_between_modes(args, tmp
     with pytest.raises(RuntimeError, match="different connection mode"):
         with launcher.target_directory(args):
             pytest.fail("mixed connection modes shared configuration")
+
+
+@pytest.mark.parametrize("options,expected", [([], "adbkeyboard"), (["--unicode-input-method", "appium"], "appium")])
+def test_android_unicode_input_method_option_is_forwarded(tmp_path, monkeypatch, options, expected):
+    monkeypatch.setattr(launcher.sys, "platform", "darwin")
+    args = launcher.arguments([
+        "android", *options, "--data-dir", str(tmp_path / "android"), "--no-open",
+    ])
+    monkeypatch.setattr(launcher, "android_serial", lambda _args: "emulator-5554")
+
+    command = launcher.bridge_command(args, "/prepared/python")
+
+    assert command[-2:] == ["--unicode-input-method", expected]
+
+
+def test_unicode_input_method_rejects_non_android_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher.sys, "platform", "darwin")
+
+    with pytest.raises(SystemExit):
+        launcher.arguments(["ios", "--unicode-input-method", "appium", "--data-dir", str(tmp_path / "ios")])
 
 
 def test_occupied_port_is_rejected_without_starting_a_process(args):
@@ -141,8 +162,11 @@ def test_frontend_build_reuses_assets_unless_missing_or_forced(monkeypatch, tmp_
     assert (result / "index.html").read_text() == ("rebuilt frontend" if builds else "existing frontend")
 
 
-@pytest.mark.parametrize("mode", ["android", "iphone-mirroring", "ios"])
-@pytest.mark.parametrize("outcome", ["ready", "bridge-fails", "cancel-after-health"])
+@pytest.mark.parametrize("mode,outcome", [
+    (mode, outcome)
+    for mode in ("android", "iphone-mirroring", "ios")
+    for outcome in ("ready", "bridge-fails", "cancel-after-health")
+] + [("android", "slow-ime")])
 def test_launch_waits_for_first_config_and_cleans_up_owned_children(args, tmp_path, monkeypatch, mode, outcome):
     args.mode, args.device, args.task = mode, *launcher.MODES[mode][:2]
     args.bridge_url = ""
@@ -191,8 +215,19 @@ HTTPServer(('127.0.0.1', port), Handler).serve_forever()
     stopped = threading.Event()
     errors = []
     real_request = launcher.request
+    install_elapsed = 0
+    if outcome == "slow-ime":
+        monkeypatch.setattr(launcher, "time", SimpleNamespace(
+            monotonic=lambda: time.monotonic() + install_elapsed, sleep=time.sleep,
+        ))
 
     def request(url, *positional, **keywords):
+        nonlocal install_elapsed
+        if outcome == "slow-ime" and url == f"http://127.0.0.1:{args.bridge_port}/health" and install_elapsed < 100:
+            # Advance only the launcher's clock while the initial IME install
+            # keeps the bridge unavailable beyond the former 90-second limit.
+            install_elapsed += 25
+            raise OSError("IME installation is still running")
         result = real_request(url, *positional, **keywords)
         if outcome == "cancel-after-health" and url == f"http://127.0.0.1:{args.bridge_port}/health":
             stopped.set()
@@ -234,7 +269,7 @@ HTTPServer(('127.0.0.1', port), Handler).serve_forever()
         stopped.set()
         thread.join(timeout=15)
     assert not thread.is_alive()
-    if outcome == "ready":
+    if outcome in ("ready", "slow-ime"):
         assert not errors
     for pidfile in args.data_dir.glob("*.pid"):
         with pytest.raises(ProcessLookupError):

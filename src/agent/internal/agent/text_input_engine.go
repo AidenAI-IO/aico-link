@@ -78,6 +78,7 @@ type textInputArgs struct {
 }
 
 type textInputResult struct {
+	VLMCalls          int    `json:"-"`
 	TextMayBeInserted bool   `json:"-"`
 	OK                bool   `json:"ok"`
 	Committed         bool   `json:"committed"`

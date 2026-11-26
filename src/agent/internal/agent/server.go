@@ -1371,17 +1371,22 @@ func (s *Server) cancelActiveRun(requestID string) bool {
 	return true
 }
 
-// cancelAllActiveRuns snapshots and cancels every registered run during
-// shutdown without holding activeRunsMu while callbacks execute.
+// cancelAllActiveRuns stops registered requests, including ones that have not
+// entered the runtime yet or are still delivering output after a run finishes.
 func (s *Server) cancelAllActiveRuns() {
+	s.terminatedRequestsMu.Lock()
 	s.activeRunsMu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(s.activeRuns))
-	for _, cancel := range s.activeRuns {
+	for requestID, cancel := range s.activeRuns {
+		if !s.closing.Load() {
+			s.markRequestTerminatedLocked(requestID)
+		}
 		if cancel != nil {
 			cancels = append(cancels, cancel)
 		}
 	}
 	s.activeRunsMu.Unlock()
+	s.terminatedRequestsMu.Unlock()
 	for _, cancel := range cancels {
 		cancel()
 	}
@@ -3770,9 +3775,7 @@ func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.logger != nil {
-		s.logger.Info("Conversation history cleared")
-	}
+	s.cancelAllActiveRuns()
 	if err := s.runtime.ClearMemory(r.Context()); err != nil {
 		if s.logger != nil {
 			s.logger.Error("Clear memory failed: %v", err)
@@ -3781,6 +3784,9 @@ func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.logger != nil {
+		s.logger.Info("Conversation history cleared")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
@@ -3791,6 +3797,7 @@ func (s *Server) handleClearAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.cancelAllActiveRuns()
 	if err := s.runtime.ClearAllMemory(r.Context()); err != nil {
 		if s.logger != nil {
 			s.logger.Error("Clear all memory failed: %v", err)
