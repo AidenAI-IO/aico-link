@@ -108,6 +108,8 @@ the value back as a quoted argument. Shell command substitution itself removes
 trailing newlines, even though the CLI preserves them in stdout.
 
 Calendar, contacts, and notification sending use named flags, not JSON.
+For calendar queries, `--start` aliases `--from` and `--end` aliases `--to`.
+Specify each bound once.
 Repeat `--phone-number` or `--email` to supply multiple contact values.
 Calendar times and notification `--schedule-at` use RFC3339 with a timezone.
 Omit `--schedule-at` to send immediately. Confirm event details before creating

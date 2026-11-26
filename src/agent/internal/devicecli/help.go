@@ -37,7 +37,7 @@ var helpNotes = map[string]string{
 	"app type":           "Paste into the focused field using the companion App clipboard. This does not verify the final field contents.",
 	"app clipboard":      "Read prints the raw text (empty output is valid). Write an empty string to clear the clipboard.",
 	"app clipboard read": "Print only the clipboard text, without adding a newline.",
-	"app calendar":       "Use RFC3339 times with a timezone.",
+	"app calendar":       "Use RFC3339 times with a timezone. For query, --start aliases --from and --end aliases --to.",
 	"app contacts":       "Repeat --phone-number or --email to supply multiple values.",
 	"app notification":   "Use an RFC3339 time with a timezone for --schedule-at. Omit it to send immediately; sound defaults to false.",
 	"look":               "Save a JPEG (default directory /tmp) and print its path. Region coordinates are normalized to 0–1000.",

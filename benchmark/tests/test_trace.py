@@ -408,6 +408,30 @@ def test_mixed_cli_batch_recovers_only_aligned_recorded_arguments(suffix, tools,
     assert calls[0].input == ({"action": "write", "text": "marker && text"} if recovered else {})
 
 
+@pytest.mark.parametrize("flags, recovered", [
+    ("--start=2037-11-18T00:00:00+08:00 --end 2037-11-19T00:00:00+08:00", True),
+    ("--from 2037-11-18T00:00:00+08:00 --end=2037-11-19T00:00:00+08:00", True),
+    ("--from 2037-11-18T00:00:00+08:00 --start 2037-11-18T00:00:00+08:00 --end 2037-11-19T00:00:00+08:00", False),
+])
+def test_episode_evidence_recovers_calendar_query_aliases(flags, recovered):
+    from runner.trace import apply_episode_tool_evidence
+
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({
+            "command": f"device-cli app calendar query {flags}",
+        })},
+        {"type": "tool_result", "tool_name": "shell"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": "bridge_calendar", "input": {}, "is_error": False},
+        ]},
+    }]})
+    call, = trace.tool_calls[0].device_cli_calls
+    assert call.input == ({"action": "query", "from": "2037-11-18T00:00:00+08:00",
+                           "to": "2037-11-19T00:00:00+08:00"} if recovered else {})
+
+
 def test_episode_evidence_recovers_calendar_flags_from_a_batch():
     from runner.trace import apply_episode_tool_evidence
 

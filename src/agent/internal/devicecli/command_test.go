@@ -113,6 +113,32 @@ func TestParseWaitDuration(t *testing.T) {
 	}
 }
 
+func TestCalendarQueryAliases(t *testing.T) {
+	const from = "2037-11-18T00:00:00+08:00"
+	const to = "2037-11-19T00:00:00+08:00"
+	for _, flags := range [][]string{
+		{"--from", from, "--to", to},
+		{"--start", from, "--end=" + to},
+		{"--start=" + from, "--to", to},
+	} {
+		calls, err := Calls(append([]string{"app", "calendar", "query"}, flags...))
+		want := map[string]any{"action": "query", "from": from, "to": to}
+		if err != nil || len(calls) != 1 || calls[0].Tool != "bridge_calendar" || !reflect.DeepEqual(calls[0].Input, want) {
+			t.Errorf("query flags %q: got %+v, %v; want bridge_calendar with %v", flags, calls, err, want)
+		}
+	}
+	for _, args := range [][]string{
+		{"query", "--from", from, "--start", from, "--to", to},
+		{"query", "--start", from, "--end", to, "--to", to},
+		{"query", "--start", "tomorrow", "--end", to},
+		{"create", "--title", "Team sync", "--start", from},
+	} {
+		if calls, err := Calls(append([]string{"app", "calendar"}, args...)); err == nil || len(calls) != 0 {
+			t.Errorf("calendar %q should be rejected: calls=%+v, err=%v", args, calls, err)
+		}
+	}
+}
+
 func TestCalendarCreateFlags(t *testing.T) {
 	calls, err := Calls([]string{"app", "calendar", "create", "--title", "Team sync", "--start-at=2026-11-23T09:00:00+08:00", "--alarm-minutes-before", "10", "--all-day"})
 	if err != nil || len(calls) != 1 {

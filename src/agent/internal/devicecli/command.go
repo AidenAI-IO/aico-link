@@ -221,6 +221,14 @@ func appFlagFields(command string, args []string) (map[string]any, error) {
 	for len(args) > 0 {
 		flag, value, inline := strings.Cut(args[0], "=")
 		name := strings.TrimPrefix(flag, "--")
+		if command == "calendar query" {
+			switch flag {
+			case "--start":
+				name = "from"
+			case "--end":
+				name = "to"
+			}
+		}
 		if name == flag || !slices.Contains(allowed, name) {
 			return nil, fmt.Errorf("invalid app %s option %q; use --%s", command, flag, strings.Join(allowed, ", --"))
 		}

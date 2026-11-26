@@ -213,9 +213,13 @@ def _app_flag_args(domain: str, action: str, args: list[str]) -> dict[str, Any] 
     while pos < len(args):
         flag, inline, value = args[pos].partition("=")
         pos += 1
+        if not flag.startswith("--"):
+            return None
         name = flag.removeprefix("--")
+        if (domain, action) == ("calendar", "query"):
+            name = {"start": "from", "end": "to"}.get(name, name)
         key = name.replace("-", "_")
-        if name == flag or name not in allowed or key in fields:
+        if name not in allowed or key in fields:
             return None
         if name in {"all-day", "sound"}:
             if inline and value not in {"true", "false"}:
