@@ -15,8 +15,7 @@ recorded test result:
 7. [Prepare the board for packing](#7-prepare-the-board-for-packing)
 
 What each check measures and its pass limits are in
-[Board Hardware Tests](board-hardware-tests.md). This guide covers the
-companion RV1106 side only; the MCU firmware is programmed separately.
+[Board Hardware Tests](board-hardware-tests.md).
 
 > Flashing erases everything on the board, including `/userdata`. Never flash
 > a board that a customer or engineer is still using without their consent.
@@ -28,11 +27,13 @@ companion RV1106 side only; the MCU firmware is programmed separately.
 | Item | Purpose |
 | --- | --- |
 | Test computer, Linux (Ubuntu 22.04 or later) or macOS | Flashing, login and running tests. Windows can flash (see below) but has no built-in driver for the board's USB network (CDC ECM), so use Linux or macOS for login and tests |
+| Chrome or Edge | Browser flashing of the MCU and the wake-word module (Safari and Firefox do not support it) |
 | USB-C data cable | Connects the computer to the board's USB-C port J3. A charge-only cable does not work |
+| CMSIS-DAP probe (MuseLab nanoDAP) | Programs the MCU firmware over SWD |
+| USB-to-serial adapter (CH340K or CH343) and jumper wires | Programs the wake-word module (ASRPRO); also usable as a debug console |
 | Video source with USB-C video output (DisplayPort Alt Mode) | Needed for the HDMI capture tests. A laptop whose USB-C port outputs video can be both the test computer and the video source |
-| USB-to-TTL serial adapter (optional) | Debug console when the USB network does not come up |
 | Wi-Fi access point for the line (optional) | Needed for the Wi-Fi checks; use a 2.4 GHz network |
-| Quiet place, 5 V charger, TF card, phone with Bluetooth (optional) | For the interactive checks: speaker/microphone, charger detection, TF card, BLE connection |
+| Quiet place, 5 V charger, TF card, phone with Bluetooth (optional) | For the interactive checks: speaker/microphone, wake word, charger detection, TF card, BLE connection |
 
 ### Release kit
 
@@ -41,26 +42,138 @@ different releases.
 
 | File | Use |
 | --- | --- |
-| `update.img` | Full firmware image |
+| `update.img` | Full RV1106 firmware image |
 | `update.img.sha256` | Its SHA-256, to confirm the file is complete |
+| `aico-power-hub.bin` and its SHA-256 | MCU firmware |
+| MCU flashing page (the `web/` folder of `aico-mcu`, with `bundle.json`) | Browser flashing of the MCU; engineering can also host it at an HTTPS address |
+| `asrpro-fw.bin` and its SHA-256 | Wake-word module (ASRPRO) firmware, wake word "艾登" (Aiden) |
+| `asr-web-flasher.html` | Browser flashing of the wake-word module |
 | `board/` | The board test scripts (`scripts/board/` from the same release) |
 | `board_hw.conf` (optional) | Line settings for the tests, e.g. the video size to expect or a speed-test server. Made from `board/board_hw.conf.example` |
 | Station test password | The password the line sets on each board for testing (see step 3) |
 
-### Flashing tools
-
-- **Linux**: `pico-sdk/tools/linux/Linux_Upgrade_Tool/upgrade_tool` and,
-  if the kit includes the repository, the guarded helper `scripts/flash.sh`.
-  Add the tool to the station once and test it with
-  `sudo ./upgrade_tool ld` (lists connected Rockchip devices).
-- **macOS**: `upgrade_tool/upgrade_tool` from the repository root.
-- **Windows**: in `pico-sdk/tools/windows/`, install `DriverAssitant` once,
-  then use `SocToolKit` for single boards or `FactoryTool` for flashing
-  several boards in parallel on a production line.
-
 ## 2. Flash the firmware
 
-### 2.1 Check the image
+The board carries three firmware images, each with its own interface. Flash
+them in this order:
+
+| Order | Firmware | Chip | Interface |
+| --- | --- | --- | --- |
+| 1 | MCU firmware | GD32L235 (power management) | SWD, interface board J17 |
+| 2 | Wake-word firmware | ASRPRO | Serial, interface board J17 |
+| 3 | Main firmware | RV1106 | USB-C, J3 |
+
+The MCU powers the RV1106, the Wi-Fi module and the wake-word module, so it
+comes first. The wake-word module's supply (`V_ASR`) is switched on by the MCU:
+it cannot be flashed while the MCU firmware is not running.
+
+J17 is the 18-pin header on the interface board; do not confuse it with the
+23-pin FPC connector J2. During all flashing the board runs from its own
+battery or charger. Do not connect the 3V3/5V outputs of the probe or the
+serial adapter.
+
+### 2.1 MCU firmware
+
+**Wiring**
+
+| Probe | J17 |
+| --- | --- |
+| SWDIO (TMS/IO) | 15 |
+| SWCLK (TCK/CK) | 16 |
+| GND | 18 |
+
+**Browser flashing (recommended)**
+
+1. Open the MCU flashing page in Chrome or Edge: the HTTPS address engineering
+   provides, or `http://localhost:8765` after running `./scripts/web.sh` in the
+   `aico-mcu` folder. Do not open `index.html` directly from disk.
+2. Close other programs that use the probe, click **Connect downloader** and
+   choose **CMSIS-DAP-MuseLab** in the browser dialog.
+3. The page uses its bundled firmware by default. To flash the kit's file,
+   choose `aico-power-hub.bin` under **Firmware .bin**. Check that the name,
+   size and SHA-256 shown match the kit.
+4. Tick the confirmation box and click **Flash firmware**. The page first reads
+   and saves a backup of the old firmware, then erases, programs, verifies and
+   resets the MCU.
+5. After the success message, download the backup and file it with the board.
+
+**Command line** (in the `aico-mcu` folder, after `./scripts/setup.sh` from its
+README):
+
+```bash
+./scripts/flash.sh aico-power-hub.bin             # offline check only, no probe access
+./scripts/flash.sh aico-power-hub.bin --execute   # program the MCU
+```
+
+Programming stops the MCU's power-management program and the reset
+re-initializes it, so the RV1106 may lose power and restart; this is expected.
+If programming fails, the MCU can stay halted: do not retry repeatedly or try
+an unlock or mass erase. Keep the page log and the backup and hand the board
+to engineering.
+
+**Verify**: once the RV1106 firmware is flashed and you are logged in
+(step 3), run the tests with `--only mcu` (step 4); `UART link to the MCU is
+connected` must pass.
+
+### 2.2 Wake-word firmware (ASRPRO)
+
+**Wiring**
+
+| Serial adapter / signal | J17 |
+| --- | --- |
+| TX (to ASRPRO RX) | 5 (ASR_PGUART_RX) |
+| RX (from ASRPRO TX) | 6 (ASR_PGUART_TX) |
+| PG_EN (download enable) | 7 (ASRPro_PG_EN) |
+| GND | 18 |
+
+The ASRPRO enters download mode when PG_EN is high at the moment it powers up.
+For flashing, connect J17-7 to 3.3 V with a jumper wire (J17-17 `MCU_3V3` can be
+used when that supply is actually present); otherwise leave it unconnected, and
+a resistor on the board pulls it low.
+
+**Steps**
+
+1. Make sure the MCU firmware is running and the board is powered (2.1).
+2. Connect J17-7 (PG_EN) to 3.3 V.
+3. Start the flasher so that it waits for the handshake:
+   - **Browser**: in the folder with `asr-web-flasher.html`, run
+     `python3 -m http.server 8000 --bind 127.0.0.1`, open
+     `http://localhost:8000/asr-web-flasher.html` in Chrome or Edge, choose the
+     ASRPRO model, Flash size **2 MiB**, the serial port and `asrpro-fw.bin`,
+     and start.
+   - **Command line** (in the `asrpro-tools` folder):
+
+     ```bash
+     python3 tools/flash/flash.py flash \
+       --port /dev/cu.wchusbserialXXXX --reset none --handshake-tries 120 \
+       --firmware asrpro-fw.bin --chip-size 0x200000
+     ```
+
+4. **Remove all power from the board and power it again**, so the ASRPRO
+   restarts with PG_EN high. With the battery connected, unplugging USB alone
+   does not remove power.
+5. Wait for the end: the command line ends with `FLASH_VERIFIED`, the page
+   reports success.
+6. Disconnect J17-7 from 3.3 V (PG_EN goes low), then power-cycle the board
+   again so the ASRPRO runs its application.
+
+If the handshake never succeeds, measure `V_ASR` (about 5 V) and PG_EN (about
+3.3 V) first, then check that TX/RX are crossed and J17 is not reversed.
+
+**Verify**: with the adapter still on J17-5/6 and PG_EN low, open the port
+with `picocom` at **921600 8N1** (the `screen` shipped with macOS does not set
+this rate and shows garbage):
+
+```bash
+picocom --baud 921600 /dev/cu.wchusbserialXXXX
+```
+
+After power-up it prints `[AIDEN][BOOT] ready`; say "艾登" (Aiden) to the board
+and it prints `[AIDEN][WAKE] ... word=艾登` and `mcu_pulse=100ms`. Quit with
+`Ctrl+A`, `Ctrl+X`. The whole-board check is the wake-word step of the
+interactive test in step 4.
+
+### 2.3 RV1106 main firmware: check the image
 
 Run this once per kit, not once per board:
 
@@ -70,7 +183,7 @@ sha256sum -c update.img.sha256      # macOS: shasum -a 256 -c update.img.sha256
 
 The result must be `update.img: OK`. Otherwise copy the kit again.
 
-### 2.2 Put the board in flashing mode (Maskrom/Loader)
+### 2.4 RV1106 main firmware: flashing mode (Maskrom/Loader)
 
 - **New board, or one that does not boot**: hold the BOOT (Maskrom) key
   while connecting the USB-C cable to J3, then release it after about two
@@ -87,7 +200,7 @@ sudo ./upgrade_tool ld
 It must list one device in `Maskrom` or `Loader` mode. If nothing is listed,
 try another cable or port and repeat the key sequence.
 
-### 2.3 Write the image
+### 2.5 RV1106 main firmware: write the image
 
 On Linux with the repository helper (checks the hash and that only one board
 is connected):
@@ -106,11 +219,10 @@ With the tool alone (Linux or macOS):
 sudo ./upgrade_tool uf update.img
 ```
 
-On Windows, load `update.img` in SocToolKit or FactoryTool and start the
-upgrade. Every tool must finish with a success message (for `upgrade_tool`,
+Every tool must finish with a success message (for `upgrade_tool`,
 `Upgrade firmware ok.`). The board then restarts by itself.
 
-### 2.4 First boot
+### 2.6 RV1106 main firmware: first boot
 
 The first boot takes longer than later ones (a few minutes): the system
 grows its file systems and creates its identity. The board is ready when the computer gets
@@ -119,8 +231,8 @@ a new network interface with an address in `192.168.42.0/24`, and
 
 ## 3. Log in to the board
 
-A freshly flashed board has **no login password**: the `aico` account is
-locked until a device password is set. Set the station test password first.
+A freshly flashed board's default password is `luckfox`: the `aico` account
+is locked until a device password is set. Set the station test password first.
 
 ### 3.1 Set the test password
 
@@ -207,7 +319,7 @@ ssh -t aico@192.168.42.1 \
 
 | Option | What the operator does |
 | --- | --- |
-| `--interactive` | Speak into the microphone, confirm the LEDs, touch the touch key, say the wake word, insert a TF card |
+| `--interactive` | Speak into the microphone, confirm the LEDs, touch the touch key, say the wake word "艾登", insert a TF card |
 | `--hotplug` | Unplug and replug the video cable when asked |
 | `--sleep-test` | Turn the video source's screen off and on when asked |
 | `--charger` | Unplug and replug the charger when asked |
@@ -302,7 +414,8 @@ First checks for common failures:
 | `hdmi`: no locked DV timings, frame_service `RECOVERING`, screenshot failed | The video source is connected to J3, awake and outputting video over USB-C; run again with `--only hdmi` |
 | `audio`: no speaker signal detected | Speaker connector and wiring; the board was not muted or covered |
 | `audio`: noise floor too high, clipping | Test in a quieter place; then microphone assembly |
-| `mcu`: UART link not connected, MCU service missing | MCU firmware programmed and running; MCU UART wiring |
+| `mcu`: UART link not connected, MCU service missing | MCU firmware programmed and running (step 2.1); MCU UART wiring |
+| `mcu`: no wake-word (asr) event | Wake-word firmware flashed and recognizing "艾登" in its serial log (step 2.2); wake signal from the ASRPRO to the MCU |
 | `peripherals` / wifi: interface missing | Wi-Fi module soldering and supply; MCU firmware (it powers the module) |
 | `peripherals` / wifi: not associated | The board joined the line's access point (step 3.4) |
 | `peripherals` / storage: TF card not detected | Card inserted and readable on a computer; card slot |
