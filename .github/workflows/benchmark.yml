@@ -24,6 +24,17 @@ on:
         description: Optional attempt count override; defaults to repository BENCHMARK_REPEATS
         required: false
         type: string
+      model:
+        description: Agent model
+        required: true
+        default: google/gemini-3.5-flash-lite
+        type: choice
+        options:
+          - google/gemini-3.5-flash-lite
+          - qwen/qwen3.8-flash
+          - deepseek/deepseek-v4.1-flash-1017
+          - google/gemini-3.8-flash
+          - openai/gpt-6-luna
 
 permissions:
   contents: read
@@ -110,7 +121,7 @@ jobs:
       BENCHMARK_REPEATS: ${{ inputs.repeats || vars.BENCHMARK_REPEATS || '1' }}
       BENCHMARK_AGENT_PROVIDER: ${{ vars.BENCHMARK_AGENT_PROVIDER }}
       DOCKER_BUILDKIT: 1
-      BENCHMARK_AGENT_MODEL: ${{ vars.BENCHMARK_AGENT_MODEL }}
+      BENCHMARK_AGENT_MODEL: ${{ inputs.model || 'google/gemini-3.5-flash-lite' }}
       BENCHMARK_AGENT_BASE_URL: ${{ vars.BENCHMARK_AGENT_BASE_URL }}
       BENCHMARK_AGENT_API_KEY: ${{ secrets.BENCHMARK_AGENT_API_KEY }}
       BENCHMARK_REALTIME_PROVIDER: ${{ vars.BENCHMARK_REALTIME_PROVIDER }}
