@@ -1,5 +1,7 @@
 # Factory Test Guide
 
+[中文版](factory-test-guide.zh-CN.md)
+
 This guide is for the assembly (SMT/PCBA) line and the hardware engineers who
 support it. It covers one Aico Link SCH v1 board from a blank flash to a
 recorded test result:
