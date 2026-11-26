@@ -744,6 +744,37 @@ func (s *TaskEpisodeStore) MarkRunningEpisodesInterruptedWithDetails(ctx context
 	return interrupted, nil
 }
 
+// ListRecent returns newest-first index summaries for debugging UIs. It reads
+// the episode index only and never loads full event payloads.
+func (s *TaskEpisodeStore) ListRecent(ctx context.Context, limit int) ([]episodeIndexEntry, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	if s == nil || s.rootDir == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	index, err := s.loadIndex()
+	if err != nil {
+		return nil, err
+	}
+	entries := append([]episodeIndexEntry(nil), index.Episodes...)
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].StartedAt > entries[j].StartedAt
+	})
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+	return entries, nil
+}
+
 func (s *TaskEpisodeStore) Get(ctx context.Context, id string) (TaskEpisode, error) {
 	select {
 	case <-ctx.Done():

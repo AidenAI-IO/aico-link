@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory · Aico</title>
+  <script src="/web-ui/scripts/theme.js"></script>
+  <style>
+    :root { color-scheme: dark; --bg:#101113; --bg-glow:#20232b; --panel:#17181b; --panel2:#1d1f23; --chip:#25272c; --header:rgba(16,17,19,.88); --line:#303238; --text:#e8e8e8; --muted:#8f9299; --blue:#8ab4ff; --purple:#c7a5ff; --green:#9bd6a8; --orange:#e8b47a; --dialog-shadow:#000b; --scrollbar-thumb:rgba(255,255,255,.16); --scrollbar-thumb-hover:rgba(255,255,255,.28); }
+    :root[data-theme="light"] { color-scheme: light; --bg:#f5f5f7; --bg-glow:#f5f5f7; --panel:#ffffff; --panel2:#fbfbfc; --chip:#f0f1f3; --header:rgba(251,251,252,.92); --line:#d9dadd; --text:#2c2d31; --muted:#73767e; --blue:#2867c7; --purple:#6b4fc8; --green:#267044; --orange:#8b5d12; --dialog-shadow:rgba(38,41,48,.18); --scrollbar-thumb:rgba(38,41,48,.2); --scrollbar-thumb-hover:rgba(38,41,48,.34); }
+    ::-webkit-scrollbar { width:10px; height:10px; }
+    ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background:transparent; }
+    ::-webkit-scrollbar-thumb { border:3px solid transparent; border-radius:999px; background:var(--scrollbar-thumb) padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background-color:var(--scrollbar-thumb-hover); }
+    @supports not selector(::-webkit-scrollbar) { * { scrollbar-width:thin; scrollbar-color:var(--scrollbar-thumb) transparent; } }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:radial-gradient(circle at 20% 0%,var(--bg-glow) 0,var(--bg) 42%); color:var(--text); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    header { height:64px; display:flex; align-items:center; gap:14px; padding:0 24px; border-bottom:1px solid var(--line); background:var(--header); position:sticky; top:0; z-index:2; }
+    .mark { width:10px; height:10px; border-radius:50%; background:var(--blue); box-shadow:0 0 16px var(--blue); }
+    h1 { margin:0; font:600 16px/1 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.02em; }
+    .spacer { flex:1; }
+    .refresh, .action { border:1px solid var(--line); border-radius:5px; padding:7px 12px; color:var(--text); background:var(--panel2); cursor:pointer; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .refresh:hover, .action:hover { border-color:var(--blue); color:var(--blue); }
+    .copy { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; border:0; border-radius:4px; background:transparent; color:var(--muted); cursor:pointer; flex:none; }
+    .copy svg { width:13px; height:13px; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .copy:hover { color:var(--blue); background:var(--chip); }
+    .copy.copied { color:var(--green); }
+    .meta { color:var(--muted); font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .stats { display:flex; flex-wrap:wrap; gap:8px 14px; padding:12px 24px; border-bottom:1px solid var(--line); color:var(--muted); font:12px ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--panel); }
+    .stats strong { color:var(--text); font-weight:600; }
+    .note { padding:10px 24px 0; color:var(--muted); font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .note a { color:var(--blue); }
+    main { display:grid; grid-template-columns:1fr 1fr; gap:1px; min-height:calc(100vh - 148px); background:var(--line); }
+    section { min-width:0; padding:22px; background:var(--panel); }
+    .title { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+    h2 { margin:0; font:600 13px ui-monospace,SFMono-Regular,Menlo,monospace; text-transform:uppercase; letter-spacing:.12em; }
+    .longterm h2 { color:var(--blue); } .device h2 { color:var(--purple); } .chunks h2 { color:var(--green); } .episode h2 { color:var(--orange); }
+    .count { color:var(--muted); font:11px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .item { margin:0 0 8px; border:1px solid var(--line); border-radius:6px; background:var(--panel2); overflow-wrap:anywhere; }
+    .item > summary { list-style:none; display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:start; padding:10px 12px; cursor:pointer; }
+    .item > summary::-webkit-details-marker { display:none; }
+    .item-chevron { width:14px; color:var(--muted); font:12px ui-monospace,SFMono-Regular,Menlo,monospace; line-height:1.4; margin-top:1px; }
+    .item[open] .item-chevron::before { content:'▾'; }
+    .item:not([open]) .item-chevron::before { content:'▸'; }
+    .item-summary { min-width:0; }
+    .item-title { font:600 13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .item-preview { margin-top:4px; color:var(--muted); font:12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .item-badges { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
+    .badge { padding:2px 7px; border-radius:999px; background:var(--chip); color:var(--muted); font:10px ui-monospace,SFMono-Regular,Menlo,monospace; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }
+    .item-detail { padding:0 12px 12px 36px; border-top:1px solid transparent; }
+    .item[open] .item-detail { border-top-color:var(--line); padding-top:10px; margin-top:0; }
+    .item-meta { display:grid; gap:4px; margin-bottom:10px; color:var(--muted); font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .item-meta div { display:grid; grid-template-columns:72px 1fr; gap:8px; }
+    .item-meta dt { color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+    .item-meta dd { margin:0; color:var(--text); word-break:break-all; }
+    .item-body { white-space:pre-wrap; font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+    .chip { padding:2px 7px; border-radius:999px; background:var(--chip); color:var(--muted); font:11px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .empty, .error { color:var(--muted); font:13px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .error { color:var(--orange); }
+    .episode-form { display:flex; gap:8px; margin-bottom:14px; }
+    .episode-form input { flex:1; min-width:0; border:1px solid var(--line); border-radius:5px; padding:8px 10px; background:var(--panel2); color:var(--text); font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .episode-form input:focus { outline:none; border-color:var(--blue); }
+    .item.episode-item[open] { border-color:var(--orange); }
+    pre.dump { margin:0; padding:12px 14px; border:1px solid var(--line); border-radius:6px; background:var(--panel); overflow:auto; max-height:50vh; white-space:pre-wrap; color:var(--muted); font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    @media (max-width: 960px) { main { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="mark"></span>
+    <h1>Memory</h1>
+    <span class="meta" id="status">loading…</span>
+    <span class="spacer"></span>
+    <button class="refresh" type="button" id="refreshBtn">↻ Refresh</button>
+  </header>
+  <div class="stats" id="stats">
+    <span>Long-term/temp <strong id="statMemory">—</strong></span>
+    <span>Device <strong id="statDevice">—</strong></span>
+    <span>Chunks <strong id="statChunks">—</strong></span>
+    <span>Episode <strong id="statEpisode">—</strong></span>
+    <span>Refresh <strong id="statMs">—</strong></span>
+  </div>
+  <p class="note">
+    Read-only browse via existing memory tools. Sensitive memories stay hidden on empty browse.
+    Full conversation context: <a href="/web-ui/context.html" target="_blank" rel="noopener">Context</a>.
+  </p>
+  <main>
+    <section class="longterm">
+      <div class="title"><h2>Long-term / Temporary</h2><span class="count" id="memoryCount"></span></div>
+      <div id="memoryList"></div>
+    </section>
+    <section class="device">
+      <div class="title"><h2>Device</h2><span class="count" id="deviceCount"></span></div>
+      <div id="deviceList"></div>
+    </section>
+    <section class="chunks">
+      <div class="title"><h2>Session chunks</h2><span class="count" id="chunksCount"></span></div>
+      <div id="chunksList"></div>
+    </section>
+    <section class="episode">
+      <div class="title"><h2>Episode</h2><span class="count" id="episodeCount"></span></div>
+      <form class="episode-form" id="episodeForm">
+        <input id="episodeId" name="episodeId" type="text" placeholder="ep_…" autocomplete="off" spellcheck="false">
+        <button class="action" type="submit">Load</button>
+      </form>
+      <div id="episodeList"></div>
+    </section>
+  </main>
+  <script>
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const copyStore = new Map();
+    const episodeCache = new Map();
+    let copySeq = 0;
+
+    function chips(values) {
+      const list = Array.isArray(values) ? values.filter(Boolean) : [];
+      if (!list.length) return '';
+      return `<div class="chips">${list.map(v => `<span class="chip">${esc(v)}</span>`).join('')}</div>`;
+    }
+
+    function shortTime(value) {
+      const text = String(value || '').trim();
+      if (!text) return '';
+      const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(text);
+      return match ? `${match[1]} ${match[2]}` : text;
+    }
+
+    const copyIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    const checkIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
+    function storeCopy(value) {
+      const key = `c${++copySeq}`;
+      copyStore.set(key, String(value ?? ''));
+      return key;
+    }
+
+    function copyButton(value) {
+      const text = String(value ?? '');
+      if (!text) return '';
+      return `<button class="copy" type="button" title="Copy" aria-label="Copy" data-copy="${esc(storeCopy(text))}">${copyIcon}</button>`;
+    }
+
+    function episodeCopyButton(id) {
+      const text = String(id || '');
+      if (!text) return '';
+      return `<button class="copy" type="button" title="Copy" aria-label="Copy" data-copy-episode="${esc(text)}">${copyIcon}</button>`;
+    }
+
+    async function copyText(text, button) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const area = document.createElement('textarea');
+          area.value = text;
+          area.setAttribute('readonly', '');
+          area.style.position = 'fixed';
+          area.style.opacity = '0';
+          document.body.appendChild(area);
+          area.select();
+          document.execCommand('copy');
+          document.body.removeChild(area);
+        }
+        if (button) {
+          button.classList.add('copied');
+          button.innerHTML = checkIcon;
+          setTimeout(() => {
+            button.classList.remove('copied');
+            button.innerHTML = copyIcon;
+          }, 1000);
+        }
+      } catch (_) {}
+    }
+
+    function itemCard(item) {
+      const id = item.id || item.ID || item.chunk_id || item.ChunkID || '';
+      const type = item.type || item.Type || '';
+      const scope = item.memory_scope || item.MemoryScope || item.source || item.Source || '';
+      const session = item.session_id || item.SessionID || '';
+      const title = item.title || item.Title || '';
+      const summary = item.summary || item.Summary || '';
+      const content = item.content || item.Content || '';
+      const created = item.created_at || item.CreatedAt || '';
+      const expires = item.expires_at || item.ExpiresAt || '';
+      const body = content || summary || '(empty)';
+      const headline = title && title !== id ? title : (summary || body).split('\n')[0];
+      const preview = (summary && title && title !== id) ? summary : body;
+      const badges = [type, scope || session].filter(Boolean)
+        .map(value => `<span class="badge">${esc(value)}</span>`).join('');
+      const metaRows = [
+        id && ['ID', id],
+        created && ['Created', shortTime(created)],
+        expires && ['Expires', shortTime(expires)],
+        session && ['Session', session],
+      ].filter(Boolean).map(([label, value]) =>
+        `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`
+      ).join('');
+      return '<details class="item">'
+        + '<summary>'
+        + '<span class="item-chevron" aria-hidden="true"></span>'
+        + '<div class="item-summary">'
+        + `<div class="item-title">${esc(headline || id || 'Memory')}</div>`
+        + (preview && preview !== headline ? `<div class="item-preview">${esc(preview)}</div>` : '')
+        + '</div>'
+        + `<div class="item-badges">${badges}${copyButton(JSON.stringify(item, null, 2))}</div>`
+        + '</summary>'
+        + '<div class="item-detail">'
+        + (metaRows ? `<dl class="item-meta">${metaRows}</dl>` : '')
+        + `<div class="item-body">${esc(body)}</div>`
+        + chips(item.tags || item.Tags)
+        + chips(item.entities || item.Entities)
+        + '</div>'
+        + '</details>';
+    }
+
+    function renderList(targetId, countId, results, emptyText) {
+      const root = document.getElementById(targetId);
+      const count = document.getElementById(countId);
+      const list = Array.isArray(results) ? results : [];
+      count.textContent = `${list.length} shown`;
+      root.innerHTML = list.length
+        ? list.map(itemCard).join('')
+        : `<div class="empty">${esc(emptyText)}</div>`;
+      return list.length;
+    }
+
+    function parseToolOutput(output) {
+      if (output == null || output === '') return { results: [] };
+      if (typeof output === 'object') return output;
+      try {
+        return JSON.parse(output);
+      } catch (_) {
+        return { raw: String(output) };
+      }
+    }
+
+    async function invokeTool(name, input) {
+      const res = await fetch(`/api/tools/${name}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input }),
+      });
+      if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.is_error) throw new Error(data.error || data.tool_error?.message || `${name} failed`);
+      return parseToolOutput(data.output);
+    }
+
+    function setSectionError(targetId, countId, message) {
+      document.getElementById(countId).textContent = 'error';
+      document.getElementById(targetId).innerHTML = `<div class="error">${esc(message)}</div>`;
+    }
+
+    function renderEpisodeList(entries, openId) {
+      const root = document.getElementById('episodeList');
+      const list = Array.isArray(entries) ? entries : [];
+      if (!list.length) {
+        root.innerHTML = '<div class="empty">No recent episodes.</div>';
+        return 0;
+      }
+      root.innerHTML = list.map(entry => {
+        const id = entry.id || '';
+        const goal = entry.user_goal || entry.summary || id;
+        const status = entry.status || '';
+        const success = entry.success === true ? 'ok' : (entry.success === false ? 'fail' : '');
+        const started = shortTime(entry.started_at || '');
+        const open = id && id === openId ? ' open' : '';
+        const badges = [status, success].filter(Boolean)
+          .map(value => `<span class="badge">${esc(value)}</span>`).join('');
+        return `<details class="item episode-item"${open} data-episode-id="${esc(id)}">`
+          + '<summary>'
+          + '<span class="item-chevron" aria-hidden="true"></span>'
+          + '<div class="item-summary">'
+          + `<div class="item-title">${esc(id)}</div>`
+          + `<div class="item-preview">${esc(goal)}</div>`
+          + (started ? `<div class="item-preview">${esc(started)}</div>` : '')
+          + '</div>'
+          + `<div class="item-badges">${badges}${episodeCopyButton(id)}</div>`
+          + '</summary>'
+          + `<div class="item-detail" data-episode-detail="${esc(id)}"><div class="empty">loading…</div></div>`
+          + '</details>';
+      }).join('');
+      return list.length;
+    }
+
+    async function loadEpisodeList() {
+      const res = await fetch('/api/episodes?limit=20');
+      if (!res.ok) throw new Error(`episodes list: HTTP ${res.status}`);
+      const data = await res.json();
+      return Array.isArray(data.episodes) ? data.episodes : [];
+    }
+
+    async function fetchEpisodeJSON(id) {
+      const trimmed = String(id || '').trim();
+      if (!trimmed) throw new Error('missing episode id');
+      if (episodeCache.has(trimmed)) return episodeCache.get(trimmed);
+      const res = await fetch(`/api/episodes/${encodeURIComponent(trimmed)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const episode = await res.json();
+      const text = JSON.stringify(episode, null, 2);
+      episodeCache.set(trimmed, text);
+      return text;
+    }
+
+    async function fillEpisodeDetail(id) {
+      const detail = document.querySelector(`[data-episode-detail="${CSS.escape(id)}"]`);
+      if (!detail) return 0;
+      try {
+        const text = await fetchEpisodeJSON(id);
+        detail.innerHTML = `<pre class="dump">${esc(text)}</pre>`;
+        document.getElementById('statEpisode').textContent = '1';
+        return 1;
+      } catch (err) {
+        detail.innerHTML = `<div class="error">${esc(err.message || err)}</div>`;
+        document.getElementById('statEpisode').textContent = 'err';
+        return 0;
+      }
+    }
+
+    async function openEpisode(id, { updateInput = true } = {}) {
+      const trimmed = String(id || '').trim();
+      if (updateInput) document.getElementById('episodeId').value = trimmed;
+      if (!trimmed) {
+        document.getElementById('statEpisode').textContent = '—';
+        return 0;
+      }
+      let card = document.querySelector(`details.episode-item[data-episode-id="${CSS.escape(trimmed)}"]`);
+      if (!card) {
+        const root = document.getElementById('episodeList');
+        const empty = root.querySelector('.empty, .error');
+        if (empty) empty.remove();
+        root.insertAdjacentHTML('afterbegin',
+          `<details class="item episode-item open" data-episode-id="${esc(trimmed)}">`
+          + '<summary>'
+          + '<span class="item-chevron" aria-hidden="true"></span>'
+          + '<div class="item-summary">'
+          + `<div class="item-title">${esc(trimmed)}</div>`
+          + '</div>'
+          + `<div class="item-badges">${episodeCopyButton(trimmed)}</div>`
+          + '</summary>'
+          + `<div class="item-detail" data-episode-detail="${esc(trimmed)}"><div class="empty">loading…</div></div>`
+          + '</details>'
+        );
+        card = document.querySelector(`details.episode-item[data-episode-id="${CSS.escape(trimmed)}"]`);
+      }
+      document.querySelectorAll('details.episode-item').forEach(node => {
+        node.open = node === card;
+      });
+      return fillEpisodeDetail(trimmed);
+    }
+
+    async function loadMemory() {
+      const status = document.getElementById('status');
+      const started = performance.now();
+      status.textContent = 'loading…';
+      copyStore.clear();
+      episodeCache.clear();
+      let memoryCount = 0;
+      let deviceCount = 0;
+      let chunksCount = 0;
+      let episodeListCount = 0;
+      let episodeCount = 0;
+      let hadError = false;
+      let episodeEntries = [];
+
+      const memoryPromise = invokeTool('recall_memory', { tags: [], entities: [], types: [], limit: 20 })
+        .then(payload => {
+          if (payload.raw) {
+            document.getElementById('memoryCount').textContent = 'raw';
+            document.getElementById('memoryList').innerHTML = `<pre class="dump">${esc(payload.raw)}</pre>`;
+            memoryCount = 0;
+            return;
+          }
+          memoryCount = renderList('memoryList', 'memoryCount', payload.results, 'No long-term or temporary memories matched browse.');
+        })
+        .catch(err => {
+          hadError = true;
+          setSectionError('memoryList', 'memoryCount', err.message || err);
+        });
+
+      const devicePromise = invokeTool('recall_device_memory', { terms: [], tags: [], entities: [], types: [], limit: 5 })
+        .then(payload => {
+          if (payload.raw) {
+            document.getElementById('deviceCount').textContent = 'raw';
+            document.getElementById('deviceList').innerHTML = `<pre class="dump">${esc(payload.raw)}</pre>`;
+            deviceCount = 0;
+            return;
+          }
+          deviceCount = renderList('deviceList', 'deviceCount', payload.results, 'No device memories matched browse (tool limit 5).');
+        })
+        .catch(err => {
+          hadError = true;
+          setSectionError('deviceList', 'deviceCount', err.message || err);
+        });
+
+      const chunksPromise = invokeTool('recall_session_chunks', { tags: [], entities: [], limit: 20 })
+        .then(payload => {
+          if (payload.raw) {
+            document.getElementById('chunksCount').textContent = 'raw';
+            document.getElementById('chunksList').innerHTML = `<pre class="dump">${esc(payload.raw)}</pre>`;
+            chunksCount = 0;
+            return;
+          }
+          chunksCount = renderList('chunksList', 'chunksCount', payload.results, 'No session chunks matched browse.');
+        })
+        .catch(err => {
+          hadError = true;
+          setSectionError('chunksList', 'chunksCount', err.message || err);
+        });
+
+      const episodeListPromise = loadEpisodeList()
+        .then(entries => {
+          episodeEntries = entries;
+          const preferred = document.getElementById('episodeId').value.trim()
+            || (entries[0] && entries[0].id)
+            || '';
+          episodeListCount = renderEpisodeList(entries, preferred);
+          document.getElementById('episodeCount').textContent = `${episodeListCount} recent`;
+        })
+        .catch(err => {
+          hadError = true;
+          document.getElementById('episodeCount').textContent = 'error';
+          document.getElementById('episodeList').innerHTML = `<div class="error">${esc(err.message || err)}</div>`;
+        });
+
+      await Promise.all([memoryPromise, devicePromise, chunksPromise, episodeListPromise]);
+
+      const selected = document.getElementById('episodeId').value.trim()
+        || (episodeEntries[0] && episodeEntries[0].id)
+        || '';
+      episodeCount = selected ? await openEpisode(selected, { updateInput: true }) : 0;
+
+      document.getElementById('statMemory').textContent = String(memoryCount);
+      document.getElementById('statDevice').textContent = String(deviceCount);
+      document.getElementById('statChunks').textContent = String(chunksCount);
+      document.getElementById('statEpisode').textContent = episodeCount ? '1' : String(episodeListCount);
+      document.getElementById('statMs').textContent = `${Math.round(performance.now() - started)} ms`;
+      status.textContent = hadError ? 'loaded with errors' : 'loaded';
+    }
+
+    document.addEventListener('click', event => {
+      const episodeCopyBtn = event.target.closest('[data-copy-episode]');
+      if (episodeCopyBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        const id = episodeCopyBtn.getAttribute('data-copy-episode') || '';
+        fetchEpisodeJSON(id)
+          .then(text => copyText(text, episodeCopyBtn))
+          .catch(() => {});
+        return;
+      }
+      const copyBtn = event.target.closest('[data-copy]');
+      if (copyBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        const text = copyStore.get(copyBtn.getAttribute('data-copy')) || '';
+        copyText(text, copyBtn);
+      }
+    });
+
+    document.getElementById('episodeList').addEventListener('toggle', event => {
+      const card = event.target;
+      if (!(card instanceof HTMLDetailsElement) || !card.classList.contains('episode-item') || !card.open) return;
+      const id = card.getAttribute('data-episode-id') || '';
+      document.getElementById('episodeId').value = id;
+      document.querySelectorAll('details.episode-item').forEach(node => {
+        if (node !== card) node.open = false;
+      });
+      fillEpisodeDetail(id);
+    });
+
+    document.getElementById('refreshBtn').addEventListener('click', () => { loadMemory(); });
+    document.getElementById('episodeForm').addEventListener('submit', event => {
+      event.preventDefault();
+      openEpisode(document.getElementById('episodeId').value).then(count => {
+        document.getElementById('statEpisode').textContent = count ? '1' : '0';
+      });
+    });
+
+    loadMemory();
+  </script>
+</body>
+</html>

@@ -3012,6 +3012,7 @@ func TestServerServesEmbeddedWebUIAssets(t *testing.T) {
 		{path: "/web-ui/scripts/bootstrap.js", contentType: "text/javascript", content: "loadHistory();"},
 		{path: "/web-ui/scripts/resources.js", contentType: "text/javascript", content: "startResourcePolling"},
 		{path: "/web-ui/scripts/streaming_text.js", contentType: "text/javascript", content: "function createStreamingTextReveal("},
+		{path: "/web-ui/memory.html", contentType: "text/html", content: "recall_memory"},
 	} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
@@ -3445,6 +3446,36 @@ func TestContextPageUsesSafeAttachmentHandlers(t *testing.T) {
 	// Attachment values are user-controlled; inline handlers would let them execute as script.
 	if strings.Contains(readWebUIResource(t, "context.html"), `onclick="openAttachment(`) {
 		t.Fatal("context page embeds attachment values in an inline JavaScript handler")
+	}
+}
+
+func TestMemoryDebugPageIsLinkedAndReadOnly(t *testing.T) {
+	index := readWebUIResource(t, "index.html")
+	if !strings.Contains(index, `href="/web-ui/memory.html"`) {
+		t.Fatal("chat web UI is missing the Memory debug entry")
+	}
+	page := readWebUIResource(t, "memory.html")
+	for _, needle := range []string{
+		"recall_memory",
+		"recall_device_memory",
+		"recall_session_chunks",
+		"/api/episodes?limit=20",
+		"/api/episodes/",
+		"chunk_id",
+		"data-copy",
+		"data-copy-episode",
+		`aria-label="Copy"`,
+		"data-episode-id",
+		"episode-item",
+	} {
+		if !strings.Contains(page, needle) {
+			t.Fatalf("memory debug page is missing %q", needle)
+		}
+	}
+	for _, needle := range []string{"forget_memory", "save_memory", "/api/clear-all"} {
+		if strings.Contains(page, needle) {
+			t.Fatalf("memory debug page should stay read-only; found %q", needle)
+		}
 	}
 }
 
@@ -5042,6 +5073,23 @@ func TestBenchmarkSeedEpisodePersistsCompletedEpisode(t *testing.T) {
 	}
 	if response.Episode.EndedAt == "" || response.Episode.Status == "running" {
 		t.Fatalf("seeded Episode was not completed: %#v", response.Episode)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/episodes?limit=5", nil)
+	listRec := httptest.NewRecorder()
+	handler.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("unexpected list status: %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	var list EpisodeListResponse
+	if err := json.NewDecoder(listRec.Body).Decode(&list); err != nil {
+		t.Fatalf("decode episode list: %v", err)
+	}
+	if len(list.Episodes) == 0 || list.Episodes[0].ID != "ep_benchmark_title_save" {
+		t.Fatalf("unexpected episode list: %#v", list.Episodes)
+	}
+	if list.Episodes[0].UserGoal == "" {
+		t.Fatalf("episode list entry missing user_goal: %#v", list.Episodes[0])
 	}
 }
 

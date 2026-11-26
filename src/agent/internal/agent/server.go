@@ -442,6 +442,24 @@ type EpisodeResponse struct {
 	Episode TaskEpisode `json:"episode"`
 }
 
+// EpisodeListEntry is the read-only summary returned by GET /api/episodes.
+// It intentionally omits on-disk paths from the episode index.
+type EpisodeListEntry struct {
+	ID        string   `json:"id"`
+	Status    string   `json:"status"`
+	UserGoal  string   `json:"user_goal"`
+	Summary   string   `json:"summary"`
+	Success   bool     `json:"success"`
+	StartedAt string   `json:"started_at"`
+	EndedAt   string   `json:"ended_at"`
+	Tags      []string `json:"tags,omitempty"`
+	Entities  []string `json:"entities,omitempty"`
+}
+
+type EpisodeListResponse struct {
+	Episodes []EpisodeListEntry `json:"episodes"`
+}
+
 type ToolCatalogResponse struct {
 	Tools []ToolDescriptor `json:"tools"`
 }
@@ -597,6 +615,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/proactive", s.handleProactive)
 	mux.HandleFunc("/api/context", s.handleContext)
 	mux.HandleFunc("/api/context/attachment", s.handleContextAttachment)
+	mux.HandleFunc("/api/episodes", s.handleEpisodes)
 	mux.HandleFunc("/api/episodes/", s.handleEpisodes)
 	mux.HandleFunc("/api/agent-tasks/history", s.handleTaskHistory)
 	mux.HandleFunc("/api/agent-tasks/history/", s.handleTaskHistory)
@@ -3211,10 +3230,43 @@ func (s *Server) handleEpisodes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Episode store is not configured", http.StatusNotFound)
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/episodes/")
+	id := strings.TrimPrefix(r.URL.Path, "/api/episodes")
 	id = strings.Trim(id, "/")
-	if id == "" || strings.Contains(id, "/") {
+	if strings.Contains(id, "/") {
 		http.Error(w, "Invalid episode id", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if id == "" {
+		limit := 20
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				http.Error(w, "Invalid limit", http.StatusBadRequest)
+				return
+			}
+			limit = parsed
+		}
+		entries, err := store.ListRecent(r.Context(), limit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		episodes := make([]EpisodeListEntry, 0, len(entries))
+		for _, entry := range entries {
+			episodes = append(episodes, EpisodeListEntry{
+				ID:        entry.ID,
+				Status:    entry.Status,
+				UserGoal:  entry.UserGoal,
+				Summary:   entry.Summary,
+				Success:   entry.Success,
+				StartedAt: entry.StartedAt,
+				EndedAt:   entry.EndedAt,
+				Tags:      append([]string(nil), entry.Tags...),
+				Entities:  append([]string(nil), entry.Entities...),
+			})
+		}
+		json.NewEncoder(w).Encode(EpisodeListResponse{Episodes: episodes})
 		return
 	}
 	episode, err := store.Get(r.Context(), id)
@@ -3222,7 +3274,6 @@ func (s *Server) handleEpisodes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(EpisodeResponse{Episode: episode})
 }
 
