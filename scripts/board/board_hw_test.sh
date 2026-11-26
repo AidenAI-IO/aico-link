@@ -90,9 +90,17 @@ while [ "$#" -gt 0 ]; do
         --only) [ "$#" -ge 2 ] || die "$1 needs a value"; SUITES="$(csv_words "$2")"; shift 2 ;;
         --skip)
             [ "$#" -ge 2 ] || die "$1 needs a value"
+            set -f  # names are words, not file patterns
             for skipped in $(csv_words "$2"); do
-                SUITES="$(printf '%s\n' $SUITES | grep -vx "$skipped" | tr '\n' ' ')"
+                # Names are compared literally and must exist.
+                case " $ALL_SUITES " in *" $skipped "*) ;; *) die "unknown suite: $skipped (use: $ALL_SUITES)" ;; esac
+                kept=""
+                for suite in $SUITES; do
+                    [ "$suite" = "$skipped" ] || kept="$kept $suite"
+                done
+                SUITES="${kept# }"
             done
+            set +f
             shift 2 ;;
         --hotplug|--sleep-test) ARGS_hdmi="$ARGS_hdmi $1"; shift ;;
         --expect-size|--modes) [ "$#" -ge 2 ] || die "$1 needs a value"; no_spaces "$1" "$2"; ARGS_hdmi="$ARGS_hdmi $1 $2"; shift 2 ;;
@@ -107,6 +115,8 @@ while [ "$#" -gt 0 ]; do
         *) die "unknown option: $1" ;;
     esac
 done
+# Suite names and forwarded values are words, never file patterns.
+set -f
 for suite in $SUITES; do
     case " $ALL_SUITES " in *" $suite "*) ;; *) die "unknown suite: $suite (use: $ALL_SUITES)" ;; esac
 done
@@ -115,16 +125,22 @@ ensure_artifact_dir
 [ -n "$REPORT" ] || REPORT="${AICO_HW_RUN_DIR:-$AICO_LOW_LEVEL_ARTIFACT_DIR}/report.txt"
 : >"$REPORT" 2>/dev/null || die "cannot write report: $REPORT"
 
-COMMON="--artifact-dir $AICO_LOW_LEVEL_ARTIFACT_DIR --run-id $RUN_ID"
-INTER=""
-[ "$INTERACTIVE" = "1" ] && INTER="--interactive"
 SUMMARY=""
 OVERALL=0
 
 run_suite() {
     name="$1"
     shift
-    log="$(mktemp "${TMPDIR:-/tmp}/aico_hw_suite.XXXXXX")"
+    # The counts come from this log: without it a run could not be judged.
+    if ! log="$(mktemp "${TMPDIR:-/tmp}/aico_hw_suite.XXXXXX")"; then
+        printf '[FAIL] %s: cannot create a temporary log in %s; suite not run\n' "$name" "${TMPDIR:-/tmp}" | tee -a "$REPORT"
+        hw_event FAIL "$name: cannot create a temporary log; suite not run"
+        SUMMARY="$SUMMARY$(printf '%-12s %-5s not run (no temporary log)' "$name" FAIL)
+"
+        OVERALL=1
+        return 0
+    fi
+    rc_file="$log.rc"
     printf '\n################ %s ################\n' "$name" | tee -a "$REPORT"
     # The suites read prompts from /dev/tty, so tee does not block them.
     if [ "$name" = "lowlevel" ]; then
@@ -133,7 +149,7 @@ run_suite() {
         transcript="${AICO_HW_RUN_DIR:-$AICO_LOW_LEVEL_ARTIFACT_DIR}/lowlevel.log"
         printf '# Aico hardware test transcript: suite=lowlevel run_id=%s\n# started=%s uptime_s=%s boot_id=%s\n# command: %s\n' \
             "$RUN_ID" "$(hw_now)" "$(hw_uptime)" "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" "$*" >"$transcript"
-        sh "$@" 2>&1 | (
+        { sh "$@" 2>&1; echo "$?" >"$rc_file"; } | (
             HW_SUITE=lowlevel
             HW_SECTION=""
             while IFS= read -r line; do
@@ -141,10 +157,13 @@ run_suite() {
                 hw_line_event "$line"
             done
         ) | tee -a "$transcript" | tee "$log" | tee -a "$REPORT"
-        printf '# finished=%s uptime_s=%s\n' "$(hw_now)" "$(hw_uptime)" >>"$transcript"
+        printf '# finished=%s uptime_s=%s exit=%s\n' "$(hw_now)" "$(hw_uptime)" "$(cat "$rc_file" 2>/dev/null)" >>"$transcript"
     else
-        sh "$@" 2>&1 | tee "$log" | tee -a "$REPORT"
+        { sh "$@" 2>&1; echo "$?" >"$rc_file"; } | tee "$log" | tee -a "$REPORT"
     fi
+    # The suite's own exit status counts too: a crash prints no [FAIL] line.
+    rc="$(cat "$rc_file" 2>/dev/null)"
+    [ -n "$rc" ] || rc=2
     passes="$(grep -c '^\[PASS\]' "$log")"
     warns="$(grep -c '^\[WARN\]' "$log")"
     fails="$(grep -c '^\[FAIL\]' "$log")"
@@ -152,10 +171,17 @@ run_suite() {
     result="PASS"
     [ "$warns" -gt 0 ] && result="WARN"
     [ "$fails" -gt 0 ] && { result="FAIL"; OVERALL=1; }
+    if [ "$rc" -ne 0 ] && [ "$fails" -eq 0 ]; then
+        result="FAIL"
+        OVERALL=1
+        printf '[FAIL] %s exited with status %s without reporting a failure\n' "$name" "$rc" | tee -a "$REPORT"
+        (HW_SUITE="$name"; hw_event FAIL "$name exited with status $rc without reporting a failure")
+    fi
+    [ "$name" = "lowlevel" ] && (HW_SUITE=lowlevel; hw_event END "exit=$rc")
     SUMMARY="$SUMMARY$(printf '%-12s %-5s pass=%-3s warn=%-3s fail=%-3s skip=%s' "$name" "$result" "$passes" "$warns" "$fails" "$skips")
 "
-    hw_event SUITE "$name $result pass=$passes warn=$warns fail=$fails skip=$skips"
-    rm -f "$log"
+    hw_event SUITE "$name $result pass=$passes warn=$warns fail=$fails skip=$skips exit=$rc"
+    rm -f "$log" "$rc_file"
 }
 
 {
@@ -169,9 +195,14 @@ for suite in $SUITES; do
     case "$suite" in
         lowlevel) run_suite lowlevel "$SCRIPT_DIR/board_low_level_smoke.sh" --artifact-dir "${AICO_HW_RUN_DIR:-$AICO_LOW_LEVEL_ARTIFACT_DIR}" --run-id "$RUN_ID" ;;
         *)
+            # Each value stays one argument. Forwarded suite options are
+            # checked to contain no spaces when they are parsed.
+            set -- "$SCRIPT_DIR/$(suite_file "$suite")"
+            [ "$INTERACTIVE" = "1" ] && set -- "$@" --interactive
             extra=""
             case "$suite" in hdmi|mcu|peripherals) eval "extra=\$ARGS_$suite" ;; esac
-            run_suite "$suite" "$SCRIPT_DIR/$(suite_file "$suite")" $INTER $extra $COMMON ;;
+            for word in $extra; do set -- "$@" "$word"; done
+            run_suite "$suite" "$@" --artifact-dir "$AICO_LOW_LEVEL_ARTIFACT_DIR" --run-id "$RUN_ID" ;;
     esac
 done
 

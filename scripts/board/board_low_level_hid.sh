@@ -15,7 +15,7 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/board/board_low_level_hid.sh [options]
+  sudo sh board_low_level_hid.sh [options]
 
 Runs board-local USB HID checks. By default it is read-only and does not emit
 keyboard or pointer reports.

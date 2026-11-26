@@ -10,7 +10,7 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/board/board_low_level_hdmi.sh [options]
+  sudo sh board_low_level_hdmi.sh [options]
 
 Runs board-local HDMI/frame_service checks:
   - video device and frame socket

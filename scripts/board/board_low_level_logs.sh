@@ -9,7 +9,7 @@ LINES=30
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/board/board_low_level_logs.sh [options]
+  sudo sh board_low_level_logs.sh [options]
 
 Prints recent board-local low-level service logs.
 

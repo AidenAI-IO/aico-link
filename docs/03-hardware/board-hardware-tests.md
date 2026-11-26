@@ -25,7 +25,10 @@ ssh -t aico@192.168.42.1 'sudo sh /tmp/board/board_hw_test.sh --interactive \
 
 Without `--interactive`, steps that need a person (speech, LED confirmation,
 touch key, wake word, TF card insertion, cable and charger handling) are
-reported as `[SKIP]`, so an unattended run never waits for input.
+reported as `[SKIP]`, so an unattended run never waits for input. If the
+operator's terminal goes away during an interactive run, the run reports one
+`[FAIL]` for the lost input and skips the remaining interactive steps; an
+unanswered confirmation is never counted as a hardware result.
 
 Useful options of the entry point:
 
@@ -157,7 +160,10 @@ values from the report as the baseline for later boards.
 ## Evidence of a run
 
 Every run writes an evidence directory, `<artifact-dir>/aico_hw_<run-id>/`
-(default `/tmp`), and a tarball of it next to it. Together they show that the
+(default `/tmp`), and a tarball of it next to it. The directory is created
+fresh and private to the user running the tests; a run never reuses an
+existing one, so pass a new `--run-id` for every run (the default timestamp id
+gets the process id appended if it is taken). Together they show that the
 tests ran on this board, when, with which scripts, and what they measured:
 
 | File | Content |
@@ -166,7 +172,7 @@ tests ran on this board, when, with which scripts, and what they measured:
 | `<suite>.log` | Full console transcript of each suite (`lowlevel.log` for the low-level smoke, `all.log` for the entry point), with a header giving the start time, uptime, boot id, host, operator and command line, and a footer with the end time and exit code |
 | `events.jsonl` | One JSON line per section, check result, prompt and operator answer, recorded as it happens, with UTC time, seconds since boot and the section it belongs to |
 | `run.json` | Run id, start and end, exit code, board identity (boot id, serial, MAC addresses, model, kernel, `/etc/aico-release`, installed `aico*` packages, OS release, uptime, operator), clock state at the end of the run (NTP enabled and synchronized, time zone, RTC time and its offset from the system clock, which tells whether the timestamps can be trusted), per-suite counts, time span and exit code, failures, SHA-256 of every script, size and SHA-256 of every artifact |
-| `kernel.log` | Kernel messages logged since the run started (receiver locks, USB, audio, MMC) |
+| `kernel.log` | Kernel messages logged since the run started (receiver locks, USB, audio, MMC); never older messages. Without `journalctl` it uses `dmesg` lines stamped after the start |
 | `*.pcm`, `*.json`, `*.bmp` | Microphone captures (16-bit little-endian at the reported rate and channel count), loopback measurements and screenshots |
 | `report.txt` | The entry point's report |
 | `SHA256SUMS` | SHA-256 of every file in the directory |

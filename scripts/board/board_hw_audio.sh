@@ -80,9 +80,15 @@ while [ "$#" -gt 0 ]; do
         *) die "unknown option: $1" ;;
     esac
 done
-require_uint "--rate" "$RATE"
-require_uint "--noise-seconds" "$NOISE_SECONDS"
-[ "$CHANNELS" = "auto" ] || require_uint "--channels" "$CHANNELS"
+# arecord -d 0 records forever, so every duration must be positive.
+for value in "--rate=$RATE" "--noise-seconds=$NOISE_SECONDS" "--voice-seconds=$VOICE_SECONDS"; do
+    require_uint "${value%%=*}" "${value#*=}"
+    [ "${value#*=}" -gt 0 ] || die "${value%%=*} must be greater than 0"
+done
+if [ "$CHANNELS" != "auto" ]; then
+    require_uint "--channels" "$CHANNELS"
+    [ "$CHANNELS" -gt 0 ] || die "--channels must be greater than 0"
+fi
 
 AUDIO_CLI="$(find_bin audio_service_cli)"
 AUDIO_UNIT=""
@@ -95,8 +101,12 @@ restore() {
         ORIGINAL_VOLUME=""
     fi
     if [ "$SERVICE_STOPPED" = "1" ] && [ -n "$AUDIO_UNIT" ]; then
-        systemctl start "$AUDIO_UNIT" >/dev/null 2>&1
-        SERVICE_STOPPED=0
+        if systemctl start "$AUDIO_UNIT" >/dev/null 2>&1; then
+            SERVICE_STOPPED=0
+        else
+            # Keep the flag so a later exit trap tries again.
+            fail "could not restart $AUDIO_UNIT; start it with: sudo systemctl start $AUDIO_UNIT"
+        fi
     fi
 }
 trap 'restore' EXIT
@@ -156,9 +166,16 @@ if [ "$STOP_SERVICE" = "1" ]; then
     for unit in aico-audio.service aico_audio.service audio_service.service; do
         if systemctl cat "$unit" >/dev/null 2>&1; then AUDIO_UNIT="$unit"; break; fi
     done
-    if [ -n "$AUDIO_UNIT" ] && systemctl stop "$AUDIO_UNIT" 2>/dev/null; then
+    if [ -n "$AUDIO_UNIT" ]; then
+        # Owned before the stop is issued, so an interruption during the stop
+        # still restarts the service.
         SERVICE_STOPPED=1
-        pass "stopped $AUDIO_UNIT for direct ALSA access (restarted at exit)"
+        if systemctl stop "$AUDIO_UNIT" 2>/dev/null; then
+            pass "stopped $AUDIO_UNIT for direct ALSA access (restarted at exit)"
+        else
+            systemctl is-active --quiet "$AUDIO_UNIT" && SERVICE_STOPPED=0
+            warn "could not stop the audio service; continuing"
+        fi
     else
         warn "could not stop the audio service; continuing"
     fi
@@ -212,34 +229,39 @@ if [ -n "$AUDIO_CLI" ] && [ "$SERVICE_STOPPED" = "0" ]; then
         --save "$loop_file" --json "$(hw_artifact_path loopback_service.json)"
 
     section "volume curve (audio_service)"
-    previous=""
-    monotonic=1
-    for volume in $VOLUME_STEPS; do
-        "$AUDIO_CLI" --socket "$AUDIO_SOCKET" set-volume --volume "$volume" >/dev/null 2>&1
-        json="$(hw_artifact_path "volume_$volume.json")"
-        python3 "$HW_TOOLS" audio-loopback --player service --audio-cli "$AUDIO_CLI" --audio-socket "$AUDIO_SOCKET" \
-            --capture-device "$CAPTURE_DEVICE" --rate "$RATE" --channels "$CHANNELS" --freqs 1000 \
-            --json "$json" >/dev/null 2>&1
-        level="$(python3 -c 'import json,sys
-d=json.load(open(sys.argv[1]))
-v=[t["level_dbfs"] for c in d["channels"] for t in c["tones"] if not t.get("missing")]
-print(max(v) if v else "")' "$json" 2>/dev/null)"
-        if [ -z "$level" ]; then
-            fail "volume $volume: 1 kHz not detected"
-            monotonic=0
-            continue
-        fi
-        printf '    volume %-3s -> 1 kHz at %s dBFS\n' "$volume" "$level"
-        if [ -n "$previous" ] && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) > float(sys.argv[2]) + 1 else 1)' "$level" "$previous"; then
-            :
-        elif [ -n "$previous" ]; then
-            monotonic=0
-        fi
-        previous="$level"
-    done
-    [ "$monotonic" = "1" ] && pass "speaker level rises with the audio_service volume ($VOLUME_STEPS)" \
-        || fail "speaker level does not rise with the audio_service volume ($VOLUME_STEPS)"
-    "$AUDIO_CLI" --socket "$AUDIO_SOCKET" set-volume --volume "$ORIGINAL_VOLUME" >/dev/null 2>&1
+    if [ -z "$ORIGINAL_VOLUME" ]; then
+        # Without the starting volume the curve could not be undone.
+        skip "volume curve (the current volume could not be read, so it could not be restored)"
+    else
+        previous=""
+        monotonic=1
+        for volume in $VOLUME_STEPS; do
+            "$AUDIO_CLI" --socket "$AUDIO_SOCKET" set-volume --volume "$volume" >/dev/null 2>&1
+            json="$(hw_artifact_path "volume_$volume.json")"
+            python3 "$HW_TOOLS" audio-loopback --player service --audio-cli "$AUDIO_CLI" --audio-socket "$AUDIO_SOCKET" \
+                --capture-device "$CAPTURE_DEVICE" --rate "$RATE" --channels "$CHANNELS" --freqs 1000 \
+                --json "$json" >/dev/null 2>&1
+            level="$(python3 -c 'import json,sys
+    d=json.load(open(sys.argv[1]))
+    v=[t["level_dbfs"] for c in d["channels"] for t in c["tones"] if not t.get("missing")]
+    print(max(v) if v else "")' "$json" 2>/dev/null)"
+            if [ -z "$level" ]; then
+                fail "volume $volume: 1 kHz not detected"
+                monotonic=0
+                continue
+            fi
+            printf '    volume %-3s -> 1 kHz at %s dBFS\n' "$volume" "$level"
+            if [ -n "$previous" ] && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) > float(sys.argv[2]) + 1 else 1)' "$level" "$previous"; then
+                :
+            elif [ -n "$previous" ]; then
+                monotonic=0
+            fi
+            previous="$level"
+        done
+        [ "$monotonic" = "1" ] && pass "speaker level rises with the audio_service volume ($VOLUME_STEPS)" \
+            || fail "speaker level does not rise with the audio_service volume ($VOLUME_STEPS)"
+        "$AUDIO_CLI" --socket "$AUDIO_SOCKET" set-volume --volume "$ORIGINAL_VOLUME" >/dev/null 2>&1
+    fi
 
     section "audio_service recording path"
     service_file="$(hw_artifact_path service_record.pcm)"
@@ -257,8 +279,9 @@ fi
 section "voice capture"
 if interactive_or_skip "spoken-voice capture"; then
     voice_file="$(hw_artifact_path voice.pcm)"
-    prompt_enter "After Enter, speak normally toward the board for $VOICE_SECONDS seconds from about 1 m away."
-    if arecord -q -D "$CAPTURE_DEVICE" -t raw -f S16_LE -r "$RATE" -c "$CHANNELS" -d "$VOICE_SECONDS" "$voice_file" 2>/dev/null; then
+    if ! prompt_enter "After Enter, speak normally toward the board for $VOICE_SECONDS seconds from about 1 m away."; then
+        skip "spoken-voice capture (no operator input)"
+    elif arecord -q -D "$CAPTURE_DEVICE" -t raw -f S16_LE -r "$RATE" -c "$CHANNELS" -d "$VOICE_SECONDS" "$voice_file" 2>/dev/null; then
         hw_tool audio-stats "$voice_file" --rate "$RATE" --channels "$CHANNELS" --label "voice" --expect voice
         printf '    playing the capture back...\n'
         aplay -q -D "$PLAYBACK_DEVICE" -t raw -f S16_LE -r "$RATE" -c "$CHANNELS" "$voice_file" >/dev/null 2>&1

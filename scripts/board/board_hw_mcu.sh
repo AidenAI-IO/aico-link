@@ -79,14 +79,29 @@ print("" if d is None else (str(d).lower() if isinstance(d,bool) else d))' "$2" 
 }
 
 RESTORE_LEDS=""
+TIMER_ARMED=0
 restore_leds() {
     for led in $RESTORE_LEDS; do
         mcu set_led --led "$led" --mode auto >/dev/null 2>&1
     done
     RESTORE_LEDS=""
 }
-trap 'restore_leds' EXIT
-trap 'restore_leds; exit 130' INT TERM
+# The test arms a wake-up timer only when none was active, so any timer left
+# after its set request (even one with an unknown outcome) is the test's own.
+cancel_test_timer() {
+    [ "$TIMER_ARMED" = "1" ] || return 0
+    if [ "$(json_get "$(mcu cancel_wakeup_timer)" status)" = "OK" ]; then
+        TIMER_ARMED=0
+        return 0
+    fi
+    return 1
+}
+cleanup() {
+    restore_leds
+    cancel_test_timer >/dev/null 2>&1
+}
+trap 'cleanup' EXIT
+trap 'cleanup; exit 130' INT TERM
 
 section "mcu_service"
 warn_if_not_root
@@ -133,8 +148,8 @@ while [ "$i" -lt "$BATTERY_SAMPLES" ]; do
     charge="$(json_get "$battery" battery.charge_state)"
     printf '    sample %s: %s%% %smV %s\n' "$((i + 1))" "${percent:-?}" "${mv:-?}" "$charge"
     if [ -n "$mv" ]; then
-        [ -z "$mv_min" ] || [ "$mv" -lt "$mv_min" ] && mv_min="$mv"
-        [ -z "$mv_max" ] || [ "$mv" -gt "$mv_max" ] && mv_max="$mv"
+        if [ -z "$mv_min" ] || [ "$mv" -lt "$mv_min" ]; then mv_min="$mv"; fi
+        if [ -z "$mv_max" ] || [ "$mv" -gt "$mv_max" ]; then mv_max="$mv"; fi
     fi
     charge_states="$charge_states $charge"
     i=$((i + 1))
@@ -146,11 +161,12 @@ if [ -n "${battery:-}" ] && [ "$(json_get "$battery" status)" = "OK" ]; then
     else
         warn "battery level not reported (raw $(json_get "$battery" battery.raw_percent); gauge not ready or battery absent)"
     fi
-    if [ -n "$mv" ]; then
-        if [ "$mv" -ge 3000 ] && [ "$mv" -le 4500 ]; then
-            pass "battery voltage $mv mV within 3000..4500 mV"
+    if [ -n "$mv_min" ]; then
+        # Every sample must be in range, not only the last one.
+        if [ "$mv_min" -ge 3000 ] && [ "$mv_max" -le 4500 ]; then
+            pass "battery voltage ${mv_min}..${mv_max} mV within 3000..4500 mV"
         else
-            fail "battery voltage $mv mV outside 3000..4500 mV"
+            fail "battery voltage ${mv_min}..${mv_max} mV outside 3000..4500 mV"
         fi
         [ $((mv_max - mv_min)) -le 150 ] && pass "voltage stable over $BATTERY_SAMPLES samples (${mv_min}..${mv_max} mV)" \
             || warn "voltage moved $((mv_max - mv_min)) mV over $BATTERY_SAMPLES samples"
@@ -171,6 +187,7 @@ if [ "$(json_get "$timer" status)" != "OK" ]; then
 elif [ "$(json_get "$timer" timer.active)" = "true" ]; then
     skip "a wake-up timer is already active ($(json_get "$timer" timer.remaining_s)s left); not touching it"
 else
+    TIMER_ARMED=1
     set_reply="$(mcu set_wakeup_timer --delay-s 3600)"
     if [ "$(json_get "$set_reply" status)" = "OK" ]; then
         readback="$(mcu get_wakeup_timer)"
@@ -180,15 +197,22 @@ else
         else
             fail "wake-up timer read back as $readback"
         fi
-        cancel="$(mcu cancel_wakeup_timer)"
+        cancel_test_timer
         after="$(mcu get_wakeup_timer)"
-        if [ "$(json_get "$cancel" status)" = "OK" ] && [ "$(json_get "$after" timer.active)" = "false" ]; then
+        if [ "$TIMER_ARMED" = "0" ] && [ "$(json_get "$after" timer.active)" = "false" ]; then
             pass "wake-up timer cancelled"
         else
-            fail "wake-up timer cancel failed: $cancel / $after"
+            fail "wake-up timer cancel failed: $after"
         fi
     else
         fail "set_wakeup_timer failed: $set_reply"
+        # A lost acknowledgement can leave the timer armed: reconcile it.
+        if [ "$(json_get "$(mcu get_wakeup_timer)" timer.active)" = "true" ]; then
+            cancel_test_timer && warn "set_wakeup_timer reported failure but armed the timer; cancelled it" \
+                || fail "a test wake-up timer may still be armed; cancel it with the MCU service"
+        else
+            TIMER_ARMED=0
+        fi
     fi
 fi
 
@@ -208,24 +232,55 @@ for led in red white; do
         continue
     fi
     RESTORE_LEDS="$RESTORE_LEDS $led"
+    # The lease must outlast the operator's answer; it expires to auto mode.
+    lease=10
+    [ "$INTERACTIVE" = "1" ] && lease=600
     for mode in on blink off; do
         if [ "$mode" = "blink" ]; then
-            reply="$(mcu set_led --led "$led" --mode blink --on-ms 200 --off-ms 200 --lease-s 10)"
+            reply="$(mcu set_led --led "$led" --mode blink --on-ms 200 --off-ms 200 --lease-s "$lease")"
         else
-            reply="$(mcu set_led --led "$led" --mode "$mode" --lease-s 10)"
+            reply="$(mcu set_led --led "$led" --mode "$mode" --lease-s "$lease")"
         fi
-        effective="$(json_get "$(mcu get_led --led "$led")" led.effective_mode)"
-        if [ "$(json_get "$reply" status)" = "OK" ] && [ "$effective" = "$mode" ]; then
-            pass "$led LED $mode (effective mode read back)"
-        else
-            fail "$led LED $mode: reply $reply, effective '$effective'"
+        readback="$(mcu get_led --led "$led")"
+        requested="$(json_get "$readback" led.requested_mode)"
+        effective="$(json_get "$readback" led.effective_mode)"
+        reason="$(json_get "$readback" led.override_reason)"
+        if [ "$(json_get "$reply" status)" != "OK" ] || [ "$requested" != "$mode" ]; then
+            fail "$led LED $mode: reply $reply, requested '$requested'"
+            continue
         fi
+        case "$reason" in
+            ''|application|auto) ;;
+            *)
+                # Startup, low-battery and charging policy take priority over
+                # application control; the request is valid but not visible.
+                skip "$led LED $mode: accepted, output held by the $reason policy (physical check deferred)"
+                continue ;;
+        esac
+        if [ "$effective" != "$mode" ]; then
+            fail "$led LED $mode: requested but effective mode is '$effective'"
+            continue
+        fi
+        pass "$led LED $mode (effective mode read back)"
         if [ "$INTERACTIVE" = "1" ]; then
             case "$mode" in
-                on) confirm_check "$led LED on" "Is the $led LED lit steadily?" ;;
-                blink) confirm_check "$led LED blink" "Is the $led LED blinking about 2.5 times per second?" ;;
-                off) confirm_check "$led LED off" "Is the $led LED off?" ;;
+                on) question="Is the $led LED lit steadily?" ;;
+                blink) question="Is the $led LED blinking about 2.5 times per second?" ;;
+                off) question="Is the $led LED off?" ;;
             esac
+            ask_yes_no "$question"
+            answer=$?
+            # An answer given after the lease expired describes auto mode.
+            still="$(json_get "$(mcu get_led --led "$led")" led.effective_mode)"
+            if [ "$answer" -eq 2 ]; then
+                skip "$led LED $mode (no operator answer)"
+            elif [ "$still" != "$mode" ]; then
+                skip "$led LED $mode: the LED left $mode before the answer (now '$still'); repeat the check"
+            elif [ "$answer" -eq 0 ]; then
+                pass "$led LED $mode (confirmed by operator)"
+            else
+                fail "$led LED $mode (operator reported a problem)"
+            fi
         else
             sleep 1
         fi

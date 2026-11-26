@@ -216,13 +216,13 @@ screenshot_check() {
 
 # loss_and_recovery LABEL LOSE_PROMPT RESTORE_PROMPT
 loss_and_recovery() {
-    prompt_enter "$2"
+    prompt_enter "$2" || { skip "$1 (no operator input)"; return 0; }
     if wait_until signal_lost_now 30; then
         pass "$1: signal loss detected after ~${WAITED}s (state $(value_of state "$h"), stale $(value_of stale "$m"), frame age $(value_of frame_age_ms "$h") ms)"
     else
         fail "$1: no signal loss reported within 30s"
     fi
-    prompt_enter "$3"
+    prompt_enter "$3" || { skip "$1 recovery (no operator input)"; return 0; }
     if wait_until capture_ready_now "$SETTLE_SECONDS"; then
         pass "$1: capture recovered ${WAITED}s after restoring the signal"
         [ "$WAITED" -gt 30 ] && warn "$1: recovery took over 30s (EDID renegotiation can take ~30s)"
@@ -304,13 +304,29 @@ section "screenshot content"
 if screenshot_check "screenshot" hdmi_a; then
     shot_a="$SHOT"
     if interactive_or_skip "source-change detection"; then
-        prompt_enter "Change what the source shows (open another app or page)."
-        shot_b="$(hw_artifact_path hdmi_b.bmp)"
-        "$FRAME_CLI" --socket "$FRAME_SOCKET" screenshot --out "$shot_b" >/dev/null 2>&1
-        hw_tool frame-stats "$shot_b" --compare "$shot_a" --expect-change
-        confirm_check "capture matches the source" "Open $shot_b on a computer (or trust the stats): does it show the new screen without tearing, colour shift or garbage?"
+        if prompt_enter "Change what the source shows (open another app or page)."; then
+            shot_b="$(hw_artifact_path hdmi_b.bmp)"
+            "$FRAME_CLI" --socket "$FRAME_SOCKET" screenshot --out "$shot_b" >/dev/null 2>&1
+            hw_tool frame-stats "$shot_b" --compare "$shot_a" --expect-change
+            confirm_check "capture matches the source" "Open $shot_b on a computer (or trust the stats): does it show the new screen without tearing, colour shift or garbage?"
+        else
+            skip "source-change detection (no operator input)"
+        fi
     fi
 fi
+
+MODE_RESTORE_PENDING=0
+# restore_mode - put back the input-mode selection found before --modes.
+# Returns nonzero when the selection could not be restored.
+restore_mode() {
+    [ "$MODE_RESTORE_PENDING" = "1" ] || return 0
+    MODE_RESTORE_PENDING=0
+    if [ -n "$ORIGINAL_MODE" ]; then
+        "$HDMI_MODE_BIN" "$ORIGINAL_MODE" >/dev/null 2>&1
+    else
+        rm -f "$HDMI_MODE_FILE" && systemctl restart aico-frame.service >/dev/null 2>&1
+    fi
+}
 
 if [ -n "$MODES" ]; then
     section "input modes"
@@ -325,6 +341,10 @@ if [ -n "$MODES" ]; then
             ORIGINAL_MODE=""
         fi
         printf '    original selection: %s\n' "${ORIGINAL_MODE:-default (no saved mode)}"
+        # Restore the selection on every exit path, including an interrupted run.
+        MODE_RESTORE_PENDING=1
+        trap 'restore_mode >/dev/null; exit 130' INT TERM HUP
+        trap 'restore_mode >/dev/null' EXIT
         for mode in $MODES; do
             expected_fps="${mode#1080p}"
             if "$HDMI_MODE_BIN" "$mode" >/dev/null 2>&1; then
@@ -352,17 +372,14 @@ if [ -n "$MODES" ]; then
             measure_rate "$mode"
             screenshot_check "$mode screenshot" "hdmi_$mode" >/dev/null
         done
-        if [ -n "$ORIGINAL_MODE" ]; then
-            "$HDMI_MODE_BIN" "$ORIGINAL_MODE" >/dev/null 2>&1
-        else
-            rm -f "$HDMI_MODE_FILE"
-            systemctl restart aico-frame.service >/dev/null 2>&1
-        fi
-        if wait_until capture_ready_now "$SETTLE_SECONDS"; then
+        if ! restore_mode; then
+            fail "could not restore the original selection (${ORIGINAL_MODE:-default}); set it with: sudo aico-hdmi-mode ${ORIGINAL_MODE:-1080p60}"
+        elif wait_until capture_ready_now "$SETTLE_SECONDS"; then
             pass "restored the original selection (${ORIGINAL_MODE:-default}) and capture recovered in ${WAITED}s"
         else
             fail "restored the original selection (${ORIGINAL_MODE:-default}) but capture did not recover within ${SETTLE_SECONDS}s"
         fi
+        trap - INT TERM HUP EXIT
     fi
 fi
 

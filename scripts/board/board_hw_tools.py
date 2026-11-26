@@ -210,7 +210,7 @@ def align_tone_plan(samples: list[int], rate: int, parts: list[tuple[float, int,
     hop = max(8, rate // 50)
     hops = len(samples) // hop
     span = max(end for _, _, end in parts)
-    if hops < 4 or len(samples) < span:
+    if hops < 4 or len(samples) < span or any(end <= start or start < 0 for _, start, end in parts):
         return None
     rises: dict[float, list[float]] = {}
     for freq in sorted({f for f, _, _ in parts}):
@@ -225,8 +225,12 @@ def align_tone_plan(samples: list[int], rate: int, parts: list[tuple[float, int,
         scores = []
         for freq, start, end in parts:
             a, b = offset + start // hop, offset + max(start // hop + 1, end // hop)
+            if b > hops:
+                break
             prefix = rises[freq]
             scores.append((prefix[b] - prefix[a]) / (b - a))
+        if len(scores) < len(parts):
+            break
         if sum(scores) > best:
             best, best_offset, best_parts = sum(scores), offset, scores
     if best_offset is None or max(best_parts) < min_rise_db:
@@ -287,24 +291,31 @@ def cmd_audio_stats(args: argparse.Namespace) -> int:
     if not data:
         report.fail(f"{label}: capture is empty")
         return report.exit_code()
+    if not channels or not channels[0]:
+        report.fail(f"{label}: capture holds no complete {args.channels}-channel sample frame ({len(data)} bytes)")
+        return report.exit_code()
     stats = [channel_stats(ch, args.rate) for ch in channels]
     for index, entry in enumerate(stats):
         name = f"{label} ch{index}" if args.channels > 1 else label
         report.info(f"{name}: " + json.dumps(entry, sort_keys=True))
+        if entry["constant"] and index > 0:
+            # audio_service uses the left channel only: a right channel that
+            # never changes (zero or a rail value) has no microphone.
+            report.info(f"{name}: constant {channels[index][0]} (no microphone on this input); not analyzed")
+            continue
         if entry["all_zero"]:
             report.fail(f"{name}: every sample is zero (dead input or muted path)")
             continue
         if entry["constant"]:
-            if index > 0:
-                # audio_service uses the left channel only.
-                report.info(f"{name}: constant {channels[index][0]} (no microphone on this input); not analyzed")
-            else:
-                report.fail(f"{name}: stuck at {channels[index][0]} for the whole capture (dead input)")
+            report.fail(f"{name}: stuck at {channels[index][0]} for the whole capture (dead input)")
             continue
         report.check(entry["clip_pct"] <= args.max_clip_pct,
                      f"{name}: clipping {entry['clip_pct']}% <= {args.max_clip_pct}%")
         report.check(abs(entry["dc_offset_pct"]) <= args.max_dc_pct,
                      f"{name}: DC offset {entry['dc_offset_pct']}% within +/-{args.max_dc_pct}%", warn_only=True)
+        if args.expect != "any" and entry["noise_floor_dbfs"] is None:
+            report.fail(f"{name}: capture is {entry['seconds']} s, shorter than one 100 ms analysis window")
+            continue
         if args.expect == "quiet":
             floor = entry["noise_floor_dbfs"]
             report.check(floor <= args.max_noise_dbfs,
@@ -337,6 +348,15 @@ def wait_and_read(proc: subprocess.Popen, timeout: float) -> tuple[int, str]:
 
 
 def cmd_audio_loopback(args: argparse.Namespace) -> int:
+    if args.segment_ms <= 0:
+        print(f"[FAIL] --segment-ms must be greater than 0, got {args.segment_ms}")
+        return 1
+    # The scratch directory goes on every path; a saved capture lives elsewhere.
+    with tempfile.TemporaryDirectory(prefix="aico_loopback_") as workdir:
+        return _audio_loopback(args, workdir)
+
+
+def _audio_loopback(args: argparse.Namespace, workdir: str) -> int:
     report = Report()
     freqs = parse_freqs(args.freqs)
     amp = 10 ** (args.level_dbfs / 20.0)
@@ -344,7 +364,6 @@ def cmd_audio_loopback(args: argparse.Namespace) -> int:
     plan, segments = tone_plan(freqs, args.rate, amp, lead_ms, marker_ms, settle_ms, args.segment_ms, gap_ms)
     play_seconds = len(plan) / args.rate
     capture_seconds = int(math.ceil(play_seconds + args.capture_lead_s + 1.5))
-    workdir = tempfile.mkdtemp(prefix="aico_loopback_")
     play_path = os.path.join(workdir, "plan.pcm")
     capture_path = args.save or os.path.join(workdir, "capture.pcm")
     with open(play_path, "wb") as handle:
@@ -468,8 +487,6 @@ def cmd_audio_loopback(args: argparse.Namespace) -> int:
     if args.json:
         with open(args.json, "w") as handle:
             json.dump(summary, handle, indent=2)
-    if not args.save:
-        shutil.rmtree(workdir, ignore_errors=True)
     return report.exit_code()
 
 
@@ -490,6 +507,11 @@ def read_bmp(path: str) -> tuple[int, int, list[tuple[int, int, int]]]:
     top_down = height < 0
     height = abs(height)
     stride = ((width * bpp // 8) + 3) & ~3
+    # A truncated file would otherwise be sampled from its surviving rows.
+    if width <= 0 or height <= 0:
+        raise ValueError(f"{path} has an invalid size {width}x{height}")
+    if offset < 54 or offset + stride * height > len(data):
+        raise ValueError(f"{path} is truncated: {len(data)} bytes, {offset + stride * height} needed for {width}x{height}")
     step_x = max(1, width // 64)
     step_y = max(1, height // 64)
     pixels = []
@@ -498,9 +520,8 @@ def read_bmp(path: str) -> tuple[int, int, list[tuple[int, int, int]]]:
         base = offset + row * stride
         for x in range(0, width, step_x):
             i = base + x * (bpp // 8)
-            if i + 2 < len(data):
-                b, g, r = data[i], data[i + 1], data[i + 2]
-                pixels.append((r, g, b))
+            b, g, r = data[i], data[i + 1], data[i + 2]
+            pixels.append((r, g, b))
     return width, height, pixels
 
 
@@ -794,6 +815,36 @@ def write_failures(path: str, run_id: str, failures: list[dict]) -> None:
             handle.write("\nno failures or warnings\n")
 
 
+def run_kernel_log(start_epoch: int) -> str:
+    """Kernel messages logged since the run started, never older ones."""
+    try:
+        done = subprocess.run(["journalctl", "-k", "--no-pager", "-o", "short-iso", "--since", f"@{start_epoch}"],
+                              capture_output=True, text=True, timeout=30)
+        if done.returncode == 0:
+            return done.stdout.strip() or "# no kernel messages during the run"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # dmesg stamps lines with seconds since boot: keep those after the start.
+    try:
+        uptime = float(read_text("/proc/uptime").split()[0])
+        start_uptime = uptime - (time.time() - start_epoch)
+        done = subprocess.run(["dmesg"], capture_output=True, text=True, timeout=30)
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return "# kernel log unavailable: neither journalctl nor dmesg could be read"
+    if done.returncode != 0:
+        return "# kernel log unavailable: neither journalctl nor dmesg could be read"
+    kept = []
+    for line in done.stdout.splitlines():
+        try:
+            stamp = float(line[1:line.index("]")])
+        except ValueError:
+            continue
+        if stamp >= start_uptime:
+            kept.append(line)
+    header = "# from dmesg (journalctl unavailable); [seconds since boot]"
+    return "\n".join([header] + (kept or ["# no kernel messages during the run"]))
+
+
 def cmd_evidence_finalize(args: argparse.Namespace) -> int:
     """Write run.json, kernel.log, SHA256SUMS and a tarball for a run directory."""
     import tarfile
@@ -835,11 +886,8 @@ def cmd_evidence_finalize(args: argparse.Namespace) -> int:
     write_failures(os.path.join(run_dir, "failures.txt"), args.run_id, failures)
 
     if start_epoch:
-        kernel = run_text(["journalctl", "-k", "--no-pager", "-o", "short-iso", "--since", f"@{start_epoch}"], timeout=30)
-        if not kernel:
-            kernel = run_text(["dmesg", "-T"], timeout=30)
         with open(os.path.join(run_dir, "kernel.log"), "w") as handle:
-            handle.write(kernel + "\n")
+            handle.write(run_kernel_log(int(start_epoch)) + "\n")
 
     scripts = {}
     for name in sorted(os.listdir(args.script_dir)):
@@ -858,7 +906,8 @@ def cmd_evidence_finalize(args: argparse.Namespace) -> int:
     manifest = {
         "run_id": args.run_id,
         "entry": args.entry,
-        "command": args.command,
+        # hw_start passes "--" before the command; it is not part of it.
+        "command": args.command[1:] if args.command[:1] == ["--"] else args.command,
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(start_epoch))) if start_epoch else None,
         "finished_utc": finished,
         "exit_code": args.exit_code,
@@ -884,7 +933,14 @@ def cmd_evidence_finalize(args: argparse.Namespace) -> int:
         handle.write("\n".join(lines) + "\n")
 
     tar_path = run_dir.rstrip("/") + ".tar.gz"
-    with tarfile.open(tar_path, "w:gz") as archive:
+    # Created exclusively and without following links: the artifact
+    # directory can be shared (/tmp), and an existing path is not adopted.
+    try:
+        tar_fd = os.open(tar_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except OSError as exc:
+        print(f"[FAIL] cannot create {tar_path}: {exc}")
+        return 1
+    with os.fdopen(tar_fd, "wb") as tar_file, tarfile.open(fileobj=tar_file, mode="w:gz") as archive:
         for root, _dirs, files in os.walk(run_dir):
             for name in sorted(files):
                 if name.startswith("."):
@@ -926,11 +982,16 @@ def _fake_service(path: str, responses: list[dict], seen: list[dict]) -> threadi
         for response in responses:
             conn, _ = server.accept()
             with conn:
-                size, extra = struct.unpack("<IQ", conn.recv(12))
-                body = b""
-                while len(body) < size:
-                    body += conn.recv(size - len(body))
-                seen.append(json.loads(body))
+                def exactly(count: int) -> bytes:
+                    data = b""
+                    while len(data) < count:
+                        block = conn.recv(count - len(data))
+                        if not block:
+                            raise ConnectionError("client closed the connection")
+                        data += block
+                    return data
+                size, _extra = struct.unpack("<IQ", exactly(12))
+                seen.append(json.loads(exactly(size)))
                 data = json.dumps(response).encode()
                 conn.sendall(struct.pack("<IQ", len(data), 0) + data)
         server.close()

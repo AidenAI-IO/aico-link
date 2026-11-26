@@ -154,10 +154,18 @@ wifi_throughput() {
             host="${IPERF_SERVER%:*}"
             port="5201"
             [ "$host" != "$IPERF_SERVER" ] && port="${IPERF_SERVER##*:}"
+            bind_dev=""
+            if iperf3 --help 2>&1 | grep -q -- '--bind-dev'; then
+                bind_dev="--bind-dev $WIFI_IFACE"
+            else
+                warn "iperf3 has no --bind-dev (needs 3.10+); traffic may leave through another interface"
+            fi
             for direction in upload download; do
                 flag=""
                 [ "$direction" = "download" ] && flag="-R"
-                result="$(timeout 30 iperf3 -c "$host" -p "$port" -B "$wlan_ip" -t 5 -J $flag 2>/dev/null)"
+                # -B only picks the source address; --bind-dev (iperf3 3.10+)
+                # also keeps the traffic off another route such as usb0.
+                result="$(timeout 30 iperf3 -c "$host" -p "$port" -B "$wlan_ip" $bind_dev -t 5 -J $flag 2>/dev/null)"
                 rate="$(printf '%s' "$result" | python3 -c 'import json,sys
 d=json.load(sys.stdin); print(round(d["end"]["sum_received"]["bits_per_second"]/1e6,1))' 2>/dev/null)"
                 if [ -n "$rate" ]; then
@@ -187,6 +195,34 @@ d=json.load(sys.stdin); print(round(d["end"]["sum_received"]["bits_per_second"]/
     fi
 }
 
+# Scratch directories made with mktemp -d (private to the owner), so a file
+# planted under a shared or removable mount cannot redirect a root write.
+SCRATCH_DIRS=""
+scratch_dir() {
+    scratch="$(mktemp -d "$1/.aico_hw_test.XXXXXX" 2>/dev/null)" || return 1
+    SCRATCH_DIRS="$SCRATCH_DIRS $scratch"
+    printf '%s\n' "$scratch"
+}
+remove_scratch() {
+    for scratch in $SCRATCH_DIRS; do rm -rf "$scratch"; done
+    SCRATCH_DIRS=""
+}
+trap 'remove_scratch' EXIT
+trap 'remove_scratch; exit 130' INT TERM
+
+# md5_of FILE -> digest, or nonzero status when the file cannot be read.
+md5_of() {
+    md5_out="$(md5sum "$1" 2>/dev/null)" || return 1
+    md5_out="${md5_out%% *}"
+    [ -n "$md5_out" ] || return 1
+    printf '%s\n' "$md5_out"
+}
+
+# kernel_journal ARGS -> this boot's kernel messages; nonzero when unavailable.
+kernel_journal() {
+    journalctl -b -k --no-pager "$@" 2>/dev/null
+}
+
 ble_field() {
     printf '%s' "$1" | python3 -c 'import json,sys
 b=json.load(sys.stdin).get("bluetooth",{}); v=b.get(sys.argv[1]); print(str(v).lower() if isinstance(v,bool) else ("" if v is None else v))' "$2" 2>/dev/null
@@ -196,14 +232,17 @@ warn_if_not_root
 
 group_system() {
     section "system health"
-    failed="$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}')"
-    if [ -z "$failed" ]; then
+    # A query that fails is missing evidence, not a healthy result.
+    if ! units="$(systemctl --failed --no-legend --plain 2>/dev/null)"; then
+        warn "cannot list failed systemd units (systemctl failed); unit health not checked"
+    elif failed="$(printf '%s\n' "$units" | awk 'NF {print $1}')"; [ -z "$failed" ]; then
         pass "no failed systemd units"
     else
         fail "failed systemd units: $(printf '%s' "$failed" | tr '\n' ' ')"
     fi
-    kerr="$(journalctl -b -k -p err --no-pager 2>/dev/null | grep -v -- '-- ' | tail -n 8)"
-    if [ -n "$kerr" ]; then
+    if ! kerr="$(kernel_journal -p err)"; then
+        warn "kernel log unavailable (journalctl failed); kernel and regulator errors not checked"
+    elif kerr="$(printf '%s\n' "$kerr" | grep -v -- '-- ' | grep -v '^$' | tail -n 8)"; [ -n "$kerr" ]; then
         warn "kernel errors in this boot (latest 8):"
         printf '%s\n' "$kerr" | indent
     else
@@ -223,8 +262,10 @@ group_system() {
             "$(cat "$policy/scaling_governor" 2>/dev/null)" "$(cat "$policy/cpuinfo_min_freq" 2>/dev/null)" \
             "$(cat "$policy/cpuinfo_max_freq" 2>/dev/null)" "$(cat "$policy/scaling_cur_freq" 2>/dev/null)"
     done
-    vreg="$(journalctl -b -k --no-pager 2>/dev/null | grep -ciE 'failed to set voltage|cpu.*voltage.*fail|regulator.*fail')"
-    [ "${vreg:-0}" -eq 0 ] && pass "no CPU voltage/regulator errors" || fail "$vreg CPU voltage/regulator errors in this boot"
+    if klog="$(kernel_journal)"; then
+        vreg="$(printf '%s\n' "$klog" | grep -ciE 'failed to set voltage|cpu.*voltage.*fail|regulator.*fail')"
+        [ "${vreg:-0}" -eq 0 ] && pass "no CPU voltage/regulator errors" || fail "$vreg CPU voltage/regulator errors in this boot"
+    fi
     grep -E 'MemTotal|MemAvailable|CmaTotal|CmaFree' /proc/meminfo 2>/dev/null | indent
 }
 
@@ -385,31 +426,45 @@ group_storage() {
     fi
     free_mb="$(df -Pm "$STORAGE_DIR" 2>/dev/null | awk 'NR==2{print $4}')"
     if [ -n "$free_mb" ] && [ "$free_mb" -gt $((STORAGE_MB * 3)) ]; then
-        test_file="$STORAGE_DIR/.aico_hw_storage_test.$$"
+        if ! test_dir="$(scratch_dir "$STORAGE_DIR")"; then
+            fail "cannot create a private test directory in $STORAGE_DIR"
+            return 0
+        fi
+        test_file="$test_dir/data"
         bytes=$((STORAGE_MB * 1048576))
         t0="$(now_ms)"
         if dd if=/dev/urandom of="$test_file" bs=1M count="$STORAGE_MB" conv=fsync 2>/dev/null; then
             t1="$(now_ms)"
-            sum_written="$(md5sum "$test_file" | awk '{print $1}')"
+            sum_written="$(md5_of "$test_file")"
             sync
             { echo 3 > /proc/sys/vm/drop_caches; } 2>/dev/null
             t2="$(now_ms)"
-            sum_read="$(md5sum "$test_file" | awk '{print $1}')"
+            sum_read="$(md5_of "$test_file")"
             t3="$(now_ms)"
             write_mbs="$(mbps "$bytes" $((t1 - t0)))"
             read_mbs="$(mbps "$bytes" $((t3 - t2)))"
-            [ "$sum_written" = "$sum_read" ] && pass "$STORAGE_MB MiB written and read back intact" || fail "read-back checksum mismatch on $STORAGE_DIR"
+            if [ -z "$sum_written" ] || [ -z "$sum_read" ]; then
+                fail "cannot read back the test file on $STORAGE_DIR"
+            elif [ "$sum_written" = "$sum_read" ]; then
+                pass "$STORAGE_MB MiB written and read back intact"
+            else
+                fail "read-back checksum mismatch on $STORAGE_DIR"
+            fi
             [ "$write_mbs" -ge "$MIN_WRITE_MBS" ] && pass "write ~$write_mbs MB/s (incl. urandom, >= $MIN_WRITE_MBS)" || warn "write ~$write_mbs MB/s (< $MIN_WRITE_MBS)"
             [ "$read_mbs" -ge "$MIN_READ_MBS" ] && pass "read ~$read_mbs MB/s (>= $MIN_READ_MBS)" || warn "read ~$read_mbs MB/s (< $MIN_READ_MBS)"
         else
             fail "cannot write $test_file"
         fi
-        rm -f "$test_file"
+        remove_scratch
     else
         skip "throughput test: only ${free_mb:-?} MiB free on $STORAGE_DIR"
     fi
-    emmc_errors="$(journalctl -b -k --no-pager 2>/dev/null | grep -ciE 'mmc[0-9].*(error|timeout|crc)|I/O error')"
-    [ "${emmc_errors:-0}" -eq 0 ] && pass "no MMC/I-O errors in this boot" || warn "$emmc_errors MMC/I-O error lines in this boot"
+    if klog="$(kernel_journal)"; then
+        emmc_errors="$(printf '%s\n' "$klog" | grep -ciE 'mmc[0-9].*(error|timeout|crc)|I/O error')"
+        [ "${emmc_errors:-0}" -eq 0 ] && pass "no MMC/I-O errors in this boot" || warn "$emmc_errors MMC/I-O error lines in this boot"
+    else
+        warn "kernel log unavailable (journalctl failed); MMC errors not checked"
+    fi
 
     section "TF card"
     find_sd() {
@@ -420,25 +475,33 @@ group_storage() {
     }
     sd="$(find_sd)"
     if [ -z "$sd" ] && [ "$INTERACTIVE" = "1" ]; then
-        prompt_enter "Insert a TF (microSD) card. The test only adds and removes one small file."
-        sleep 3
-        sd="$(find_sd)"
+        if prompt_enter "Insert a TF (microSD) card. The test only adds and removes one small file."; then
+            sleep 3
+            sd="$(find_sd)"
+        fi
     fi
     if [ -n "$sd" ]; then
         size_gb=$(( $(cat "/sys/block/$sd/size" 2>/dev/null || echo 0) / 2097152 ))
         pass "TF card detected: /dev/$sd (~${size_gb} GB, $(cat "/sys/block/$sd/device/name" 2>/dev/null))"
         mnt="$(grep "^/dev/$sd" /proc/mounts | awk '{print $2}' | head -n 1)"
         if [ -n "$mnt" ]; then
-            f="$mnt/.aico_hw_tf_test.$$"
-            if dd if=/dev/urandom of="$f" bs=1M count=4 conv=fsync 2>/dev/null; then
-                a="$(md5sum "$f" | awk '{print $1}')"
+            if ! tf_dir="$(scratch_dir "$mnt")"; then
+                fail "cannot write to the TF card at $mnt (read-only or I/O error)"
+            elif dd if=/dev/urandom of="$tf_dir/data" bs=1M count=4 conv=fsync 2>/dev/null; then
+                a="$(md5_of "$tf_dir/data")"
                 sync; { echo 3 > /proc/sys/vm/drop_caches; } 2>/dev/null
-                b="$(md5sum "$f" | awk '{print $1}')"
-                [ "$a" = "$b" ] && pass "TF card write/read-back OK at $mnt" || fail "TF card read-back mismatch at $mnt"
+                b="$(md5_of "$tf_dir/data")"
+                if [ -z "$a" ] || [ -z "$b" ]; then
+                    fail "cannot read back the test file on the TF card at $mnt"
+                elif [ "$a" = "$b" ]; then
+                    pass "TF card write/read-back OK at $mnt"
+                else
+                    fail "TF card read-back mismatch at $mnt"
+                fi
             else
                 fail "cannot write to the TF card at $mnt (read-only or I/O error)"
             fi
-            rm -f "$f"
+            remove_scratch
         else
             warn "TF card /dev/$sd is not mounted (storage manager has not accepted it yet); write test skipped"
         fi

@@ -110,10 +110,11 @@ hw_start() {
         case "$hw_arg" in -h|--help) return 0 ;; esac
     done
     hw_prev=""
+    hw_run_id_given=0
     for hw_arg in "$@"; do
         case "$hw_prev" in
             --artifact-dir) AICO_LOW_LEVEL_ARTIFACT_DIR="$hw_arg" ;;
-            --run-id) RUN_ID="$hw_arg" ;;
+            --run-id) RUN_ID="$hw_arg"; hw_run_id_given=1 ;;
             --config) AICO_HW_CONFIG="$hw_arg" ;;
         esac
         hw_prev="$hw_arg"
@@ -123,9 +124,22 @@ hw_start() {
         AICO_HW_CONFIG="$(CDPATH= cd -- "$(dirname "$AICO_HW_CONFIG")" && pwd)/$(basename "$AICO_HW_CONFIG")"
         export AICO_HW_CONFIG
     fi
-    : "${AICO_HW_RUN_DIR:=$AICO_LOW_LEVEL_ARTIFACT_DIR/aico_hw_$RUN_ID}"
+    if [ -z "${AICO_HW_RUN_DIR:-}" ]; then
+        # The outermost run creates a fresh directory that only its owner can
+        # write, and never adopts an existing one: under a shared parent such
+        # as /tmp another user could have prepared it. Child suites inherit it.
+        # A default (timestamp) id that is taken gets this process's id appended.
+        if [ "$hw_run_id_given" = "0" ] && { [ -e "$AICO_LOW_LEVEL_ARTIFACT_DIR/aico_hw_$RUN_ID" ] || [ -L "$AICO_LOW_LEVEL_ARTIFACT_DIR/aico_hw_$RUN_ID" ]; }; then
+            RUN_ID="$RUN_ID-$$"
+        fi
+        AICO_HW_RUN_DIR="$AICO_LOW_LEVEL_ARTIFACT_DIR/aico_hw_$RUN_ID"
+        mkdir -p "$AICO_LOW_LEVEL_ARTIFACT_DIR" 2>/dev/null || die "cannot create artifact directory: $AICO_LOW_LEVEL_ARTIFACT_DIR"
+        [ -e "$AICO_HW_RUN_DIR" ] || [ -L "$AICO_HW_RUN_DIR" ] &&
+            die "evidence directory already exists: $AICO_HW_RUN_DIR (use another --run-id)"
+        (umask 077 && mkdir "$AICO_HW_RUN_DIR") 2>/dev/null || die "cannot create evidence directory: $AICO_HW_RUN_DIR"
+    fi
+    [ -d "$AICO_HW_RUN_DIR" ] && [ ! -L "$AICO_HW_RUN_DIR" ] || die "evidence directory missing: $AICO_HW_RUN_DIR"
     export AICO_HW_RUN_DIR RUN_ID
-    mkdir -p "$AICO_HW_RUN_DIR" 2>/dev/null || die "cannot create evidence directory: $AICO_HW_RUN_DIR"
     HW_EVENTS="$AICO_HW_RUN_DIR/events.jsonl"
 
     if [ "${AICO_HW_TRANSCRIPT_SUITE:-}" = "$HW_SUITE" ]; then
@@ -156,8 +170,11 @@ hw_start() {
     printf '# finished=%s uptime_s=%s exit=%s\n' "$(hw_now)" "$(hw_uptime)" "$hw_rc" >>"$AICO_HW_RUN_DIR/$HW_SUITE.log"
     hw_event END "exit=$hw_rc"
     if [ "$hw_outer" = "1" ]; then
-        python3 "$HW_TOOLS" evidence-finalize --run-dir "$AICO_HW_RUN_DIR" --run-id "$RUN_ID" \
-            --entry "$HW_SUITE" --exit-code "$hw_rc" --script-dir "$SCRIPT_DIR" -- "$0" "$@"
+        if ! python3 "$HW_TOOLS" evidence-finalize --run-dir "$AICO_HW_RUN_DIR" --run-id "$RUN_ID" \
+            --entry "$HW_SUITE" --exit-code "$hw_rc" --script-dir "$SCRIPT_DIR" -- "$0" "$@"; then
+            printf '[FAIL] evidence bundle incomplete: finalizing %s failed\n' "$AICO_HW_RUN_DIR"
+            [ "$hw_rc" -ne 0 ] || hw_rc=1
+        fi
     fi
     exit "$hw_rc"
 }
@@ -240,20 +257,43 @@ interactive_or_skip() {
     return 1
 }
 
+# Operator answers come from the terminal, or from stdin when there is none.
+# A failed read (no terminal, stdin closed) is lost input, not an answer: it
+# stops the remaining interactive steps instead of being taken as yes or no.
+HW_INPUT_LOST=0
+
+hw_read_answer() {
+    hw_answer=""
+    if [ "$HW_INPUT_LOST" = "1" ]; then
+        return 1
+    fi
+    if { : </dev/tty; } 2>/dev/null; then
+        read -r hw_answer </dev/tty && return 0
+    elif read -r hw_answer; then
+        return 0
+    fi
+    HW_INPUT_LOST=1
+    INTERACTIVE=0
+    hw_event ANSWER "no input (terminal unavailable or closed)"
+    fail "operator input unavailable; the remaining interactive steps are skipped (run with ssh -t)"
+    return 1
+}
+
+# Returns 0 when the operator pressed Enter, 1 when no input is available.
 prompt_enter() {
     printf '\n>>> %s\n>>> Press Enter when ready... ' "$1"
     hw_event PROMPT "$1"
-    read -r _aico_unused </dev/tty 2>/dev/null || read -r _aico_unused
+    hw_read_answer || return 1
     hw_event ANSWER "Enter"
 }
 
-# Returns 0 for yes, 1 for no.
+# Returns 0 for yes, 1 for no, 2 when no input is available.
 ask_yes_no() {
     hw_event PROMPT "$1"
     while :; do
         printf '\n??? %s [y/n] ' "$1"
-        read -r aico_answer </dev/tty 2>/dev/null || read -r aico_answer
-        case "$aico_answer" in
+        hw_read_answer || return 2
+        case "$hw_answer" in
             y|Y|yes|YES) hw_event ANSWER "yes"; return 0 ;;
             n|N|no|NO) hw_event ANSWER "no"; return 1 ;;
         esac
@@ -262,12 +302,12 @@ ask_yes_no() {
 
 confirm_check() {
     aico_confirm_name="$1"
-    aico_confirm_question="$2"
-    if ask_yes_no "$aico_confirm_question"; then
-        pass "$aico_confirm_name (confirmed by operator)"
-    else
-        fail "$aico_confirm_name (operator reported a problem)"
-    fi
+    ask_yes_no "$2"
+    case $? in
+        0) pass "$aico_confirm_name (confirmed by operator)" ;;
+        1) fail "$aico_confirm_name (operator reported a problem)" ;;
+        *) skip "$aico_confirm_name (no operator answer)" ;;
+    esac
 }
 
 # value_of KEY "k1=v1 k2=v2 ..." -> v

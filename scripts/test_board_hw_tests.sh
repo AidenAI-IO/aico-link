@@ -131,6 +131,17 @@ expect_line "every sample is zero" "$out"
 python3 "$TOOLS" audio-gen --kind tone --freq 440 --level-dbfs -60 --ms 1000 --out "$WORK/quiet.pcm"
 out="$(python3 "$TOOLS" audio-stats "$WORK/quiet.pcm" --expect quiet --label quiet)" || { printf '%s\n' "$out" >&2; fail "-60 dBFS hum is under the -45 dBFS noise limit"; }
 
+# A live left channel with an unused, zero-filled right channel passes; a dead
+# left channel fails.
+python3 - "$WORK" <<'PY'
+import math, struct, sys
+left = [int(300 * math.sin(i / 3)) for i in range(16000)]
+open(sys.argv[1] + "/rightzero.pcm", "wb").write(struct.pack("<32000h", *[v for s in left for v in (s, 0)]))
+open(sys.argv[1] + "/leftzero.pcm", "wb").write(struct.pack("<32000h", *[v for s in left for v in (0, s)]))
+PY
+python3 "$TOOLS" audio-stats "$WORK/rightzero.pcm" --channels 2 --expect any >/dev/null || fail "unused zero right channel should not fail"
+python3 "$TOOLS" audio-stats "$WORK/leftzero.pcm" --channels 2 --expect any >/dev/null && fail "zero left channel should fail"
+
 # 5. Screenshot analysis ---------------------------------------------------
 python3 - "$WORK" <<'PY'
 import struct, sys
@@ -145,6 +156,9 @@ bmp(sys.argv[1] + "/ui.bmp", lambda x, y: [(x * 4) % 256, (y * 8) % 256, 255 if 
 bmp(sys.argv[1] + "/ui2.bmp", lambda x, y: [255 - (x * 4) % 256, (y * 8) % 256, 40])
 PY
 python3 "$TOOLS" frame-stats "$WORK/black.bmp" >/dev/null && fail "black screenshot should fail"
+head -c 3000 "$WORK/ui.bmp" >"$WORK/truncated.bmp"
+out="$(python3 "$TOOLS" frame-stats "$WORK/truncated.bmp" 2>&1)" && fail "truncated screenshot should fail"
+expect_line "is truncated" "$out"
 out="$(python3 "$TOOLS" frame-stats "$WORK/ui.bmp" --expect-size 64x32)" || { printf '%s\n' "$out" >&2; fail "UI screenshot should pass"; }
 out="$(python3 "$TOOLS" frame-stats "$WORK/ui.bmp" --compare "$WORK/ui.bmp" --expect-change)" && fail "identical screenshots should fail the change check"
 python3 "$TOOLS" frame-stats "$WORK/ui2.bmp" --compare "$WORK/ui.bmp" --expect-change >/dev/null || fail "changed screenshots should pass"
@@ -168,7 +182,11 @@ while True:
             body += conn.recv(size - len(body))
         req = json.loads(body)
         op = req["op"]
-        if op == "get_state":
+        # Like mcu_service: writes need a request id and the current generation.
+        if op in ("set_wakeup_timer", "cancel_wakeup_timer", "set_led") and (
+                not 1 <= len(req.get("request_id", "")) <= 128 or req.get("generation") != "g"):
+            resp = {"status": "INVALID_ARGUMENT", "error": "request_id and current generation required"}
+        elif op == "get_state":
             resp = {"status": "OK", "state": {"rv_state": "ready", "protocol_version": 1, "uart_connected": True,
                                                "last_rx_at": "2026-11-25T00:00:00Z", "led_support": "supported",
                                                "invalid_events": 0, "generation": "g"}}
@@ -342,9 +360,9 @@ for line in "[PASS] BLE adapter powered" "[PASS] BLE pairing window opened" "[PA
     "[PASS] BLE link is paired (encrypted)" "[PASS] GATT services resolved" "[PASS] new bond stored (0 -> 1)"; do
     expect_line "$line" "$out"
 done
-out="$(sh "$SCRIPT_DIR/board_hw_peripherals.sh" --only wifi --ble-connect --run-id evidence-wifi 2>&1)" || true
-printf '%s\n' "$out" | grep -qE '^\[SKIP\] Wi-Fi throughput \(pass --iperf-server|^\[FAIL\] no Wi-Fi interface' \
-    || fail "Wi-Fi group should skip throughput without a target or report the missing interface"
+# A named interface that does not exist: no host network is touched.
+out="$(sh "$SCRIPT_DIR/board_hw_peripherals.sh" --only wifi --wifi-iface aicotest0 --run-id evidence-wifi 2>&1)" && fail "missing Wi-Fi interface should fail"
+expect_line "[FAIL] no Wi-Fi interface (aicotest0)" "$out"
 
 out="$(sh "$SCRIPT_DIR/board_hw_peripherals.sh" --only wifi,nosuch 2>&1)" && fail "unknown peripheral group should be rejected"
 expect_line "unknown group: nosuch" "$out"
@@ -378,5 +396,30 @@ out="$(sh "$PLUGIN/board_hw_test.sh" --only dummy --config "$WORK/dummy.conf" --
 }
 expect_line "[PASS] dummy value from-config" "$out"
 printf '%s\n' "$out" | grep -qE '^dummy +PASS +pass=1' || fail "discovered suite missing from the summary"
+
+# A suite that stops without a [FAIL] line still fails the run.
+cat >"$PLUGIN/board_hw_crash.sh" <<'EOF2'
+#!/bin/sh
+# aico-hw-suite: 95 crash - suite that exits early, added by the host test
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/board_hw_common.sh"
+hw_start crash "$@"
+pass "about to stop"
+exit 3
+EOF2
+out="$(sh "$PLUGIN/board_hw_test.sh" --only dummy,crash --run-id crash-run 2>&1)" && fail "a suite exiting nonzero should fail the run"
+printf '%s\n' "$out" | grep -qE '^crash +FAIL' || { printf '%s\n' "$out" >&2; fail "crashed suite should be FAIL in the summary"; }
+expect_line "crash exited with status 2 without reporting a failure" "$out"
+python3 - "$AICO_LOW_LEVEL_ARTIFACT_DIR/aico_hw_crash-run/run.json" <<'PY' || fail "run.json should mark the crashed suite FAIL"
+import json, sys
+suites = json.load(open(sys.argv[1]))["suites"]
+assert suites["crash"]["result"] == "FAIL" and suites["dummy"]["result"] == "PASS", suites
+PY
+
+# Suite names in --skip are literal and validated; evidence is never reused.
+out="$(sh "$PLUGIN/board_hw_test.sh" --skip '.*' 2>&1)" && fail "--skip with an unknown name should be rejected"
+expect_line "unknown suite: .*" "$out"
+out="$(sh "$PLUGIN/board_hw_test.sh" --only dummy --run-id discovery 2>&1)" && fail "an existing evidence directory should be rejected"
+expect_line "evidence directory already exists" "$out"
 
 echo "board hardware test scripts: all host checks passed"
