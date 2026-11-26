@@ -5,6 +5,7 @@ import urllib.request
 
 import pytest
 
+from adbandroid.bridge.adb import ADBAndroidDevice, ADBCommandError
 from adbandroid.bridge.server import ADBBridgeServer
 from adbandroid.bridge.tools_api import _normalized_point_arg, _to_pixels, _uiautomator_texts
 
@@ -46,6 +47,22 @@ def _text_entry_output(body):
     output = _post_action_output(body)
     assert "action_output" in output
     return json.loads(output["action_output"]), output
+
+
+@pytest.mark.parametrize("tool_input", [
+    r'{"text":"\ud800","replace":true}',
+    '{"text":"' + ("a" * 4097) + '","replace":true}',
+    r'{"text":"bad\u0000text","replace":true}',
+])
+def test_insert_text_rejects_invalid_input_before_device_action(bridge, tool_input):
+    _, device, base_url = bridge
+
+    status, body = _invoke(base_url, "insert_text", tool_input)
+
+    assert status == 200
+    assert body["is_error"] is True
+    assert "insert_text requires" in body["output"]
+    assert device.calls == []
 
 
 # ---- coordinate handling ----------------------------------------------------
@@ -262,8 +279,10 @@ def test_enter_text_rejects_removed_or_missing_arguments(bridge):
     assert all(call[0] != "input_text" for call in device.calls)
 
 
-def test_enter_text_reports_unsupported_text_without_typing(bridge):
+@pytest.mark.parametrize("input_method,setup", [("adbkeyboard", "ADBKeyBoard"), ("appium", "Appium Settings")])
+def test_enter_text_reports_unsupported_text_without_typing(bridge, input_method, setup):
     _, device, base_url = bridge
+    device.unicode_input_method = input_method
     status, body = _invoke(
         base_url,
         "enter_text",
@@ -274,7 +293,29 @@ def test_enter_text_reports_unsupported_text_without_typing(bridge):
     output = json.loads(body["output"])
     assert output["ok"] is False
     assert "US-keyboard ASCII" in output["suggestion"]
+    assert setup in output["suggestion"]
     assert all(call[0] != "input_text" for call in device.calls)
+
+
+@pytest.mark.parametrize("input_method", ["adbkeyboard", "appium"])
+def test_enter_text_keeps_ascii_fallback_when_unicode_installation_fails(bridge, monkeypatch, input_method):
+    _, device, base_url = bridge
+    probe_device = ADBAndroidDevice(device.serial, unicode_input_method=input_method)
+
+    def fail_install():
+        raise ADBCommandError("selected IME download failed")
+
+    monkeypatch.setattr(probe_device, "ensure_unicode_input_method_installed", fail_install)
+    monkeypatch.setattr(device, "supports_text_insertion", probe_device.supports_text_insertion)
+    device.unicode_input_method = input_method
+
+    status, body = _invoke(base_url, "enter_text", {"text": "hello", "focus": {"x": 500, "y": 100}})
+
+    assert status == 200
+    result, _ = _text_entry_output(body)
+    assert result["ok"] is True
+    assert ("input_text", "hello") in device.calls
+    assert not any(call[0] == "insert_text" for call in device.calls)
 
 
 @pytest.mark.parametrize("text", ["你好，世界 😸 %s", "你好\n", "你好\t", "\n", "\t"])
@@ -325,10 +366,12 @@ def test_uiautomator_extraction_keeps_legacy_whitespace_trimming():
     assert error == ""
 
 
-def test_enter_text_rejects_invalid_unicode_before_focus(bridge):
+@pytest.mark.parametrize("input_method,text", [("adbkeyboard", "你好\x00"), ("appium", "你好\x00"), ("appium", "你好%s")])
+def test_enter_text_rejects_invalid_unicode_before_focus(bridge, input_method, text):
     _, device, base_url = bridge
     device.unicode_input = True
-    _, body = _invoke(base_url, "enter_text", {"text": "你好\x00", "focus": {"x": 500, "y": 100}})
+    device.unicode_input_method = input_method
+    _, body = _invoke(base_url, "enter_text", {"text": text, "focus": {"x": 500, "y": 100}})
     assert json.loads(body["output"])["ok"] is False
     assert device.calls == []
 

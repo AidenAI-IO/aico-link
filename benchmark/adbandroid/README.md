@@ -55,35 +55,79 @@ device** (`/api/concurrent` is always 1) and needs no Docker.
 
 ## Unicode text with ADBKeyBoard
 
-For Chinese, emoji, multiline text, and literal `%s`, install
-[ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard) on the target device once.
-The upstream v2.5-dev APK includes the receiver fix for recent Android versions:
+For Chinese, emoji, multiline text, and literal `%s`, select ADBKeyBoard in the
+Launcher. When the ADB bridge starts, it installs the selected IME if it is
+missing. The bridge downloads the pinned upstream v2.5-dev APK and verifies its
+SHA-256 before installing it. The upstream APK includes the receiver fix for
+recent Android versions. Manual installation is optional:
 
 ```bash
 curl -fL https://github.com/senzhk/ADBKeyBoard/releases/download/v2.5-dev/keyboardservice-debug.apk -o /tmp/ADBKeyboard.apk
 shasum -a 256 /tmp/ADBKeyboard.apk
 # Expected SHA-256: 41a8a0996d7397a2390d1ca16a75cb66c4a7bdaa89cf4e63600a4d3fb346fbbb
 adb -s YOUR_ADB_SERIAL install -r /tmp/ADBKeyboard.apk
-adb -s YOUR_ADB_SERIAL shell ime enable com.android.adbkeyboard/.AdbIME
 ```
 
 Keep your usual keyboard selected. The bridge advertises `insert_text` through
-`GET /api/providers/mnk` when ADBKeyBoard is enabled; installation does not
-require a bridge restart. The Agent's `enter_text` then uses its existing native
-Unicode insertion and screen-verification path. Each insertion saves the current
-IME, selects ADBKeyBoard, waits for its editor connection, sends UTF-8 text as
-Base64 with a package-targeted `ADB_INPUT_B64` broadcast, and restores the original
-IME even on failure. Internal replacement requests send `ADB_CLEAR_TEXT` first.
-No clipboard is modified. The direct bridge `enter_text` tool also uses this
-route and verifies editable text through UIAutomator.
+`GET /api/providers/mnk` when ADBKeyBoard is installed; installation does not
+require a bridge restart after manual installation. The bridge enables
+ADBKeyBoard on first use. The Agent's `enter_text` then uses its existing native
+Unicode insertion and screen-verification path. Each insertion saves the
+current IME, selects ADBKeyBoard, waits for its editor connection, sends UTF-8
+text as Base64 with a package-targeted `ADB_INPUT_B64` broadcast, and restores
+the original IME even on failure. Internal replacement requests send
+`ADB_CLEAR_TEXT` first. No clipboard is modified. The direct bridge `enter_text`
+tool also uses this route and verifies editable text through UIAutomator.
 
 Input is limited to 1–4096 UTF-16 units and rejects control characters except
 newline/tab. A broadcast response alone cannot prove that an app accepted text;
 inspect the field after verification failures or timeouts before retrying.
 The bridge does not replay an uncertain insertion. A restore failure is reported
 explicitly; select your normal IME with `adb shell ime set YOUR_ORIGINAL_IME`.
-Devices without an enabled ADBKeyBoard retain the ASCII fallback; the low-level
-`keyboard_text` primitive remains ASCII-only.
+If the selected IME APK cannot be downloaded or installed while the device is
+ready, bridge startup reports the failure and stops before serving requests.
+If the device is not ready, installation is deferred until a later capability
+probe or text insertion. Preinstall the APK with the commands above when the
+host is offline. The low-level `keyboard_text` primitive remains ASCII-only.
+
+## Appium UnicodeIME alternative
+
+Appium Settings' `UnicodeIME` is an alternative for devices where ADBKeyBoard
+is unavailable. When selected, the bridge downloads the pinned v8.2.1 APK from
+the [official Appium Settings repository](https://github.com/appium/io.appium.settings),
+verifies its SHA-256, and installs it if the selected IME is missing. The bridge
+does not grant SMS or notification permissions. Appium Settings has exported
+receivers, so use it on a test device without sensitive SMS or notifications.
+The bridge enables `io.appium.settings/.UnicodeIME` when needed, sends modified
+UTF-7 through `adb input text`, and restores the previous IME. The Appium route
+rejects literal `%s`, which Android interprets as a space in `input text`;
+ADBKeyBoard supports it.
+
+ADBKeyBoard remains the default. Select Appium explicitly when starting the
+local phone launcher:
+
+```bash
+python3 scripts/local_agent.py android --unicode-input-method appium
+```
+
+In Aico Launcher, choose **Appium UnicodeIME** in the Android instance's
+**Unicode input method** field. Stop the instance before editing it, save, and
+start it again to apply the selection.
+
+For direct bridge startup, pass the same option:
+
+```bash
+uv run python -m adbandroid.scripts.start_bridge \
+  --adb-serial YOUR_ADB_SERIAL \
+  --unicode-input-method appium
+```
+
+The selected path is fixed for the bridge process; it does not fall back to the
+other Unicode IME if the selected one is unavailable. A running bridge reports
+Unicode input as unavailable when installation fails, retaining its ASCII input
+path. Explicit Unicode insertion still reports the installation error.
+Appium replacement requests need Android's `input keycombination` support for
+Ctrl+A and Delete.
 
 ## Quick start
 
@@ -314,7 +358,7 @@ a gesture on failure). Pass `{"list": true}` to see the full catalog.
 
 ## Known limitations
 
-- **Unicode needs ADBKeyBoard**: install and enable the optional IME as described
+- **Unicode needs ADBKeyBoard**: install the optional IME as described
   above. Without it, `adb input text` supports only ASCII and interprets literal
   `%s` as a space. That fallback temporarily selects a known enabled Latin IME
   when available, then restores the previous IME.

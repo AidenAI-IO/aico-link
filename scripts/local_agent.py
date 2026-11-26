@@ -21,6 +21,8 @@ import webbrowser
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# Allow the initial IME download (30s) and installation (120s), plus ADB setup.
+ADB_READY_TIMEOUT_SEC = 180
 MODES = {
     "android": ("Android", "local-android", 8080, 8000, 8899, 18083),
     "iphone-mirroring": ("iOS", "iphone-mirroring", 8081, 8001, 8897, 18084),
@@ -34,6 +36,12 @@ def arguments(argv=None):
     parser.add_argument("--data-dir", type=Path, help="Existing Agent directory; default: .cache/native-phone-lab/MODE")
     parser.add_argument("--config", type=Path, help="Import a TOML file only if this target has no agent.toml")
     parser.add_argument("--adb-serial", help="Android device; automatically select the only authorized device")
+    parser.add_argument(
+        "--unicode-input-method",
+        choices=("adbkeyboard", "appium"),
+        default="adbkeyboard",
+        help="Android Unicode text input path (default: adbkeyboard)",
+    )
     parser.add_argument("--udid", help="Select an iPhone when multiple USB devices are connected")
     parser.add_argument("--xctrunner", default="io.aiden.aico.WebDriverAgentRunner.xctrunner", help="Installed signed WDA runner (ios only)")
     parser.add_argument("--permission-policy", type=Path, help="Explicit permission rules for ios")
@@ -50,6 +58,8 @@ def arguments(argv=None):
     args = parser.parse_args(argv)
     if args.mode != "android" and args.adb_serial:
         parser.error("--adb-serial requires android")
+    if args.mode != "android" and args.unicode_input_method != "adbkeyboard":
+        parser.error("--unicode-input-method requires android")
     if args.mode != "ios" and (args.udid or args.permission_policy):
         parser.error("--udid and --permission-policy require ios")
     if args.request_permissions and (args.mode != "iphone-mirroring" or args.bridge_url):
@@ -74,6 +84,8 @@ def arguments(argv=None):
         url = urlsplit(args.bridge_url)
         if url.scheme != "http" or url.hostname != "127.0.0.1" or not url.port or url.username or url.password or url.path or url.query or url.fragment:
             parser.error("--bridge-url must be an http://127.0.0.1:PORT origin")
+        if args.mode == "android" and args.unicode_input_method != "adbkeyboard":
+            parser.error("--unicode-input-method requires a bridge started by this launcher")
     return args
 
 
@@ -190,7 +202,8 @@ def android_serial(args):
 def bridge_command(args, python):
     if args.mode == "android":
         return [python, "-u", "-m", "adbandroid.scripts.start_bridge", "--adb-serial", android_serial(args),
-                "--bridge-host", "127.0.0.1", "--bridge-port", str(args.bridge_port)]
+                "--bridge-host", "127.0.0.1", "--bridge-port", str(args.bridge_port),
+                "--unicode-input-method", args.unicode_input_method]
     command = [python, "-u", "-m", "ios_device" if args.mode == "ios" else "iphone_mirroring",
                "--port", str(args.bridge_port), "--task-id", args.task]
     if args.mode == "ios":
@@ -313,7 +326,8 @@ def launch(args, stopped):
                 except (OSError, ValueError):
                     raise RuntimeError("Existing bridge is unavailable; restore it before using --bridge-url") from None
             else:
-                health = processes.wait_http(endpoint + "/health").get("data", {})
+                timeout = ADB_READY_TIMEOUT_SEC if args.mode == "android" else 90
+                health = processes.wait_http(endpoint + "/health", timeout=timeout).get("data", {})
             expected = {"android": "adb_android", "iphone-mirroring": "iphone_mirroring", "ios": "ios_device"}[args.mode]
             if health.get("bridge_type") != expected:
                 raise RuntimeError("Bridge identity does not match the selected mode")

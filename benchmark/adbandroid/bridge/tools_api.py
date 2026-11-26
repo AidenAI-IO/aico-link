@@ -190,7 +190,7 @@ class ADBToolsAPIHandler:
             },
             {
                 "name": "enter_text",
-                "description": "Enter text into an Android field using ADBKeyBoard when enabled (including Unicode), otherwise adb input text (ASCII). Taps the focus point, verifies with UIAutomator, and returns a screenshot.",
+                "description": "Enter text into an Android field using the configured Unicode input method when enabled, otherwise adb input text (ASCII). Taps the focus point, verifies with UIAutomator, and returns a screenshot.",
                 "args_schema": {
                     "type": "object",
                     "additionalProperties": False,
@@ -644,15 +644,22 @@ class ADBToolsAPIHandler:
         device = self.state.device
         try:
             validate_insert_text(text)
+            if getattr(device, "unicode_input_method", "adbkeyboard") == "appium" and "%s" in text:
+                raise ValueError('Appium UnicodeIME cannot type literal "%s"; select ADBKeyBoard for this text.')
         except ValueError as exc:
             return {"output": json.dumps({"ok": False, "suggestion": str(exc)}), "is_error": False}
         with self.state.lock:
             native = device.supports_text_insertion()
         unsupported = unsupported_adb_text_chars(text)
         if unsupported and not native:
+            setup = (
+                "install Appium Settings with io.appium.settings/.UnicodeIME"
+                if getattr(device, "unicode_input_method", "adbkeyboard") == "appium"
+                else "install ADBKeyBoard"
+            )
             output = {
                 "ok": False,
-                "suggestion": "adb input text supports only US-keyboard ASCII characters; install and enable ADBKeyBoard for Unicode input.",
+                "suggestion": f"adb input text supports only US-keyboard ASCII characters; {setup} for Unicode input.",
             }
             return {"output": json.dumps(output, ensure_ascii=False), "is_error": False}
 
@@ -749,7 +756,12 @@ class ADBToolsAPIHandler:
         return self._execute_device(
             lambda: self.state.device.insert_text(text, replace),
             tool_name="insert_text", tool_input=tool_input,
-            adb_summary="ADBKeyBoard Base64 input", capture_screenshot=capture_screenshot,
+            adb_summary=(
+                "Appium UnicodeIME modified UTF-7 input"
+                if getattr(self.state.device, "unicode_input_method", "adbkeyboard") == "appium"
+                else "ADBKeyBoard Base64 input"
+            ),
+            capture_screenshot=capture_screenshot,
         )
 
     def _call_keyboard_text(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
