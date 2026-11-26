@@ -654,10 +654,12 @@
   align-items: center;
   width: 100%;
   max-width: 320px;
+  max-height: 100%;
   padding: var(--space-xxl) var(--space-xl);
   border-radius: var(--radius-sheet);
   background-color: var(--color-card);
   text-align: center;
+  overflow-y: auto;
 }
 
 .ds-restart__spinner {
@@ -679,10 +681,13 @@
 
 .ds-restart__body {
   display: block;
+  flex-shrink: 0;
+  max-width: 100%;
   margin: var(--space-sm) 0 var(--space-lg);
   font-size: var(--font-body-sm);
   line-height: 1.45;
   color: var(--color-ink-secondary);
+  overflow-wrap: anywhere;
 }
 
 /* ---- Conversation & tools ------------------------------------------------ */
