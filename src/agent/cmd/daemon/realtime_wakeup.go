@@ -1387,8 +1387,9 @@ func realtimeToolJSON(value any) string {
 	return string(encoded)
 }
 
-func startRealtimeToolCall(ctx context.Context, executor realtimeVoiceToolExecutor, call realtimevoice.Event, results chan<- realtimeToolResult) {
+func startRealtimeToolCall(ctx context.Context, executor realtimeVoiceToolExecutor, call realtimevoice.Event, results chan<- realtimeToolResult, done func()) {
 	go func() {
+		defer done()
 		callCtx, cancel := context.WithTimeout(ctx, realtimeToolCallTimeout)
 		defer cancel()
 		result := executor.result(callCtx, call)
@@ -1596,14 +1597,31 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	// microphone or speaker and asks the provider for text replies.
 	textOnly := cfg.Benchmark.RealtimeText || voice.Route() == agent.RealtimeAudioRouteText
 	sessionConfig := realtimeProviderSessionConfigWithTools(cfg, runtime, runtimeTools, textOnly)
+	var foregroundToolCalls sync.WaitGroup
 	if runtime != nil {
+		sessionDone := make(chan struct{})
+		unregisterReset, err := runtime.RegisterUserContextResetHook(func(clearCtx context.Context) error {
+			cancel()
+			select {
+			case <-sessionDone:
+				return nil
+			case <-clearCtx.Done():
+				return clearCtx.Err()
+			}
+		})
+		if err != nil {
+			return err
+		}
+		defer func() {
+			// Tools canceled during an earlier response can still be finishing writes.
+			cancel()
+			foregroundToolCalls.Wait()
+			close(sessionDone)
+			unregisterReset()
+		}()
 		if err := runtime.PrepareUserContext(sessionConfig.Instructions); err != nil {
 			return err
 		}
-	}
-	if runtime != nil {
-		unregisterReset := runtime.RegisterUserContextResetHook(cancel)
-		defer unregisterReset()
 	}
 	userContext, err := agent.InitializeContextManager(
 		sessionConfig.Instructions,
@@ -2848,7 +2866,8 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if activeNotificationToken != "" || suppressedNotificationResponsePending || hasSuppressedNotificationResponse(suppressedNotificationResponseIDs, event.ResponseID) {
 					startRealtimeSuppressedToolCall(toolCtx, event, toolResults)
 				} else {
-					realtimeToolCallStarter(toolCtx, toolExecutor, event, toolResults)
+					foregroundToolCalls.Add(1)
+					realtimeToolCallStarter(toolCtx, toolExecutor, event, toolResults, foregroundToolCalls.Done)
 				}
 				if semanticEmitter != nil {
 					semanticEmitter.emit(event)
