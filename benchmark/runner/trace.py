@@ -26,22 +26,45 @@ def tool_result_failed(message: dict[str, Any], content: Any = None) -> bool:
     return isinstance(content, dict) and (bool(content.get("is_error")) or content.get("ok") is False)
 
 
+_TOOL_EXCHANGE_TYPES = {"tool_call", "tool_result"}
+
+
+def _matches_tool_event(message: dict[str, Any], event: dict[str, Any]) -> bool:
+    if message.get("type") != event.get("type") or message.get("tool_name") != event.get("tool_name"):
+        return False
+    if event.get("type") != "tool_call":
+        return True
+    history_input = message.get("tool_input", "")
+    episode_input = event.get("tool_input", "")
+    parsed_input = _safe_loads(history_input)
+    return history_input == episode_input or (parsed_input is not None and parsed_input == _safe_loads(episode_input))
+
+
 def tool_execution_history(
     history: list[dict[str, Any]], episode: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    """Recover tool exchanges removed from public history by a successful fold."""
+    """Recover recorded executions missing from the public history snapshot."""
     events = episode.get("events") if isinstance(episode, dict) else None
     if not isinstance(events, list):
         return history
     events = [event for event in events if isinstance(event, dict)]
     last_fold = next((i for i in reversed(range(len(events))) if events[i].get("type") == "conact_fold"), None)
+    positions = [i for i, message in enumerate(history) if message.get("type") in _TOOL_EXCHANGE_TYPES]
     if last_fold is None:
+        recorded = [event for event in events if event.get("type") in _TOOL_EXCHANGE_TYPES]
+        missing = len(recorded) - len(positions)
+        # The recorder can finish one execution while the client takes its
+        # history snapshot. Require an exact prefix and a complete final pair.
+        if missing in (1, 2) and len(recorded) >= 2:
+            call, result = recorded[-2:]
+            if (call["type"] == "tool_call" and result["type"] == "tool_result"
+                    and call.get("tool_name") and call["tool_name"] == result.get("tool_name")
+                    and all(_matches_tool_event(history[i], event) for i, event in zip(positions, recorded))):
+                return history + recorded[-missing:]
         return history
 
-    tool_types = {"tool_call", "tool_result"}
-    before_fold = [event for event in events[:last_fold] if event.get("type") in tool_types]
-    after_fold = [event for event in events[last_fold + 1:] if event.get("type") in tool_types]
-    positions = [i for i, message in enumerate(history) if message.get("type") in tool_types]
+    before_fold = [event for event in events[:last_fold] if event.get("type") in _TOOL_EXCHANGE_TYPES]
+    after_fold = [event for event in events[last_fold + 1:] if event.get("type") in _TOOL_EXCHANGE_TYPES]
 
     # The episode records completed executions. Keep a trailing unfinished call
     # from history, but only use history's completed exchanges when they align
@@ -53,13 +76,7 @@ def tool_execution_history(
         pending = positions.pop()
     if after_fold and len(positions) >= len(after_fold):
         suffix = positions[-len(after_fold):]
-        if all(
-            history[i].get("type") == event.get("type")
-            and history[i].get("tool_name") == event.get("tool_name")
-            and (event.get("type") != "tool_call"
-                 or _safe_loads(history[i].get("tool_input", "")) == _safe_loads(event.get("tool_input", "")))
-            for i, event in zip(suffix, after_fold)
-        ):
+        if all(_matches_tool_event(history[i], event) for i, event in zip(suffix, after_fold)):
             return before_fold + history[suffix[0]:]
 
     # A fold marker is bookkeeping and does not represent a normal tool exchange.

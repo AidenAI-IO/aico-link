@@ -56,6 +56,17 @@ def test_folded_trace_uses_episode_order_and_keeps_surviving_screenshot():
     assert trace.tool_calls[-1].has_result
 
 
+def test_episode_tail_is_ignored_when_history_prefix_does_not_match():
+    def shell_call(command):
+        return {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})}
+
+    result = {"type": "tool_result", "tool_name": "shell"}
+    history = [shell_call("device-cli tap 100 200"), result]
+    episode = {"events": [shell_call("device-cli tap 300 400"), result,
+                          shell_call("device-cli app clipboard read"), result]}
+    assert tool_execution_history(history, episode) == history
+
+
 def test_extract_trace_marks_has_screenshot_when_data_present():
     trace = extract_trace(HISTORY)
     assert trace.tool_calls[0].has_screenshot is True

@@ -1834,6 +1834,32 @@ def test_unverifiable_required_calls_are_evaluation_errors_not_agent_failures(tm
     assert result.metrics["failure_class"] == "agent"
 
 
+@pytest.mark.parametrize("keep_pending_call", [False, True])
+def test_timeout_keeps_tool_evidence_from_ahead_of_history(tmp_path, keep_pending_call):
+    call = {"type": "tool_call", "tool_name": "shell", "tool_input": '{"command":"device-cli app clipboard read"}'}
+    result = {"type": "tool_result", "tool_name": "shell", "content": "ok", "metadata": {
+        "device_cli_calls": [{"tool": "bridge_clipboard", "input": {}, "is_error": False}],
+    }}
+    earlier = [{"type": "tool_call", "tool_name": "skill_read", "tool_input": '{"name":"device-cli"}'},
+               {"type": "tool_result", "tool_name": "skill_read", "content": "ok"}]
+    history = earlier + ([call] if keep_pending_call else [])
+    task = TaskSpec(id="clipboard", category="device", prompt="Read clipboard", description_for_judge="Read clipboard",
+                    rubric=[], hard_assertions=HardAssertions(response_required=False,
+                        required_tools=["bridge_clipboard"], required_tool_calls=[
+                            RequiredToolCallSpec("bridge_clipboard", {"action": "read"}),
+                        ]))
+    suite = Suite(name="test", tasks=[task], global_reset={}, sha256="sha", source_path=tmp_path / "suite.json")
+    row = runtask_mod.evaluate_task_history(
+        suite=suite, task=task, history=history, episode={"events": earlier + [call, result]},
+        attempt=1, artifact_dir=tmp_path, judge_cfg=None, judge_cache_dir=None, run_id="test", timed_out=True,
+    )
+    assert row.status == "timeout"
+    assert row.metrics["episode_tool_evidence"] == "applied"
+    assert row.metrics["tool_calls"] == 2
+    assert [f.id for f in row.hard_assertion_failures] == ["timeout"]
+    assert json.loads((tmp_path / "history.json").read_text()) == history
+
+
 def test_required_calls_use_episode_evidence_when_it_aligns(tmp_path: Path):
     from runner.runtask import evaluate_task_history
 

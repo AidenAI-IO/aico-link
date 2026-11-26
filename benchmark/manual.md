@@ -443,9 +443,10 @@ recorded failure and the final outcome rather than requiring the failed action
 to succeed.
 
 When ConAct folds a subtask, the runner recovers tool exchanges from the
-request-scoped episode for tool metrics and assertions. The fold marker itself
-is excluded from tool counts. Assistant reply text is never counted as a tool
-call.
+request-scoped episode for tool metrics and assertions. If the history's tool
+events match the episode in order and one final execution is missing or lacks
+its result, the runner completes that exchange from the episode. The fold marker
+and assistant reply text are excluded from tool counts.
 
 Use `$one_of` in an input matcher for equivalent values, such as an app name
 and its canonical package ID.
