@@ -33,8 +33,16 @@ from ci.plan import (
 )
 
 
-# Tool-call markup a model emitted as plain reply text.
-TEXT_TOOL_CALL = re.compile(r"<parcel_call\b|default_api:\w+")
+# Tool-call markup a model emitted as plain reply text. Seen forms:
+# <parcel_call><default_api:touch_gesture>, <call_default_api:recall_memory{...}/>
+# <recall_memory>...</recall_memory> and recall_memory(tags=[...]). Tool names
+# are snake_case, so a snake_case tag or call catches any tool without listing
+# them. <final_answer> is the benchmark's answer format (runner/assertions.py).
+TEXT_TOOL_CALL = re.compile(
+    r"default_api:\w+"
+    r"|<(?!final_answer\b)[a-z]+(?:_[a-z]+)+[\s>/{]"
+    r"|\b[a-z]+(?:_[a-z]+)+\((?:\w+=|\))"
+)
 
 
 @dc.dataclass(frozen=True)

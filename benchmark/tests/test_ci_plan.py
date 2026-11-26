@@ -579,11 +579,10 @@ def test_workflow_artifacts_upload_only_named_files_from_benchmark_runs() -> Non
                 or name in {"pre.jpg", "post.jpg"}), f"{workflow}: {path}"
 
 
-def test_self_hosted_benchmark_job_never_runs_pull_request_code() -> None:
+def test_labeled_pull_request_runs_only_the_reviewed_head_commit() -> None:
+    # scripts/test_github_actions_self_hosted_safety.sh checks the job guard.
+    # This pins the checkout: without it, a push after the label is applied
+    # would run unreviewed code on the self-hosted runner.
     run_job = _workflow_job("run")
-
-    assert (
-        "    if: ${{ startsWith(github.ref, 'refs/heads/') "
-        "&& github.event_name != 'pull_request' "
-        "&& github.event_name != 'pull_request_target' }}"
-    ) in run_job.splitlines()
+    checkout = run_job.split("uses: actions/checkout@v4", 1)[1].split("- name:", 1)[0]
+    assert "ref: ${{ github.event.pull_request.head.sha || '' }}" in checkout

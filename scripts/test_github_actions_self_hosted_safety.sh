@@ -58,6 +58,25 @@ def repo_branch_guarded?(condition, dynamic_runner)
   blocks_pr_events && requires_repo_branch && runner_guard
 end
 
+# The one sanctioned way for pull request code to reach a self-hosted runner:
+# a maintainer applies this label, and pull_request_target (whose workflow
+# definition always comes from the default branch) reacts to that event only.
+LABEL_GATE = "github.event_name == 'pull_request_target' && github.event.action == 'labeled' " \
+             "&& github.event.label.name == 'run-baseline-gate'"
+BRANCH_GUARD = "startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' " \
+               "&& github.event_name != 'pull_request_target'"
+
+def label_gated?(condition)
+  normalized = condition.gsub(/\s+/, " ").strip
+  normalized == "${{ (#{BRANCH_GUARD}) || (#{LABEL_GATE}) }}"
+end
+
+def workflow_triggers(workflow)
+  # YAML 1.1 reads the bare key `on` as true.
+  triggers = workflow["on"] || workflow[true] || {}
+  triggers.is_a?(Hash) ? triggers : Array(triggers).to_h { |name| [name, nil] }
+end
+
 failures = []
 
 branch_guard = "startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target'"
@@ -70,6 +89,10 @@ end
 abort "hosted Ubuntu runner incorrectly classified as self-hosted" if self_hosted_capable?("ubuntu-24.04")
 abort "unconditional repository branch guard was rejected" unless repo_branch_guarded?(branch_guard, true)
 abort "missing repository branch guard was accepted" if repo_branch_guarded?("", false)
+abort "label gate was rejected" unless label_gated?("${{ (#{BRANCH_GUARD}) || (#{LABEL_GATE}) }}")
+abort "label gate without a label check was accepted" if label_gated?(
+  "${{ (#{BRANCH_GUARD}) || (github.event_name == 'pull_request_target') }}"
+)
 %w[aico aiden].each do |brand|
   incomplete_guard = "(inputs.runner != 'self-hosted' && !startsWith(inputs.runner, '#{brand}-hosted-')) || (#{branch_guard})"
   abort "runner exemption omitted a dedicated label prefix" if repo_branch_guarded?(incomplete_guard, true)
@@ -85,6 +108,13 @@ Dir.glob(File.join(workflow_dir, "*.{yml,yaml}")).sort.each do |file|
 
     dynamic_runner = dynamic_self_hosted_capable?(runs_on)
     condition = job["if"].to_s
+    if label_gated?(condition)
+      types = Array(workflow_triggers(workflow).dig("pull_request_target", "types"))
+      next if types == ["labeled"]
+      relative_file = file.delete_prefix("#{repo_root}/")
+      failures << "#{relative_file}:#{job_name} is label-gated but pull_request_target must use types: [labeled] only"
+      next
+    end
     next if repo_branch_guarded?(condition, dynamic_runner)
 
     relative_file = file.delete_prefix("#{repo_root}/")

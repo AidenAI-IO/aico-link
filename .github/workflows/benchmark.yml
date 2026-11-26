@@ -4,18 +4,13 @@ on:
   schedule:
     # 02:07 Asia/Shanghai daily (UTC 18:07 previous day).
     - cron: '7 18 * * *'
-  # Baseline gate: every merge into main that can change Agent behavior must
-  # keep the must-pass tasks in benchmark/ci/baseline_gate_v1.json passing.
-  # Pull requests cannot run here (self-hosted runner on a public repository);
-  # dispatch the baseline-gate profile on a pull request branch to check it
-  # before merging.
-  push:
-    branches:
-      - main
-    paths:
-      - src/agent/**
-      - benchmark/**
-      - .github/workflows/benchmark.yml
+  # Baseline gate for a pull request: a maintainer adds the run-baseline-gate
+  # label after reviewing the change. pull_request_target takes this workflow
+  # from main, so a pull request cannot change the trigger or the label check.
+  # Only the head commit at labeling time is tested; the label is removed at
+  # once, so testing a later push needs a new label.
+  pull_request_target:
+    types: [labeled]
   workflow_dispatch:
     inputs:
       profile:
@@ -55,22 +50,47 @@ permissions:
 
 concurrency:
   # A separate group keeps a queued gate run from replacing a queued full run
-  # on the same branch. Each gate run checks a cumulative main, so a newer
-  # pending gate run may replace an older pending one.
-  group: benchmark-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.profile == 'baseline-gate') && 'gate' || 'full' }}
-  cancel-in-progress: false
+  # on the same branch. A new gate label on a pull request cancels the gate
+  # run of its previous label. Labels for other purposes get their own group
+  # so they never cancel a gate run.
+  group: >-
+    ${{ github.event_name == 'pull_request_target'
+    && format('benchmark-gate-pr-{0}{1}', github.event.pull_request.number,
+              github.event.label.name == 'run-baseline-gate' && '' || format('-{0}', github.run_id))
+    || format('benchmark-{0}-{1}', github.ref, inputs.profile == 'baseline-gate' && 'gate' || 'full') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   plan:
+    # Labels other than run-baseline-gate start nothing.
+    if: ${{ github.event_name != 'pull_request_target' || (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'run-baseline-gate') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       profile: ${{ steps.profile.outputs.profile }}
       timeout_minutes: ${{ steps.profile.outputs.timeout_minutes }}
     steps:
+      # Always the trusted default branch: the gate list comes from main.
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Consume the gate label and mark the pull request pending
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/run-baseline-gate" >/dev/null || true
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=pending \
+            -f context=baseline-gate -f target_url="$RUN_URL" \
+            -f description="Running the baseline gate" >/dev/null
       - id: profile
         name: Select scheduled profile
         env:
@@ -82,7 +102,7 @@ jobs:
             profile="${DISPATCH_PROFILE:-runnable}"
           elif [[ "$EVENT_NAME" == "schedule" ]]; then
             profile="runnable"
-          elif [[ "$EVENT_NAME" == "push" ]]; then
+          elif [[ "$EVENT_NAME" == "pull_request_target" ]]; then
             profile="baseline-gate"
           else
             echo "Unsupported benchmark workflow event: $EVENT_NAME" >&2
@@ -136,7 +156,11 @@ jobs:
     needs: plan
     # A distinct check name lets the gate become a required status check.
     name: ${{ needs.plan.outputs.profile == 'baseline-gate' && 'baseline-gate' || 'run' }}
-    if: ${{ startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+    # Pull request code reaches this self-hosted runner only through the
+    # maintainer-applied run-baseline-gate label on pull_request_target.
+    if: >-
+      ${{ (startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target')
+      || (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'run-baseline-gate') }}
     runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
     # One runner serves this label, so a job matrix could never start a second job:
     # every case ran back to back and repaid the checkout/uv/docker setup 13 times.
@@ -220,6 +244,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # A labeled pull request: the head commit the maintainer reviewed.
+          ref: ${{ github.event.pull_request.head.sha || '' }}
       - name: Reap orphaned benchmark containers and run directories
         # Every other cleanup is keyed to this job's RUN_ID, so a cancelled job or a
         # SIGKILLed runner leaks containers and run directories that nothing collects.
@@ -866,3 +892,64 @@ jobs:
             echo "::warning::Both BENCHMARK_REPORT_PUBLISH_DIR and BENCHMARK_REPORT_BASE_URL are required for direct report links"
           fi
           uv run python -m ci.publish_reports "${args[@]}"
+
+  report:
+    # The pull request verdict comes from main's ci.gate_verdict and gate list
+    # on a GitHub-hosted runner, so the pull request's own code can neither
+    # weaken the gate nor fake the result. Posted as the baseline-gate commit
+    # status on the tested head and as a pull request comment.
+    needs: [plan, run]
+    if: ${{ always() && needs.plan.result == 'success' && github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download gate results
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gate
+      - name: Judge and report
+        working-directory: benchmark
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          RUNS_DIR: ${{ runner.temp }}/gate/runs
+        run: |
+          set -uo pipefail
+          summary="$RUNNER_TEMP/gate-summary.md"
+          if [[ -d "$RUNS_DIR" ]]; then
+            python3 -m ci.gate_verdict --runs-dir "$RUNS_DIR" \
+              --run-id-prefix "$PREFIX" --run-id-prefix "$PREFIX-retry" --enforce > "$summary"
+            code=$?
+          else
+            printf '## Baseline gate\n\nThe gate job produced no results (setup failure or cancellation).\n' > "$summary"
+            code=2
+          fi
+          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          passed="$(grep -oE '^[0-9]+/[0-9]+ gated task' "$summary" | head -1 | cut -d' ' -f1)"
+          case "$code" in
+            0) state=success; description="Passed ${passed:-}" ;;
+            1) state=failure; description="Failed ${passed:-}" ;;
+            *) state=error; description="Did not complete" ;;
+          esac
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state="$state" \
+            -f context=baseline-gate -f target_url="$RUN_URL" -f description="$description" >/dev/null
+          {
+            grep -v '^::' "$summary"
+            echo
+            echo "Tested commit ${HEAD_SHA:0:9} ([run]($RUN_URL)). Add the \`run-baseline-gate\` label again to test a later push."
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
+          exit "$code"

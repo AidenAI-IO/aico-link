@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from ci.gate_verdict import judge, retry_matrix
+import pytest
+
+from ci.gate_verdict import TEXT_TOOL_CALL, judge, retry_matrix
 from ci.plan import SuiteCase
 
 CASE = SuiteCase(id="local", suite="suites/s.json", environment="isolated",
@@ -50,3 +52,15 @@ def test_gate_passes_a_task_once_any_pass_succeeds_and_retries_only_the_rest(
     assert final["broken"].blocking and final["unscored"].blocking
     assert final["text_call"].statuses == ("model_format", "model_format")
     assert final["text_call"].kind == "model_format" and not final["text_call"].blocking
+
+
+@pytest.mark.parametrize(("reply", "text_call"), [
+    ("<parcel_call><default_api:touch_gesture><point/></default_api:touch_gesture></parcel_call>", True),
+    ("<call_default_api:recall_memory{tags:[games]}/>", True),
+    ("<recall_memory><tags>[writing]</tags></recall_memory>", True),
+    ("recall_memory(tags=[writing,feedback], types=[preference])", True),
+    ("<final_answer>B</final_answer>", False),
+    ("Your preferred city is Hangzhou.", False),
+])
+def test_text_tool_call_forms(reply: str, text_call: bool) -> None:
+    assert bool(TEXT_TOOL_CALL.search(reply)) is text_call

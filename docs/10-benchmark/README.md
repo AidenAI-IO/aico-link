@@ -516,7 +516,7 @@ The execution policy is based only on whether CI can prepare the environment:
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (16 cases) |
 | Manual dispatch | `adb` | Native Android comparisons, built-in app workflows, and Bridge capabilities on the configured emulator |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
-| Push to `main` changing `src/agent/`, `benchmark/`, or the workflow | `baseline-gate` | Must-pass tasks from `benchmark/ci/baseline_gate_v1.json` |
+| `run-baseline-gate` label on a pull request | `baseline-gate` | Must-pass tasks from `benchmark/ci/baseline_gate_v1.json` on the labeled head commit |
 | Manual dispatch | `baseline-gate` | The same must-pass tasks on any repository branch, such as a pull request branch before merging |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
@@ -569,8 +569,8 @@ no matching case remains an error.
 Pull requests run the catalog and planner tests in the normal `CI` workflow, but
 do not receive Agent/Judge/Langfuse secrets and therefore do not operate a
 device. Real benchmark execution comes from the daily schedule on the default
-branch or a manual `workflow_dispatch` on any repository branch. Manual
-dispatch remains unavailable to pull request and fork refs.
+branch, a manual `workflow_dispatch` on any repository branch, or the
+maintainer-applied `run-baseline-gate` label described below.
 
 ### Baseline gate
 
@@ -601,14 +601,38 @@ Agent's decision. A task that fails only this way is reported as a warning
 and does not fail the gate. A gate run is not published to Langfuse and does
 not generate a dashboard, so task subsets never appear as suite regressions.
 
-The self-hosted runner never runs pull request events. To check a change before
-merging, dispatch the workflow on the pull request branch:
+#### Checking a pull request
+
+The repository is public and the benchmark runs on a self-hosted runner with
+benchmark credentials, so pull request code never runs there automatically. A
+maintainer who has reviewed a pull request adds the `run-baseline-gate` label.
+That triggers the Benchmark workflow through `pull_request_target`, whose
+definition always comes from `main`, so a pull request cannot change the
+trigger. The workflow:
+
+1. removes the label and sets a pending `baseline-gate` commit status on the
+   pull request's head commit;
+2. builds the task list from `main`'s `baseline_gate_v1.json`;
+3. checks out exactly the head commit that was labeled, runs the gate on the
+   self-hosted runner, and reruns tasks that did not pass once;
+4. judges the results with `main`'s `ci.gate_verdict` on a GitHub-hosted runner,
+   sets the `baseline-gate` status to success, failure, or error, and comments
+   the result table on the pull request.
+
+A later push is not tested until a maintainer adds the label again, which also
+cancels a gate run still in progress for that pull request. Fork pull requests
+work the same way, because the label, not the author, starts the run.
+`scripts/test_github_actions_self_hosted_safety.sh` accepts this one guard for
+pull request code on the self-hosted runner, and only when `pull_request_target`
+reacts to `labeled` events alone.
+
+To make the gate a merge requirement, add `baseline-gate` as a required status
+check in the `main` ruleset. Branches in this repository can also be checked
+without a pull request:
 
 ```bash
 gh workflow run benchmark.yml --ref <branch> -f profile=baseline-gate
 ```
-
-The result is reported on the branch's head commit as the `baseline-gate` check.
 
 Use the `model` dropdown when manually dispatching the workflow to select the
 Agent model for that run. Manual dispatch defaults to
