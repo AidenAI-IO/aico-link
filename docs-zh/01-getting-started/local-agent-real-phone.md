@@ -105,7 +105,12 @@ python3 scripts/local_agent.py ios --xctrunner YOUR_RUNNER_ID.xctrunner --permis
 未知或含糊的权限弹窗会保持显示。关于规则匹配、512 个 UTF-16 单元的输入限制以及安全界面的限制，参见
 [iOS 直连参考](../../benchmark/ios_device/README.md)。Android 通过可选的
 [ADBKeyBoard 设置](../../benchmark/adbandroid/README.md#unicode-text-with-adbkeyboard)支持提交 Unicode 文本。
-桥接会临时选择该输入法进行 Base64 输入，然后恢复原来的键盘；没有安装它的设备保留 ASCII 回退方案。
+默认使用 ADBKeyBoard：桥接会临时选择它进行 Base64 输入，然后恢复原来的键盘。如果想改用 Appium Settings 的 UnicodeIME，
+请用 `--unicode-input-method appium` 启动 Android 模式。如果所选输入法缺失且设备在启动时已就绪，桥接会自动安装它；
+安装失败时，启动会在桥接服务器启动之前终止。如果设备尚未就绪，安装会推迟到设备响应之后的某次能力探测或文本输入时进行。
+桥接运行期间，如果所选输入法无法安装，则保留 ASCII 输入。Appium 路径通过 `adb input text` 发送 modified UTF-7，
+无法发送字面量 `%s`。两条路径在桥接启动时选定，彼此不会相互回退。参见
+[Appium UnicodeIME 设置](../../benchmark/adbandroid/README.md#appium-unicodeime-alternative)。
 镜像模式通过 Mac 支持提交 Unicode 文本。
 
 在 USB/WDA 模式下，Agent 通过原生的 `insert_text` 发送原始 Unicode，并通过截图验证结果。
