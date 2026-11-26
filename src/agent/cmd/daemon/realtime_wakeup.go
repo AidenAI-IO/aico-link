@@ -40,7 +40,7 @@ const (
 	realtimeTaskResultDebounce = 500 * time.Millisecond
 	realtimeContextReplayTurns = 10
 	// realtimeContextReplayGap ends verbatim replay: a conversation resumed
-	// after it starts fresh, with the earlier one left to recall_session_chunks.
+	// after it gets the earlier turns only as one transcript marked old.
 	// Replayed turns steer the model more than its instructions do, so an old
 	// topic, an old answer, or an old work update would otherwise carry on.
 	realtimeContextReplayGap          = 30 * time.Minute
@@ -3896,7 +3896,15 @@ func realtimeEarlierConversation(recent []messages.Message) string {
 		case messages.MessageRoleAssistant:
 			speaker = "assistant"
 		case messages.MessageRoleNotice:
-			speaker = "work update"
+			// A work update opens with instructions for the live turn. Only its
+			// task lines belong in the transcript; cut as a whole, the update
+			// would keep the instructions and lose every task.
+			for _, line := range strings.Split(content, "\n") {
+				if task, ok := strings.CutPrefix(strings.TrimSpace(line), "- task_id="); ok {
+					lines = append(lines, "work update: task_id="+limitRealtimeTaskField(task, 300))
+				}
+			}
+			continue
 		default:
 			continue
 		}

@@ -862,11 +862,12 @@ func TestRealtimeNoticePersistsAsNoticeInUserContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := appendRealtimeNoticeMessage(manager, "background task completed"); err != nil {
+	notice := formatRealtimeTaskUpdates([]agenttask.Task{{ID: "task_news", Status: agenttask.StatusCompleted, Prompt: "read the news", Result: "three headlines"}})
+	if err := appendRealtimeNoticeMessage(manager, notice); err != nil {
 		t.Fatal(err)
 	}
 	got := manager.MessageListDump().Messages
-	if len(got) != 2 || got[1].Role != messages.MessageRoleNotice || got[1].Content != "background task completed" {
+	if len(got) != 2 || got[1].Role != messages.MessageRoleNotice || got[1].Content != notice {
 		t.Fatalf("messages = %+v, want notice role", got)
 	}
 
@@ -877,7 +878,7 @@ func TestRealtimeNoticePersistsAsNoticeInUserContext(t *testing.T) {
 	if err := replayRealtimeContext(context.Background(), replayer, manager, nil, false, now, "UTC"); err != nil {
 		t.Fatal(err)
 	}
-	if len(replayer.items) != 2 || replayer.items[0].Content != util.STag("notice", "background task completed") {
+	if len(replayer.items) != 2 || replayer.items[0].Content != util.STag("notice", notice) {
 		t.Fatalf("replayed = %+v, want tagged notice then time note", replayer.items)
 	}
 	if note := replayer.items[1].Content; replayer.items[1].Role != "user" || !strings.Contains(note, "elapsed: 10m0s") ||
@@ -886,13 +887,16 @@ func TestRealtimeNoticePersistsAsNoticeInUserContext(t *testing.T) {
 	}
 
 	// A conversation resumed after a long gap is not replayed as live turns:
-	// it comes back as one transcript marked old, then the time note.
+	// it comes back as one transcript marked old, then the time note. The
+	// work update keeps its outcome, not its instructions for the live turn.
 	replayer = &recordingContextReplayer{}
 	if err := replayRealtimeContext(context.Background(), replayer, manager, nil, false, got[1].Timestamp.Add(2*time.Hour), "UTC"); err != nil {
 		t.Fatal(err)
 	}
+	instructions, _, _ := strings.Cut(notice, "\n")
 	if len(replayer.items) != 2 || !strings.HasPrefix(replayer.items[0].Content, "<earlier_conversation>") ||
-		!strings.Contains(replayer.items[0].Content, "work update: background task completed") ||
+		!strings.Contains(replayer.items[0].Content, `work update: task_id=task_news status=completed task="read the news" result="three headlines"`) ||
+		strings.Contains(replayer.items[0].Content, instructions) ||
 		!strings.Contains(replayer.items[1].Content, "elapsed: 2h0m0s") {
 		t.Fatalf("replayed after gap = %+v, want the old transcript then the time note", replayer.items)
 	}
