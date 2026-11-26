@@ -1,6 +1,6 @@
 # Aico Link Firmware
 
-Website: [aico.link](https://aico.link) | Docs: [Documentation Hub](docs/README.md) | Community: [Join the Discord](https://discord.gg/tFrQsgFGTy)
+Website: [aico.link](https://aico.link) | Docs: [Documentation Hub](docs/README.md) ([简体中文](docs-zh/README.md)) | Community: [Join the Discord](https://discord.gg/tFrQsgFGTy)
 
 **Aico Link** is the hardware. **Aico** is the AI Agent that runs on it.
 This repository provides Aico Link firmware, hardware services, and the Aico
