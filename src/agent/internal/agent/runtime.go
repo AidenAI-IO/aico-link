@@ -1414,7 +1414,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if budgetContextWindow <= 0 {
 		budgetContextWindow = r.models.Spec().ContextWindow
 	}
-	maxResponseTokens := r.models.Spec().MaxOutput
+	maxResponseTokens := defaultOutputReservation(r.models.Spec())
 	if cfg.Model.MaxResponseTokens > 0 {
 		maxResponseTokens = cfg.Model.MaxResponseTokens
 	}
