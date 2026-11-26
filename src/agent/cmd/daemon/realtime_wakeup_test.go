@@ -942,14 +942,15 @@ func TestStartRealtimeToolCallDoesNotBlockEventLoop(t *testing.T) {
 	call := realtimevoice.Event{Kind: realtimevoice.EventToolCall, ResponseID: "resp-1", CallID: "call-1", Name: realtimeRecallTool, Arguments: `{}`}
 
 	executor := realtimeVoiceToolExecutor{delegated: map[string]langtools.Tool{realtimeRecallTool: tool}}
-	startRealtimeToolCall(context.Background(), executor, call, results)
+	done := make(chan struct{})
+	startRealtimeToolCall(context.Background(), executor, call, results, func() { close(done) })
 	select {
 	case <-tool.started:
 	case <-time.After(time.Second):
 		t.Fatal("tool call did not start")
 	}
 	select {
-	case <-results:
+	case <-done:
 		t.Fatal("tool call completed before release")
 	default:
 	}
@@ -961,6 +962,11 @@ func TestStartRealtimeToolCallDoesNotBlockEventLoop(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for asynchronous tool result")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("tool did not signal completion")
 	}
 }
 

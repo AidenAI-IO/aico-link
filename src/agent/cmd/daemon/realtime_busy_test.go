@@ -674,7 +674,8 @@ func TestRealtimeBusyInterruptionClearsExplicitToolContinuation(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})
 	oldStarter := realtimeToolCallStarter
-	realtimeToolCallStarter = func(ctx context.Context, _ realtimeVoiceToolExecutor, _ realtimevoice.Event, _ chan<- realtimeToolResult) {
+	realtimeToolCallStarter = func(ctx context.Context, _ realtimeVoiceToolExecutor, _ realtimevoice.Event, _ chan<- realtimeToolResult, done func()) {
+		defer done()
 		close(started)
 		go func() {
 			<-ctx.Done()
@@ -712,7 +713,8 @@ func TestRealtimeBusyToolCancellationPreservesParallelCall(t *testing.T) {
 	}
 	started := make(chan heldTool, 2)
 	oldStarter := realtimeToolCallStarter
-	realtimeToolCallStarter = func(ctx context.Context, _ realtimeVoiceToolExecutor, call realtimevoice.Event, results chan<- realtimeToolResult) {
+	realtimeToolCallStarter = func(ctx context.Context, _ realtimeVoiceToolExecutor, call realtimevoice.Event, results chan<- realtimeToolResult, done func()) {
+		defer done()
 		started <- heldTool{ctx, call, results}
 	}
 	defer func() { realtimeToolCallStarter = oldStarter }()
@@ -764,7 +766,8 @@ func TestRealtimeBusyToolCancellationPreservesParallelCall(t *testing.T) {
 func TestRealtimeBusyToolCancellationAfterResponseDone(t *testing.T) {
 	started := make(chan context.Context, 1)
 	oldStarter := realtimeToolCallStarter
-	realtimeToolCallStarter = func(ctx context.Context, _ realtimeVoiceToolExecutor, _ realtimevoice.Event, _ chan<- realtimeToolResult) {
+	realtimeToolCallStarter = func(ctx context.Context, _ realtimeVoiceToolExecutor, _ realtimevoice.Event, _ chan<- realtimeToolResult, done func()) {
+		defer done()
 		started <- ctx
 	}
 	defer func() { realtimeToolCallStarter = oldStarter }()
@@ -803,7 +806,8 @@ func TestRealtimeBusyLateToolCancellationDoesNotCancelReusedCallID(t *testing.T)
 	}
 	started := make(chan startedTool, 2)
 	oldStarter := realtimeToolCallStarter
-	realtimeToolCallStarter = func(ctx context.Context, _ realtimeVoiceToolExecutor, call realtimevoice.Event, _ chan<- realtimeToolResult) {
+	realtimeToolCallStarter = func(ctx context.Context, _ realtimeVoiceToolExecutor, call realtimevoice.Event, _ chan<- realtimeToolResult, done func()) {
+		defer done()
 		started <- startedTool{responseID: call.ResponseID, ctx: ctx}
 	}
 	defer func() { realtimeToolCallStarter = oldStarter }()
