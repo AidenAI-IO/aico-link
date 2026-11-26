@@ -178,7 +178,9 @@ export function ValueField({
     setError('');
     try {
       const result = await onCommit(value);
-      if (sequence.current === id) staged.current = result === 'staged';
+      // Later edits do not release ownership of a patch still queued by the hook.
+      if (result === 'staged') staged.current = true;
+      else if (result === 'saved' || result === undefined) staged.current = false;
       if (sequence.current === id && result !== 'staged' && result !== 'superseded') {
         if (result === 'failed' || result === 'invalid')
           setError(resolve(msg('basic.save_failed', '保存失败')));

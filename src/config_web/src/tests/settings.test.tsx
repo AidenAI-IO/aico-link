@@ -648,6 +648,66 @@ it('saves only the staged entries whose restart level was confirmed', async () =
   expect(screen.getByText(/reboot/i)).toBeTruthy();
   model.dispose();
 });
+it('replaces a staged field after a duplicate submission and a revert during another commit', async () => {
+  let releasePlan!: (value: { apply: string }) => void;
+  const send = vi.fn(async (path: string, options?: RequestInit) => {
+    const patch = JSON.parse(String(options?.body)).config;
+    if (path === '/api/config/plan') {
+      if (patch.model?.model === 'B')
+        return new Promise<{ apply: string }>((resolve) => (releasePlan = resolve));
+      return { apply: patch.agent ? 'agent_restart' : 'live' };
+    }
+    return { apply: 'live', config: { model: { model: 'A' }, ...patch } };
+  });
+  const { model, props, mount } = setup(send, { model: { model: 'A' } });
+  function Form() {
+    const saver = useSettings(props, 'Settings');
+    return (
+      <>
+        <ValueField
+          label="Model"
+          saved={saver.config.model?.model}
+          onCommit={(value) => saver.change('model', { model: { model: String(value) } })}
+        />
+        <button onClick={() => void saver.change('agent', { agent: { input_mode: 'stt' } })}>
+          Stage agent
+        </button>
+        <button onClick={() => void saver.commit()}>Commit</button>
+      </>
+    );
+  }
+  mount(<Form />);
+  fireEvent.click(screen.getByText('Stage agent'));
+  await act(flush);
+  const input = screen.getByLabelText('Model') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'B' } });
+  fireEvent.blur(input);
+  fireEvent.change(input, { target: { value: 'C' } });
+  fireEvent.change(input, { target: { value: 'B' } });
+  fireEvent.blur(input);
+  expect(send.mock.calls.filter(([path]) => path === '/api/config/plan')).toHaveLength(2);
+  fireEvent.click(screen.getByText('Commit'));
+  await act(flush);
+  await act(async () => {
+    releasePlan({ apply: 'live' });
+    await flush();
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  await act(flush);
+  fireEvent.change(input, { target: { value: 'A' } });
+  fireEvent.blur(input);
+  await act(flush);
+  expect(input.value).toBe('A');
+  fireEvent.click(screen.getByText('Commit'));
+  await act(flush);
+  fireEvent.click(screen.getByRole('button', { name: 'Save & Restart' }));
+  await act(flush);
+  const writes = send.mock.calls
+    .filter(([path, options]) => path === '/api/config' && options?.method === 'PATCH')
+    .map(([, options]) => JSON.parse(String(options?.body)).config);
+  expect(writes).toEqual([{ model: { model: 'A' } }, { agent: { input_mode: 'stt' } }]);
+  model.dispose();
+});
 it('keeps raw TOML recovery writable only after a successful read and preserves failed edits', async () => {
   let offline = true;
   vi.stubGlobal('fetch', async () => {
