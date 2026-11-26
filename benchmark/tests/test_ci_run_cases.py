@@ -165,7 +165,9 @@ def test_failed_aidenbridge_setup_loses_only_bridge_cases(monkeypatch, tmp_path:
         records[0]["workflow_run_id"] = healthy["workflow_run_id"] = "123"
         run, = _group_into_runs([healthy, records[0]])
         assert run["metrics_complete"] is False and run["pass_at_1"] is None
-        assert _totals([healthy, records[0]])["pass_at_1"] is None
+        weekly = _totals([healthy, records[0]])
+        assert weekly["pass_at_1"] == 1.0
+        assert weekly["coverage"] == 0.5
     else:
         assert sorted(started) == ["bridge", "memory", "plain-adb"]
     assert by_id["plain-adb"].ok and by_id["memory"].ok

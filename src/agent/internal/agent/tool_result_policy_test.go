@@ -988,3 +988,26 @@ func TestBoundedToolResultObservationPrioritizesPreview(t *testing.T) {
 		t.Fatal("observation exceeds budget")
 	}
 }
+
+// The input budget reserves only the output limit the request sends, so an
+// advertised maximum near the window does not crowd out the input.
+func TestToolResultSoftLimitReservesSentOutputLimit(t *testing.T) {
+	tests := []struct {
+		name    string
+		spec    model.ModelSpec
+		options []llms.CallOption
+		reserve int
+	}{
+		{name: "no limit sent", spec: model.ModelSpec{Provider: "openrouter", ContextWindow: 262_144, MaxOutput: 235_929}, reserve: 0},
+		{name: "native anthropic sends its limit", spec: model.ModelSpec{Provider: "anthropic", ContextWindow: 200_000, MaxOutput: 64_000}, reserve: 64_000},
+		{name: "explicit limit", spec: model.ModelSpec{Provider: "openrouter", ContextWindow: 262_144, MaxOutput: 235_929}, options: []llms.CallOption{llms.WithMaxTokens(100_000)}, reserve: 100_000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := toolResultSoftLimit(ToolResultPrepareInput{ModelSpec: tt.spec, CallOptions: tt.options})
+			if want := toolResultSoftInputLimit(tt.spec.ContextWindow, tt.reserve); got != want {
+				t.Fatalf("soft limit = %d, want %d (output reservation %d)", got, want, tt.reserve)
+			}
+		})
+	}
+}
