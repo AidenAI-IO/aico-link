@@ -9,6 +9,11 @@ import (
 )
 
 func (e *textInputEngine) runNativeTextInsertion(ctx context.Context, args textInputArgs) (textInputResult, bool) {
+	return e.runNativeTextInsertionWithFocus(ctx, args, nil)
+}
+
+// resolveFocus runs only after native insertion is supported, before any input.
+func (e *textInputEngine) runNativeTextInsertionWithFocus(ctx context.Context, args textInputArgs, resolveFocus func(context.Context) (focusPointArgs, error)) (textInputResult, bool) {
 	if e.hw.textInsertion == nil {
 		return textInputResult{}, false
 	}
@@ -24,6 +29,12 @@ func (e *textInputEngine) runNativeTextInsertion(ctx context.Context, args textI
 	}
 	if e.vision == nil || e.hw.screenshot == nil {
 		return textInputResult{Reason: "native text verification is not configured"}, true
+	}
+	if resolveFocus != nil {
+		args.Focus, err = resolveFocus(ctx)
+		if err != nil {
+			return textInputResult{Reason: err.Error()}, true
+		}
 	}
 	if err := e.applyFocus(ctx, args.Focus); err != nil {
 		return textInputFailure(err), true

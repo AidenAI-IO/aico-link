@@ -438,6 +438,31 @@ const (
 )
 
 func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, term string, clearFirst, allowQuick bool) (searchQueryEntry, error) {
+	// Native bridges replace the focused query directly. Probe before any
+	// clipboard, Select All, or quick pinyin input: WDA cannot execute those
+	// physical-key shortcuts. A failed insertion must not replay via HID.
+	if result, handled := engine.runNativeTextInsertionWithFocus(ctx, textInputArgs{
+		Text:         term,
+		ReplaceField: true,
+	}, func(ctx context.Context) (focusPointArgs, error) {
+		// Spotlight can place its field above the keyboard instead of at
+		// the top. A fixed tap can open a search result before text is sent.
+		field, _, err := checkSearchField(ctx, cfg, engine)
+		if err != nil {
+			return focusPointArgs{}, err
+		}
+		if field.SearchField == nil {
+			return focusPointArgs{}, fmt.Errorf("no visible system search field; inspect the screen before retrying")
+		}
+		return *field.SearchField, nil
+	}); handled {
+		if !result.OK {
+			logging.Warnf("agent", "app_search", "native query input failed: %s", result.Reason)
+			return searchQueryTyped, fmt.Errorf("enter search query: %s", enterTextFailureSuggestion(result))
+		}
+		logging.Infof("agent", "app_search", "query input route=native_text")
+		return searchQueryTyped, nil
+	}
 	if clearFirst {
 		if err := engine.clearField(ctx, cfg.resolvedPlatform()); err != nil {
 			return searchQueryTyped, err
@@ -488,7 +513,7 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *
 	return searchQueryTyped, nil
 }
 
-// searchFieldCheck is the state of the system search field after a paste.
+// searchFieldCheck identifies the visible system search field and its state.
 type searchFieldCheck struct {
 	Empty       bool            `json:"empty"`
 	SearchField *focusPointArgs `json:"search_field"`
@@ -558,8 +583,8 @@ func checkSearchField(ctx context.Context, cfg appSearchOpenFlowConfig, engine *
 }
 
 func buildSearchFieldCheckPrompt() string {
-	return strings.TrimSpace(`Analyze this phone screenshot of a system app search page right after automation pasted a query into its search field.
-Decide whether the search field is still empty, which means the paste had no effect.
+	return strings.TrimSpace(`Analyze this phone screenshot of a system app search page.
+Locate the search query field and decide whether it is empty.
 Return JSON only:
 {
   "empty": true,

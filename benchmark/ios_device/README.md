@@ -211,7 +211,11 @@ applications' permissions.
   still uses gesture navigation. Synthetic bottom-edge swipes may scroll an app
   instead of returning Home. Only this target's `quick_actions.json` opts into
   native system navigation; Mirroring, Android, and HID mappings are unchanged.
-  The Agent's search/launch flow replaces its query through native insertion;
+  The Agent's search/launch flow selects native insertion before clipboard,
+  physical-key clearing, or quick pinyin entry. It locates the visible search
+  field, including layouts above the keyboard, and replaces its query with the
+  original app name. Field lookup, input, or verification failures stop the
+  search without replaying the query through physical keys;
   public `enter_text` inserts at the current caret/selection. Direct bridge
   clients may use `insert_text` with `replace: true` to clear old field text.
 - WDA can control permission alerts but cannot bypass locked-device security,
