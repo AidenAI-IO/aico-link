@@ -478,7 +478,10 @@ Task-selection metadata distinguishes a repetition change from changed coverage;
 older records without that metadata retain a general coverage-change notice.
 
 The daily benchmark workflow generates `dashboard.html` with the last 7 days
-of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml`
+of pass@1 trends and efficiency metrics. The dashboard opens with the agent
+models and overall pass@1 for the latest workflow run. The overall rate pools
+passes across eligible first attempts and is unavailable if any dataset lacks
+complete first-attempt counts. A separate `benchmark-weekly-report.yml`
 workflow runs every Thursday and sends a Lark card summarizing the last 7 days
 and each dataset's change from its own previous 7 days, with a link to the dashboard. History comes from
 Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
@@ -566,6 +569,13 @@ dispatch remains unavailable to pull request and fork refs.
 Use the `model` dropdown when manually dispatching the workflow to select the
 Agent model for that run. Manual dispatch defaults to
 `google/gemini-3.5-flash-lite`, which is also the model used by scheduled runs.
+Models with the `internal/` prefix, such as `internal/qwen3.6-35b`, use the
+configured `BENCHMARK_JUDGE_BASE_URL` variable and `BENCHMARK_JUDGE_API_KEY`
+secret for Agent requests. The workflow strips the `internal/` prefix before
+passing the model name to the runner, so `internal/qwen3.6-35b` is sent as
+`qwen3.6-35b`. An internal run fails configuration validation if those settings
+are missing. Other Agent models use `BENCHMARK_AGENT_BASE_URL` and
+`BENCHMARK_AGENT_API_KEY`.
 
 The workflow expects these GitHub configuration values. GitHub-facing names omit
 the `AICO_` prefix; the workflow maps them to the runner variables documented

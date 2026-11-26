@@ -35,6 +35,7 @@ on:
           - deepseek/deepseek-v4.1-flash-1017
           - google/gemini-3.8-flash
           - openai/gpt-6-luna
+          - internal/qwen3.6-35b
 
 permissions:
   contents: read
@@ -122,8 +123,14 @@ jobs:
       BENCHMARK_AGENT_PROVIDER: ${{ vars.BENCHMARK_AGENT_PROVIDER }}
       DOCKER_BUILDKIT: 1
       BENCHMARK_AGENT_MODEL: ${{ inputs.model || 'google/gemini-3.5-flash-lite' }}
-      BENCHMARK_AGENT_BASE_URL: ${{ vars.BENCHMARK_AGENT_BASE_URL }}
-      BENCHMARK_AGENT_API_KEY: ${{ secrets.BENCHMARK_AGENT_API_KEY }}
+      # Keep missing internal credentials empty for validation. The Judge's
+      # public endpoint fallback must not apply to internal Agent runs.
+      BENCHMARK_AGENT_BASE_URL: >-
+        ${{ (startsWith(inputs.model, 'internal/') && vars.BENCHMARK_JUDGE_BASE_URL)
+          || (!startsWith(inputs.model, 'internal/') && vars.BENCHMARK_AGENT_BASE_URL) || '' }}
+      BENCHMARK_AGENT_API_KEY: >-
+        ${{ (startsWith(inputs.model, 'internal/') && secrets.BENCHMARK_JUDGE_API_KEY)
+          || (!startsWith(inputs.model, 'internal/') && secrets.BENCHMARK_AGENT_API_KEY) || '' }}
       BENCHMARK_REALTIME_PROVIDER: ${{ vars.BENCHMARK_REALTIME_PROVIDER }}
       BENCHMARK_REALTIME_MODEL: ${{ vars.BENCHMARK_REALTIME_MODEL }}
       BENCHMARK_REALTIME_ENDPOINT: ${{ vars.BENCHMARK_REALTIME_ENDPOINT }}
@@ -537,6 +544,7 @@ jobs:
           # 0 only when Aico App cases are planned and their device setup failed.
           AIDENBRIDGE_READY: ${{ (steps.aidenbridge_install.outcome == 'failure' || steps.aidenbridge_routing.outcome == 'failure') && '0' || '1' }}
         run: >-
+          BENCHMARK_AGENT_MODEL="${BENCHMARK_AGENT_MODEL#internal/}"
           uv run python -m ci.run_cases
           --matrix-json "$MATRIX"
           --run-id-prefix "$RUN_ID_PREFIX"
