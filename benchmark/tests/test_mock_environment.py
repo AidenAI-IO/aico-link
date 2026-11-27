@@ -161,14 +161,7 @@ def test_mock_environment_returns_scripted_tool_result_and_updates_screen():
         blocked = _json_request(
             f"{base_url}/api/tools/enter_text",
             "POST",
-            {
-                "input": json.dumps(
-                    {
-                        "text": "+1 202-555-0147",
-                        "focus": {"x": 500, "y": 360},
-                    }
-                )
-            },
+            {"input": json.dumps({"text": "+1 202-555-0147", "route": "app"})},
         )
         assert blocked["is_error"] is True
 
@@ -179,27 +172,10 @@ def test_mock_environment_returns_scripted_tool_result_and_updates_screen():
         )
         assert json.loads(opened["output"])["ok"] is True
 
-        missing_focus = _json_request(
-            f"{base_url}/api/tools/enter_text",
-            "POST",
-            {"input": json.dumps({"text": "+1 202-555-0147"})},
-        )
-        assert missing_focus["is_error"] is True
-
         entered = _json_request(
             f"{base_url}/api/tools/enter_text",
             "POST",
-            {
-                "input": json.dumps(
-                    {
-                        "text": "Biden: +1 202-555-0147",
-                        "focus": {
-                            "x": 500,
-                            "y": 360,
-                        },
-                    }
-                )
-            },
+            {"input": json.dumps({"text": "Biden: +1 202-555-0147", "route": "app"})},
         )
         assert json.loads(entered["output"]) == {"ok": True}
 
