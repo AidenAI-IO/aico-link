@@ -79,7 +79,7 @@ normal 选择 CMD/DAT/CLK，而 idle 在 GPIO3_A2-A7 上选择 GPIO 下拉，用
 这块开发板暴露的是 `/dev/mmcblk1p1`。挂载检查包括一次同步的临时写入和回读，
 并拒绝只读挂载或 I/O 错误。读取失败不会触发空白卡格式化。Debian 包含 FAT32、ext4 和 exFAT
 的检查/格式化工具。完整的可用性检查、显式设备覆盖以及默认 64 MiB 最小剩余空间，
-参见 [存储管理器](04-agent/storage-manager.md)。
+参见 [存储管理器](05-agent/storage-manager.md)。
 
 ### 验证
 

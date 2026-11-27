@@ -506,7 +506,7 @@ judged semantically, while identifiers such as employee IDs remain exact.
 #### Memory admission benchmark
 
 `suites/memory_admission_v1.json` checks the
-[Memory Admission Policy](../docs/04-agent/memory-plane.md#memory-admission-policy):
+[Memory Admission Policy](../docs/05-agent/memory-plane.md#memory-admission-policy):
 what the Agent chooses to keep and whether saved memory reaches later answers.
 Run it with `--auto-agent-setup`, like `memory_v1`.
 
@@ -1428,7 +1428,7 @@ billing leaves the task cost unknown. Explicitly free calls remain zero. The
 runner publishes cost distributions to Langfuse. Episode model-call counts and
 elapsed times also supplement history, including compaction and failed calls.
 
-See the [Metrics Reference](../docs/09-benchmark/metrics-reference.md) for
+See the [Metrics Reference](../docs/10-benchmark/metrics-reference.md) for
 measurement boundaries.
 
 Latest results also groups **Failure details** by dataset. Each task/attempt

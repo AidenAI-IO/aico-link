@@ -114,7 +114,7 @@ Settings > Accessibility > Touch > AssistiveTouch
 
 还建议在 AssistiveTouch 页面中开启 **Show Onscreen Keyboard**，以获得更稳定的键盘输入体验。
 
-当前固件改用 HID 触控板驱动 iOS，需要打开 Zoom 并关闭 AssistiveTouch；参见 [USB HID](../03-services/usb-hid.md)。
+当前固件改用 HID 触控板驱动 iOS，需要打开 Zoom 并关闭 AssistiveTouch；参见 [USB HID](../04-services/usb-hid.md)。
 
 ## 默认设备节点
 

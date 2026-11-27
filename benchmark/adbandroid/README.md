@@ -310,7 +310,7 @@ In GitHub Actions, select profile `adb` and leave `suite` empty to run all
 six cases, or enter one suite path to run its matching cases. Basic and
 text-editing suite paths each select both comparison variants. The workflow requires an
 already booted device and `BENCHMARK_ANDROID_SERIAL`; see
-[CI configuration](../../docs/09-benchmark/README.md#github-actions-ci).
+[CI configuration](../../docs/10-benchmark/README.md#github-actions-ci).
 For local runs, use any suite path in the quick-start command above. Add
 `--task-id <id>` to select individual tasks and `--repeats <count>` to repeat them.
 

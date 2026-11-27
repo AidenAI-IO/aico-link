@@ -96,7 +96,7 @@ fixed ports under the instance's advanced options.
 | Host desktop | This computer's screen, mouse, and keyboard | macOS or Linux with a graphical session. See [Host desktop](#host-desktop). |
 | iPhone Mirroring | A real iPhone through Apple's iPhone Mirroring app | macOS with iPhone Mirroring set up and Xcode Command Line Tools. See [iPhone Mirroring](#iphone-mirroring). |
 | iOS device | A real iPhone over USB through WebDriverAgent | macOS, Xcode, and a signed WebDriverAgent installed on the phone. See [iOS device](#ios-device). |
-| Virtual iPhone | A [vphone-cli](../../docs/09-benchmark/vphone-cli-setup-guide-en.md) virtual iPhone | macOS with a running vphone VM. See [Virtual iPhone](#virtual-iphone). |
+| Virtual iPhone | A [vphone-cli](../../docs/10-benchmark/vphone-cli-setup-guide-en.md) virtual iPhone | macOS with a running vphone VM. See [Virtual iPhone](#virtual-iphone). |
 | Custom bridge | Any service that implements the [Environment Bridge Protocol](../environment_bridge.md) | A running bridge. Enter the URL the Agent container should use, normally `http://host.docker.internal:<port>`; `127.0.0.1` and `localhost` are rewritten to `host.docker.internal` for the container. The launcher checks `/health` at the address containers reach this computer at and derives the device type from the reported platform. On Linux that address is the Docker bridge gateway (usually `172.17.0.1`), so a bridge on this computer must listen on `0.0.0.0` or that gateway; a bridge that listens only on `127.0.0.1` is reported by **Check** and refused at start. |
 
 Bridge types that the host cannot run (for example the iPhone types on Linux)
@@ -114,7 +114,7 @@ The device type passed to the Agent (`AICO_DEVICE_TYPE`) comes from the bridge:
 Android (ADB) instances keep Phone Bridge on the Agent. The ADB bridge receives
 only screen and input requests; companion App status, WebSocket connections,
 and HTTP command queues are handled locally. Companion App features require a
-phone-to-Agent network path; see [Phone Bridge](../../docs/04-agent/phone-bridge.md#desktop-agent-with-adb-reverse).
+phone-to-Agent network path; see [Phone Bridge](../../docs/05-agent/phone-bridge.md#desktop-agent-with-adb-reverse).
 
 For Unicode text, choose **Unicode input method** in the instance's Android
 settings. **ADBKeyBoard** is the default and uses Base64 broadcasts.
@@ -235,7 +235,7 @@ or other WDA sessions on that phone first.
 
 ### Virtual iPhone
 
-Controls a [vphone-cli](../../docs/09-benchmark/vphone-cli-setup-guide-en.md)
+Controls a [vphone-cli](../../docs/10-benchmark/vphone-cli-setup-guide-en.md)
 virtual iPhone on this Mac. Start the VM first.
 
 - **VM socket** is the VM's host-control socket, `vm/vphone.sock` in the

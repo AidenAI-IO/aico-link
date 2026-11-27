@@ -209,7 +209,7 @@ Config Web 的 **Export logs** 操作（`GET /api/logs/support`）会把最新�
 
 `aico-mcu-event.service` 单元现在运行 `mcu_service`，即 `/dev/ttyS5`（115200 8N1）上的生产 UART 对端。
 它提供电池/定时器/LED 操作和基于游标的唤醒长轮询，并协调由 MCU 请求的 Linux 关机。
-应用约定、关机时序约束以及烧录后的验证命令参见 [MCU 服务](../03-services/mcu-service.md)。
+应用约定、关机时序约束以及烧录后的验证命令参见 [MCU 服务](../04-services/mcu-service.md)。
 在使用其他 UART 占用者之前，请先停止该单元。这块开发板上的 journald 是易失的；
 如果需要保留记录，请在重启前导出日志。
 

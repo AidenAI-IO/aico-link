@@ -24,7 +24,7 @@ named volume.
 
 Use this workflow for interactive development, configuration checks, and Agent
 testing. For repeatable task suites, parallel environments, scoring, and reports,
-use the [Benchmark workflow](../09-benchmark/README.md) instead.
+use the [Benchmark workflow](../10-benchmark/README.md) instead.
 
 ## Aico Launcher
 
@@ -335,7 +335,7 @@ AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:8899 \
 
 See [ADB Android Environment Bridge](../../benchmark/adbandroid/README.md) for
 supported tools, serial selection, and device-specific limitations.
-See [Phone Bridge](../04-agent/phone-bridge.md#desktop-agent-with-adb-reverse)
+See [Phone Bridge](../05-agent/phone-bridge.md#desktop-agent-with-adb-reverse)
 for the companion App's separate network requirements.
 
 ### Other Virtual Machines or Targets
@@ -354,7 +354,7 @@ AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:<bridge-port> \
 The environment bridge is the control boundary: the sandbox does not gain direct
 access to an arbitrary virtual machine merely because the VM is running. For the
 project's virtual iPhone workflow, use `AICO_DEVICE_TYPE=iOS` and see the
-[vphone CLI setup guide](../09-benchmark/vphone-cli-setup-guide-en.md).
+[vphone CLI setup guide](../10-benchmark/vphone-cli-setup-guide-en.md).
 
 ### Real iPhone Through macOS iPhone Mirroring
 
@@ -479,7 +479,7 @@ URL. The sandbox does not provide model credentials automatically.
 
 ## Next Steps
 
-- [Benchmark Overview](../09-benchmark/README.md) for repeatable suites, parallel
+- [Benchmark Overview](../10-benchmark/README.md) for repeatable suites, parallel
   environments, scoring, and reports;
-- [Agent Configuration](../04-agent/configuration.md) for configuration fields;
+- [Agent Configuration](../05-agent/configuration.md) for configuration fields;
 - [Hardware & Wiring](hardware.md) when moving to a physical board.

@@ -17,12 +17,12 @@ sidebar_position: 2
 | --- | --- | --- |
 | 1 | 按照硬件设计接线（仅限旧版自行组装开发板） | [硬件与接线（旧版）](hardware.md) |
 | 2 | 将 `update.img` 固件烧录到 Pico Zero | [固件构建与烧录](firmware.md) |
-| 3 | 打开配置页面并连接 Wi-Fi | [Config Web](../04-agent/configuration.md#config-web设备配置页面) |
-| 4 | 配置 model / tts / stt 等密钥 | [Agent 配置](../04-agent/configuration.md) |
+| 3 | 打开配置页面并连接 Wi-Fi | [Config Web](../05-agent/configuration.md#config-web设备配置页面) |
+| 4 | 配置 model / tts / stt 等密钥 | [Agent 配置](../05-agent/configuration.md) |
 | 5 | 启动开发板并验证 | [测试与验证](testing.md) |
 | 6 | 了解架构和模块 | [架构概览](../02-architecture/overview.md) |
-| 7 | 固件构建与 OTA 升级 | [固件](firmware.md) / [OTA](../08-ota/README.md) |
-| 8 | 出现问题时进行故障排查 | [故障排查](../07-operations/troubleshooting.md) |
+| 7 | 固件构建与 OTA 升级 | [固件](firmware.md) / [OTA](../09-ota/README.md) |
+| 8 | 出现问题时进行故障排查 | [故障排查](../08-operations/troubleshooting.md) |
 
 ## 1. 硬件与接线
 
@@ -81,7 +81,7 @@ http://192.168.42.1
 - 输入 SSID 和密码；保存时会写入
   `/userdata/debian/wifi/wpa_supplicant-wlan0.conf`。
 
-配置页面还维护 Agent 配置和系统环境变量。详情参见 [Config Web](../04-agent/configuration.md#config-web设备配置页面)。
+配置页面还维护 Agent 配置和系统环境变量。详情参见 [Config Web](../05-agent/configuration.md#config-web设备配置页面)。
 
 ## 4. 配置密钥
 
@@ -104,7 +104,7 @@ Agent 的 HTTP 服务器和 Web UI 始终会启动。`input_mode` 决定是否�
 
 > 注意这是两个不同的网页：`http://192.168.42.1`（端口 80）是设备配置页面；`http://<device-ip>:8080` 是 Agent Web UI，在 `text` 和 `stt` 两种模式下都可用。
 
-字段含义、最小可用配置示例以及 TTS/STT 提供商取值参见 [Agent 配置](../04-agent/configuration.md)。
+字段含义、最小可用配置示例以及 TTS/STT 提供商取值参见 [Agent 配置](../05-agent/configuration.md)。
 
 ## 5. 启动开发板
 
@@ -135,12 +135,12 @@ Agent 的 HTTP 服务器和 Web UI 始终会启动。`input_mode` 决定是否�
 
 然后深入各个模块：
 
-- [Frame 服务](../03-services/frame-service.md)：HDMI 帧采集服务
-- [音频服务](../03-services/audio-service.md)：音频录制/播放服务
-- [USB HID 与设备控制](../03-services/usb-hid.md)
-- [Go Agent 概览](../04-agent/overview.md)：LLM 运行时、工具调用、语音流水线
-- [Agent 配置](../04-agent/configuration.md)：agent.toml 参考以及 Config Web 配置页面
-- [Tools HTTP API](../04-agent/tools-http-api.md)
+- [Frame 服务](../04-services/frame-service.md)：HDMI 帧采集服务
+- [音频服务](../04-services/audio-service.md)：音频录制/播放服务
+- [USB HID 与设备控制](../04-services/usb-hid.md)
+- [Go Agent 概览](../05-agent/overview.md)：LLM 运行时、工具调用、语音流水线
+- [Agent 配置](../05-agent/configuration.md)：agent.toml 参考以及 Config Web 配置页面
+- [Tools HTTP API](../05-agent/tools-http-api.md)
 
 源码布局参见 [源码树](../02-architecture/source-tree.md)；启动服务和运行时布局参见 [启动服务与运行时布局](../02-architecture/boot-services.md)。
 
@@ -150,11 +150,11 @@ Agent 的 HTTP 服务器和 Web UI 始终会启动。`input_mode` 决定是否�
 
 - 原生 / 交叉编译开发环境：[构建与开发环境](build.md)；
 - 完整的 Debian 固件构建（`./debian_build.sh`）和烧录：[固件构建与烧录](firmware.md)；
-- 空中升级：[OTA 概览](../08-ota/README.md)。
+- 空中升级：[OTA 概览](../09-ota/README.md)。
 
 ### 开发构建的 OTA
 
-**Aico Link Channel Release** 工作流可以手动发布 `dev`、`staging` 或 `prod`，并根据自该通道上一个发布版本以来的改动选择业务软件包或完整 OTA。参见 [通道发布](../08-ota/channel-release.md)。
+**Aico Link Channel Release** 工作流可以手动发布 `dev`、`staging` 或 `prod`，并根据自该通道上一个发布版本以来的改动选择业务软件包或完整 OTA。参见 [通道发布](../09-ota/channel-release.md)。
 对于未发布的本地构建，使用通道匹配的测试设备，从开发用的 HTTP(S) 端点提供其产物，并显式地将设备指向其清单：
 
 ```bash
@@ -166,8 +166,8 @@ ota update \
   --dry-run
 ```
 
-公钥必须与本地构建使用的密钥匹配。先使用 `--dry-run` 验证下载，而不切换槽位。托管细节参见 [面向外部开发者的 OTA](../08-ota/ota-external-developers.md)。
+公钥必须与本地构建使用的密钥匹配。先使用 `--dry-run` 验证下载，而不切换槽位。托管细节参见 [面向外部开发者的 OTA](../09-ota/ota-external-developers.md)。
 
 ## 8. 故障排查
 
-遇到问题时，先查看 [故障排查](../07-operations/troubleshooting.md)，其中涵盖常见的连接、服务、视频/音频、Agent 和 OTA 问题。日志位置参见 [部署](deployment.md)。
+遇到问题时，先查看 [故障排查](../08-operations/troubleshooting.md)，其中涵盖常见的连接、服务、视频/音频、Agent 和 OTA 问题。日志位置参见 [部署](deployment.md)。

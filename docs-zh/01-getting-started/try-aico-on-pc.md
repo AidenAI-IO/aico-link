@@ -17,7 +17,7 @@ Docker 沙箱是在没有 Luckfox 开发板的情况下运行 Aico 的最快方�
 同时把配置和 Agent 状态保存在一个 Docker 命名卷中。
 
 此工作流适用于交互式开发、配置检查和 Agent 测试。如需可重复的任务套件、并行环境、评分和报告，
-请改用 [Benchmark 工作流](../09-benchmark/README.md)。
+请改用 [Benchmark 工作流](../10-benchmark/README.md)。
 
 ## Aico Launcher
 
@@ -279,7 +279,7 @@ AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:8899 \
 ```
 
 关于支持的工具、序列号选择和特定设备的限制，参见 [ADB Android 环境桥接](../../benchmark/adbandroid/README.md)。
-关于配套 App 的单独网络要求，参见 [手机桥接](../04-agent/phone-bridge.md#使用-adb-reverse-的桌面-agent)。
+关于配套 App 的单独网络要求，参见 [手机桥接](../05-agent/phone-bridge.md#使用-adb-reverse-的桌面-agent)。
 
 ### 其他虚拟机或目标
 
@@ -294,7 +294,7 @@ AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:<bridge-port> \
 
 环境桥接是控制边界：沙箱不会仅仅因为某个虚拟机正在运行，就获得对它的直接访问权限。
 对于本项目的虚拟 iPhone 工作流，请使用 `AICO_DEVICE_TYPE=iOS`，并参见
-[vphone CLI 设置指南](../09-benchmark/vphone-cli-setup-guide-en.md)。
+[vphone CLI 设置指南](../10-benchmark/vphone-cli-setup-guide-en.md)。
 
 ### 通过 macOS iPhone 镜像连接真实 iPhone
 
@@ -400,6 +400,6 @@ docker compose logs -f
 
 ## 后续步骤
 
-- [Benchmark 概览](../09-benchmark/README.md)：可重复的测试套件、并行环境、评分和报告；
-- [Agent 配置](../04-agent/configuration.md)：配置字段；
+- [Benchmark 概览](../10-benchmark/README.md)：可重复的测试套件、并行环境、评分和报告；
+- [Agent 配置](../05-agent/configuration.md)：配置字段；
 - [硬件与接线](hardware.md)：迁移到实体开发板时参考。

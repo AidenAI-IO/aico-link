@@ -17,7 +17,7 @@ sidebar_position: 4
 **Aico Link Channel Release** 工作流会将改动与所选通道的上一个发布版本进行比较。系统改动会生成已签名的固件；
 仅业务改动会生成 Debian 软件包。主工作流每小时在 UTC `:17` 检查一次 `main`，并将有变化的内容发布到
 `dev`；内容未变化时跳过。三个通道（`dev`、`staging`、`prod`）也都支持手动发布；
-参见 [通道发布](../08-ota/channel-release.md)。主入口和备用入口默认进行经过验证的发布，
+参见 [通道发布](../09-ota/channel-release.md)。主入口和备用入口默认进行经过验证的发布，
 固件构建分别使用 `aico-hosted-01` 和 `aico-hosted-02`。回退构建和独立的软件包构建只上传产物。
 你也可以使用 `./debian_build.sh` 在本地构建镜像，或通过项目的手动分发流程获取经过审核的 `update.img`。
 
@@ -76,7 +76,7 @@ Debian 生产软件包集包含 `python3` 和 `python3-pip`。构建镜像后，
 /usr/bin/python3 -m pip --version
 ```
 
-运行时安装的软件包保存在 `/userdata` 下；参见 [持久化 Python 软件包](../04-agent/python-packages.md)。
+运行时安装的软件包保存在 `/userdata` 下；参见 [持久化 Python 软件包](../05-agent/python-packages.md)。
 
 ## 系统挂起
 
@@ -225,4 +225,4 @@ sudo scripts/flash.sh flash \
 
 Debian `update.img` 包含一个初始为空的 `ota.img`。生成的出厂配置存储在 `userdata.img` 的 `/debian/ota/config.json` 中，启动后出现在 `/userdata/debian/ota/config.json`。它包含 `repo`、`channel`、`factory_version`、`factory_build_time` 以及按槽位区分的 `factory_partition_hashes`；`/userdata/ota` 仍是用于状态和下载的专用工作区。
 
-更多 OTA 细节参见 [OTA 概览](../08-ota/README.md)。
+更多 OTA 细节参见 [OTA 概览](../09-ota/README.md)。

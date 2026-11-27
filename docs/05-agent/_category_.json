@@ -1,0 +1,8 @@
+{
+  "label": "Agent",
+  "position": 5,
+  "link": {
+    "type": "generated-index",
+    "description": "Configure and extend the Aico runtime, tools, skills, memory, and voice features."
+  }
+}
