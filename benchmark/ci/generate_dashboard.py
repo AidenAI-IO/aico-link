@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp, comparison_key, fetch_benchmark_history
-from ci.weekly_report import (AREA_ORDER, DIAGNOSTIC_SUITES, capability_of, environment_of, render_weekly,
-                              summarize_latest_run, summarize_weekly)
+from ci.weekly_report import (AREA_ORDER, DIAGNOSTIC_SUITES, capability_of, environment_of, label_datasets,
+                              render_weekly, summarize_latest_run, summarize_weekly)
 from ci.dashboard_metrics import METRIC_CHARTS
 
 
@@ -50,7 +50,9 @@ def generate_dashboard(
     """
     report_end = report_end or datetime.now(timezone.utc)
     display_start = report_end - timedelta(days=7)
-    display_history = [record for record in history
+    # Name datasets as the weekly summary does, so a suite run in two
+    # environments is two datasets in every view.
+    display_history = [record for record in label_datasets(history)
                        if (stamp := parse_timestamp(record.get("timestamp"))) is not None
                        and display_start <= stamp < report_end]
     runs = _group_into_runs(display_history)
@@ -154,6 +156,7 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
             **{field: record.get(field) for field in COMPARISON_FIELDS},
             "comparison_key": comparison_key(record),
             "suite": record.get("suite") or "unknown",
+            "dataset": record.get("dataset") or record.get("suite") or "unknown",
             "timestamp": record.get("timestamp"),
             "commit_sha": record.get("commit_sha") or "unknown",
             "run_id": record.get("run_id"),
@@ -248,7 +251,7 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     series: dict[str, list[dict[str, Any]]] = {}
     for run in runs:
         for suite in run["suites"]:
-            series.setdefault(suite["suite"], []).append({
+            series.setdefault(suite["dataset"], []).append({
                 **suite,
                 "timestamp": suite.get("timestamp") or run["timestamp"],
                 "commit_sha": suite.get("commit_sha") or run["commit_sha"],
@@ -278,10 +281,11 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "Configuration changed" if changed_fields else
             "Comparable"
         )
+        suite = latest["suite"]
         summaries.append({
             "suite": name,
-            "capability": capability_of(name),
-            "diagnostic": name in DIAGNOSTIC_SUITES,
+            "capability": capability_of(suite),
+            "diagnostic": suite in DIAGNOSTIC_SUITES,
             "latest": latest,
             "previous": previous,
             "metric_deltas": metric_deltas,

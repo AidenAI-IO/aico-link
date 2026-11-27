@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS
+from ci.weekly_report import label_datasets
 from ci.generate_dashboard import (
     _group_into_runs,
     _summarize_suites,
@@ -43,20 +44,20 @@ def _record(**overrides):
     return record
 
 
-def test_adb_bridge_pair_keeps_same_workload_and_distinct_environment():
-    runs = _group_into_runs([
+def test_a_suite_in_two_environments_is_two_datasets():
+    runs = _group_into_runs(label_datasets([
         _record(suite="adb_android_basic", run_id="ci-1-1-adb_android_basic",
                 execution_environment="adb", passed=2, pass_at_1=0.5),
         _record(suite="adb_android_basic", run_id="ci-1-1-adb_android_basic-aidenbridge",
                 timestamp="2026-10-10T01:00:00+00:00", execution_environment="adb_aidenbridge",
                 passed=3, pass_at_1=0.75),
-    ])
-    summary, = _summarize_suites(runs)
-    assert summary["changed_fields"] == ["execution_environment"]
-    assert summary["previous"]["environment_label"] == "ADB device"
-    assert summary["latest"]["environment_label"] == "ADB + Aico App"
-    assert summary["delta"] == 0.25
-    assert len(summary["points"]) == 2
+    ]))
+    summaries = {summary["suite"]: summary for summary in _summarize_suites(runs)}
+    assert sorted(summaries) == ["adb_android_basic [adb]", "adb_android_basic [adb_aidenbridge]"]
+    bridge = summaries["adb_android_basic [adb_aidenbridge]"]
+    assert bridge["latest"]["environment_label"] == "ADB + Aico App"
+    assert bridge["previous"] is None and len(bridge["points"]) == 1
+    assert bridge["capability"] == "UI operation"
 
 
 def test_group_into_runs_weights_pass_rate_by_task_count() -> None:

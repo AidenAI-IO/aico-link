@@ -83,7 +83,7 @@ def _by_suite(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     return groups
 
 
-def _label_datasets(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def label_datasets(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Name each record's dataset: its suite, plus its environment when the
     same suite also ran in another environment, so those results never merge."""
     environments: dict[str, set[str]] = {}
@@ -232,7 +232,7 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=7)
     previous_start = start - timedelta(days=7)
-    history = _label_datasets(history)
+    history = label_datasets(history)
     current = [r for r in history if start <= parse_timestamp(r["timestamp"]) < end]
     earlier = [r for r in history if parse_timestamp(r["timestamp"]) < start]
     previous = [r for r in earlier if previous_start <= parse_timestamp(r["timestamp"])]
@@ -253,7 +253,7 @@ def summarize_latest_run(history: list[dict[str, Any]], *, end: datetime | None 
     A dataset missing from the previous run has no change.
     """
     end = end or datetime.now(timezone.utc)
-    history = _label_datasets([r for r in history if parse_timestamp(r["timestamp"]) < end])
+    history = label_datasets([r for r in history if parse_timestamp(r["timestamp"]) < end])
     runs: dict[tuple[Any, Any], list[dict[str, Any]]] = {}
     for record in history:
         runs.setdefault(_run_key(record), []).append(record)

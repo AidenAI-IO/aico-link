@@ -311,7 +311,7 @@ const rateBar = (rate, previous, label) => `<span class="rate"><span class="rate
   "</span></span>";
 const changeCell = (change, previous, label) => weekChange(change) +
   (known(previous) ? `<span class="delta empty">${esc(label)} ${pct(previous)}</span>` : "");
-const datasetIndexByName = name => datasets.findIndex(dataset => dataset.suite === name.replace(/ \[[^\]]*\]$/, ""));
+const datasetIndexByName = name => datasets.findIndex(dataset => dataset.suite === name);
 const workflowLink = summary => DATA.repo && summary.workflow_run_id
   ? safeLink(`https://github.com/${DATA.repo.split('/').map(encodeURIComponent).join('/')}/actions/runs/${encodeURIComponent(summary.workflow_run_id)}`,
       `Workflow #${summary.workflow_run_number || summary.workflow_run_id}` + (summary.workflow_run_attempt > 1 ? ` · attempt ${summary.workflow_run_attempt}` : ""))

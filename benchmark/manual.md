@@ -1302,7 +1302,8 @@ A dataset with no usable first attempts can display its most recent usable
 result and date from the fetched history. The historical result is excluded
 from the current window's totals and changes. A suite measured in multiple
 execution environments appears once per environment, for example
-`adb_android_text_editing [adb_aidenbridge]`.
+`adb_android_text_editing [adb_aidenbridge]`. The dashboard uses the same
+names, so each environment has its own results, trends, and failure details.
 
 The card's headline and test-area changes compare each window's own totals.
 Positive and negative changes indicate direction. Coverage helps interpret
