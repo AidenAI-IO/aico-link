@@ -5,12 +5,14 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/messages"
 	"aico-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agenttask"
 	streamcontract "aico-agent/internal/stream"
 )
 
@@ -32,6 +35,8 @@ type busyTestSession struct {
 	interrupted              chan struct{}
 	blockCreate              bool
 	explicitToolContinuation bool
+	textMu                   sync.Mutex
+	texts                    []string
 }
 
 func (s *busyTestSession) Info() realtimevoice.SessionInfo {
@@ -42,7 +47,33 @@ func (s *busyTestSession) Events() <-chan realtimevoice.Event      { return s.ev
 func (s *busyTestSession) Errors() <-chan error                    { return nil }
 func (s *busyTestSession) Done() <-chan struct{}                   { return s.closed }
 func (s *busyTestSession) SendAudio(context.Context, []byte) error { return nil }
-func (s *busyTestSession) SendText(context.Context, string) error  { return nil }
+func (s *busyTestSession) SendText(_ context.Context, text string) error {
+	s.textMu.Lock()
+	s.texts = append(s.texts, text)
+	s.textMu.Unlock()
+	return nil
+}
+
+func (s *busyTestSession) countTexts(substr string) int {
+	s.textMu.Lock()
+	defer s.textMu.Unlock()
+	n := 0
+	for _, text := range s.texts {
+		if strings.Contains(text, substr) {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *busyTestSession) lastText() string {
+	s.textMu.Lock()
+	defer s.textMu.Unlock()
+	if len(s.texts) == 0 {
+		return ""
+	}
+	return s.texts[len(s.texts)-1]
+}
 func (s *busyTestSession) SendToolResult(context.Context, string, string) error {
 	s.toolResults <- struct{}{}
 	return nil
@@ -117,6 +148,9 @@ func busyTestAudio(t *testing.T) string {
 						return
 					}
 					response := []byte(`{"status":"OK","session_id":"1"}`)
+					if req.Op == "health" && busyTestStillPlaying.Load() {
+						response = []byte(`{"status":"OK","playback_sessions":1}`)
+					}
 					var pcm []byte
 					if req.Op == "read_record_chunk" {
 						time.Sleep(5 * time.Millisecond)
@@ -146,6 +180,14 @@ func startBusyTestSessionWithBlockedCreate(t *testing.T, timeout time.Duration, 
 // session's semantic events.
 var busyTestSemanticSink streamcontract.EventSink
 
+// busyTestTasks, when set before a session starts, is that session's
+// background task manager.
+var busyTestTasks *agenttask.Manager
+
+// busyTestStillPlaying makes the fake audio_service report queued speech, so a
+// playback drain does not finish until it is cleared.
+var busyTestStillPlaying atomic.Bool
+
 // busyTestConfigDir is the config directory of the last started session.
 var busyTestConfigDir string
 
@@ -172,7 +214,7 @@ func startBusyTestSessionConfigured(t *testing.T, timeout time.Duration, blockCr
 	done := make(chan error, 1)
 	sink := busyTestSemanticSink
 	go func() {
-		done <- runRealtimeSessionWithRegistryAndSink(cfg, signals, nil, nil, registry, sink, timeout, nil, bridge)
+		done <- runRealtimeSessionWithRegistryAndSink(cfg, signals, nil, busyTestTasks, registry, sink, timeout, nil, bridge)
 	}()
 	t.Cleanup(func() {
 		signals <- os.Interrupt
@@ -1144,5 +1186,209 @@ func TestRealtimeSavesToolAndInterruptedReplies(t *testing.T) {
 			t.Fatalf("saved replies = %q, want the tool reply and the interrupted one", saved)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A task result counts as told only once it has played out. When the user
+// speaks over it, the reply answers them only, and their words decide whether
+// the rest is told afterwards as an update of its own or dropped. Providers
+// with server-side turn detection cancel the response before they report the
+// speech, which must count as the same interruption.
+func TestRealtimeInterruptedTaskResultIsFinishedUnlessUnwanted(t *testing.T) {
+	for _, order := range []struct {
+		name string
+		// cut ends response r1, which tells the result, before the speech.
+		cut realtimevoice.Event
+	}{
+		{name: "speech while playing", cut: realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "r1", Status: "completed"}},
+		{name: "provider cancels first", cut: realtimevoice.Event{Kind: realtimevoice.EventResponseCancelled, ResponseID: "r1", Status: "cancelled"}},
+	} {
+		for _, unwanted := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/unwanted=%v", order.name, unwanted), func(t *testing.T) {
+				var judged atomic.Value
+				previous := decideRealtimeInterruptedResult
+				decideRealtimeInterruptedResult = func(_ context.Context, _ *agent.Runtime, words, report string) agent.InterruptedReportVerdict {
+					judged.Store(words + "|" + report)
+					if unwanted {
+						return agent.InterruptedReportUnwanted
+					}
+					return agent.InterruptedReportWanted
+				}
+				defer func() { decideRealtimeInterruptedResult = previous }()
+				manager := agenttask.NewManager(staticTaskRunner{result: "the report is ready"})
+				defer manager.Close()
+				busyTestTasks = manager
+				defer func() { busyTestTasks = nil }()
+				s, _, done := startBusyTestSession(t, 60*time.Second)
+				if _, err := manager.Create("prepare the report"); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-s.created:
+				case err := <-done:
+					t.Fatalf("session ended: %v", err)
+				case <-time.After(3 * time.Second):
+					t.Fatal("task result was not delivered")
+				}
+				settled := func() bool {
+					pending, _ := manager.TerminalState()
+					return len(pending) == 0 && len(manager.Outstanding()) == 0
+				}
+
+				// The provider finishing a response is not the user hearing it.
+				busyTestStillPlaying.Store(true)
+				defer busyTestStillPlaying.Store(false)
+				s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "r1"}
+				s.events <- realtimevoice.Event{Kind: realtimevoice.EventAudio, ResponseID: "r1", ItemID: "r1-item", PCM: make([]byte, 6400)}
+				s.events <- order.cut
+				time.Sleep(200 * time.Millisecond)
+				if order.cut.Kind == realtimevoice.EventResponseDone && settled() {
+					t.Fatal("result counted as heard while it was still playing")
+				}
+				s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStarted, ItemID: "speech-1"}
+				busyTestStillPlaying.Store(false)
+				deadline := time.Now().Add(3 * time.Second)
+				for !strings.Contains(s.lastText(), "Private note for the assistant") {
+					if time.Now().After(deadline) {
+						t.Fatalf("no note about the interruption was added: %q", s.lastText())
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+				if s.countTexts("Private note for the assistant") != 1 {
+					t.Fatalf("one interruption noted more than once")
+				}
+				s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStopped, ItemID: "speech-1"}
+				s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptFinal, Role: "user", ItemID: "speech-1", Text: "what time is it"}
+				s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "reply"}
+				s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "reply", Status: "completed"}
+
+				if unwanted {
+					for !settled() {
+						if time.Now().After(deadline) {
+							t.Fatalf("unwanted result left outstanding: %+v", manager.Outstanding())
+						}
+						time.Sleep(20 * time.Millisecond)
+					}
+					select {
+					case <-s.created:
+						t.Fatal("a result the user did not want was told again")
+					case <-time.After(900 * time.Millisecond):
+					}
+				} else {
+					select {
+					case <-s.created:
+					case <-time.After(3 * time.Second):
+						t.Fatal("the rest of the interrupted result was not told")
+					}
+					if !strings.Contains(s.lastText(), "not_heard=true") || !strings.Contains(s.lastText(), "the report is ready") {
+						t.Fatalf("finishing update does not ask for the missed part: %q", s.lastText())
+					}
+				}
+				if got, _ := judged.Load().(string); got != "what time is it|the report is ready" {
+					t.Fatalf("decision asked with %q", got)
+				}
+			})
+		}
+	}
+}
+
+// Speech before a result has played any audio cuts off nothing the user
+// heard: the result is told once they are answered, without a note or a
+// decision on their words.
+func TestRealtimeSpeechBeforeTaskResultPlaysRetellsIt(t *testing.T) {
+	previous := decideRealtimeInterruptedResult
+	decideRealtimeInterruptedResult = func(context.Context, *agent.Runtime, string, string) agent.InterruptedReportVerdict {
+		t.Error("asked whether the user wants a result they never heard")
+		return agent.InterruptedReportUnwanted
+	}
+	defer func() { decideRealtimeInterruptedResult = previous }()
+	manager := agenttask.NewManager(staticTaskRunner{result: "the report is ready"})
+	defer manager.Close()
+	busyTestTasks = manager
+	defer func() { busyTestTasks = nil }()
+	s, _, done := startBusyTestSession(t, 60*time.Second)
+	if _, err := manager.Create("prepare the report"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session ended: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("task result was not delivered")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStarted, ItemID: "speech-1"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStopped, ItemID: "speech-1"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptFinal, Role: "user", ItemID: "speech-1", Text: "what time is it"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "reply"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "reply", Status: "completed"}
+	select {
+	case <-s.created:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the result was not told after the user was answered")
+	}
+	if s.countTexts("Private note for the assistant") != 0 {
+		t.Fatal("a result that never played was noted as interrupted")
+	}
+	if !strings.Contains(s.lastText(), "the report is ready") {
+		t.Fatalf("result not told again: %q", s.lastText())
+	}
+}
+
+// When the user's words are unclear, the result comes back once as a question
+// whether they want it; spoken over again with unclear words, it is dropped.
+func TestRealtimeUnclearInterruptionAsksOnceThenDrops(t *testing.T) {
+	previous := decideRealtimeInterruptedResult
+	decideRealtimeInterruptedResult = func(context.Context, *agent.Runtime, string, string) agent.InterruptedReportVerdict {
+		return agent.InterruptedReportUnsure
+	}
+	defer func() { decideRealtimeInterruptedResult = previous }()
+	manager := agenttask.NewManager(staticTaskRunner{result: "the report is ready"})
+	defer manager.Close()
+	busyTestTasks = manager
+	defer func() { busyTestTasks = nil }()
+	s, _, done := startBusyTestSession(t, 60*time.Second)
+	if _, err := manager.Create("prepare the report"); err != nil {
+		t.Fatal(err)
+	}
+	busyTestStillPlaying.Store(true)
+	defer busyTestStillPlaying.Store(false)
+	for round := 1; round <= 2; round++ {
+		select {
+		case <-s.created:
+		case err := <-done:
+			t.Fatalf("session ended: %v", err)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("round %d: task result was not told", round)
+		}
+		if asks := strings.Contains(s.lastText(), "only ask briefly whether they want to hear it"); asks != (round == 2) {
+			t.Fatalf("round %d: asks=%v in %q", round, asks, s.lastText())
+		}
+		r := fmt.Sprintf("r%d", round)
+		speech := fmt.Sprintf("speech-%d", round)
+		s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: r}
+		s.events <- realtimevoice.Event{Kind: realtimevoice.EventAudio, ResponseID: r, ItemID: r + "-item", PCM: make([]byte, 6400)}
+		s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: r, Status: "completed"}
+		s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStarted, ItemID: speech}
+		s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStopped, ItemID: speech}
+		s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptFinal, Role: "user", ItemID: speech, Text: "ok"}
+		s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "reply-" + r}
+		s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "reply-" + r, Status: "completed"}
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		pending, _ := manager.TerminalState()
+		if len(pending) == 0 && len(manager.Outstanding()) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("result left outstanding after the second unclear interruption")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	select {
+	case <-s.created:
+		t.Fatal("result told a third time")
+	case <-time.After(900 * time.Millisecond):
 	}
 }
