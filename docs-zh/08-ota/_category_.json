@@ -1,0 +1,8 @@
+{
+  "label": "OTA",
+  "position": 8,
+  "link": {
+    "type": "doc",
+    "id": "ota/README"
+  }
+}

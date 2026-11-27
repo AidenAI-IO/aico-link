@@ -227,7 +227,7 @@ A phone running iOS locks its hardware-keyboard layout at the moment the USB key
 
 1. On the phone, switch the input language to the matching one (for example French for `azerty`, German for `qwertz`).
 2. Set `keyboard_layout` in Config Web to the target layout and save.
-3. Accept the Config Web reboot prompt and wait for the board and USB composite to reconnect. The phone then locks the hardware layout based on the language active in step 1.
+3. Accept the Config Web reboot prompt and wait for the board and USB composite to reconnect. On iOS the composite reconnects without a keyboard; the first keyboard action attaches it (see [On-demand keyboard](#on-demand-keyboard)), and the phone locks the hardware layout at that attach. Keep the step 1 language active until the keyboard has attached.
 
 The order matters: switch the language _before_ saving the configuration, because the layout is locked during enumeration. The Config Web save flow does not hot-reload or soft re-enumerate the same USB identity: iOS can retain an inconsistent keyboard and pointer session across that transition. If immediate reboot is cancelled, reboot the board manually before verifying the new layout.
 

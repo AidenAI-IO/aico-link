@@ -503,7 +503,7 @@ idle retry delay to avoid a hot loop.
 
 | Processor | Trigger | Batch | Output |
 | --- | --- | --- | --- |
-| EpisodeProcessor | Shared Agent idle window | 5 Episodes / 1 LLM call | Device Memory |
+| EpisodeProcessor | Shared Agent idle window | 3 Episodes / 1 LLM call | Device Memory |
 | NotificationProcessor | Shared Agent idle window | 10 events / 1 LLM call | Temporary or Long-Term Memory |
 
 Notification persistence does not start a 30-second timer. A Notification

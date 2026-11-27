@@ -254,7 +254,8 @@ means the requested cursor is older than the bounded ring's retained history.
 ```
 
 Accepts 1-8 Android notification events, validates bounded metadata fields,
-sets `source=android` and the request `device_id`, and returns accepted and
+sets `source=android` and the stored event `device_id` to the request `phone_id`,
+and returns accepted and
 duplicate counts. This operation is intended for the Agent HTTP bridge rather
 than arbitrary local publishers.
 

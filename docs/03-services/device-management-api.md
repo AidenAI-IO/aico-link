@@ -569,7 +569,8 @@ see [MCP](../04-agent/mcp.md#authentication) for client configuration.
 ## API Boundary
 
 Retired routes such as `/api/wifi/*`, `/api/system/env`,
-`/api/ota/update`, `/api/reboot`, `/api/agent/*`, and `/api/llm-logs/*` have
+`/api/ota/update`, `/api/reboot`, `/api/agent/*` other than
+`POST /api/agent/restart`, and `/api/llm-logs/*` have
 been removed and return `404 Not Found`; no compatibility adapters are
 provided. Clients must use the canonical resources in the table above.
 `GET /api/config` has only configuration semantics and uses the canonical editor

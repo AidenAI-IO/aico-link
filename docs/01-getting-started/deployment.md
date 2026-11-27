@@ -95,7 +95,8 @@ ssh root@<device-ip> 'chmod 0755 /usr/lib/aico/frame_service && systemctl start 
 ```
 
 Use the same pattern for `audio_service`, `ble_service`, or `agent`. The Agent
-binary also provides the `config-web` subcommand. Copying a binary directly mutates only the active rootfs slot and can
+binary also provides the `config-web` subcommand, so when replacing `agent`, stop
+and later start both `aico-agent.service` and `aico-config-web.service`. Copying a binary directly mutates only the active rootfs slot and can
 invalidate the factory hash expected by OTA diagnostics, so use it for short
 development cycles only. Rebuild and flash a complete image for a reproducible
 deployment.

@@ -368,8 +368,8 @@ documented workflow runs the Agent on the Mac, not in the Docker sandbox.
 
 ### Host Desktop
 
-To let the Agent operate the desktop session running the benchmark, start the
-host desktop bridge from `benchmark/`:
+To let the Agent operate the desktop session running the benchmark on macOS,
+start the host desktop bridge from `benchmark/`:
 
 ```bash
 uv run python -m runner start-desktop-env --bridge-port 8898
@@ -382,6 +382,29 @@ AICO_DEVICE_TYPE=macOS \
 AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:8898 \
   docker compose up --build
 ```
+
+On native Linux, the sandbox reaches the host only through the Docker bridge
+gateway (typically `172.17.0.1`), not through the loopback address that
+`start-desktop-env` binds. Start the bridge on the gateway from `benchmark/`
+instead, and use the Linux device type:
+
+```bash
+uv run python -m desktop.scripts.start_bridge \
+  --bridge-host 172.17.0.1 --allow-private-bind --bridge-port 8898
+```
+
+> **Warning:** The bridge does not authenticate clients. Any process that can
+> reach `172.17.0.1:8898`, including other containers on this host, can drive
+> this desktop. Run it only on a trusted host.
+
+```bash
+AICO_DEVICE_TYPE=linux \
+AICO_ENVIRONMENT_BRIDGE_ENDPOINT=http://host.docker.internal:8898 \
+  docker compose up --build
+```
+
+See [Desktop Environment Bridge](../../benchmark/desktop/README.md#bind-address)
+for the accepted bind addresses.
 
 The bridge uses `pyautogui` for pointer and keyboard input and normalized
 0–1000 coordinates for all pointer operations. Install it with

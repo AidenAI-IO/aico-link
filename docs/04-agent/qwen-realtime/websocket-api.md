@@ -64,11 +64,11 @@ Authorization is validated during the WebSocket handshake. If the API key is inv
 
 The Qwen-Audio Realtime API supports three interaction modes, configured through the `turn_detection.type` parameter in the `session.update` event:
 
-| **Mode** | **turn\\_detection.type** | **Description** | **Use cases** |
+| **Mode** | **turn_detection.type** | **Description** | **Use cases** |
 | --- | --- | --- | --- |
-| **server\\_vad** | `server_vad` | Server-side VAD detects speech boundaries and automatically triggers inference. | Hands-free conversations, voice assistants |
-| **smart\\_turn** | `smart_turn` | Combines acoustic perception and semantic understanding to identify turn boundaries rather than relying solely on voice signals. Sounds without semantic meaning (such as "um" or "ah") do not trigger a conversation turn or interrupt model speech. | Low-latency natural conversations, high-quality interruption handling |
-| **push-to-talk** | `null` | The client manually submits audio and triggers inference. | Push-to-talk, precise control |
+| **server_vad** | `server_vad` | Server-side VAD detects speech boundaries and automatically triggers inference. | Hands-free conversations, voice assistants |
+| **smart_turn** | `smart_turn` | Combines acoustic perception and semantic understanding to identify turn boundaries rather than relying solely on voice signals. Sounds without semantic meaning (such as "um" or "ah") do not trigger a conversation turn or interrupt model speech. | Low-latency natural conversations, high-quality interruption handling |
+| **push-to-talk** | — (set `turn_detection` itself to `null`) | The client manually submits audio and triggers inference. | Push-to-talk, precise control |
 
 ## **Interaction flows**
 
@@ -175,7 +175,21 @@ The client manually controls audio submission and inference triggering, suitable
 
 The following diagram shows a typical interaction sequence in push-to-talk mode:
 
-![111](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=)
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    loop While the user speaks
+        C->>S: input_audio_buffer.append
+    end
+    C->>S: input_audio_buffer.commit
+    S-->>C: input_audio_buffer.committed
+    S-->>C: conversation.item.created
+    C->>S: response.create
+    S-->>C: response.created
+    S-->>C: response.audio_transcript.delta / response.audio.delta
+    S-->>C: response.done
+```
 
 The client and server interact in the following order:
 
@@ -192,16 +206,23 @@ The client and server interact in the following order:
 
 The client sends `response.cancel` to cancel the current response, and the server returns `response.done` (with status `cancelled` and reason `client_cancelled`). The following diagram shows the user interruption sequence:
 
-![111](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=)
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    S-->>C: response.audio.delta (streaming)
+    C->>S: response.cancel
+    S-->>C: response.done (status=cancelled, reason=client_cancelled)
+```
 
 ## **Operation constraints by mode**
 
-| **Operation** | **push-to-talk** | **server\\_vad** | **smart\\_turn** |
+| **Operation** | **push-to-talk** | **server_vad** | **smart_turn** |
 | --- | --- | --- | --- |
 | session.update | All fields editable in IDLE; some restricted outside IDLE | All fields editable in IDLE; some restricted outside IDLE | All fields editable in IDLE; some restricted outside IDLE |
-| input\\_audio\\_buffer.append | Allowed  | Allowed  | Allowed  |
-| input\\_audio\\_buffer.commit | Allowed  | Ignored  | Ignored  |
-| input\\_audio\\_buffer.clear | Allowed  | Ignored  | Ignored  |
+| input_audio_buffer.append | Allowed  | Allowed  | Allowed  |
+| input_audio_buffer.commit | Allowed  | Ignored  | Ignored  |
+| input_audio_buffer.clear | Allowed  | Ignored  | Ignored  |
 | response.create | Allowed (first commit buffered audio with `input_audio_buffer.commit`; cannot retrigger while a response is being generated) | Allowed when no response is being generated; cannot retrigger while a response is being generated | Allowed while waiting for the user's next input; cannot retrigger during an active turn (between receiving `input_audio_buffer.speech_started` and `response.done`) |
 | response.cancel | Allowed (during inference) | Allowed (during inference) | Allowed (during inference) |
 | conversation.item.create/delete/retrieve | Allowed  | Allowed  | Allowed  |
@@ -214,5 +235,5 @@ The client sends `response.cancel` to cancel the current response, and the serve
 
 | **Type** | **Behavior** | **Examples** |
 | --- | --- | --- |
-| Client error (`invalid_request_error`) | Connection remains open; notification only | Invalid parameters, disallowed state, duplicate item\\_id |
+| Client error (`invalid_request_error`) | Connection remains open; notification only | Invalid parameters, disallowed state, duplicate item_id |
 | Server error (`server_error`) | Connection terminated | LLM connection failure, storage failure |

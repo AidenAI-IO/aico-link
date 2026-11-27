@@ -119,7 +119,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-After startup, visit `http://localhost:3000`, create an Organization / Project, and copy the Public Key and Secret Key to device environment variables. To skip that step, set `LANGFUSE_INIT_ORG_ID`, `LANGFUSE_INIT_PROJECT_ID`, and the project key pair in `.env` before the first start; the stack then provisions the project on boot.
+After startup, visit `http://localhost:3000`, create an Organization / Project, and copy the Public Key and Secret Key into `public_key` and `secret_key` under `[advanced_settings.runtime.telemetry]` in the device `agent.toml`; the Agent does not read Langfuse keys from environment variables. To skip creating the project by hand, set `LANGFUSE_INIT_ORG_ID`, `LANGFUSE_INIT_PROJECT_ID`, and the project key pair in `.env` before the first start; the stack then provisions the project on boot, but the same keys must still be copied into `agent.toml`.
 
 Components: Langfuse Web + Worker, Postgres, ClickHouse, Redis, MinIO (screenshot and event blob storage).
 
