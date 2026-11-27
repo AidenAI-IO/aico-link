@@ -1,5 +1,5 @@
 [Unit]
-Description=Load Luckfox media, audio, RGA and RKNN modules
+Description=Load the RV1106 media, audio, RGA and RKNN modules
 After=systemd-udevd.service
 Before=aico-frame.service aico-audio.service aico-agent.service
 

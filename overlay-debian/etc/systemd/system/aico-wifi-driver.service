@@ -1,5 +1,5 @@
 [Unit]
-Description=Load the Luckfox AIC8800 Wi-Fi driver and firmware
+Description=Load the AIC8800 Wi-Fi driver and firmware
 Requires=aico-userdata-migrate.service
 After=systemd-udevd.service aico-userdata-migrate.service
 Before=wpa_supplicant@wlan0.service

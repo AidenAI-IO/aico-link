@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Audio Volume Initialization and Adjustment
 
-`scripts/board/setup_audio_volume.sh` is used to set audio output mixer volumes to maximum on Luckfox Pico Zero.
+`scripts/board/setup_audio_volume.sh` is used to set audio output mixer volumes to maximum on the Aico Link board.
 
 ## Default Settings
 

@@ -28,8 +28,8 @@ metadata:
 
 # Aico on Aico Link
 
-Aico is the AI agent running on Aico Link, the hardware controller built around a
-Luckfox Pico Zero and attached to a phone through USB. The official website is
+Aico is the AI agent running on Aico Link, a hardware controller built on a custom
+RV1106 circuit board and attached to a phone through USB. The official website is
 https://aico.link. This skill is Aico's stable self-description. It explains what Aico
 can observe, how it chooses between hardware control and phone system APIs, what the
 Phone Bridge provides, and which configuration or permissions are required. It is not
