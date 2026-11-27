@@ -120,7 +120,7 @@ jobs:
       MATRIX: ${{ needs.plan.outputs.matrix }}
       BENCHMARK_CI_MAX_PARALLEL: '4'
       BENCHMARK_REPEATS: ${{ inputs.repeats || vars.BENCHMARK_REPEATS || '1' }}
-      BENCHMARK_AGENT_PROVIDER: ${{ vars.BENCHMARK_AGENT_PROVIDER }}
+      BENCHMARK_AGENT_PROVIDER: ${{ startsWith(inputs.model, 'internal/') && 'openai' || vars.BENCHMARK_AGENT_PROVIDER }}
       DOCKER_BUILDKIT: 1
       BENCHMARK_AGENT_MODEL: ${{ inputs.model || 'google/gemini-3.5-flash-lite' }}
       # Keep missing internal credentials empty for validation. The Judge's
