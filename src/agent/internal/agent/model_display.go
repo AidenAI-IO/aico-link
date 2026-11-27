@@ -1,10 +1,19 @@
 package agent
 
 import (
+	"fmt"
+	"sort"
 	"strings"
+	"sync"
+
+	_ "embed"
 
 	"aico-agent/internal/agent/model"
+	"gopkg.in/yaml.v3"
 )
+
+//go:embed model_catalog.yaml
+var embeddedModelCatalogYAML []byte
 
 // ModelDisplayInfo represents UI display information for a model.
 // The ID serves as both the model identifier and the display name to reduce
@@ -18,11 +27,9 @@ type ModelDisplayInfo struct {
 // GetDescription returns the localized description for the given locale.
 // Falls back to English if the requested locale is not available.
 func (m ModelDisplayInfo) GetDescription(locale string) string {
-	// Direct match
 	if desc, ok := m.Descriptions[locale]; ok && desc != "" {
 		return desc
 	}
-	// Fallback to English
 	if desc, ok := m.Descriptions[localeEnglishUS]; ok {
 		return desc
 	}
@@ -53,237 +60,140 @@ func (m ModelDisplayInfo) Localized(locale string) LocalizedModelInfo {
 	}
 }
 
-// displayModelsByProvider defines the models available for each provider,
-// displayed in config_web UI for user selection.
-var displayModelsByProvider = map[string][]ModelDisplayInfo{
-	"openai": {
-		{
-			ID: "gpt-5.5",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Latest flagship model with 1M+ context",
-				localeSimplifiedChinese: "最新旗舰模型，100万+ 上下文",
-			},
-			Recommended: true,
-		},
-		{
-			ID: "gpt-5.4",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Previous generation flagship model",
-				localeSimplifiedChinese: "上一代旗舰模型",
-			},
-		},
-		{
-			ID: "gpt-5.4-mini",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Fast and economical small model",
-				localeSimplifiedChinese: "快速且经济的小模型",
-			},
-		},
-		{
-			ID: "gpt-5.4-nano",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Ultra-fast nano model",
-				localeSimplifiedChinese: "超快速微型模型",
-			},
-		},
-		{
-			ID: "gpt-4o",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Classic multimodal model",
-				localeSimplifiedChinese: "经典多模态模型",
-			},
-		},
-		{
-			ID: "gpt-4o-mini",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Compact version of GPT-4o",
-				localeSimplifiedChinese: "GPT-4o 的紧凑版本",
-			},
-		},
-	},
-	"anthropic": {
-		{
-			ID: "claude-fable-5",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Anthropic's most capable model",
-				localeSimplifiedChinese: "Anthropic 最强大的模型",
-			},
-			Recommended: true,
-		},
-		{
-			ID: "claude-opus-5",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Newest flagship for agentic coding and enterprise workflows",
-				localeSimplifiedChinese: "面向智能体编程和企业工作流的最新旗舰模型",
-			},
-		},
-		{
-			ID: "claude-sonnet-4-6",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Balanced performance and speed",
-				localeSimplifiedChinese: "性能和速度平衡",
-			},
-		},
-		{
-			ID: "claude-haiku-4-5",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Fast and economical Claude model",
-				localeSimplifiedChinese: "快速且经济的 Claude 模型",
-			},
-		},
-	},
-	"kimi": {
-		{
-			ID: "kimi-k3",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Deep reasoning model with 1M+ tokens",
-				localeSimplifiedChinese: "深度推理模型，100万+ token 上下文",
-			},
-			Recommended: true,
-		},
-	},
-	"kimi-cn": {
-		{
-			ID: "kimi-k3",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Deep reasoning model with 1M+ tokens",
-				localeSimplifiedChinese: "深度推理模型，100万+ token 上下文",
-			},
-			Recommended: true,
-		},
-	},
-	"volcengine": {
-		{
-			ID: "doubao-seed-2-1-pro-260628",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "ByteDance multimodal model",
-				localeSimplifiedChinese: "字节跳动多模态模型",
-			},
-			Recommended: true,
-		},
-	},
-	"deepseek": {
-		{
-			ID: "deepseek-flash",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Fast multimodal model with 1M context",
-				localeSimplifiedChinese: "快速多模态模型，100万上下文",
-			},
-			Recommended: true,
-		},
-		// Pro does not support vision yet (2026-09-14). Restore this preset and
-		// its modelSpecRegistry entry after verifying vision support and limits.
-		// {
-		// 	ID: "deepseek-v4-pro",
-		// 	Descriptions: map[string]string{
-		// 		localeEnglishUS:         "Text-only model; does not support screenshots",
-		// 		localeSimplifiedChinese: "纯文本模型，不支持截图输入",
-		// 	},
-		// },
-	},
-	"gemini": {
-		{
-			ID: "gemini-3.8-flash",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Most intelligent Flash model for complex coding and agentic workflows, 1M context",
-				localeSimplifiedChinese: "最智能的 Flash 模型，适用于复杂编程和智能体工作流，100万上下文",
-			},
-			Recommended: true,
-		},
-		{
-			ID: "gemini-2.5-pro",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Advanced 2.5 model for complex reasoning and coding, 1M context",
-				localeSimplifiedChinese: "适用于复杂推理和编程的 2.5 高级模型，100万上下文",
-			},
-		},
-		{
-			ID: "gemini-2.5-flash",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Best price-performance for low-latency, high-volume reasoning, 1M context",
-				localeSimplifiedChinese: "最佳性价比，低延迟高吞吐推理，100万上下文",
-			},
-		},
-	},
-	"openrouter": {
-		{
-			ID: "anthropic/claude-fable-5",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Anthropic's most capable model",
-				localeSimplifiedChinese: "Anthropic 最强大的模型",
-			},
-			Recommended: true,
-		},
-		{
-			ID: "anthropic/claude-opus-5",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Newest flagship for agentic coding and enterprise workflows",
-				localeSimplifiedChinese: "面向智能体编程和企业工作流的最新旗舰模型",
-			},
-		},
-		{
-			ID: "anthropic/claude-sonnet-4-6",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Balanced performance and speed",
-				localeSimplifiedChinese: "性能和速度平衡",
-			},
-		},
-		{
-			ID: "google/gemini-3.5-pro",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Google's flagship model",
-				localeSimplifiedChinese: "Google 旗舰模型",
-			},
-		},
-		{
-			ID: "google/gemini-3.5-flash",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Fast and efficient Gemini model",
-				localeSimplifiedChinese: "快速高效的 Gemini 模型",
-			},
-		},
-	},
-	"ollama": {
-		{
-			ID: "qwen2.5:14b",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "General Chinese model (recommended)",
-				localeSimplifiedChinese: "通用中文模型（推荐）",
-			},
-			Recommended: true,
-		},
-		{
-			ID: "qwen2.5:7b",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Lightweight Chinese model",
-				localeSimplifiedChinese: "轻量级中文模型",
-			},
-		},
-		{
-			ID: "llama3.1:8b",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Meta's open source model",
-				localeSimplifiedChinese: "Meta 开源模型",
-			},
-		},
-		{
-			ID: "llama3.1:70b",
-			Descriptions: map[string]string{
-				localeEnglishUS:         "Large version of Llama 3.1",
-				localeSimplifiedChinese: "Llama 3.1 大型版本",
-			},
-		},
-	},
+type modelCatalogFile struct {
+	Providers map[string]modelCatalogProvider `yaml:"providers"`
+}
+
+type modelCatalogProvider struct {
+	Default string              `yaml:"default"`
+	Models  []modelCatalogModel `yaml:"models"`
+}
+
+type modelCatalogModel struct {
+	ID           string            `yaml:"id"`
+	Recommended  bool              `yaml:"recommended"`
+	Descriptions map[string]string `yaml:"descriptions"`
+}
+
+type providerModelCatalog struct {
+	Default string
+	Models  []ModelDisplayInfo
+}
+
+var (
+	modelCatalogOnce sync.Once
+	modelCatalogData map[string]providerModelCatalog
+	modelCatalogErr  error
+)
+
+func loadModelCatalog() (map[string]providerModelCatalog, error) {
+	modelCatalogOnce.Do(func() {
+		modelCatalogData, modelCatalogErr = parseModelCatalogYAML(embeddedModelCatalogYAML)
+	})
+	return modelCatalogData, modelCatalogErr
+}
+
+func parseModelCatalogYAML(raw []byte) (map[string]providerModelCatalog, error) {
+	var file modelCatalogFile
+	if err := yaml.Unmarshal(raw, &file); err != nil {
+		return nil, fmt.Errorf("parse model catalog: %w", err)
+	}
+	if len(file.Providers) == 0 {
+		return nil, fmt.Errorf("model catalog has no providers")
+	}
+	out := make(map[string]providerModelCatalog, len(file.Providers))
+	for provider, entry := range file.Providers {
+		key := strings.ToLower(strings.TrimSpace(provider))
+		if key == "" {
+			return nil, fmt.Errorf("model catalog has an empty provider key")
+		}
+		if len(entry.Models) == 0 {
+			return nil, fmt.Errorf("model catalog provider %q has no models", key)
+		}
+		seen := make(map[string]struct{}, len(entry.Models))
+		models := make([]ModelDisplayInfo, 0, len(entry.Models))
+		var hasRecommended bool
+		for _, item := range entry.Models {
+			id := strings.TrimSpace(item.ID)
+			if id == "" {
+				return nil, fmt.Errorf("model catalog provider %q has a model with empty id", key)
+			}
+			if _, ok := seen[id]; ok {
+				return nil, fmt.Errorf("model catalog provider %q has duplicate model %q", key, id)
+			}
+			seen[id] = struct{}{}
+			if item.Recommended {
+				hasRecommended = true
+			}
+			models = append(models, ModelDisplayInfo{
+				ID:           id,
+				Recommended:  item.Recommended,
+				Descriptions: item.Descriptions,
+			})
+		}
+		if !hasRecommended {
+			return nil, fmt.Errorf("model catalog provider %q has no recommended model", key)
+		}
+		def := strings.TrimSpace(entry.Default)
+		if def == "" {
+			return nil, fmt.Errorf("model catalog provider %q is missing default", key)
+		}
+		if _, ok := seen[def]; !ok {
+			return nil, fmt.Errorf("model catalog provider %q default %q is not in models", key, def)
+		}
+		out[key] = providerModelCatalog{Default: def, Models: models}
+	}
+	return out, nil
+}
+
+func providerCatalog(providerType string) (providerModelCatalog, bool) {
+	catalog, err := loadModelCatalog()
+	if err != nil || catalog == nil {
+		return providerModelCatalog{}, false
+	}
+	entry, ok := catalog[strings.ToLower(strings.TrimSpace(providerType))]
+	return entry, ok
 }
 
 // GetDisplayModelsForProvider returns the list of models available for the given provider.
+// Recommended models are ordered first, with the provider default at the front.
 // Returns an empty slice if the provider is not found.
 func GetDisplayModelsForProvider(providerType string) []ModelDisplayInfo {
-	normalized := strings.ToLower(strings.TrimSpace(providerType))
-	if models, ok := displayModelsByProvider[normalized]; ok {
-		return models
+	entry, ok := providerCatalog(providerType)
+	if !ok {
+		return []ModelDisplayInfo{}
 	}
-	return []ModelDisplayInfo{}
+	models := append([]ModelDisplayInfo(nil), entry.Models...)
+	sortProviderModels(models, entry.Default)
+	return models
+}
+
+// GetDefaultModelForProvider returns the catalog default model id for a provider.
+func GetDefaultModelForProvider(providerType string) string {
+	entry, ok := providerCatalog(providerType)
+	if !ok {
+		return ""
+	}
+	return entry.Default
+}
+
+func sortProviderModels(models []ModelDisplayInfo, defaultID string) {
+	rank := func(m ModelDisplayInfo) int {
+		if m.ID == defaultID {
+			return 0
+		}
+		if m.Recommended {
+			return 1
+		}
+		return 2
+	}
+	sort.SliceStable(models, func(i, j int) bool {
+		ri, rj := rank(models[i]), rank(models[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return false
+	})
 }
 
 // GetLocalizedModelsForProvider returns the localized model list for the given provider and locale.

@@ -4,6 +4,8 @@ import type { Configuration } from '../types';
 export interface ModelOption {
   id: string;
   name?: string;
+  description?: string;
+  recommended?: boolean;
 }
 type History = Record<string, string[]>;
 const object = (value: unknown): Record<string, unknown> =>

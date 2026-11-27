@@ -265,6 +265,7 @@ it('retains saved custom main models after switching, recreating the app and a c
       return { models: [{ id: 'listed', name: 'Listed model' }] };
     }
     if (path === '/api/config/plan') return { apply: 'live' };
+    if (path === '/api/config/test') return { ok: true };
     if (options?.method === 'PATCH')
       config = {
         ...config,
@@ -323,6 +324,36 @@ it('excludes rejected custom models from saved choices', async () => {
   expect(JSON.stringify(app.model.store.get(app.model.modelHistory))).not.toContain(
     'custom/rejected',
   );
+  app.model.dispose();
+});
+it('warns after saving a model when the connection probe fails', async () => {
+  let config: Configuration = {
+    model: { provider: 'demo', model: 'original' },
+    model_providers: { demo: { type: 'openai' } },
+  };
+  const send: Transport = async (path, options) => {
+    if (path.startsWith('/api/models')) return { models: [{ id: 'listed', recommended: true }] };
+    if (path === '/api/config/plan') return { apply: 'live' };
+    if (path === '/api/config/test')
+      return { ok: false, results: [{ passed: false, detail: '401' }] };
+    if (options?.method === 'PATCH') {
+      config = {
+        ...config,
+        model: { ...config.model, ...JSON.parse(String(options.body)).config.model },
+      };
+    }
+    return { config, config_valid: true, apply: 'live' };
+  };
+  const app = setup(send, config);
+  app.props.route.path = '/model/models';
+  app.mount(<ModelPicker {...app.props} />);
+  await act(flush);
+  fireEvent.click(screen.getByRole('button', { name: 'listed Recommended · listed' }));
+  await act(flush);
+  expect(config.model?.model).toBe('listed');
+  expect(app.props.navigate).toHaveBeenCalledWith('/model/main');
+  await act(flush);
+  expect(screen.getByText('Connection failed: 401')).toBeTruthy();
   app.model.dispose();
 });
 it.each(['voice', 'decision'])(

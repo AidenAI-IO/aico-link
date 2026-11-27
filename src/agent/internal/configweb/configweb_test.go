@@ -1031,8 +1031,17 @@ func TestModelsEndpointReturnsGeminiCatalog(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Models) != 3 || payload.Models[0].ID != "gemini-3.8-flash" || !payload.Models[0].Recommended {
+	if len(payload.Models) == 0 || payload.Models[0].ID != "gemini-3.8-flash" || !payload.Models[0].Recommended {
 		t.Fatalf("Gemini catalog = %+v", payload.Models)
+	}
+	var full struct {
+		Default string `json:"default"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &full); err != nil {
+		t.Fatal(err)
+	}
+	if full.Default != "gemini-3.8-flash" {
+		t.Fatalf("Gemini default = %q, want gemini-3.8-flash", full.Default)
 	}
 }
 

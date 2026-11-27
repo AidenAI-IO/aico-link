@@ -48,6 +48,9 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		"provider": provider,
 		"models":   agent.GetLocalizedModelsForProvider(provider, locale),
 	}
+	if defaultModel := agent.GetDefaultModelForProvider(provider); defaultModel != "" {
+		response["default"] = defaultModel
+	}
 	if modelName := strings.TrimSpace(r.URL.Query().Get("model")); modelName != "" {
 		spec, _ := agent.LookupModelSpec(provider, modelName)
 		if configErr == nil {
