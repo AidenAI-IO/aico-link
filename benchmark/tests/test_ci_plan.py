@@ -339,6 +339,21 @@ def test_android_cases_use_run_completeness_not_task_pass_rate(
     assert network_cleanup == (["emulator-5554"] if case.android_phone_bridge else [])
 
 
+@pytest.mark.parametrize("case_id", ["adb_android_text_editing", "adb_android_text_editing-aidenbridge"])
+def test_only_bridge_cases_start_adb_without_native_text_insertion(monkeypatch, case_id: str) -> None:
+    case = next(item for item in load_catalog().cases if item.id == case_id)
+    commands = []
+    monkeypatch.setattr(run_case_module, "_run_json", lambda command, **kwargs: (
+        commands.append(command) or {"environment_url": "http://bridge.test"}))
+    monkeypatch.setattr(run_case_module.subprocess, "run", lambda command, **kwargs: (
+        run_case_module.subprocess.CompletedProcess(command, 0, stdout="")))
+
+    run_case_module._environment_url(case, run_id="ci-test", environment={"ANDROID_SERIAL": "emulator-5554"})
+
+    disabled = commands[0][-2:] == ["--unicode-input-method", "none"]
+    assert disabled == case.android_phone_bridge
+
+
 @pytest.mark.parametrize(
     "metrics",
     [

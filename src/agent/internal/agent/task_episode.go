@@ -763,6 +763,63 @@ func (s *TaskEpisodeStore) MarkRunningEpisodesInterruptedWithDetails(ctx context
 	return interrupted, nil
 }
 
+// ListRecent returns newest-first index summaries for debugging UIs. It reads
+// the episode index only and never loads full event payloads.
+func (s *TaskEpisodeStore) ListRecent(ctx context.Context, limit int) ([]episodeIndexEntry, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	if s == nil || s.rootDir == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	index, err := s.loadIndex()
+	if err != nil {
+		return nil, err
+	}
+	entries := append([]episodeIndexEntry(nil), index.Episodes...)
+	sort.SliceStable(entries, func(i, j int) bool {
+		return episodeStartedAtNewer(entries[i], entries[j])
+	})
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+	return entries, nil
+}
+
+// parseEpisodeTimestamp parses episode index timestamps. Invalid values sort as
+// the zero time so they fall behind valid entries instead of winning by string
+// order when offsets differ (for example 11:00+02:00 vs 10:00Z).
+func parseEpisodeTimestamp(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return ts
+	}
+	if ts, err := time.Parse(time.RFC3339, value); err == nil {
+		return ts
+	}
+	return time.Time{}
+}
+
+func episodeStartedAtNewer(a, b episodeIndexEntry) bool {
+	ta := parseEpisodeTimestamp(a.StartedAt)
+	tb := parseEpisodeTimestamp(b.StartedAt)
+	if !ta.Equal(tb) {
+		return ta.After(tb)
+	}
+	return a.ID > b.ID
+}
+
 func (s *TaskEpisodeStore) Get(ctx context.Context, id string) (TaskEpisode, error) {
 	select {
 	case <-ctx.Done():

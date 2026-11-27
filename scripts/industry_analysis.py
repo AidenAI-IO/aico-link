@@ -42,7 +42,7 @@ COMMENT_LIMIT = 4
 FEEDBACK_LIMIT = 12
 SCENARIO_LIMIT = 10
 BENCHMARK_LIMIT = 6
-PRODUCT_CONTEXT = "docs/04-agent/overview.md"
+PRODUCT_CONTEXT = "docs/05-agent/overview.md"
 BENCHMARK_CASES = {
     "app-workflow", "aico-app-ios", "aico-app-android", "aidenbridge-capabilities-android",
     "adb_android_text_editing", "adb_android_text_editing-aidenbridge", "adb_android_builtin_apps",

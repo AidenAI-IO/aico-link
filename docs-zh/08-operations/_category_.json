@@ -1,0 +1,8 @@
+{
+  "label": "运维",
+  "position": 8,
+  "link": {
+    "type": "generated-index",
+    "description": "运维和排查已部署的 Aico Link 设备。"
+  }
+}

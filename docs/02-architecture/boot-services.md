@@ -365,7 +365,7 @@ downloads, pending-boot data, and health markers. The immutable factory
 repository and partition baseline live separately at
 `/userdata/debian/ota/config.json`.
 
-See [OTA Overview](../08-ota/README.md) for the full state machine.
+See [OTA Overview](../09-ota/README.md) for the full state machine.
 
 ## Config Web
 

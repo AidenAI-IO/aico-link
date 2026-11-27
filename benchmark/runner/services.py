@@ -112,6 +112,11 @@ def add_service_parsers(subparsers: argparse._SubParsersAction[argparse.Argument
     )
     p_adb.add_argument("--bridge-port", type=int, default=0, help="Host port for the bridge API (default: auto)")
     p_adb.add_argument("--ready-timeout-sec", type=int, default=DEFAULT_ADB_BRIDGE_READY_TIMEOUT_SEC)
+    p_adb.add_argument(
+        "--unicode-input-method",
+        default="",
+        help="Bridge Unicode input path: adbkeyboard, appium, or none (default: the bridge default)",
+    )
     p_adb.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     p_desktop = subparsers.add_parser(
@@ -399,6 +404,7 @@ def cmd_start_adb_android_env(args: argparse.Namespace) -> int:
             log_path=log_path,
             adb_path=args.adb_path,
             bridge_host=bridge_host,
+            unicode_input_method=str(getattr(args, "unicode_input_method", "") or ""),
         )
         pid = proc.pid
         pid_path.write_text(str(pid), encoding="utf-8")

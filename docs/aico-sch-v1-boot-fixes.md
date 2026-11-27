@@ -8,7 +8,7 @@ table 2-1 and the SDK pinctrl definitions.
 
 | Function | RV1106 pin / mux | Previous conflict |
 | --- | --- | --- |
-| WL_EN | pin 3, GPIO3_C5, external pull-up to V_WIFI_1V8 | Linux must not drive the MCU-owned rail |
+| WL_EN | pin 3, GPIO3_C5, no external pull-up | Linux must not drive the MCU-owned rail |
 | BT wake | pin 4, GPIO3_C6 | Activity LED drove the same net |
 | CPU AVS | pin 74, GPIO1_A2, PWM0 M0 | Fixed regulator and BT host IRQ |
 | RK628 I2C | pins 93/92, GPIO1_C2/C3, I2C4 M1 | I2C3 M1 goes to MCU UART |
@@ -102,7 +102,7 @@ instead of assuming `mmcblk2`; this board exposes `/dev/mmcblk1p1`. Mount
 checks include a synced temporary write and readback, and reject read-only
 mounts or I/O errors. Failed reads cannot trigger blank-card formatting.
 Debian includes FAT32, ext4 and exFAT checking/formatting tools. See
-[Storage Manager](04-agent/storage-manager.md) for the full usability gate,
+[Storage Manager](05-agent/storage-manager.md) for the full usability gate,
 explicit device overrides and the default 64 MiB minimum free space.
 
 ### Validation

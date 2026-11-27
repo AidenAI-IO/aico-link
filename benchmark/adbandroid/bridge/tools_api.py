@@ -652,11 +652,11 @@ class ADBToolsAPIHandler:
             native = device.supports_text_insertion()
         unsupported = unsupported_adb_text_chars(text)
         if unsupported and not native:
-            setup = (
-                "install Appium Settings with io.appium.settings/.UnicodeIME"
-                if getattr(device, "unicode_input_method", "adbkeyboard") == "appium"
-                else "install ADBKeyBoard"
-            )
+            method = getattr(device, "unicode_input_method", "adbkeyboard")
+            setup = {
+                "appium": "install Appium Settings with io.appium.settings/.UnicodeIME",
+                "none": "restart the bridge with a Unicode input method",
+            }.get(method, "install ADBKeyBoard")
             output = {
                 "ok": False,
                 "suggestion": f"adb input text supports only US-keyboard ASCII characters; {setup} for Unicode input.",

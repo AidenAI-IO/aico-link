@@ -26,8 +26,10 @@ It is not a substitute for the full test gate. Before merging, run:
 make check-full
 ```
 
-CI runs `make check-full` on every PR, including the suites omitted by the quick
-profile. `make test` is also an alias for the full check. To run one suite while
+CI skips its test jobs on PRs limited to `docs/`, `docs-zh/`, and the root
+`README.md` and `AGENTS.md` files. Other PRs and pushes to `main` run
+`make check-full`, including the suites omitted by the quick profile.
+`make test` is also an alias for the full check. To run one suite while
 iterating, use `bash scripts/run_tests_in_docker.sh --suite go-unit` (or another
 name from `bash scripts/run_tests_in_docker.sh --list`). All commands still run
 inside the same Docker test image.
@@ -99,12 +101,24 @@ cat /tmp/record.pcm | audio_service_cli --socket /run/audio_service/audio_servic
 
 ## USB HID Validation
 
+`example_usb_hid` is not part of the device image. Build it with
+`scripts/debian-apps/build-apps.sh all` and copy it to the device temporarily:
+
 ```bash
-sudo example_usb_hid setup composite
-sudo example_usb_hid keyboard tap ENTER
-sudo example_usb_hid keyboard text "hello from pico"
-sudo example_usb_hid touch click 16000 16000
+scp output/debian-apps/apps/bin/example_usb_hid root@<device-ip>:/userdata/example_usb_hid
 ```
+
+Then run it on the device by its copied path:
+
+```bash
+sudo /userdata/example_usb_hid setup composite
+sudo /userdata/example_usb_hid keyboard tap ENTER
+sudo /userdata/example_usb_hid keyboard text "hello from pico"
+sudo /userdata/example_usb_hid touch click 16000 16000
+```
+
+Remove the copy with `sudo rm /userdata/example_usb_hid` when the test is
+complete.
 
 ## Agent Validation
 

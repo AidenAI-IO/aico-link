@@ -95,7 +95,8 @@ ssh root@<device-ip> 'chmod 0755 /usr/lib/aico/frame_service && systemctl start 
 ```
 
 Use the same pattern for `audio_service`, `ble_service`, or `agent`. The Agent
-binary also provides the `config-web` subcommand. Copying a binary directly mutates only the active rootfs slot and can
+binary also provides the `config-web` subcommand, so when replacing `agent`, stop
+and later start both `aico-agent.service` and `aico-config-web.service`. Copying a binary directly mutates only the active rootfs slot and can
 invalidate the factory hash expected by OTA diagnostics, so use it for short
 development cycles only. Rebuild and flash a complete image for a reproducible
 deployment.
@@ -238,7 +239,7 @@ stdout/stderr that is intentionally persisted remains in the files above.
 The `aico-mcu-event.service` unit now runs `mcu_service`, the production UART
 peer on `/dev/ttyS5` (115200 8N1). It exposes battery/timer/LED operations and
 cursor-based wake long polling, and coordinates MCU-requested Linux poweroff.
-See [MCU Service](../03-services/mcu-service.md) for application contracts,
+See [MCU Service](../04-services/mcu-service.md) for application contracts,
 shutdown timing constraints and post-flash validation commands. Stop the unit
 before using another UART owner. Journald is volatile on this board; export
 logs before reboot when the record needs to be retained.

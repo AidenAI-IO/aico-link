@@ -3012,6 +3012,7 @@ func TestServerServesEmbeddedWebUIAssets(t *testing.T) {
 		{path: "/web-ui/scripts/bootstrap.js", contentType: "text/javascript", content: "loadHistory();"},
 		{path: "/web-ui/scripts/resources.js", contentType: "text/javascript", content: "startResourcePolling"},
 		{path: "/web-ui/scripts/streaming_text.js", contentType: "text/javascript", content: "function createStreamingTextReveal("},
+		{path: "/web-ui/memory.html", contentType: "text/html", content: "/api/memory/debug"},
 	} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
@@ -3445,6 +3446,38 @@ func TestContextPageUsesSafeAttachmentHandlers(t *testing.T) {
 	// Attachment values are user-controlled; inline handlers would let them execute as script.
 	if strings.Contains(readWebUIResource(t, "context.html"), `onclick="openAttachment(`) {
 		t.Fatal("context page embeds attachment values in an inline JavaScript handler")
+	}
+}
+
+func TestMemoryDebugPageIsLinkedAndReadOnly(t *testing.T) {
+	index := readWebUIResource(t, "index.html")
+	if !strings.Contains(index, `href="/web-ui/memory.html"`) {
+		t.Fatal("chat web UI is missing the Memory debug entry")
+	}
+	page := readWebUIResource(t, "memory.html")
+	for _, needle := range []string{
+		"/api/memory/debug?plane=",
+		"/api/episodes?limit=50",
+		"/api/episodes/",
+		"memoryFilter",
+		"deviceFilter",
+		"chunksFilter",
+		"episodeFilter",
+		"data-copy",
+		"data-copy-episode",
+		`aria-label="Copy"`,
+		"data-episode-id",
+		"episode-item",
+		"includes sensitive",
+	} {
+		if !strings.Contains(page, needle) {
+			t.Fatalf("memory debug page is missing %q", needle)
+		}
+	}
+	for _, needle := range []string{"forget_memory", "save_memory", "/api/clear-all", "recall_memory"} {
+		if strings.Contains(page, needle) {
+			t.Fatalf("memory debug page should stay inventory/read-only; found %q", needle)
+		}
 	}
 }
 
@@ -5042,6 +5075,77 @@ func TestBenchmarkSeedEpisodePersistsCompletedEpisode(t *testing.T) {
 	}
 	if response.Episode.EndedAt == "" || response.Episode.Status == "running" {
 		t.Fatalf("seeded Episode was not completed: %#v", response.Episode)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/episodes?limit=5", nil)
+	listRec := httptest.NewRecorder()
+	handler.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("unexpected list status: %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	var list EpisodeListResponse
+	if err := json.NewDecoder(listRec.Body).Decode(&list); err != nil {
+		t.Fatalf("decode episode list: %v", err)
+	}
+	if len(list.Episodes) == 0 || list.Episodes[0].ID != "ep_benchmark_title_save" {
+		t.Fatalf("unexpected episode list: %#v", list.Episodes)
+	}
+	if list.Episodes[0].UserGoal == "" {
+		t.Fatalf("episode list entry missing user_goal: %#v", list.Episodes[0])
+	}
+}
+
+func TestHandleMemoryDebugListsSeededPlanes(t *testing.T) {
+	server, _ := newBenchmarkSeedMemoryServer(t)
+	handler := server.Handler()
+	seedBodies := []string{
+		`{"id":"dbg_long_term","type":"preference","title":"Prefer bananas","content":"User likes bananas.","tags":["fruit"]}`,
+		`{"store":"temporary","id":"dbg_temporary","type":"fact","title":"Delivery","content":"Package arrives today.","tags":["notification"],"expires_at":"2099-01-01T00:00:00Z"}`,
+		`{"store":"device","id":"dbg_device","type":"procedure","title":"Login flow","content":"Open app, then confirm.","tags":["login"]}`,
+	}
+	for _, body := range seedBodies {
+		req := httptest.NewRequest(http.MethodPost, "/api/benchmark/seed_memory", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-benchmark-token")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("seed failed: %d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+
+	cases := []struct {
+		plane string
+		id    string
+	}{
+		{plane: "long_term", id: "dbg_long_term"},
+		{plane: "temporary", id: "dbg_temporary"},
+		{plane: "device", id: "dbg_device"},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/api/memory/debug?plane="+tc.plane+"&q="+tc.id, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("plane %s: unexpected status %d body=%s", tc.plane, rec.Code, rec.Body.String())
+		}
+		var resp MemoryDebugListResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("plane %s: decode: %v", tc.plane, err)
+		}
+		if resp.Plane != tc.plane || resp.Total == 0 {
+			t.Fatalf("plane %s: unexpected response %#v", tc.plane, resp)
+		}
+		found := false
+		for _, item := range resp.Items {
+			if item.ID == tc.id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("plane %s: missing seeded id %q in %#v", tc.plane, tc.id, resp.Items)
+		}
 	}
 }
 

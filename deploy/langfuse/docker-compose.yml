@@ -19,7 +19,7 @@
 #   enabled = true
 #   base_url = "http://<langfuse-host>:3000"
 #
-# See docs/04-agent/telemetry-langfuse.md for the full workflow.
+# See docs/05-agent/telemetry-langfuse.md for the full workflow.
 
 services:
   langfuse-worker:

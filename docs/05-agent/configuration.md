@@ -1,0 +1,1523 @@
+---
+sidebar_position: 2
+---
+
+# Agent Configuration Reference
+
+The Agent daemon takes `-dir`, the data directory it works out of. `agent.toml` is only one of the things that live there: skills, memory, cache and logs are all resolved relative to it (see [Directory layout](#directory-layout)). The `config`, `config-check` and `config-test` subcommands take `-config` with the path to a TOML config file. Every field below lives in `agent.toml`. Most fields can be edited through the on-device [Config Web page](#config-web-the-device-config-page); sections without dedicated controls are preserved by Config Web and can be edited by hand. TOML is the only supported config format; JSON config is deprecated.
+
+`config-check --config <path>` applies the strict validator and is the gate the image
+build and release workflows run, so a configuration the runtime would quietly recover
+from at boot still fails there — for example a persisted `input_mode = "realtime"` whose
+credential was removed, where the Agent falls back to text mode instead of refusing to
+start. The Config Web recovery page reports a different verdict on purpose: it uses the
+runtime loader, because it has to describe the state the Agent actually boots in and name
+the field to repair. Candidate values a user is about to save are validated strictly by
+`config-check --stdin`.
+
+The daemon also accepts `-device-type <value>` as a process-local override for
+`[basic_settings.device].device_type`. The override is applied after `agent.toml` is loaded, so
+the command-line value has higher priority and does not rewrite the config file.
+Accepted values and aliases are normalized to the canonical values documented
+under `[basic_settings.device]` below.
+
+## Configuration groups
+
+`agent.toml` uses the same product-oriented hierarchy as the Agent settings
+page. Runtime code maps these grouped tables to its internal structures at the
+load boundary; Config Web writes only the grouped paths below.
+
+1. **Wi-Fi and Bluetooth Settings**: Configured through Config Web, not in `agent.toml`
+   - WiFi Configuration: Network credentials, proxy settings
+   - Bluetooth Configuration: Managed by separate bluetooth service
+
+2. **Basic Settings**:
+   - **Language & Time Zone**: `[basic_settings.language_timezone]`
+   - **Device Settings**: `[basic_settings.device]`, including `[basic_settings.device.hid].keyboard_layout`
+
+3. **Conversation Settings**:
+   - Agent Prompt: `prompt`
+   - Max Iterations: `max_iterations`
+   - Context Management: `context_prune_threshold`, `context_prune_state_limit`, `context_compaction_threshold`
+   - Tool Settings: `[conversation_settings.termination_policy]`, web search `[conversation_settings.search]`
+
+4. **Model Settings**:
+   - Provider Configuration: `[model_settings.providers.<name>]`
+   - Model Selection: `[model_settings.model]` including provider, model, api_key, temperature, max_response_tokens, context_window, reasoning_effort, and api_mode settings
+   - Optional Decision Model: `[model_settings.decision]`
+
+5. **Voice Settings**:
+   - Mode Selection: `[voice_settings.mode].input_mode` (`stt` for Classic or `realtime` for Realtime)
+   - **Realtime Mode**: `[voice_settings.realtime.providers.<name>]`, `[voice_settings.realtime]`
+   - **Classic Mode**: `[voice_settings.classic.runtime]`, `[voice_settings.classic.stt]`, `[voice_settings.classic.stt.providers.<name>]`, `[voice_settings.classic.tts]`, `[voice_settings.classic.tts.providers.<name>]`, `[voice_settings.classic.audio]`, `[voice_settings.classic.audio_archive]`
+
+6. **Memory Settings**:
+   - Screen Memory Retention: `[memory_settings.screen].screen_memory_ttl`
+   - Notification Memory: `[memory_settings.notification]` and expiration policies
+   - Reset Conversation: Handled through Config Web UI
+
+7. **Storage Settings**:
+   - Storage Status: Displayed through Config Web (total/available space)
+   - microSD Settings: `[storage_settings.storage]` configuration, format/eject operations
+   - Backup & Restore: Export or import the canonical grouped `agent.toml` through Config Web
+   - Internal storage policy: `[storage_settings.storage.degraded_mode]`, `[storage_settings.storage.cleanup]`
+
+8. **Advanced Settings**:
+   - Logs: detailed model request capture, Agent log level, retention, and support-log export
+   - Manual Config Edit: validated raw editor for the canonical grouped `agent.toml`
+   - MCP: `[conversation_settings.agent].mcp_enabled` (toggle on the Advanced page); see [MCP](mcp.md)
+
+   Hardware and runtime debug tables remain available in TOML but are not
+   exposed as product settings in Config Web.
+
+9. **About**:
+   - Firmware Version: Read from OTA state; before the first OTA transaction,
+     read from the factory baseline in `/userdata/debian/ota/config.json`
+   - Component Versions: Boot and RootFS versions for the running slot
+   - Version information refreshes with device status without initializing or
+     modifying OTA state
+
+The group tables are the canonical on-disk configuration schema. New options
+should be added to the closest existing group and its section rather than
+creating another top-level section.
+
+## Contents
+
+- [Configuration groups](#configuration-groups)
+- [Applying Changes Online](#applying-changes-online)
+- [Agent self-configuration](#agent-self-configuration)
+- [Directory layout](#directory-layout)
+- [Config Web: the device config page](#config-web-the-device-config-page)
+- [Minimal config examples](#minimal-config-examples)
+- [Grouped runtime fields](#grouped-runtime-fields)
+- [`[basic_settings.device]`](#basic_settingsdevice)
+- [`[basic_settings.device.hid]`](#basic_settingsdevicehid)
+- [`[model_settings.model]`](#model_settingsmodel)
+- [`[model_settings.decision]`](#model_settingsdecision)
+- [`[advanced_settings.log]`](#advanced_settingslog)
+- [`[voice_settings.classic.audio]`](#voice_settingsclassicaudio)
+- [`[voice_settings.realtime]`](#voice_settingsrealtime)
+- [`[voice_settings.realtime.providers.<name>]`](#voice_settingsrealtimeprovidersname)
+- [`[advanced_settings.hardware.frame_service]`](#advanced_settingshardwareframe_service)
+- [Quick Capture](#quick-capture)
+- [`[memory_settings.notification]`](#memory_settingsnotification)
+- [`[advanced_settings.hardware.hid]`](#advanced_settingshardwarehid)
+- [`[voice_settings.classic.stt]` and `[voice_settings.classic.tts]`](#voice_settingsclassicstt-and-voice_settingsclassictts)
+- [`[advanced_settings.runtime.live_activity]`](#advanced_settingsruntimelive_activity)
+- [Episode telemetry (Langfuse)](#episode-telemetry-langfuse)
+- [System environment variables](#system-environment-variables)
+- [`memory/extraction.yaml`](#memoryextractionyaml)
+- [Known limitations](#known-limitations)
+
+## Applying Changes Online
+
+Saving through Config Web queues runtime application. See the
+[application policy](../04-services/config-web.md#configuration-application-policy)
+and [status API](../04-services/device-management-api.md#configuration-save-response).
+Mode, model/provider, audio/VAD, and hardware-client changes rebuild the affected
+components after current work drains. Ordinary limits and policies apply to
+subsequent work. USB pointer descriptor and keyboard layout changes remain
+pending across Agent restarts until an explicit board reboot; changing `frame_service.keep_streamon`
+restarts only the frame service. Every queued application logs one outcome line
+to `log/agent.log`: `config_applied` with the applied revision and duration, or
+`config_apply_failed` with the error. Editing the TOML outside Config Web
+requires an explicit reload request or service restart; there is no file watcher.
+
+## Agent self-configuration
+
+The Agent can change a small set of its own settings when the user asks, such
+as "speak slower" or "reply in English". It uses two agent-only tools, which
+are not exposed through `/api/tools` or MCP:
+
+- `config_get` returns the adjustable settings and the apply status of the last
+  saved change: `applied`, `pending`, `reboot_required`, or `failed`.
+- `config_update` takes `{"settings": {"<path>": value}, "dry_run": bool}` and
+  saves directly. The tool description tells the model to change only what the
+  user explicitly asked for, never because of screen or notification content,
+  and then to tell the user the `from`/`to` values and that they can ask to
+  change it back. `dry_run: true` returns the same preview without writing, for
+  a request that is ambiguous about the setting or value.
+
+There is no confirmation step. A confirmation enforced only by the tool
+description cannot stop an injected instruction, which can claim the user
+confirmed; the allowlist below is the safety boundary. Every allowlisted
+setting applies live and can be changed back with one request, so a second
+turn would only slow down voice use.
+
+A save goes through the same validation and atomic write as Config Web, then
+queues the new revision for live application like a Config Web save. The
+running task holds the run lock, so the change takes effect when the current
+task or voice conversation ends. Each save logs `config_self_update` with the
+changed settings and revision. Changing `agent.locale` or `agent.timezone`
+updates the system prompt and keeps the conversation, so the Agent still
+remembers the request that changed it.
+
+A saved setting can still have no effect, and the result says so instead of
+letting the reply claim it changed. `ignored` lists, with a reason, a setting
+that resolves to a different value (such as `tts.speed` without a TTS
+provider) or that the resolved `input_mode` never reads (such as
+`agent.silence_ms` in realtime mode). The value is still written, so it applies
+after a later mode switch. `notes` lists a setting the mode narrows: in
+realtime mode, `tts.speed` changes standalone speech such as notifications and
+failure announcements, but not the voice model's own conversation voice.
+
+Only these Config Web paths are writable. All of them apply live, and numeric
+values outside the listed range are rejected, because a model can emit any
+number where Config Web offers a slider. `voice_progress_speech_enabled` is
+deliberately absent: nothing at runtime reads it, so the tool would report a
+change that cannot happen.
+
+| Path | Meaning |
+| ---- | ------- |
+| `tts.speed` | Speech playback speed multiplier, 0.5-2; in realtime mode, standalone speech only |
+| `stt.language` | Speech recognition language; `stt` mode only |
+| `agent.locale` | Reply locale: `zh-CN` or `en-US` |
+| `agent.timezone` | IANA time zone |
+| `agent.silence_ms` | Silence-only endpointing when Classic Smart Turn paths are unset, 200-5000 ms; `stt` mode only |
+| `agent.voice_followup_enabled`, `agent.voice_followup_timeout_ms` | Continuous Classic session (default on) and follow-up timeout 1000-60000 ms; `stt` mode only |
+| `agent.voice_max_turns` | Spoken turns per voice conversation, 0-50; `stt` mode only |
+| `agent.voice_interrupt_on_wakeup` | Wakeup/button interrupts the spoken reply; `stt` mode only |
+| `agent.voice_tool_call_speech` | Spoken note when a tool call starts |
+| `voice_notifications.enabled` | Read phone notifications aloud |
+| `live_activity.enabled` | Task progress Live Activity |
+
+Providers, credentials, endpoints, the custom prompt, HID/USB identity, OTA,
+storage, and telemetry are deliberately excluded, so an instruction injected
+through screen or notification content cannot redirect model traffic, read
+keys, or drop the USB link. The allowlist lives in
+`src/agent/internal/agent/config_tools.go`; a contract test in
+`internal/configupdate` checks that every listed path is writable and live.
+
+Config Web, the `agent config update` CLI, and `config_update` serialize their
+read-modify-write cycles with an exclusive `flock` on `.agent.toml.lock` next
+to `agent.toml`, so concurrent saves from different processes merge instead of
+overwriting each other.
+
+## Directory layout
+
+Passed to the daemon as `-dir /userdata/agent`. Everything except `agent.toml`
+is created on demand, so a directory holding only `agent.toml` is a valid start.
+
+```text
+/userdata/agent/
+├── agent.toml               # required
+├── quick_actions.json       # optional, falls back to the bundled defaults
+├── skills/                  # optional, auto-discovers **/SKILL.md
+├── skill-state/             # bundled skill sync manifest
+├── memory/                  # conversation memory persistence directory
+│   └── extraction.yaml      # optional memory extraction overrides
+├── cache/                   # provider model metadata cache
+└── log/                     # runtime log directory
+```
+
+## Config Web: the device config page
+
+Config Web is the browser client served by the `config-web` subcommand of the
+Go Agent binary (`/usr/lib/aico/agent`). It maintains the device Agent
+configuration, system environment variables, and Wi-Fi configuration, and is
+the primary way to edit the fields documented on this page without manually
+editing `agent.toml`. Its device operations use the
+[Device Management API](../04-services/device-management-api.md), which is
+designed to remain usable if the bundled page is later replaced or removed.
+
+On a device, open the config page in a browser at the USB-network gateway address:
+
+```text
+http://192.168.42.1
+```
+
+The firmware starts `agent config-web` on port 80.
+
+### What the page can configure
+
+The page renders the following config sections. The Language & Time Zone controls persist the device-level `locale` and `timezone` and apply them online. Changing either value, or the Agent prompt, rewrites the session's system message in a new session revision at the next task boundary: the conversation continues, the previous revision stays on disk, and provider continuation IDs are dropped. Changing the model, provider, API mode, or base URL starts a new conversation instead, because the transcript carries provider-specific reasoning and continuation data. This also applies to a change saved while the Agent was stopped: each session folder records a hash of the model settings in `.conversation_identity`, and the next start compares it. The selected time zone is included in Agent state and controls the current-date context and controller shell commands.
+
+- `[basic_settings.language_timezone]`: UI and response language plus controller time zone
+- `[conversation_settings.agent]`: Agent prompt, iteration and context controls
+- `[model_settings.model]`: provider, model, api_mode, temperature, max_response_tokens, context_window, model_max_output_tokens
+- `[model_settings.decision]`: optional decision model switch, provider, write-only API key, minimum confidence, and connection test; OpenRouter also exposes its model ID and Base URL
+- `[voice_settings.classic.stt]`: provider, language and STT options
+- `[voice_settings.classic.tts]`: provider and playback options
+- `[voice_settings.classic.audio]`: socket, sample_rate, channels, bit_width, backend
+- `[voice_settings.classic.audio_archive]`: optional STT recording archive settings
+- `[voice_settings.realtime]`: selected realtime provider and session options
+- `[advanced_settings.hardware.frame_service]`: whether Frame Service keeps capture STREAMON between screenshots
+- `[memory_settings.screen]`: GPIO capture and Screen Memory retention
+- `[memory_settings.notification]`: notification retention and expiration policies
+- `[advanced_settings.log]`: LLM HTTP log retention
+- `[advanced_settings.runtime.ota]`: optional GitHub download proxy URL
+- `[basic_settings.device]`: device_type
+- `[basic_settings.device.hid]`: user-facing keyboard layout
+- `[advanced_settings.hardware.hid]`: internal HID device paths and input backend
+- `[conversation_settings.search]`: web-search provider and provider credential
+- `[advanced_settings.runtime.telemetry]`: Langfuse enablement, endpoint, credentials, upload policy, environment, and tags
+- `[advanced_settings.runtime.live_activity]`: Phone Bridge Live Activity enablement
+- `env`: shell-style environment text written to `/userdata/system/env`, including optional proxy variables such as `http_proxy`, `HTTPS_PROXY`, and `NO_PROXY`
+- Wi-Fi: SSID / PSK etc. (written to `/userdata/wpa_supplicant.conf`)
+
+## Minimal config examples
+
+### HTTP/Web UI without the device voice loop (voice unconfigured)
+
+```toml
+[basic_settings.language_timezone]
+locale = "en-US"
+timezone = "UTC"
+
+[conversation_settings.agent]
+max_iterations = -1
+context_prune_threshold = 0.5
+context_prune_state_limit = 6
+context_compaction_threshold = 0.8
+
+# input_mode is intentionally omitted: this example configures no STT/TTS
+# provider, and stt and realtime each require their own. An unset mode is
+# valid and leaves the agent reachable through the Web UI and HTTP API.
+
+[model_settings.providers.openrouter-main]
+type = "openrouter"
+api_key = "$OPENROUTER_API_KEY"
+
+[basic_settings.device]
+device_type = "iOS"
+
+[model_settings.model]
+provider = "openrouter-main"
+model = "bytedance-seed/seed-2.0-lite"
+temperature = 0.2
+# max_response_tokens = 0  # 0 = provider default
+# OpenRouter supports stateless Responses only. This keeps ContextManager
+# history local and omits store and previous_response_id from every request.
+# api_mode = "responses"
+# For reasoning models, request the encrypted reasoning item needed for exact
+# stateless replay when the provider supports it.
+# responses_include = ["reasoning.encrypted_content"]
+# responses_stateful is available only with OpenAI and Volcengine Ark. Aico
+# still persists the local transcript for audit, compaction, and recovery.
+# OpenAI-only provider compaction:
+# responses_context_management = "compaction" # empty/disabled or compaction
+# responses_compact_threshold = 0               # 0 = provider default
+# Volcengine Ark context edits (object-shaped, not OpenAI's array):
+# responses_context_management = "ark_context_edit"
+# responses_context_edit_trigger = 10            # tool-call trigger; 0 = 10
+# responses_context_edit_keep = 3                 # recent tool calls to keep; 0 = 3
+# responses_context_edit_clear_thinking = true    # clear previous thinking turns
+# OpenAI and OpenRouter support the standard truncation policy:
+# responses_truncation = "auto"                # empty/disabled or auto
+# Optional model metadata overrides. Leave unset or 0 for provider metadata auto-discovery when available.
+# context_window = 128000
+# model_max_output_tokens = 8192
+
+[voice_settings.classic.audio]
+socket = "/run/audio_service/audio_service.sock"
+sample_rate = 16000
+channels = 1
+bit_width = 16
+backend = "auto"
+
+[advanced_settings.log]
+llm_http_retention_days = 7
+
+[basic_settings.device.hid]
+keyboard_layout = "qwerty"
+
+[advanced_settings.hardware.hid]
+keyboard_device = "/dev/hidg0"
+mouse_device = "/dev/hidg1"
+android_keyboard_device = "/dev/hidg2"
+frame_socket = "/run/frame_service/frame_service.sock"
+```
+
+> Provider credentials use one field everywhere. Set `api_key = "$VAR_NAME"` to read from an environment variable, or set a literal key directly. Config Web accepts the same two forms in its API Key box. A `$VAR_NAME` reference counts as configured only when that variable is set in the Agent environment (`/userdata/system/env`): `has_api_key` is `false` for an unset reference, so Config Web and the companion app's onboarding ask for a key instead of showing it as filled in. The committed template, which a default image installs, references variables a device does not set, so a new device reports every provider key as missing until the user enters one.
+
+### Google Gemini provider
+
+```toml
+[model_settings.providers.gemini-main]
+type = "gemini"
+api_key = "$GEMINI_API_KEY"
+
+[model_settings.model]
+provider = "gemini-main"
+model = "gemini-3.8-flash"
+api_mode = "interactions"  # or "interactions_stateful"
+reasoning_effort = "low"  # gemini-3.8-flash: low/medium/high
+# max_response_tokens = 0  # 0 = provider default
+# Optional model metadata overrides
+# context_window = 1048576
+# model_max_output_tokens = 65536
+```
+
+**Gemini models**:
+- `gemini-3.8-flash`: Most capable Flash model for complex tasks
+- `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`: Earlier Flash generations
+- `gemini-2.5-flash`, `gemini-2.5-pro`: Gemini 2.5 series models
+
+**Thinking/reasoning**: Gemini 3.x and 2.5 models support internal reasoning through `reasoning_effort`:
+- `minimal`: Fastest, least reasoning; supported by Gemini 3.6 and 3.5 Flash
+- `low`: Balanced speed and quality (default for voice)
+- `medium`: More thorough reasoning
+- `high`: Maximum reasoning depth
+
+Gemini 3.8 Flash, 3.7 Flash, and the Gemini 2.5 models use `low`, `medium`, or `high` in native Interactions mode. Gemini 3 models and Gemini 2.5 Pro cannot disable thinking.
+
+**API key**: Get from [Google AI Studio](https://aistudio.google.com/apikey)
+
+**Native Interactions API**: `interactions` submits the complete local transcript as Gemini StepList input with `store=false`; `interactions_stateful` stores the interaction and continues with `previous_interaction_id`. Both use `https://generativelanguage.googleapis.com/v1beta/interactions` and authenticate with `x-goog-api-key`. Native generation settings `thinking_level`, `thinking_summaries`, `max_output_tokens`, `seed`, `stop_sequences`, and `tool_choice` are sent under `generation_config`. `store=true` retains the interaction on Google's servers, so use the local mode when server-side retention is not desired.
+
+**Only the native API is supported.** `api_mode` accepts `interactions` or `interactions_stateful`, and an unset `api_mode` selects `interactions`. The OpenAI-compatible `/chat/completions` path is deliberately not wired up for this provider: it cannot round-trip the `thought_signature` that Gemini 3 models require on replayed function calls, so multi-turn tool use fails there with `400 Function call is missing a thought_signature`. Google also documents `generateContent` as legacy and recommends calling the native API directly. Setting `api_mode = "chat_completions"`, `responses`, or `responses_stateful` on a `gemini` provider is rejected at config validation.
+
+**Base URL**: Defaults to `https://generativelanguage.googleapis.com/v1beta`. It can be overridden with `base_url` for a gateway that speaks the native Interactions protocol.
+
+### STT voice mode
+
+```toml
+[basic_settings.language_timezone]
+locale = "en-US"
+timezone = "UTC"
+
+[voice_settings.mode]
+input_mode = "stt"
+
+[voice_settings.classic.runtime]
+vad_backend = "rknn"
+vad_model_path = "/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
+vad_helper_path = "/usr/lib/aico/rknn_vad"
+vad_speech_threshold = 0.5
+min_speech_ms = 300
+# Optional Classic Smart Turn (leave unset for silence-only Silero endpointing):
+# turn_detection_model_path = "/usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
+# turn_detection_helper_path = "/usr/lib/aico/smart_turn_helper"
+# turn_detection_threshold = 0.5
+# turn_detection_analyze_silence_ms = 600
+# turn_detection_silence_fallback_ms = 3000
+tap_wakeup_enabled = true
+voice_followup_enabled = true
+voice_followup_timeout_ms = 5000
+voice_first_turn_timeout_ms = 10000
+voice_max_turns = 0
+voice_interrupt_on_wakeup = true
+voice_streaming_tts_enabled = true
+voice_tool_call_speech = true
+voice_progress_speech_enabled = true
+
+[model_settings.providers.openrouter-main]
+type = "openrouter"
+api_key = "$OPENROUTER_API_KEY"
+
+[basic_settings.device]
+device_type = "iOS"
+
+[model_settings.model]
+provider = "openrouter-main"
+model = "bytedance-seed/seed-2.0-lite"
+
+[voice_settings.classic.stt.providers.openrouter-main]
+type = "openrouter"
+api_key = "$OPENROUTER_API_KEY"
+model = "qwen/qwen3-asr-flash-2026-02-10"
+
+[voice_settings.classic.stt]
+provider = "openrouter-main"
+
+[voice_settings.classic.tts.providers.minimax-main]
+type = "minimax"
+api_key = "$MINIMAX_API_KEY"
+model = "speech-2.8-hd"
+voice_id = "male-qn-qingse"
+emotion = "happy"
+
+[voice_settings.classic.tts]
+provider = "minimax-main"
+speed = 1.0
+
+[voice_settings.classic.audio]
+socket = "/run/audio_service/audio_service.sock"
+sample_rate = 16000
+channels = 1
+bit_width = 16
+backend = "auto"
+
+[basic_settings.device.hid]
+keyboard_layout = "qwerty"
+
+[advanced_settings.hardware.hid]
+keyboard_device = "/dev/hidg0"
+mouse_device = "/dev/hidg1"
+android_keyboard_device = "/dev/hidg2"
+frame_socket = "/run/frame_service/frame_service.sock"
+```
+
+## Grouped runtime fields
+
+### General
+
+| Field                       | Default / allowed values    | Description                                                                                                                                                                                               |
+| --------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `locale`                    | `en-US` (default) / `zh-CN` | Device-level language for Config Web and user-facing Agent responses, including progress messages and `<tts>` content. This is independent from `[voice_settings.classic.stt].language`, which only controls speech recognition. |
+| `timezone`                  | `UTC` (default) / supported IANA zone | Controller time zone used for the `controller_time` and `controller_timezone` entries in each user turn's state message, and for shell child processes. Config Web provides the supported IANA zone list. |
+| `prompt`                    | -                           | Prompt appended after the built-in Agent instruction at runtime. The built-in instruction is not configurable. |
+| `max_iterations`            | `-1`                        | Maximum number of tool-call loops per run; `-1` means unlimited                                                                                                                                           |
+| `mcp_enabled`               | `true`                      | When on, the Agent serves Streamable HTTP MCP at `POST /mcp` on port 8080. Config Web exposes this under Advanced Settings. See [MCP](mcp.md).                                                              |
+| `ui_grounding_enabled`      | `true`                      | When on, the screenshots the Agent takes by itself (with each user message, and after input, text-entry and launch tools) mark detected interface components with numbered boxes, and their state message lists each element's center in `touch_gesture` coordinates. The `screenshot` tool grounds only when its `grounding` argument is true. Applied live. Config Web exposes this as "Mark tappable elements automatically" under Conversation & tools. See [UI Grounding](ui-grounding.md). |
+| `mcp_shell_enabled`         | `false`                     | When on, the MCP allowlist includes the `shell` tool. TOML-only in this release (not on the Config Web Advanced page).                                                                                      |
+| `mcp_config_web_base_url`   | `http://127.0.0.1`          | Loopback HTTP base URL used by MCP `device_status` / `support_bundle`. Non-loopback values are rejected.                                                                                                   |
+| `context_prune_threshold`   | `0.5`                       | Fraction of the usable model input budget that triggers deterministic cleanup of stale state snapshots and older tool exchanges, including while one long-running tool loop is still executing. It cleans down to 6/7 of the trigger (so the default cleans from 50% to ~43%). Must be `0` or within `(0, 1)`; `0` (or an omitted value) uses `0.5`. The effective value is capped at `context_compaction_threshold`, so this cheap deterministic pass always gets a chance to free tokens before the LLM summary runs. A value of `1` or greater is rejected, as are `nan` and `inf`; a legacy absolute token count (for example `12000`) is detected on load, logged, and replaced by the default. |
+| `context_prune_state_limit` | `6`                       | Runs the stale-state cleanup once more `<state>` messages than this carry a screenshot, keeping the latest state of the current turn; does not compact tool results. Must be `0` or greater; `0` uses `6` |
+| `context_compaction_threshold` | `0.8`                    | Fraction of the usable model input budget at which the conversation is summarized into a compaction message. Must be `0` or within `(0, 1)`; `0` (or an omitted value) uses `0.8`. Values of `1` or greater, `nan`, and `inf` are rejected. Compaction itself has no token target: the transcript is reduced structurally by retaining head and tail messages and replacing the middle with one LLM summary, so the post-compaction size follows from the summary rather than from a budget. |
+| `input_mode`                | unset / `stt` / `realtime`   | Voice mode: unset leaves voice unconfigured (HTTP/Web UI only), `stt` runs the STT/TTS voice loop, `realtime` uses a realtime voice model. `stt` requires `[voice_settings.classic.stt]` and `[...tts]`; `realtime` requires a realtime credential |
+
+Before each model request, the Agent prunes stale state and older completed
+tool-call/result pairs, normally protecting the latest three exchanges.
+It then
+applies threshold-based conversation summarization and rechecks any rewritten
+context. The hard input-budget check includes tool schemas and can prune the
+protected exchanges if necessary. If deterministic pruning is insufficient, it
+attempts a conversation summary even when provider-managed compaction is enabled.
+If the request still cannot fit, the run returns a local budget error; a failed
+hard-budget preparation does not activate its candidate session revision.
+Its summary chunk is staged in memory and only persisted after the revision is
+accepted and activated, so rejected recovery attempts do not create duplicate
+searchable history. A chunk persistence failure is logged without undoing the
+accepted revision; the full history remains in the parent transcript.
+Successful revisions preserve the original transcript on disk and reset provider
+response anchors.
+
+`context_prune_state_limit` runs the same stale-state cleanup once the context
+holds more `<state>` messages with a screenshot than the limit (default 6),
+even when token usage is far below `context_prune_threshold`. It drops the
+older states, text and screenshot together, and keeps the latest state of the
+current turn; it does not compact tool results, which stays the job of
+`context_prune_threshold`. Screenshots are cheap in tokens but each carries
+50-100 KB of image data in every request, so on a long conversation the request
+outgrows a small device's memory long before the token trigger fires.
+
+### Quick Capture
+
+| Field                           | Default                                                     | Description                                                                                                                                                                            |
+| ------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `quick_capture.enabled`         | `true`                                                       | Enables GPIO-triggered Screen Memory capture, independent of MCU voice wakeup events                                                                                           |
+| `quick_capture.gpio_pin`        | `3`                                                         | Falling-edge GPIO for Quick Capture; supported values are `3` (physical pin 38) and `0` (disabled). GPIO32/GPIO33 control HDMI power/reset and are unavailable for capture                          |
+| `quick_capture.screen_memory_ttl` | `90d`                                                    | Retention period for captured Screen Memory entries, or `forever`                                                                                                                       |
+
+### Voice & VAD
+
+Unless noted otherwise, these fields apply to the `stt` input mode.
+`tap_wakeup_enabled` also applies in `realtime`: it gates the hardware tap
+button in both modes.
+
+| Field                           | Default                                                     | Description                                                                                                                                                                            |
+| ------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vad_backend`                   | `rknn`                                                      | VAD backend: `rknn` uses NPU encoder + CPU LSTM/decoder, `cpu` uses a pure-CPU helper                                                                                                  |
+| `vad_model_path`                | `/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn` | Silero VAD RKNN encoder model path; not used when `vad_backend="cpu"`                                                                                                                  |
+| `vad_helper_path`               | `/usr/lib/aico/rknn_vad`                                     | VAD helper executable path; the CPU backend defaults to `/usr/lib/aico/cpu_vad`                                                                                                         |
+| `vad_speech_threshold`          | `0.5`                                                       | Silero VAD speech probability threshold                                                                                                                                                |
+| `silence_ms`                    | `550`                                                       | Silence-only endpointing when Classic Smart Turn paths are unset; unused once Smart Turn is enabled                                                                                    |
+| `min_speech_ms`                 | `300`                                                       | Minimum valid speech duration                                                                                                                                                          |
+| `turn_detection_model_path`     | empty                                                       | Opt-in Classic Smart Turn RKNN model path; both this and the helper path must be empty for silence-only Silero endpointing                                                             |
+| `turn_detection_helper_path`    | empty                                                       | Opt-in Classic Smart Turn helper executable; both this and the model path must be empty for silence-only Silero endpointing                                                            |
+| `turn_detection_threshold`      | `0.5`                                                       | Smart Turn probability required to commit after short silence (used only when Smart Turn is enabled)                                                                                   |
+| `turn_detection_analyze_silence_ms` | `600`                                                   | Short silence before asking Smart Turn whether the turn is complete (used only when Smart Turn is enabled)                                                                             |
+| `turn_detection_silence_fallback_ms` | `3000`                                               | Force-commit after this much continuous silence even if Smart Turn is incomplete (used only when Smart Turn is enabled)                                                                |
+| `tap_wakeup_enabled`            | `true`                                                      | When on, the MCU touch-key event can wake Aico in Classic STT and Realtime. Turning it off disables only that button path—not ASR wakeup. Realtime `/api/chat` can still activate a session |
+| `voice_followup_enabled`        | `true`                                                      | Classic continuous voice session after wakeup (Realtime-like shell). Set `false` for one utterance per wakeup                                                                          |
+| `voice_followup_timeout_ms`     | `5000`                                                      | Window to wait for a user follow-up after the Agent replies                                                                                                                            |
+| `voice_first_turn_timeout_ms`   | `10000`                                                     | Window to wait for the first utterance after wakeup                                                                                                                                    |
+| `voice_max_turns`               | `0`                                                         | Maximum turns per wakeup session; `0` means unlimited                                                                                                                                  |
+| `voice_interrupt_on_wakeup`     | `true`                                                      | When a wakeup is received again while thinking or speaking, cancel that turn and listen again. During Classic listen: if speech is already in progress, the button ends the utterance early and returns the captured audio; if listening is idle (no speech yet), the button closes the voice session and returns to wakeup-waiting. Duplicate wakeups already drained for the current listen are ignored |
+| `voice_speaker_gate_enabled`    | `false`                                                     | Classic-only owner gate: when on, a completed utterance must match the enrolled ERes2Net profile before it enters the dialog path; rejected audio is discarded and the streaming STT session is rotated. Default off. Config Web (Classic voice page) enrolls a single owner via board-mic capture (re-enroll replaces), or use `POST /api/speaker/enroll` / `.../enroll/capture`. Does not affect Realtime |
+| `voice_speaker_threshold`       | `0.50`                                                      | Cosine similarity threshold for the Classic speaker gate. Kept as a TOML/advanced knob (not exposed on Config Web); raise to tighten owner-only gating                                                                 |
+| `voice_speaker_tools_dir`       | `/usr/lib/aico`                                             | Directory containing `speaker_verify_fbank`, `speaker_verify_rknn`, and `speaker_verify_tail`                                                                                          |
+| `voice_speaker_model_dir`       | `/usr/lib/aico/models`                                      | Directory with `eres2net_backbone_rv1106_mmse.rknn` and `eres2net_tail.f32`                                                                                                             |
+| `voice_speaker_store_dir`       | `/userdata/aico/speaker_profiles`                           | Directory for enrolled speaker embedding profiles                                                                                                                                      |
+| `voice_speaker_max_profiles`    | `1`                                                         | Classic is single-owner only. Matching uses the newest enrolled profile; re-enrollment writes canonical id `speaker` and then removes legacy extras. Values above 1 are ignored                                                                 |
+| `voice_streaming_tts_enabled`   | `true`                                                      | Feed the LLM streaming output into TTS sentence by sentence, reducing the wait before the first sentence plays                                                                         |
+| `voice_tool_call_speech`        | `true`                                                      | Whether to asynchronously read the `content` of a tool-call event; this content comes only from the assistant content in the same LLM tool-call response, and stays silent when absent |
+| `voice_progress_speech_enabled` | `true`                                                      | Parsed, defaulted, and reported in config snapshots, but no runtime code reads it, so it has no effect on speech; todo state is still sent to the UI/trace                            |
+
+Classic STT Agent turns use the main model's `max_response_tokens` output limit; there is no separate voice output-token setting. After upgrading, any existing `voice_max_response_tokens` key is ignored, so set `model_settings.model.max_response_tokens` if you need to control the voice output limit (by default no limit is sent, except that native Anthropic uses the model's advertised output limit). Voice replies should still be kept short through the voice instructions rather than a second token cap.
+
+The model pointed to by `vad_model_path` must first be converted from the Silero ONNX to RV1106 RKNN on a PC using `silero-vad/convert_silero_vad_to_rknn.py`, then placed at the corresponding path on the device. The CPU backend requires `silero_vad_6_2_lstm_decoder_weights.bin` to include the Conv1d encoder extension, which can be generated from the TorchScript file shipped with the repo using `silero-vad/export_silero_vad_v6_2_weights.py`.
+When `vad_helper_path` is still the built-in default, switching `vad_backend` automatically switches the helper; only when set to a custom path does it run that custom path.
+
+## `[conversation_settings.termination_policy]`
+
+The termination policy prevents stalled runs from looping indefinitely. These
+fields can be edited directly in `agent.toml`; omitted or zero-valued numeric
+fields use the defaults below.
+
+```toml
+[conversation_settings.termination_policy]
+enabled = true
+max_seconds = 0
+repeat_action_limit = 3
+same_result_limit = 3
+soft_notice_stall_score = 2
+restrict_tools_stall_score = 4
+terminate_stall_score = 6
+parse_failure_limit = 3
+```
+
+| Field                        | Default | Description                                                                                                 |
+| ---------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
+| `enabled`                    | `true`  | Enable loop notices and policy checks for execution budgets and parse failures                                                       |
+| `max_seconds`                | `0`     | Wall-clock budget per instruction; `0` disables the time budget, and a consumed steer starts a fresh budget |
+| `repeat_action_limit`        | `3`     | Repeated call threshold for the stronger notice on non-UI loops |
+| `same_result_limit`          | `3`     | Number of repeated identical results considered stalled                                                     |
+| `soft_notice_stall_score`    | `2`     | Stall score that injects a one-shot strategy-change notice                                                  |
+| `restrict_tools_stall_score` | `4`     | Stall score that adds a stronger strategy-change notice                                                   |
+| `terminate_stall_score`      | `6`     | Legacy setting retained for config compatibility. It does not stop the run.                                                                    |
+| `parse_failure_limit`        | `3`     | Stop after this many consecutive unparseable model outputs                                                  |
+
+The three stall-score thresholds must satisfy
+`soft_notice_stall_score < restrict_tools_stall_score < terminate_stall_score`.
+
+The loop guard only catches obvious loops; whether an action worked is for the
+model to judge from its screenshot. A UI action (tap, swipe, key press, text
+entry, app launch) counts toward a loop only when it repeats the previous UI
+action exactly and leaves the screen identical to what that action left, with
+no progress-grid block changed. Tools called in between, such as `screenshot`
+or `shell`, neither hide nor reset that count. The second identical UI action
+adds one notice for the streak. A different action on an unchanged screen or a
+repeated action that changes the screen starts a new streak.
+
+For other tools, repeating the same call adds 1 to the stall score and getting
+the same result again adds 2. Identical screenshots count as the same result.
+A new result resets the score. The guard adds notices at
+`soft_notice_stall_score` and `restrict_tools_stall_score`. Repeated actions
+and stalls only produce notices. Iteration limits, configured time budgets,
+cancellation, and repeated parse failures can still stop the run.
+
+## `[model_settings.providers.<name>]`
+
+Optional named provider configurations. Each section holds the credentials for
+one endpoint, and `[model_settings.model]` references it by putting the name in its `provider`
+field. This lets several providers stay configured at once
+so switching is a one-line change instead of a re-entry of keys.
+
+| Field       | Description                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------- |
+| `type`      | Required provider type: `openai`, `anthropic`, `openrouter`, `kimi`, `kimi-cn`, `volcengine`, `deepseek`, `gemini`, `ollama`, `fake`   |
+| `api_key`   | Literal API key, or `$VAR_NAME` to read it from an environment variable                              |
+| `base_url`  | Custom endpoint; supported by `openai`, `anthropic`, `gemini`, and `ollama`                         |
+
+```toml
+[model_settings.providers.openai-work]
+type = "openai"
+api_key = "sk-..."
+
+[model_settings.providers.ollama-local]
+type = "ollama"
+base_url = "http://127.0.0.1:11434"
+
+[model_settings.providers.claude-work]
+type = "anthropic"
+api_key = "$ANTHROPIC_AUTH_TOKEN"
+base_url = "https://api.anthropic.com/v1"
+
+[model_settings.model]
+provider = "openai-work"   # references [model_settings.providers.openai-work]
+model = "gpt-5.5"
+```
+
+On load, a `provider` value that names a section under `[model_settings.providers]` is replaced
+by that section's provider type. Its `api_key` fills an empty `[model_settings.model].api_key`,
+while its `base_url` always controls the endpoint. A legacy `[model_settings.model].base_url`
+is ignored; configure custom endpoints only through the selected
+`[model_settings.providers.<name>].base_url`. A `provider` that matches no section is
+treated as a provider type, so existing configs keep working unchanged.
+
+`token_env` is not supported. Replace it with `api_key = "$VAR_NAME"`.
+
+Only the `[model_settings.providers.<name>]` namespace is supported. The former
+`[providers.<name>]` namespace is rejected with an error. The record-level
+`provider` field is still accepted as a read-time alias for `type`; saving always
+writes `type`, and `type` wins when both fields are present.
+
+A `provider` that is neither a section name nor a known provider type is
+rejected at load, so a typo or a reference left behind after deleting a section
+fails with a clear error instead of surfacing later when the model client is
+built. When a section is named exactly like a provider type, the section wins.
+
+## `[model_settings.model]`
+
+| Field                     | Description                                                                                                                                                                                                                                          |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`                | A provider type, or the name of a `[model_settings.providers.<name>]` section. Types: `openai`, `anthropic`, `openrouter`, `kimi`, `kimi-cn`, `volcengine`, `deepseek`, `gemini`, `ollama`, `fake`. `kimi` targets the Moonshot global site (`https://api.moonshot.ai/v1`) and `kimi-cn` targets the mainland China site (`https://api.moonshot.cn/v1`); `volcengine` targets Volcengine Ark (`https://ark.cn-beijing.volces.com/api/v3`); `deepseek` targets DeepSeek's OpenAI-compatible endpoint (`https://api.deepseek.com`); `gemini` targets the native Interactions endpoint (`https://generativelanguage.googleapis.com/v1beta`) and has no OpenAI-compatible transport. |
+| `model`                   | Model name; usually required except for `fake`                                                                                                                                                                                                       |
+| `api_key`                 | API key written directly                                                                                                                                                                                                                             |
+| `api_mode`                | Wire protocol. For providers with a Chat Completions transport, omit it (or use `chat_completions`) for that path; `responses` sends full local context to OpenAI, OpenRouter, Volcengine Ark, or DeepSeek. `responses_stateful` chains stored Responses with `previous_response_id` where supported. Gemini defaults an omitted value to `interactions` (native local StepList, `store=false`) and also supports `interactions_stateful` (native stored interaction, `previous_interaction_id`); it rejects `chat_completions`. The local transcript remains authoritative for audit, compaction, session rotation, and recovery. |
+| `responses_context_management` | Provider-side Responses context policy. `compaction` sends OpenAI's token-based compaction array; `ark_context_edit` sends Volcengine Ark's object-shaped `context_management.edits` policy; empty/`disabled` omits provider context management. DeepSeek does not support provider-side context management. This policy is independent from local historical state/tool-result pruning. |
+| `responses_compact_threshold` | Optional token threshold sent with provider compaction. `0` lets the provider choose. |
+| `responses_context_edit_trigger` | Ark tool-call count that triggers `clear_tool_uses`; `0` uses the recommended value `10`. |
+| `responses_context_edit_keep` | Ark recent tool-call count to retain after cleanup; `0` uses the recommended value `3`. |
+| `responses_context_edit_clear_thinking` | When true, adds Ark's `clear_thinking` edit and removes previous thinking turns. |
+| `responses_truncation` | OpenAI-compatible Responses truncation policy. Empty/`disabled` preserves the API default; `auto` lets OpenAI or OpenRouter discard the oldest input. This field is not sent to Ark or DeepSeek. |
+| `responses_include` | Optional array of provider-supported Responses include values. In stateless reasoning mode, use `reasoning.encrypted_content` when supported so Aico can replay the complete opaque reasoning item. DeepSeek does not support `include`; its plain-text reasoning items are replayed directly. Aico uses `previous_response_id` for provider-managed chaining and intentionally does not expose the separate `conversation` resource ID: the local session transcript remains authoritative and must not be shared across sessions accidentally. |
+| `temperature`             | Sampling temperature. When unset, the default is model-dependent. Kimi K3 uses its required value, Gemini 3 models use Google's documented default of `1.0`, and other non-Gemini providers fall back to `0.2`. Native Gemini models without a registered default omit `generation_config.temperature` so Google can choose the model default. An explicit value normally takes precedence and is forwarded to Gemini; Google warns that lowering Gemini 3 temperature from `1.0` may cause looping or degraded performance on complex reasoning and math. DeepSeek thinking mode does not use temperature, so Aico omits it whenever `reasoning_effort` is not `none`. |
+| `reasoning_effort`        | Reasoning effort. Unset is auto. Native Anthropic maps supported effort values to adaptive thinking `output_config.effort` and preserves signed thinking blocks across tool-call turns. Gemini maps the shared model-specific effort values to native Interactions `generation_config.thinking_level`; Gemini 3.8/3.7 and Gemini 2.5 accept `low`, `medium`, or `high`. `minimal` is supported by OpenRouter, Volcengine Ark, and selected Gemini 3 models. `none` is supported by OpenRouter, OpenAI, Kimi, DeepSeek, Ollama, and the fake provider, but not by native Anthropic, Ark, or Gemini Interactions. DeepSeek defaults to `none` for faster device interactions; explicit `low`, `high`, or `max` enables thinking with `reasoning_content` replay. Other models may also pin a lighter default in `model_specs.go`; an explicit value always wins. |
+| `reasoning_budget_tokens` | Optional exact reasoning-token budget for models that expose a numeric budget. `0` uses the model default or effort preset. It is currently translated only to Anthropic's native `thinking.budget_tokens` field. |
+| `max_response_tokens`     | Maximum output tokens passed to the model on request. Default `0` sends no limit, so the provider applies its model default; native Anthropic, which requires `max_tokens`, uses the model's advertised output limit (or `8192` when unknown), and the input budget reserves that same value. |
+| `context_window`          | Optional total context window override in tokens. Unset or `0` uses the built-in registry, then provider metadata (OpenRouter, Ollama, or models.dev for the other supported providers) when the registry has no value, then memory fallback.                                                                        |
+| `model_max_output_tokens` | Optional advertised max output override in tokens. Unset or `0` uses the built-in registry, then provider metadata when the registry has no value; native Anthropic falls back to `8192`. When `max_response_tokens` is unset, the input budget reserves this value only for native Anthropic, which sends it as `max_tokens`; other providers receive no output limit, so nothing is reserved and the reply uses the room that compaction keeps free. |
+
+### Automatic provider retries
+
+Model requests automatically retry timeouts, transient network failures, HTTP
+408/409/429, and HTTP 5xx responses. Each call allows up to five retries (six
+attempts total), with delays of 2, 4, 6, 8, and 10 seconds. A provider's valid
+`Retry-After` header (seconds or HTTP date) extends the delay when necessary.
+No additional configuration is required.
+
+Each non-streaming attempt has a fresh 30-second timeout, including response
+body reads. Streaming calls have a 30-second timeout for response headers and
+for each blocked response-body read; ongoing data or SSE heartbeats keep a long
+response alive. Time spent in consumer callbacks does not count toward the read
+timeout. The caller's deadline and cancellation always bound the complete call
+and interrupt retry waits. Authentication, validation, and context-window errors
+are returned without a transient retry; context-window recovery remains the context
+manager's responsibility.
+
+A streaming request can retry only before it delivers text or reasoning to a
+consumer. Once output is delivered, failures are returned to avoid duplicating
+displayed text or spoken audio. Transport and transient stream retries share
+the same attempt budget; Anthropic's existing semantic-response repair remains
+separate. Structured SSE error envelopes (including numeric status codes and
+provider rate-limit/overload codes) are classified even when HTTP returns 200.
+An interrupted stream without a completion marker or finish reason is returned
+as an error. Retries are recorded under the `provider_retry` log component.
+
+Speech and decision requests also retry transient failures without additional
+configuration:
+
+- **STT:** Whisper, OpenRouter, Google Cloud, Tencent ASR, and DashScope allow
+  two retries with 500 ms and 1 s delays and a fresh 30-second timeout per
+  buffered-WAV attempt. The complete recording is retained and rebuilt on each
+  attempt. Tencent and DashScope streaming uploaders retry connection/session
+  setup before audio upload; once upload starts, existing full-recording fallback
+  remains responsible for recognition failures.
+- **TTS:** All provider sessions opened through the shared provider holder use
+  one two-retry budget across connection setup and synthesis operations, with
+  500 ms and 1 s delays. Blocking setup/synthesis operations before the first
+  PCM write are bounded to 30 seconds. Input is retained only until audio starts
+  (up to 256 KiB); failed attempts are canceled and closed before replay, and
+  they cannot finalize the shared playback sink. Once any PCM is submitted to
+  playback, failures are returned without replaying speech. Provider-specific
+  synthesis/playback timeouts still apply after audio starts.
+- **Decision models:** TypeSafe, OpenAI, Gemini, and OpenRouter share two retries
+  with 400 ms and 800 ms delays and a 15-second
+  overall budget (or a shorter caller deadline).
+- **Realtime:** OpenAI, Qwen, Gemini Live, xAI, Moss, and Speko retry failed
+  connection/session setup twice, with 500 ms and 1 s delays. WebSocket upgrade
+  failures preserve HTTP status and `Retry-After`; setup timeouts and structured
+  transient server errors are retryable. Setup remains bounded by the caller's
+  connection deadline and adapter handshake/readiness timeouts. Nested mint and
+  WebSocket requests share the setup budget, and Speko retains the same mint
+  idempotency key across attempts. Active-session audio, tool results, and
+  conversation turns are never replayed automatically.
+
+All of these paths honor a longer valid `Retry-After` and stop immediately on
+caller cancellation. Unknown provider business codes are treated as permanent
+failures unless explicitly mapped; error-message text alone does not trigger a
+retry.
+
+### Moonshot Kimi K3
+
+Use the dedicated `kimi` (global) or `kimi-cn` (mainland China) provider. Each has a built-in Moonshot OpenAI-compatible endpoint, so only `model` and the API key are required. The `kimi-k3` context window and max output are in the built-in registry, so the metadata overrides can stay unset.
+
+Moonshot's official endpoint implements OpenAI-compatible Chat Completions, not
+the Responses API. Keep `api_mode` unset (or set it to `chat_completions`). A
+third-party protocol-conversion gateway can instead be configured as a custom
+`openai` provider if it genuinely exposes `/responses`. Kimi thinking models
+require preserved thinking across multi-turn and tool-call requests, so Aico
+replays each returned assistant `reasoning_content` field through the shared
+compatible transport. See the official [Kimi Thinking Models](https://platform.kimi.ai/docs/guide/use-thinking-models)
+guide.
+
+```toml
+# Global site (https://api.moonshot.ai/v1)
+[model_settings.model]
+provider = "kimi"
+model = "kimi-k3"
+api_key = "MOONSHOT_API_KEY"
+
+# Mainland China site (https://api.moonshot.cn/v1)
+# [model_settings.model]
+# provider = "kimi-cn"
+# model = "kimi-k3"
+# api_key = "MOONSHOT_API_KEY"
+```
+
+### Volcengine Ark (Doubao)
+
+Use the `volcengine` provider. It targets Ark's OpenAI-compatible endpoint
+(`https://ark.cn-beijing.volces.com/api/v3`), so only `model` and the API key are
+required. `model` is the Ark model ID, and `api_key` is an Ark API key.
+
+```toml
+[model_settings.model]
+provider = "volcengine"
+model = "doubao-seed-2-1-pro-260628"
+api_key = "ARK_API_KEY"
+```
+
+Ark supports `responses_stateful` with `store=true` and
+`previous_response_id`; `caching` is a separate optional cost/latency feature
+and is not required for stored response chaining. Ark's request schema is not
+identical to OpenAI's: Aico keeps supported `instructions`, `include`, and
+`reasoning` fields, but does not send OpenAI's compaction array or `truncation`
+field to Ark. Set `responses_context_management = "ark_context_edit"` to send
+Ark's object-shaped `context_management` edit schema. The default edit clears
+all old tool inputs after 10 tool calls while retaining the latest 3; the
+optional `clear_thinking` edit removes previous thinking turns as well.
+An older provider record saved as `type = "openai"` with the standard Ark host
+is recognized automatically and uses the same compatibility profile.
+
+To read the key from the environment instead of writing it here, put it on a
+named provider and reference that:
+
+```toml
+[model_settings.providers.ark]
+type = "volcengine"
+api_key = "$ARK_API_KEY"
+
+[model_settings.model]
+provider = "ark"
+model = "doubao-seed-2-1-pro-260628"
+```
+
+Ark also exposes an Anthropic-protocol endpoint at `/api/compatible`. This agent
+always speaks the OpenAI-compatible protocol, so use the `/api/v3` path above.
+
+`reasoning_effort` accepts `minimal` (no reasoning), `low`, `medium`, and `high`.
+Ark treats an omitted value as `high`, which delays the first streamed token by
+several seconds; the built-in registry therefore pins `low` as the default for
+`doubao-seed-2-1-pro-260628` so voice replies stay responsive. Set the field
+explicitly to override. Note that `none` is not an Ark level — use `minimal`.
+
+The context window and max output for `doubao-seed-2-1-pro-260628` are in the
+built-in registry, so the metadata overrides can stay unset. Other dated releases
+are not registered; for those, set `context_window` and
+`model_max_output_tokens` explicitly, or add a registry entry keyed by the exact
+Ark model ID.
+
+The `[voice_settings.classic.tts]` section has an unrelated provider that is also named `volcengine`. It
+speaks a separate WebSocket protocol with its own host and credentials, so an Ark
+API key and base URL do not carry over to it.
+
+### DeepSeek
+
+Use the `deepseek` provider for DeepSeek's OpenAI-compatible endpoint. Aico
+presets `deepseek-flash`, which supports vision and tool calls with a 1M context
+window. The `deepseek-v4-pro` preset is commented out because it does not support
+vision; it can be restored once vision support is verified.
+DeepSeek defaults to non-thinking mode in Aico with `reasoning_effort = "none"`.
+Set `reasoning_effort` to `low`, `high`, or `max` to enable thinking. In Chat
+Completions mode, Aico sends DeepSeek's `thinking` toggle and replays assistant
+`reasoning_content` from the transcript on subsequent tool-call requests. In
+Responses mode, it sends `reasoning.effort` and replays the returned reasoning,
+message, and executed function-call items through Aico's local context. Since
+DeepSeek does not apply temperature in thinking mode, Aico omits the field for
+both transports while preserving it in non-thinking mode.
+
+Set `api_mode = "responses"` to use DeepSeek's stateless `/responses` endpoint.
+DeepSeek does not support `responses_stateful`, `store`, or
+`previous_response_id`; Aico therefore keeps and resubmits the full local
+transcript. The provider uses its built-in endpoint, so `base_url` is not
+configurable.
+
+```toml
+[model_settings.providers.deepseek-main]
+type = "deepseek"
+api_key = "$DEEPSEEK_API_KEY"
+
+[model_settings.model]
+provider = "deepseek-main"
+model = "deepseek-flash"
+api_mode = "responses"
+```
+
+Official references: [model capabilities and limits](https://api-docs.deepseek.com/quick_start/pricing),
+[vision](https://api-docs.deepseek.com/guides/vision),
+[thinking with tool calls](https://api-docs.deepseek.com/guides/thinking_mode),
+[Responses API compatibility](https://api-docs.deepseek.com/guides/responses_api).
+
+## `[model_settings.decision]`
+
+An optional decision model that answers fixed-choice questions (choice, yes/no,
+box in an image) inside deterministic workflows. It is separate from the main
+model: it returns typed answers without planning or user-facing text. It is off
+by default; turning it on requires `api_key`. When it is off, workflows with a
+main-model decision keep using it.
+One provider is active at a time; its key is independent of the main model key.
+The following providers are supported:
+
+- `typesafe`: TypeSafe's System One API (Jev). Answers choice, yes/no and box
+  questions, so it can also locate tap targets.
+- `openai`: OpenAI's Decisions API (GPT-6 Luna, public beta). Answers choice
+  and yes/no (predicate) questions but has no box answer, so the tap-target
+  decisions (`app_search`, `paste_menu`, the Android search field) always stay
+  with the main model.
+- `gemini`: Google's Gemini Decisions API (`gemini-decision-1`). Answers
+  choice, yes/no, and score questions but has no box answer, so the same
+  tap-target decisions stay with the main model.
+- `openrouter`: OpenRouter's native `/api/alpha/decisions` API. The default is
+  Jev (`~typesafe/jev-latest`), which currently resolves to Jev 1.14 and answers
+  choice, yes/no, score, and box questions. Other models are drawn from the
+  [Decisions model catalog](https://openrouter.ai/models?output_modalities=decisions&order=top-weekly).
+  Entries that only serve Extractions are excluded. Non-Jev models and Jev
+  versions before 1.14 omit box questions, leaving tap-target decisions to the
+  main model. Screenshot decisions require image input; unsupported
+  capabilities retain the existing fallback behavior. The native Decisions
+  endpoint is currently an alpha API.
+
+| Field            | Default                      | Description                                                                   |
+| ---------------- | ---------------------------- | ----------------------------------------------------------------------------- |
+| `enabled`        | `false`                      | Turns the decision model on. Requires `api_key`.                              |
+| `provider`       | `typesafe`                   | `typesafe` (TypeSafe Jev), `openai` (OpenAI Luna), `gemini` (Gemini Decision 1), or `openrouter`. |
+| `api_key`        | empty                        | Provider API key. Config Web treats it as write-only and reports `has_api_key`. |
+| `base_url`       | provider default             | Provider endpoint; must be an absolute `http(s)` URL. Defaults to `https://api.typesafe.ai/v1`, `https://api.openai.com/v1`, `https://generativelanguage.googleapis.com/v1beta`, or `https://openrouter.ai/api/alpha`. |
+| `model`          | provider default             | Decision model name. Defaults to `jev-preview` (Jev 1.14, which box questions need), `gpt-6-luna`, `gemini-decision-1`, or `~typesafe/jev-latest`. |
+| `min_confidence` | `0.8`                        | Answers below this confidence (0 to 1) are handed back to the main model. A yes/no answer counts as confident at `p >= min_confidence` or `p <= 1 - min_confidence`. `0` selects the default. |
+
+```toml
+[model_settings.decision]
+enabled = true
+api_key = "ts-..."
+```
+
+For OpenRouter, use a separate OpenRouter key:
+
+```toml
+[model_settings.decision]
+enabled = true
+provider = "openrouter"
+api_key = "sk-or-..."
+# model = "~typesafe/jev-latest"
+# base_url = "https://openrouter.ai/api/alpha"
+```
+
+Each decision below asks both models at once. A decision-model answer that
+reaches `min_confidence` is used as soon as it arrives and the main-model call
+is canceled; otherwise the main model's answer is used, so an unsure decision
+model adds no latency.
+
+| Op in the log           | Decision                                          | What the decision model may decide       |
+| ----------------------- | ------------------------------------------------- | ---------------------------------------- |
+| `ime_probe`             | Input method state after typing the probe letter  | The state                                |
+| `probe_cleanup`         | Whether the probe letter is still in the field    | Whether to delete it                     |
+| `screen_analysis`       | Whether the entered text matched and composition is pending | Only the match and pending flags; both models are awaited and the field text always comes from the main model |
+| `app_search`            | Direct app result on the search page, and its tap point | Only a confident "found" with a confident tap box; "not found" always goes to the main model |
+| `app_open_confirmation` | Whether the app opened                            | Only a confident "opened"; otherwise the main model decides |
+| `android_search_entry`  | Whether Android launcher search opened            | The answer and the search field position |
+| `paste_menu`            | The Paste action in the long-press menu           | The tap point                            |
+
+These are the decisions where, in on-device runs (2026-10, iOS and Android),
+confident decision-model answers matched the main model or corrected it.
+Decisions that did not gain from it, such as IME candidate choice, dialog
+checks, loop-guard advice and memory retention, are not sent to the decision
+model.
+
+`app_open_confirmation` trusts only "opened": Jev was confidently wrong saying
+"not opened" on app-switch transitions (dimmed screen, "opening app" overlay),
+and never wrong saying "opened". Otherwise the main model compares the search
+page the result was tapped on with the screen after the tap and answers
+whether the screen left the search page, without having to recognize the app:
+Settings reopening on its own search page and Safari's start page read as "not
+opened" from the second screenshot alone. `app_search` trusts only "found": a
+screenshot taken before the results settle, or after the app already opened,
+reads as "not found", and the main model then rechecks.
+
+The `step_gate` op is different: it has no main-model counterpart. It checks
+a multi-step `quick_action` between steps. A step in `quick_actions.json` may
+declare `expect`, a description of the screen state it should leave behind;
+for example, the first `spotlight_search` step expects Spotlight to be open
+before Cmd+A and Backspace clear its field. When the decision model is on, the
+runtime takes a screenshot after that step and asks whether it shows the
+expected state. Nothing mid-batch can fall back to the main model, so only a
+confident "yes" continues; "no" or an unsure answer stops the sequence with
+`step_expectation_unmet`, listing the steps that ran. That result carries no
+screenshot, so the main model takes one before it continues. A failed request or screenshot, or a disabled
+decision model, leaves the sequence unchecked. `expect` on the last step has
+no effect.
+
+`touch_gesture` `tap_sequence` also logs `step_gate`. Its pixel check still
+runs between taps; when it sees a remaining target change (not a whole-screen
+change, which always stops), the decision model gets the frame the taps were
+planned on and the changed frame, and is asked whether the remaining targets
+are the same controls, still in place. A confident "yes" is rechecked against a
+fresh frame, and only when the screen has not moved again does the sequence
+continue with that frame as the new baseline; anything else, including a
+disabled decision model, stops the sequence as before. A step-gate request is
+bounded at 4 seconds; a request that fails or times out counts as unchecked.
+
+Every decision writes one Agent log line under the `decision` component:
+`op=... provider=... dm={...} conf=... llm={...} agree=... dm_ms=... llm_ms=... fallback=...`,
+where `dm` is the decision model's answer; `llm` and `agree` are filled in
+when the main model's answer was also used.
+
+Each user turn also asks the decision model once, from the utterance text
+and the exchange before it (the previous request, the tools it used and the
+reply), while the turn's screenshot is being captured (`turn_screenshot`):
+does responding need the phone screen? The previous exchange lets a follow-up
+such as "now press equals" after opening an app read as needing the screen. Only a confident "no", such as small
+talk, arithmetic or the weather, drops the screenshot from the turn; the main
+model can still call `screenshot`. The request is bounded at 4 seconds, and an
+unsure answer, a failed request or a disabled decision model keeps the
+screenshot.
+
+The same request also decides which saved memories bear on the request
+(`memory_recall`). Profile, preference and rule memories already reach the main
+model through the system prompt's user profile, so only fact and procedure
+memories are offered: up to 20 of the highest-priority ones, of which up to 5
+confidently relevant ones are added to the turn's state message. Sensitive
+memories and memories written from notifications are never offered this way,
+because a notification's text is controlled by third parties; `recall_memory`
+still finds them, and any memory not recalled automatically, by topic. An unsure answer or a failed
+request recalls nothing. The memory texts offered are sent to the decision
+model provider.
+
+The TypeSafe API is region-restricted (HTTP 451 outside supported regions);
+the Agent reaches every decision provider through the same proxy environment it
+uses for other model providers.
+
+In Config Web, **Models** lists the main model and the decision model. The
+decision model page edits the switch, the provider, the key and the minimum
+confidence, and **Test connection** sends one small question with the saved
+key (`POST /api/config/test` with section `decision`), also while the switch is
+off. Switching the provider clears the saved key, turns the model off, and
+resets the Base URL and model to the new provider's defaults. The
+OpenRouter page offers a model ID input with native Decisions catalog
+suggestions and a separate full-width Base URL input. The catalog only assists
+typing; IDs outside the suggestions are accepted, even if the catalog cannot
+be loaded. Clear the model ID to restore the default Jev model; leaving the
+Base URL empty restores the official endpoint. The catalog is fetched from
+OpenRouter's public Models API with `output_modalities=decisions` and
+`order=top-weekly`, without sending any saved API key; entries keep the order
+returned by that API. Other providers' Base URL and model overrides are edited
+in the TOML file.
+
+The SkillOpt sample classifier (`--sample-classifier typesafe`) can use Jev
+offline; it reads the key from `TYPESAFE_API_KEY`.
+
+## `[advanced_settings.log]`
+
+| Field                     | Default | Description                                                                                                                                              |
+| ------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `level`                   | `info`  | Minimum Agent log severity: `debug`, `info`, `warn`, or `error`. Changes apply without restarting the Agent.                                             |
+| `llm_http_retention_days` | `7`     | Number of days to keep raw LLM HTTP logs under `<config_dir>/log` (`llm-http-*.log`). Cleanup runs when the agent starts; unset or `0` uses the default. |
+| `log_raw_http`            | `true`  | Record detailed model HTTP requests and responses. This maps to the runtime model transport logger but is stored in the Advanced Settings log group.      |
+
+## `[voice_settings.classic.audio]`
+
+| Field              | Default                                 | Description                                                                                                                                                                                                                   |
+| ------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `socket`           | `/run/audio_service/audio_service.sock` | Audio Service socket                                                                                                                                                                                                          |
+| `sample_rate`      | `16000`                                 | Sample rate                                                                                                                                                                                                                   |
+| `channels`         | `1`                                     | Number of channels                                                                                                                                                                                                            |
+| `bit_width`        | `16`                                    | Bit width                                                                                                                                                                                                                     |
+| `backend`           | `auto`                                  | Recording and playback backend. `auto` uses `audio_service` on the board and host recorder/player commands in desktop/PC mode through the ADB input backend or environment bridge. Use `audio_service` or `local` to force both directions to one backend. |
+
+## `[voice_settings.realtime]`
+
+This section selects a named realtime provider record used after a GPIO wakeup.
+It is active when `input_mode = "realtime"`; the
+mode, not API key presence, controls whether the daemon starts the realtime
+path. The daemon streams microphone PCM to the selected adapter and plays its
+response PCM through the board audio path.
+For providers with text-input capability, `/api/chat` can start a session and send the queued text as its first user message. Speko S2S is audio-first; its delegated native provider may expose optional text capabilities, but the board microphone path remains the canonical full-duplex path. The selected direct provider owns turn detection and interruption; Speko does not relay PCM or synthesize a separate VAD loop.
+Use `input_mode = "stt"` to select the existing VAD/STT/LLM/TTS wakeup loop.
+Config Web renders the selector when `agent.input_mode = "realtime"`. Provider
+credentials and model settings live in `[voice_settings.realtime.providers.<name>]`, so
+switching the selector never overwrites another provider's saved configuration.
+The current adapters are Qwen, Speko S2S, OpenAI Realtime, Google Gemini Live, and xAI Grok Voice.
+The session always starts with the built-in realtime voice instruction. If
+`[conversation_settings.agent].prompt` is non-empty, it is appended after that
+base instruction; it does not replace it.
+
+| Field | Default | Description |
+| ----- | ------- | ----------- |
+| `provider` | `qwen` | Named `[voice_settings.realtime.providers.<name>]` record. Bare `qwen`, `speko`, `openai`, `gemini`, `xai`, or `moss` values remain accepted for compatibility. |
+| `enable_speech_emotion` | `true` | Enable realtime speech emotion. |
+| `input_audio_format` / `output_audio_format` | `pcm` | Audio formats accepted by the realtime API. |
+
+Legacy Qwen `turn_detection*` fields under this section are migrated to the selected Qwen provider record when the configuration is loaded or next saved.
+
+## `[voice_settings.realtime.providers.<name>]`
+
+Realtime provider records follow the same named-record pattern as
+`[model_settings.providers.<name>]`. Multiple configurations of each realtime provider can coexist;
+`[voice_settings.realtime].provider` selects one by name.
+
+```toml
+[voice_settings.realtime.providers.qwen-main]
+type = "qwen"
+api_key = "$DASHSCOPE_API_KEY"
+model = "qwen-audio-3.0-realtime-plus"
+region = "cn-beijing"
+voice = "longanqian"
+turn_detection = "server_vad"
+turn_detection_threshold = 0.5
+turn_detection_silence_ms = 800
+
+[voice_settings.realtime.providers.speko-main]
+type = "speko"
+api_key = "$SPEKO_API_KEY"
+upstream_provider = "google"
+model = "gemini-3.1-flash-live-preview"
+voice = "Puck"
+
+[voice_settings.realtime.providers.gemini-vertex]
+type = "gemini"
+auth_mode = "vertex"
+api_key = "$GOOGLE_OAUTH_ACCESS_TOKEN"
+project_id = "my-project"
+location = "us-central1"
+model = "gemini-live"
+voice = "Puck"
+
+[voice_settings.realtime.providers.openai-gateway]
+type = "openai"
+api_key = "$OPENAI_API_KEY"
+model = "gpt-realtime"
+endpoint = "wss://gateway.example/v1/realtime"
+realtime_protocol = "legacy"
+voice = "alloy"
+
+[voice_settings.realtime.providers.moss-main]
+type = "moss"
+api_key = "$MOSS_API_KEY"
+model = "moss-live-1.0"
+
+[voice_settings.realtime]
+provider = "speko-main"
+```
+
+| Field | Providers | Description |
+| ----- | --------- | ----------- |
+| `type` | all | Adapter type: `qwen`, `speko`, `openai`, `gemini`, `xai`, or `moss`. |
+| `api_key` | all | Provider credential; supports `$ENV_VAR` expansion. For Gemini Vertex, this is an OAuth access token. |
+| `model` / `voice` | all | Provider-specific model and voice. Speko requires an explicit model; voice may stay empty for the selected upstream default. Moss Live uses its default persona and ignores `voice`. |
+| `workspace_id` / `region` | Qwen | Optional DashScope routing settings. |
+| `turn_detection` | Qwen | Qwen turn detector: `server_vad` (default) or `smart_turn`. Config Web exposes this under the provider's Advanced Settings. |
+| `turn_detection_threshold` | Qwen `server_vad` | Optional Qwen VAD threshold; leave unset to use the service default. Ignored by `smart_turn`. |
+| `turn_detection_silence_ms` | Qwen `server_vad` | Optional silence duration before Qwen completes a turn; leave unset to use the service default. Ignored by `smart_turn`. |
+| `auth_mode` | Gemini | `api_key` (default) for the Gemini Developer API, or `vertex` for Vertex OAuth. |
+| `project_id` / `location` | Gemini Vertex | Required Google Cloud project and Vertex region, for example `us-central1`. |
+| `endpoint` | Qwen, OpenAI, Gemini, xAI | Optional WebSocket endpoint override, primarily for regional gateways and protocol tests. |
+| `realtime_protocol` | OpenAI | OpenAI Realtime wire schema: empty or `ga` (default) uses the current GA session payload; `legacy` (alias `beta`) uses the older `modalities`, `input_audio_format`, and `output_audio_format` fields required by some compatible gateways. Set this explicitly; the endpoint URL is never used to infer the protocol. |
+| `use_backend_agent` | realtime mode (`[voice_settings.realtime]`) | Controls tool ownership: omitted/`true` (default) enables the backend agent and exposes its communication tools (`*_agent_task`); when omitted and the backend model (`[model_settings.model]`) has no usable credential, the runtime falls back to `false` so delegated tasks do not fail; `false` disables agent communication tools and exposes the runtime tools that the backend agent would otherwise use directly to the realtime model. This setting does not control provider reasoning, which remains a provider/model capability. Moss Live always runs with an effective `false` (no task-update text injection) without rewriting the stored value, hides the Config Web toggle, and still caps client tools at 32 when running without the backend agent (dropping lower-priority tools when the catalog is larger). |
+| `thinking_level` | Gemini | Thinking depth for Live Extended Thinking models: `LOW` (default), `MINIMAL`, `MEDIUM`, or `HIGH`. Only applies to models that support thinking; other models ignore it. |
+| `upstream_provider` | Speko | Required S2S upstream: `google` (or `gemini`) or `xai`, paired with `model`. Automatic routing is disabled because it may select an unsupported WebRTC route. OpenAI is not a supported Speko route in Aico; use the top-level `openai` provider instead. |
+| `agent_id` / `base_url` | Speko | Optional Speko agent ID and API base URL override. |
+
+## `[advanced_settings.hardware.frame_service]`
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `keep_streamon` | `false` | When `true`, Frame Service keeps capture STREAMON between screenshots and discards 6 warm-up frames for each request. When `false`, it pauses between screenshots and uses 0 warm-up frames. |
+
+## `[memory_settings.notification]`
+
+Voice notifications attach system reminders to a normal spoken reply or replace a final failed LLM turn with a fixed error message. In Realtime mode, an idle session can also announce a pending reminder as a private speech response. See [Voice Notifications](voice-notifications.md) for the lifecycle and delivery contract.
+
+```toml
+[memory_settings.notification]
+enabled = true
+max_pending = 8
+retention_days = 14
+
+[memory_settings.notification.response_tail]
+enabled = true
+max_items = 1
+max_text_chars = 40
+
+[memory_settings.notification.expiration]
+default_ttl_seconds = 0
+
+[memory_settings.notification.expiration.code_ttl_seconds]
+storage = 900
+```
+
+| Field                                | Default         | Description                                                               |
+| ------------------------------------ | --------------- | ------------------------------------------------------------------------- |
+| `enabled`                            | `true`          | Enable persistent tails and final-turn replacements                       |
+| `max_pending`                        | `8`             | Maximum active condition records kept by the in-memory manager            |
+| `retention_days`                     | `14`            | Days to keep processed notification memory during normal storage cleanup  |
+| `response_tail.enabled`              | `true`          | Allow persistent reminders to be appended to normal replies               |
+| `response_tail.max_items`            | `1`             | Maximum reminders per reply; the current implementation supports only `1` |
+| `response_tail.max_text_chars`       | `40`            | Maximum reminder length in Unicode characters                             |
+| `expiration.default_ttl_seconds`     | `0`             | Default active-condition lease; `0` disables automatic expiration         |
+| `expiration.code_ttl_seconds.<code>` | `storage = 900` | Per-code lease override renewed by each active heartbeat                  |
+
+Config Web exposes `retention_days` in Memory Settings. The lifecycle and lease fields remain available through manual TOML editing.
+
+## `[basic_settings.device]`
+
+| Field         | Default | Description |
+| ------------- | ------- | ----------- |
+| `device_type` | `iOS`   | Target host type for USB HID descriptors and Agent global device state. Accepted values: `iOS`, `Android`, `macOS`, `windows`, `linux`. `iOS` derives HID `pointer_mode = "touchpad"` (needs Zoom on and AssistiveTouch off on the iPhone), `Android` derives `"touchscreen"`, and `macOS`, `windows`, and `linux` derive `"absolute"`. A change that changes the pointer mode requires a reboot so USB descriptors are re-enumerated; changes among `macOS`, `windows`, and `linux` apply online. |
+
+## `[basic_settings.device.hid]`
+
+| Field             | Default  | Description |
+| ----------------- | -------- | ----------- |
+| `keyboard_layout` | `qwerty` | How the phone interprets the external USB HID keyboard: `qwerty`, `azerty`, or `qwertz`. See [USB HID](../04-services/usb-hid.md). |
+
+## `[advanced_settings.hardware.hid]`
+
+This table is retained for internal HID device settings and compatibility with
+older configurations. Put the user-facing `keyboard_layout` value under
+`[basic_settings.device.hid]`; when both tables are present, the Basic Settings
+value is authoritative.
+
+| Field                     | Default                                 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `keyboard_device`         | `/dev/hidg0`                            | Keyboard HID device                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `mouse_device`            | `/dev/hidg1`                            | Mouse/touch HID device                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `android_keyboard_device` | `/dev/hidg2`                            | Consumer Control HID device (`hid.usb2`) used for Android extension keys when `[basic_settings.device].device_type = "Android"` and media/volume/brightness/screenshot keys for other device types                                                                                                                                                                                                                                                                                                                                          |
+| `frame_socket`            | `/run/frame_service/frame_service.sock` | Frame Service socket used by the screenshot tool                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `input_backend`           | `hid`                                   | Low-level input backend for click/touch/keyboard tools. `hid` writes USB HID reports; `adb` uses the paired Android ADB connection and `adb shell input`/ADBKeyboard commands. Atomic touch programs additionally try `getevent`/`sendevent`, then fall back to `input touchscreen motionevent` when raw event injection is blocked. |
+
+## `[voice_settings.classic.tts.providers.<name>]` and `[voice_settings.classic.stt.providers.<name>]`
+
+Named voice provider configurations, the same shape `[model_settings.providers.<name>]` gives
+`[model_settings.model]`. Each section holds the credentials and settings for one voice service,
+and `[voice_settings.classic.tts]` / `[voice_settings.classic.stt]` reference one by putting the name in their own `provider`
+field. Several providers stay configured at once, so switching is a one-line
+change instead of a re-entry of keys.
+
+Unlike `[model_settings.providers.<name>]`, these are separate namespaces: the `[voice_settings.classic.tts]`
+`volcengine` provider speaks a different protocol with its own host and
+credentials than the Ark LLM provider of the same name, so one map could not
+serve both. Each namespace also validates its own provider types — a TTS type is
+rejected for `[model_settings.model]` and vice versa.
+
+Several records may share one provider type, which is how two accounts of the
+same service (different keys, different voices) stay configured together.
+
+```toml
+[voice_settings.classic.tts.providers.minimax-main]
+type = "minimax"
+api_key = "sk-aaa"
+voice_id = "male-qn-qingse"
+
+[voice_settings.classic.tts.providers.minimax-alt]     # same type, second account
+type = "minimax"
+api_key = "sk-bbb"
+voice_id = "female-shaonv"
+
+[voice_settings.classic.tts.providers.fish]
+type = "fish-audio"
+api_key = "$FISH_API_KEY"
+reference_id = "abc123"
+
+[voice_settings.classic.tts]
+provider = "minimax-main"       # references [voice_settings.classic.tts.providers.minimax-main]
+speed = 1.0
+
+[voice_settings.classic.stt.providers.tencent]
+type = "tencent-asr"
+app_id = "123"
+secret_id = "AKID..."
+secret_key = "..."
+region = "ap-shanghai"
+
+[voice_settings.classic.stt]
+provider = "tencent"
+language = "zh"
+```
+
+### Field placement
+
+A field lives on the record when it stops meaning anything once the provider
+changes; it stays on `[voice_settings.classic.tts]` / `[voice_settings.classic.stt]` when it holds regardless of provider.
+
+| | Record fields | Stays on the shared section |
+| ---- | ---- | ---- |
+| TTS | `type`, `api_key`, `model`, `voice_id`, `emotion`, `reference_id` | `provider` (reference), `speed` |
+| STT | `type`, `api_key`, `model`, `base_url`, `app_id`, `secret_id`, `secret_key`, `region`, `engine_model_type` | `provider` (reference), `language` |
+
+`speed` is a listening preference and `language` a transcription preference:
+neither should change because the voice changed, so both stay global.
+
+For all provider records, `api_key` accepts either a literal key or `$VAR_NAME`.
+Config Web stores exactly the same representation.
+
+### Provider configuration compatibility
+
+The Config Web request contract accepts only canonical provider records. Records
+use `type`, while the selected record name remains in the parent section's
+`provider` field. Retired record aliases and flat credential request fields are
+rejected. Existing TOML files may still be normalized on save so credentials are
+preserved while the file is converted to the canonical layout.
+
+An unresolvable reference does not stop the device from booting: voice is
+optional at runtime, so a stale name is reported and the agent starts without
+voice. Config Web rejects such a reference when saving, while the form is
+still on screen.
+
+## `[voice_settings.classic.stt]` and `[voice_settings.classic.tts]`
+
+`[voice_settings.classic.stt]` is required when `input_mode = "stt"`; `[voice_settings.classic.tts]` is required when `input_mode = "stt"`.
+
+`provider` here is a reference to a `[voice_settings.classic.tts.providers.<name>]` /
+`[voice_settings.classic.stt.providers.<name>]` record (a bare provider type still works — see above).
+The provider-specific credentials listed below live on that record; Config Web
+edits them in the provider dialog rather than on the `[voice_settings.classic.tts]` / `[voice_settings.classic.stt]` card.
+
+STT:
+
+- `provider = "openai-whisper"`: currently available;
+- `provider = "openrouter"`: currently available, default endpoint is `https://openrouter.ai/api/v1/audio/transcriptions`, request body uses base64 WAV;
+- `provider = "tencent-asr"`: Tencent Cloud Sentence Recognition (SentenceRecognition), uses `secret_id` / `secret_key`, no `base_url` needed; the legacy values `tencent` / `tencent_asr` are retained only as compatibility aliases;
+- `provider = "qwen-asr"`: Alibaba Cloud DashScope Realtime ASR over WebSocket, default model `qwen3-asr-flash-realtime`; supports streaming upload and accepts optional `model` / `base_url` overrides;
+- `provider = "google-cloud"`: Google Cloud Speech-to-Text REST API with API key authentication, default endpoint `https://speech.googleapis.com/v1/speech:recognize`; accepts optional `model` / `base_url` overrides and does not support streaming upload.
+
+TTS:
+
+- `provider = "ekho"`: local Ekho CLI (built-in default), Mandarin with mixed English support; no API key. See [Local Ekho](audio-features.md#local-ekho-default) for installation requirements, sentence buffering, and speed behavior;
+- `provider = "minimax"`: Minimax WebSocket, global endpoint `api.minimax.io`;
+- `provider = "minimax-cn"`: Minimax WebSocket, mainland China endpoint `api.minimaxi.com`;
+- `provider = "fish-audio"`: Fish Audio WebSocket;
+- `provider = "alicloud"`: Alibaba Cloud Qwen-TTS Realtime;
+- `provider = "volcengine"`: Volcengine WebSocket bidirectional streaming V3. Currently only the new console's `X-Api-Key` authentication is supported: `api_key` maps to `X-Api-Key`, `model` maps to `X-Api-Resource-Id` (default `seed-tts-2.0`), and `voice_id` maps to the speaker;
+- `provider = "openrouter"`: OpenRouter HTTP speech API, default model `google/gemini-3.1-flash-tts-preview`; `model` and `voice_id` select the routed TTS model and its voice;
+- `provider = "google-cloud"`: Google Cloud Text-to-Speech REST API with API key authentication; `voice_id` defaults to `en-US-Neural2-C`.
+
+TTS configuration fields:
+
+| Field          | Location                         | Description                                                                                                              |
+| -------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `provider`     | `[voice_settings.classic.tts]`                          | Required reference to a named provider record; a bare provider type remains supported for backward compatibility        |
+| `api_key`      | `[voice_settings.classic.tts.providers.<name>]`         | Required for cloud providers; unused by local Ekho |
+| `model`        | `[voice_settings.classic.tts.providers.<name>]`         | Optional Minimax model, Fish Audio model header, Alibaba Cloud Realtime model, Volcengine `X-Api-Resource-Id`, or OpenRouter model |
+| `voice_id`     | `[voice_settings.classic.tts.providers.<name>]`         | Optional Minimax, Alibaba Cloud, OpenRouter, or Google Cloud voice; Volcengine speaker. Not used by Fish Audio (see `reference_id`) |
+| `reference_id` | `[voice_settings.classic.tts.providers.<name>]`         | Optional Fish Audio reference id; defaults to the built-in demo voice shown by Config Web. Ignored by other providers    |
+| `emotion`      | `[voice_settings.classic.tts.providers.<name>]`         | Optional Minimax emotion; Volcengine passes it through as `audio_params.emotion` and requires voice support             |
+| `speed`        | `[voice_settings.classic.tts]`                          | Optional speech rate, default `1.0`; the supported range varies by provider, refer to the official docs                 |
+
+The examples use placeholder keys to make the required record placement explicit.
+
+Common TTS adapter configs:
+
+| Provider       | `model` example                           | Voice/reference field                               | Description                                                                                                         |
+| -------------- | ----------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `minimax`      | `speech-2.8-hd`                           | `voice_id = "male-qn-qingse"`                       | Minimax WebSocket via `api.minimax.io`; `emotion` is passed through to Minimax                                      |
+| `minimax-cn`   | `speech-2.8-hd`                           | `voice_id = "male-qn-qingse"`                       | Minimax WebSocket via `api.minimaxi.com`; `emotion` is passed through to Minimax                                    |
+| `fish-audio`   | `s2-pro`                                  | `reference_id = "98655a12fa944e26b274c535e5e03842"` | WebSocket live TTS; the shown reference is used by default, and `voice_id` is not used                              |
+| `alicloud`     | `qwen3-tts-flash-realtime`                | `voice_id = "Cherry"`                               | DashScope Realtime; the adapter outputs 24 kHz PCM, automatically resampling when the sample rate differs           |
+| `volcengine`   | `seed-tts-2.0`                            | `voice_id = "zh_female_vv_uranus_bigtts"`           | `model` maps to `X-Api-Resource-Id`, `voice_id` maps to the speaker, and the two must match                         |
+| `openrouter`   | `google/gemini-3.1-flash-tts-preview`     | `voice_id = "Kore"`                                 | OpenRouter `/audio/speech`; voice defaults depend on the selected model and output is 24 kHz PCM                    |
+| `google-cloud` | —                                         | `voice_id = "en-US-Neural2-C"`                      | Google Cloud Text-to-Speech REST API with API key authentication; output is 24 kHz PCM                              |
+
+### Provider examples
+
+Minimax WebSocket:
+
+```toml
+[voice_settings.classic.tts.providers.minimax-main]
+type = "minimax"
+api_key = "..."
+model = "speech-2.8-hd"
+voice_id = "male-qn-qingse"
+emotion = "happy"
+
+[voice_settings.classic.tts]
+provider = "minimax-main"
+speed = 1.0
+```
+
+Fish Audio WebSocket:
+
+```toml
+[voice_settings.classic.tts.providers.fish-main]
+type = "fish-audio"
+api_key = "..."
+model = "s2-pro"
+reference_id = "98655a12fa944e26b274c535e5e03842"
+
+[voice_settings.classic.tts]
+provider = "fish-main"
+speed = 1.0
+```
+
+Fish Audio `model` defaults to `s2-pro` and is sent as a WebSocket handshake header. An empty `reference_id` uses the built-in demo voice shown in Config Web; configure `reference_id` on the selected `[voice_settings.classic.tts.providers.<name>]` record to override it. `voice_id` is not used by Fish Audio and is ignored (this avoids inheriting a `voice_id` meant for another provider). In some networks, the public Fish Audio endpoint may require `ALL_PROXY` or `HTTPS_PROXY` in `/userdata/system/env`.
+
+Alibaba Cloud Qwen-TTS Realtime:
+
+```toml
+[voice_settings.classic.tts.providers.alicloud-main]
+type = "alicloud"
+api_key = "..."
+model = "qwen3-tts-flash-realtime"
+voice_id = "Cherry"
+
+[voice_settings.classic.tts]
+provider = "alicloud-main"
+speed = 1.0
+```
+
+The Alibaba Cloud adapter uses the DashScope WebSocket Realtime endpoint and outputs a fixed 24 kHz PCM; when the device playback sample rate differs, it automatically resamples.
+
+Volcengine WebSocket bidirectional streaming V3:
+
+```toml
+[voice_settings.classic.tts.providers.volcengine-main]
+type = "volcengine"
+api_key = "..."
+model = "seed-tts-2.0"
+voice_id = "zh_female_vv_uranus_bigtts"
+
+[voice_settings.classic.tts]
+provider = "volcengine-main"
+speed = 1.0
+```
+
+For Volcengine, `api_key` is the new console's `X-Api-Key`, `model` is the `X-Api-Resource-Id`, and `voice_id` is the speaker. `voice_id` must match the resource corresponding to `model`; when they do not match, the server returns `resource ID is mismatched with speaker related resource`. A verified working voice example for `seed-tts-2.0` is `zh_female_vv_uranus_bigtts`.
+
+### Switching providers at runtime
+
+```bash
+curl -X POST http://<device-ip>:8080/api/settings/tts \
+  -H 'Content-Type: application/json' \
+  -d '{"provider":"volcengine","voice":"zh_female_vv_uranus_bigtts"}'
+```
+
+If you need to store the keys of multiple providers in the same config, use named provider records. When switching providers via runtime POST, the corresponding record is read first, then overridden by the request body.
+
+```toml
+[voice_settings.classic.tts.providers.minimax-main]
+type = "minimax"
+api_key = "..."
+model = "speech-2.8-hd"
+voice_id = "male-qn-qingse"
+
+[voice_settings.classic.tts.providers.fish-main]
+type = "fish-audio"
+api_key = "..."
+model = "s2-pro"
+reference_id = "98655a12fa944e26b274c535e5e03842"
+
+[voice_settings.classic.tts.providers.alicloud-main]
+type = "alicloud"
+api_key = "..."
+model = "qwen3-tts-flash-realtime"
+voice_id = "Cherry"
+
+[voice_settings.classic.tts.providers.volcengine-main]
+type = "volcengine"
+api_key = "..."
+model = "seed-tts-2.0"
+voice_id = "zh_female_vv_uranus_bigtts"
+
+[voice_settings.classic.tts]
+provider = "minimax-main"
+speed = 1.0
+```
+
+## `[advanced_settings.runtime.live_activity]`
+
+For the iOS companion app's Live Activity / Dynamic Island task status.
+Snapshots are enabled by default and delivered locally through BLE Wake plus
+USB ECM. See [Live Activity / Dynamic Island](./live-activity.md).
+
+| Field     | Default | Description |
+| --------- | ------- | ----------- |
+| `enabled` | `true`  | Maintain local task-status snapshots and send coalesced `live_activity` BLE Wake notifications |
+
+## Episode telemetry (Langfuse)
+
+Optional. After a task ends, asynchronously report the full episode to Langfuse; see [telemetry-langfuse.md](./telemetry-langfuse.md) for details.
+
+```toml
+[advanced_settings.runtime.telemetry]
+enabled = false
+provider = "langfuse"
+base_url = "http://langfuse.example.com:3000"
+public_key = "pk-lf-..."
+secret_key = "sk-lf-..."
+upload_screenshots = true
+upload_timeout_sec = 30
+max_retry = 2
+environment = "default"
+tags = ["aico-hardware"]
+```
+
+## System environment variables
+
+The Agent no longer reads `[proxy]` from `agent.toml`. Values in `/userdata/system/env` define the system/default upstream proxy. Outbound HTTP/WebSocket requests, shell tool subprocesses, OTA commands launched through `aico-env-run`, and SSH login shells use the fixed local address `127.0.0.1:18080`; it selects the system upstream, direct mode, or a custom upstream from the active Wi-Fi's saved policy. The listener accepts both HTTP proxy and SOCKS5 protocols. Its generated environment keeps the local URL scheme aligned with the selected upstream, so a `socks5://` Wi-Fi proxy remains SOCKS5 on both sides of the local endpoint instead of being wrapped in HTTP CONNECT. The local URL uses `socks5h://` so hostname resolution also travels through SOCKS5 rather than depending on the board's DNS. The file is loaded with shell syntax, for example:
+
+```sh
+HTTP_PROXY=http://127.0.0.1:7890
+HTTPS_PROXY=http://127.0.0.1:7890
+NO_PROXY=localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10
+OPENROUTER_API_KEY=...
+```
+
+| Variable                      | Description                                                                                                                                        |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HTTP_PROXY` / `http_proxy`   | HTTP proxy URL, for example `http://127.0.0.1:7890`                                                                                                |
+| `HTTPS_PROXY` / `https_proxy` | HTTPS proxy URL, usually the same HTTP proxy endpoint                                                                                              |
+| `ALL_PROXY` / `all_proxy`     | Fallback proxy used when no scheme-specific proxy applies                                                                                          |
+| `NO_PROXY` / `no_proxy`       | Comma-separated bypass rules; when a proxy URL is set and no bypass value is present, the launcher injects the default private-network bypass list |
+
+Agent HTTP clients, including the Google Cloud and OpenRouter TTS adapters, use
+the proxy for the request scheme and fall back to `ALL_PROXY`. WebSocket
+clients, including the realtime STT clients and the Fish Audio, MiniMax, and
+Volcengine TTS adapters, prefer `HTTPS_PROXY`, then `HTTP_PROXY`, then
+`ALL_PROXY`. All of them connect directly to hosts that match `NO_PROXY`, even
+when the proxy is SOCKS5, and use the default private-network bypass list when
+a proxy URL is set without `NO_PROXY`. The Alibaba Cloud TTS adapter always
+connects directly.
+
+The `web_scraper` tool refuses targets that are, or resolve to, loopback,
+private, or link-local addresses, and checks every redirect the same way. When
+a proxy carries the request, the scraper checks the target name with the
+board's DNS, but the proxy resolves it again and connects on its own. The
+configured proxy is therefore trusted: the scraper may connect to it even on
+loopback or the LAN, and the proxy is responsible for refusing private,
+loopback, and link-local destinations if that protection is needed. The local
+proxy at `127.0.0.1:18080` and its upstreams do not filter destinations.
+
+Per-Wi-Fi policies are configured in the Config Web connection dialog and
+stored in `/userdata/system/wifi-proxies.json` with mode `0600`. Setting
+`AICO_WIFI_PROXY_ENABLED=0` in the system environment is an emergency bypass
+that restores direct use of the raw environment proxy variables after the
+affected services or shell are restarted.
+
+The selected local URLs are written to `/run/wifi_proxy/proxy-env`. New managed
+commands and login shells read that file. If a Wi-Fi change switches between
+HTTP and SOCKS5, `aico-wifi-proxy.service` restarts the long-running Agent so its HTTP and
+WebSocket clients also pick up the new URL scheme; changing only the upstream
+host or port does not require an Agent restart.
+
+For a custom per-Wi-Fi proxy, the dialog's `NO_PROXY` value belongs to that
+SSID's custom upstream and replaces the environment `NO_PROXY` while the
+custom policy is active. The system-default policy uses the proxy variables
+and `NO_PROXY` from `/userdata/system/env` together; it stores no per-Wi-Fi
+bypass value.
+
+## `memory/extraction.yaml`
+
+Optional. Place `memory/extraction.yaml` under the config directory to control session-memory compaction and chunk extraction. Missing files and invalid fields fall back to defaults. See [session-memory.md](./session-memory.md) for the full flow.
+
+| Field                                | Default                 | Description                                                                                                                                                                                                                          |
+| ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `reserve_tokens`                     | `8192`                  | Token headroom reserved below the active model context window. Compaction triggers when `prompt_tokens >= context_window - reserve_tokens`. The value is clamped to at most half of the window so small-window models remain usable. |
+| `keep_recent_tokens`                 | `20000`                 | Approximate token budget for the hot window retained by token-based cut-point selection. It is clamped together with `reserve_tokens` to fit the active window.                                                                      |
+| `hot_window_events`                  | `30`                    | Target number of recent events retained by the count fallback. Used only when prompt-token data is unavailable.                                                                                                                      |
+| `count_compress_after_events`        | `hot_window_events * 2` | Event-count trigger used only when prompt-token data is unavailable. If omitted, it is derived from the normalized `hot_window_events`; explicit values must be greater than `hot_window_events`.                                    |
+| `context_window`                     | `32000`                 | Fallback context window for compaction when the active model is not present in `model_specs`. Runtime normally derives this from `ModelResolver.Spec()`; this value is only used for unknown models.                                 |
+| `compress_at_percent`                | `50`                    | Percentage trigger: compaction starts when `prompt_tokens / context_window >= compress_at_percent%`.                                                                                                                                 |
+| `summary_max_chunks`                 | `10`                    | Number of chunk summaries kept in the Recent Chunks section of `summary.md`. Older entries move to the archive and are folded into the Rolling Summary.                                                                              |
+| `session_boundary_enabled`           | `true`                  | Classify each new user turn as continuing the current session or starting a new one. A `new` boundary archives the current `memory/session/` directory and recreates an empty active session.                                        |
+| `session_boundary_short_gap_seconds` | `300`                   | Gap below which a turn is treated as continuation regardless of lexical signals.                                                                                                                                                     |
+| `session_boundary_long_gap_seconds`  | `1800`                  | Gap above which a turn is treated as a fresh session regardless of lexical signals.                                                                                                                                                  |
+| `episode_memory_idle_delay_seconds`  | `300`                   | Idle time before eligible completed Episodes are consolidated into Device Memory in the background. Foreground tasks cancel or defer consolidation.                                                                                  |
+| `tag_candidates`                     | see defaults            | Candidate keywords matched when tagging chunk summaries.                                                                                                                                                                             |
+| `entity_suffixes`                    | `["App","app","APP"]`   | Suffixes recognized during entity extraction.                                                                                                                                                                                        |
+
+## Known limitations
+
+- `preferred_model` and `allowed_children` are currently parsed but not fully wired into execution;

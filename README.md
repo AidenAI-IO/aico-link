@@ -1,6 +1,6 @@
 # Aico Link Firmware
 
-Website: [aico.link](https://aico.link) | Docs: [Documentation Hub](docs/README.md) | Community: [Join the Discord](https://discord.gg/tFrQsgFGTy)
+Website: [aico.link](https://aico.link) | Docs: [Documentation Hub](docs/README.md) ([简体中文](docs-zh/README.md)) | Community: [Join the Discord](https://discord.gg/tFrQsgFGTy)
 
 **Aico Link** is the hardware. **Aico** is the AI Agent that runs on it.
 This repository provides Aico Link firmware, hardware services, and the Aico
@@ -115,7 +115,7 @@ docker compose up --build
 Open `http://localhost:8000` for Config Web and `http://localhost:8080` for
 Agent Web. The sandbox can also connect to MobileGym, an ADB target, or another
 compatible environment bridge. For benchmark suites and reports, see
-[Benchmark](docs/09-benchmark/README.md).
+[Benchmark](docs/10-benchmark/README.md).
 
 First-time hardware users should start with [Newcomer Quickstart](docs/01-getting-started/quickstart.md). It walks through flashing, Wi-Fi setup, Agent configuration, voice verification, and troubleshooting; its wiring steps apply only to the legacy self-assembled board.
 
@@ -179,17 +179,17 @@ The full documentation is organized under [docs/](docs/README.md):
 - [Deployment to Device](docs/01-getting-started/deployment.md)
 - [Testing & Verification](docs/01-getting-started/testing.md)
 - [Architecture Overview](docs/02-architecture/overview.md)
-- [Frame Service](docs/03-services/frame-service.md)
-- [Audio Service](docs/03-services/audio-service.md)
-- [USB HID & Device Control](docs/03-services/usb-hid.md)
-- [Go Agent](docs/04-agent/overview.md)
-- [Agent Configuration Reference](docs/04-agent/configuration.md)
-- [Tools HTTP API](docs/04-agent/tools-http-api.md)
-- [UI Grounding](docs/04-agent/ui-grounding.md)
-- [OTA](docs/08-ota/README.md)
-- [Benchmark](docs/09-benchmark/README.md)
-- [SkillOpt](docs/10-skillopt/README.md)
-- [Troubleshooting](docs/07-operations/troubleshooting.md)
+- [Frame Service](docs/04-services/frame-service.md)
+- [Audio Service](docs/04-services/audio-service.md)
+- [USB HID & Device Control](docs/04-services/usb-hid.md)
+- [Go Agent](docs/05-agent/overview.md)
+- [Agent Configuration Reference](docs/05-agent/configuration.md)
+- [Tools HTTP API](docs/05-agent/tools-http-api.md)
+- [UI Grounding](docs/05-agent/ui-grounding.md)
+- [OTA](docs/09-ota/README.md)
+- [Benchmark](docs/10-benchmark/README.md)
+- [SkillOpt](docs/11-skillopt/README.md)
+- [Troubleshooting](docs/08-operations/troubleshooting.md)
 
 ## Contributing
 

@@ -1,0 +1,8 @@
+{
+  "label": "架构",
+  "position": 2,
+  "link": {
+    "type": "generated-index",
+    "description": "了解 Aico Link 的系统架构、运行时服务和源码布局。"
+  }
+}

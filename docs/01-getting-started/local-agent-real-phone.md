@@ -22,6 +22,11 @@ Install Git, Go 1.26 or newer, Python 3.10 or newer, and
 [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for isolated
 phone-bridge dependencies. Have a model provider and API key ready.
 
+The first launch builds the Config Web assets into `src/config_web/dist` with
+`scripts/build-config-web.sh`, which needs Docker and `rsync`. Later launches
+reuse the built assets, so Docker is only needed again for `--rebuild-web`.
+The Agent itself still runs natively, not in a Docker sandbox.
+
 ```bash
 git clone https://github.com/AidenAI-IO/aico-link.git
 cd aico-link
@@ -176,6 +181,6 @@ startup and recovery never replay a potentially delivered text/touch request.
 Phone Bridge contacts/calendar APIs and board audio, GPIO, USB HID, and firmware
 services are separate capabilities. A screenshot/input connection alone does
 not provide them. For a container-based Agent, see [Try Aico on PC](try-aico-on-pc.md).
-After verifying your phone, continue with [Benchmark](../09-benchmark/README.md)
+After verifying your phone, continue with [Benchmark](../10-benchmark/README.md)
 for suites, scoring, and reports. The bridge-specific references retain manual
 startup commands for debugging individual components.

@@ -10,8 +10,8 @@ target is `aico_image`; the archives are `libaico.a` and `libaico_image.a`. See 
 
 The full documentation is available here:
 
-- [C++ SDK reference](../docs/05-sdk-and-tools/cpp-sdk.md)
-- [Example programs](../docs/05-sdk-and-tools/examples.md)
-- [Frame Service](../docs/03-services/frame-service.md)
-- [Audio Service](../docs/03-services/audio-service.md)
-- [Unix Domain Socket protocol](../docs/06-protocols/uds-protocol.md)
+- [C++ SDK reference](../docs/06-sdk-and-tools/cpp-sdk.md)
+- [Example programs](../docs/06-sdk-and-tools/examples.md)
+- [Frame Service](../docs/04-services/frame-service.md)
+- [Audio Service](../docs/04-services/audio-service.md)
+- [Unix Domain Socket protocol](../docs/07-protocols/uds-protocol.md)

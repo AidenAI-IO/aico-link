@@ -536,6 +536,8 @@ def test_start_adb_android_env_defaults_to_docker_reachable_host(tmp_path: Path,
             str(tmp_path),
             "--bridge-port",
             "18899",
+            "--unicode-input-method",
+            "none",
             "--json",
         ]
     )
@@ -545,6 +547,7 @@ def test_start_adb_android_env_defaults_to_docker_reachable_host(tmp_path: Path,
     payload = json.loads(capsys.readouterr().out)
     assert payload["environment_url"] == "http://172.17.0.1:18899"
     assert launched[0]["bridge_host"] == "172.17.0.1"
+    assert launched[0]["unicode_input_method"] == "none"
 
 
 def test_start_adb_android_env_requires_serial(tmp_path: Path, capsys):

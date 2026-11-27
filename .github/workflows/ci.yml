@@ -10,7 +10,37 @@ permissions:
   contents: read
 
 jobs:
+  classify-pr:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    outputs:
+      docs-only: ${{ steps.diff.outputs.docs-only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+          sparse-checkout: /.github/workflows/ci.yml
+          sparse-checkout-cone-mode: false
+      - name: Check for changes outside documentation
+        id: diff
+        shell: bash
+        run: |
+          # A PR checkout is the merge commit. Its first parent is the base
+          # tree for this run. Disable rename detection to check both paths.
+          if git diff --quiet --no-renames --ignore-submodules=none HEAD^1 HEAD -- \
+              ':(top,glob,exclude)docs/**' \
+              ':(top,glob,exclude)docs-zh/**' \
+              ':(top,literal,exclude)README.md' \
+              ':(top,literal,exclude)AGENTS.md'; then
+            echo 'docs-only=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  # Keep the workflow visible to required checks. Run tests unless the PR
+  # classifier completed successfully and confirmed a documentation-only diff.
   benchmark-ci-catalog:
+    needs: classify-pr
+    if: ${{ !cancelled() && needs.classify-pr.outputs.docs-only != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +59,8 @@ jobs:
           uv run pytest tests/test_ci_plan.py tests/test_ci_prepare_images.py tests/test_ci_run_cases.py tests/test_ci_publish_langfuse.py -q
 
   github-actions-safety:
+    needs: classify-pr
+    if: ${{ !cancelled() && needs.classify-pr.outputs.docs-only != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +70,8 @@ jobs:
         run: bash scripts/test_github_actions_self_hosted_safety.sh
 
   manifest-tests:
+    needs: classify-pr
+    if: ${{ !cancelled() && needs.classify-pr.outputs.docs-only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -86,6 +120,8 @@ jobs:
           if-no-files-found: ignore
 
   docker-tests:
+    needs: classify-pr
+    if: ${{ !cancelled() && needs.classify-pr.outputs.docs-only != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

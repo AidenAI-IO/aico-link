@@ -130,6 +130,15 @@ path. Explicit Unicode insertion still reports the installation error.
 Appium replacement requests need Android's `input keycombination` support for
 Ctrl+A and Delete.
 
+## Disabling native text insertion
+
+`--unicode-input-method none` installs no IME and reports `insert_text` as
+unavailable, so the bridge keeps only its ASCII `keyboard_text` path. The Agent
+then enters text as it does on the board, through Phone Bridge paste or its
+local keyboard path. CI starts the bridge this way for suites that use the
+Aico App (`android_phone_bridge` in `ci/suites.json`), because those suites
+check the Phone Bridge clipboard route that native insertion would replace.
+
 ## Quick start
 
 ### Option 1: CLI (recommended)
@@ -311,7 +320,7 @@ In GitHub Actions, select profile `adb` and leave `suite` empty to run all
 six cases, or enter one suite path to run its matching cases. Basic and
 text-editing suite paths each select both comparison variants. The workflow requires an
 already booted device and `BENCHMARK_ANDROID_SERIAL`; see
-[CI configuration](../../docs/09-benchmark/README.md#github-actions-ci).
+[CI configuration](../../docs/10-benchmark/README.md#github-actions-ci).
 For local runs, use any suite path in the quick-start command above. Add
 `--task-id <id>` to select individual tasks and `--repeats <count>` to repeat them.
 

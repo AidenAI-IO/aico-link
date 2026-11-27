@@ -80,6 +80,21 @@ def test_base64_input_is_exact_package_scoped_and_restores_keyboard(keyboard):
     assert state["ime"] == "example/.LatinIME"
 
 
+def test_disabled_input_method_never_advertises_or_sends_native_text(keyboard):
+    device, state = keyboard
+    device.unicode_input_method = "none"
+    state["installed"] = []
+
+    assert device.supports_text_insertion() is False
+    assert device.ensure_unicode_input_method_installed() is False
+    with pytest.raises(ADBCommandError, match="disabled"):
+        device.insert_text("你好", replace=True)
+    assert not any(
+        call[:2] == ["install", "-r"] or call[:3] in (["shell", "ime", "set"], ["shell", "am", "broadcast"])
+        for call in state["calls"]
+    )
+
+
 def test_capability_reflects_new_keyboard_installation(keyboard):
     device, state = keyboard
     state["installed"] = []
