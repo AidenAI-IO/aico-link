@@ -585,6 +585,8 @@ class ContractTests(unittest.TestCase):
         env = {**self.env, "DPKG_ROOT": str(self.root), "SYSTEMD_OFFLINE": "1"}
         script = str(self.root / "DEBIAN/preinst")
         subprocess.run([script, "install"], check=True, env=env)
+        release.write_json(contract_path, {**platform, "platform_id": "luckfox-rv1106"})
+        subprocess.run([script, "upgrade"], check=True, env=env)
         for field, value in (("platform_contract", 6), ("platform_contract", 7.0),
                              ("platform_contract", "7"), ("platform_contract", "7.0.0"),
                              ("runtime_config", 0), ("channel", "prod"),
@@ -594,6 +596,10 @@ class ContractTests(unittest.TestCase):
                 result = subprocess.run([script, "upgrade"], env=env, capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("incompatible platform", result.stderr)
+        release.write_json(contract_path, {**platform, "platform_id": "rv1106"})
+        result = subprocess.run([script, "upgrade"], env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("incompatible platform", result.stderr)
         contract_path.unlink()
         self.assertNotEqual(subprocess.run([script, "install"], env=env, capture_output=True).returncode, 0)
 

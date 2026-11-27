@@ -20,6 +20,12 @@ New base images with this feature automatically select a repository from
 `/usr/lib/aico/platform/contract.json`. For example, dev with contract `1` uses
 `dev-c1`; staging/prod each use the repository for their own contract.
 
+New platform contracts use the `aico-rv1106` platform ID. During the migration,
+the APT source configurator, package pre-installation check, and repository
+publisher also accept the legacy `luckfox-rv1106` ID used by shipped devices.
+New images and packages must not emit the legacy ID; the alias exists only to
+keep those devices on their matching signed repository while they transition.
+
 ```bash
 sudo apt update && sudo apt upgrade
 dpkg-query -W aico-business

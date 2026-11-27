@@ -111,8 +111,11 @@ def package_control(package, record):
         raise ValueError("Runtime configuration ownership differs from release record")
     business.verify_runtime_config(package, record.get("runtime_config", 0))
     platform = manifest.get("platform", {})
+    platform_id = platform.get("platform_id")
+    if platform_id not in ("aico-rv1106", "luckfox-rv1106"):
+        raise ValueError("Published package manifest has an unsupported platform ID")
     expected_platform = {
-        "format": 1, "product": "aico", "platform_id": "luckfox-rv1106", "architecture": "armhf",
+        "format": 1, "product": "aico", "platform_id": platform_id, "architecture": "armhf",
         "os_release": "debian-13", "libc": "glibc", "channel": record["channel"],
         "platform_contract": record["platform"]["contract"],
         "base_release": record["platform"]["base_release"],
