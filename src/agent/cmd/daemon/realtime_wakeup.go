@@ -2226,11 +2226,23 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	// does not want the rest, and otherwise queues them to be finished once
 	// the user's turn has been answered.
 	settleInterruptedTaskUpdates := func(batch []agenttask.Task, verdict agent.InterruptedReportVerdict, why string) {
+		// Clear words bring a result back in full; unclear ones only ask.
+		retelling := realtimeRetell
+		if verdict != agent.InterruptedReportWanted {
+			retelling = realtimeAskToRetell
+		}
 		var settled, dropped []agenttask.Task
 		for _, task := range batch {
-			if verdict == agent.InterruptedReportUnwanted || (verdict == agent.InterruptedReportUnsure && interruptions[task.ID] > 1) {
+			switch {
+			case realtimeTaskAwaitsUserAction(task):
+				// The task cannot go on until the user acts, so the request
+				// is told again in full whatever their words were.
+				unheardTaskUpdates[task.ID] = realtimeRetell
+				settled = append(settled, task)
+			case verdict == agent.InterruptedReportUnwanted || (verdict == agent.InterruptedReportUnsure && interruptions[task.ID] > 1):
 				dropped = append(dropped, task)
-			} else {
+			default:
+				unheardTaskUpdates[task.ID] = retelling
 				settled = append(settled, task)
 			}
 		}
@@ -2247,15 +2259,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		if len(settled) == 0 {
 			return
 		}
-		// Clear words bring the result back in full; unclear ones only ask.
-		retelling := realtimeRetell
-		if verdict != agent.InterruptedReportWanted {
-			retelling = realtimeAskToRetell
-		}
-		for _, task := range settled {
-			unheardTaskUpdates[task.ID] = retelling
-		}
-		logging.Infof("agent", "realtime", "Interrupted task update queued: tasks=%d verdict=%s retelling=%s (%s)", len(settled), verdict, retelling, why)
+		logging.Infof("agent", "realtime", "Interrupted task update queued: tasks=%d verdict=%s (%s)", len(settled), verdict, why)
 		if tasks != nil {
 			restoreRealtimeTaskUpdates(tasks, settled)
 		}
@@ -4087,6 +4091,12 @@ var decideRealtimeInterruptedResult = func(ctx context.Context, runtime *agent.R
 	return runtime.DecideInterruptedReport(ctx, words, report)
 }
 
+// realtimeTaskAwaitsUserAction reports whether an update asks the user to act
+// on the device (request_user_action), which the task waits for.
+func realtimeTaskAwaitsUserAction(task agenttask.Task) bool {
+	return task.Status == agenttask.StatusRunning && task.PendingUserAction != nil
+}
+
 // restoreRealtimeTaskUpdates returns updates the user has not heard to the
 // task manager's queue so a later response delivers them.
 func restoreRealtimeTaskUpdates(tasks *agenttask.Manager, updates []agenttask.Task) {
@@ -4094,7 +4104,7 @@ func restoreRealtimeTaskUpdates(tasks *agenttask.Manager, updates []agenttask.Ta
 	for _, task := range updates {
 		// Only a running task can be waiting for a user action; a terminal
 		// snapshot is always a result update.
-		if task.Status == agenttask.StatusRunning && task.PendingUserAction != nil {
+		if realtimeTaskAwaitsUserAction(task) {
 			actions = append(actions, task)
 		} else {
 			terminal = append(terminal, task)

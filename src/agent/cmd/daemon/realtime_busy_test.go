@@ -1393,3 +1393,60 @@ func TestRealtimeUnclearInterruptionAsksOnceThenDrops(t *testing.T) {
 	case <-time.After(900 * time.Millisecond):
 	}
 }
+
+// userActionTaskRunner asks the user to act on the device and waits for the
+// task to end, as request_user_action does.
+type userActionTaskRunner struct{}
+
+func (userActionTaskRunner) Run(ctx context.Context, _ string) (string, error) {
+	if handler := agenttask.UserActionHandlerFromContext(ctx); handler != nil {
+		handler(agenttask.UserAction{Reason: "verification", Details: "approve the sign-in on the phone"})
+	}
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// A request for the user to act on the device is never dropped when spoken
+// over: the task waits for that action, so the request is told again even if
+// the user's words say they do not want the rest.
+func TestRealtimeInterruptedUserActionRequestIsToldAgain(t *testing.T) {
+	previous := decideRealtimeInterruptedResult
+	decideRealtimeInterruptedResult = func(context.Context, *agent.Runtime, string, string) agent.InterruptedReportVerdict {
+		return agent.InterruptedReportUnwanted
+	}
+	defer func() { decideRealtimeInterruptedResult = previous }()
+	manager := agenttask.NewManager(userActionTaskRunner{})
+	defer manager.Close()
+	busyTestTasks = manager
+	defer func() { busyTestTasks = nil }()
+	s, _, done := startBusyTestSession(t, 60*time.Second)
+	if _, err := manager.Create("sign in to the account"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.created:
+	case err := <-done:
+		t.Fatalf("session ended: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("user-action request was not told")
+	}
+	busyTestStillPlaying.Store(true)
+	defer busyTestStillPlaying.Store(false)
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "r1"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventAudio, ResponseID: "r1", ItemID: "r1-item", PCM: make([]byte, 6400)}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "r1", Status: "completed"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStarted, ItemID: "speech-1"}
+	busyTestStillPlaying.Store(false)
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStopped, ItemID: "speech-1"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptFinal, Role: "user", ItemID: "speech-1", Text: "stop"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "reply"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "reply", Status: "completed"}
+	select {
+	case <-s.created:
+	case <-time.After(3 * time.Second):
+		t.Fatal("user-action request was dropped after the user spoke over it")
+	}
+	if last := s.lastText(); !strings.Contains(last, "approve the sign-in on the phone") || !strings.Contains(last, "tell it again briefly") {
+		t.Fatalf("user-action request not told again in full: %q", last)
+	}
+}

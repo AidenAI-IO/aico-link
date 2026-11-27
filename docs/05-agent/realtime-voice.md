@@ -180,6 +180,9 @@ When the user speaks over a result:
   once they are answered; if they do not, it is dropped; if that is unclear,
   the model only asks whether they want to hear it. A result spoken over again
   with unclear words is dropped, so it never comes back a third time.
+- A request for the user to act on the device (`request_user_action`) is
+  never dropped: the task waits for that action, so the request is told again
+  in full once the user is answered, whatever their words were.
 
 The board cannot tell how much of an interrupted result the user heard: it
 only sees when audio was sent, and voice clients play from their own buffer.
