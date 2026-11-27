@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         "--unicode-input-method",
         choices=SUPPORTED_UNICODE_INPUT_METHODS,
         default=DEFAULT_UNICODE_INPUT_METHOD,
-        help="Unicode text input path (default: adbkeyboard)",
+        help="Unicode text input path (default: adbkeyboard); none disables native insert_text",
     )
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     args = parser.parse_args(argv)

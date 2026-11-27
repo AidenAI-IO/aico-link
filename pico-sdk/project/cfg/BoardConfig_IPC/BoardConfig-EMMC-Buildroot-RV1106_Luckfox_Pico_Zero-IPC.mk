@@ -127,10 +127,6 @@ export RK_ENABLE_WIFI=y
 # runtime from its SDIO ID.
 export RK_ENABLE_WIFI_CHIP=AIC8800D80
 
-# config wifi ssid and passwd
-export LF_WIFI_SSID="Aico Link"
-export LF_WIFI_PSK="Aiden12333"
-
 #################################################
 #  PRE and POST
 #################################################

@@ -103,8 +103,12 @@ def start_adb_bridge_process(
     adb_path: str = "adb",
     bridge_host: str = "127.0.0.1",
     cwd: Path | None = None,
+    unicode_input_method: str = "",
 ) -> subprocess.Popen:
-    """Launch adbandroid.scripts.start_bridge detached with output to log_path."""
+    """Launch adbandroid.scripts.start_bridge detached with output to log_path.
+
+    An empty unicode_input_method keeps the bridge default.
+    """
     command = [
         sys.executable,
         "-m",
@@ -118,6 +122,8 @@ def start_adb_bridge_process(
         "--bridge-port",
         str(int(bridge_port)),
     ]
+    if unicode_input_method:
+        command += ["--unicode-input-method", unicode_input_method]
     append_log(log_path, "$ " + " ".join(command))
     popen_kwargs: dict[str, Any] = {}
     if os.name == "posix":

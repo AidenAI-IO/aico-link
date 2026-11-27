@@ -271,8 +271,8 @@
     {
       "id": "calendar_query_day",
       "category": "single_step",
-      "prompt": "What's on my phone calendar on June 2, 2026?",
-      "description_for_judge": "The phone calendar holds Standup (09:30-10:00) and Product review (14:00-15:00, Room 3) on 2026-06-02 and Team weekly on 2026-06-03. The agent queries the calendar through the Phone Bridge and lists only the June 2 events.",
+      "prompt": "What's on my phone calendar on June 2, 2026? Give the times in Beijing time (UTC+8).",
+      "description_for_judge": "The phone calendar holds Standup (09:30-10:00 Beijing time) and Product review (14:00-15:00 Beijing time, Room 3) on 2026-06-02 and Team weekly on 2026-06-03. The agent queries the calendar through the Phone Bridge and lists only the June 2 events.",
       "rubric": [
         {
           "id": "listed_events",

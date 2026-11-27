@@ -38,8 +38,12 @@ ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
 ADB_KEYBOARD_PACKAGE = "com.android.adbkeyboard"
 ADB_KEYBOARD_INPUT_METHOD = "adbkeyboard"
 APPIUM_INPUT_METHOD = "appium"
+# "none" keeps the bridge to ASCII adb input and never advertises insert_text,
+# so Unicode reaches the field the way it does on the board: Phone Bridge
+# paste or the Agent's local keyboard path.
+NO_UNICODE_INPUT_METHOD = "none"
 DEFAULT_UNICODE_INPUT_METHOD = ADB_KEYBOARD_INPUT_METHOD
-SUPPORTED_UNICODE_INPUT_METHODS = (ADB_KEYBOARD_INPUT_METHOD, APPIUM_INPUT_METHOD)
+SUPPORTED_UNICODE_INPUT_METHODS = (ADB_KEYBOARD_INPUT_METHOD, APPIUM_INPUT_METHOD, NO_UNICODE_INPUT_METHOD)
 APPIUM_UNICODE_IME = "io.appium.settings/.UnicodeIME"
 # Keep the APK sources and digests pinned so automatic installation only
 # accepts the selected helper from its upstream release.
@@ -288,6 +292,8 @@ class ADBAndroidDevice:
 
     def supports_text_insertion(self) -> bool:
         """Ensure the selected Unicode IME is installed before advertising it."""
+        if self.unicode_input_method == NO_UNICODE_INPUT_METHOD:
+            return False
         try:
             self.ensure_unicode_input_method_installed()
         except ADBCommandError:
@@ -296,6 +302,8 @@ class ADBAndroidDevice:
 
     def ensure_unicode_input_method_installed(self) -> bool:
         """Install the selected pinned APK if its IME component is missing."""
+        if self.unicode_input_method == NO_UNICODE_INPUT_METHOD:
+            return False
         package = UNICODE_IME_PACKAGES[self.unicode_input_method]
         if package.ime_id in self._installed_input_methods():
             return False
@@ -331,6 +339,8 @@ class ADBAndroidDevice:
         if not isinstance(replace, bool):
             raise ValueError("replace must be a boolean")
         self._recover_pending_input_method_restore()
+        if self.unicode_input_method == NO_UNICODE_INPUT_METHOD:
+            raise ADBCommandError("native text insertion is disabled for this bridge; no text was sent")
         if self.unicode_input_method == ADB_KEYBOARD_INPUT_METHOD:
             self._insert_text_with_adbkeyboard(text, replace)
         else:
