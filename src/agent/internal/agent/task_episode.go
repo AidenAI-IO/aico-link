@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -128,12 +129,13 @@ type EpisodeRecorder struct {
 	recalledRefs []string
 	// priorUserTexts are the user's messages from the turns just before this
 	// run; see UserTexts.
-	priorUserTexts []string
-	events         []TaskEpisodeEvent
-	counter        int
-	store          *TaskEpisodeStore
-	started        bool
-	startErr       error
+	priorUserTexts        []string
+	events                []TaskEpisodeEvent
+	counter               int
+	store                 *TaskEpisodeStore
+	started               bool
+	startErr              error
+	benchmarkToolEvidence bool
 }
 
 type episodeRecorderCtxKey struct{}
@@ -273,19 +275,28 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 
 	toolName := toolCallName(result.Call)
 	input := normalizeToolInput(result.Call.Action.ToolInput)
+	content := toolContentFromAction(result.Call.Action)
+	redact := toolResultIsSensitive(toolName) || result.Result.containsPrivateDeviceData()
+	redactInput := redact && !r.benchmarkToolEvidence
+	if redactInput {
+		var fields map[string]any
+		_ = json.Unmarshal([]byte(input), &fields)
+		input = jsonString(deviceCLIOperationInput(toolName, fields))
+		content = ""
+	}
 	callEvent := TaskEpisodeEvent{
 		Type:      runEventToolCall,
 		Role:      "agent",
 		ToolName:  toolName,
 		ToolInput: input,
-		Content:   toolContentFromAction(result.Call.Action),
+		Content:   content,
 	}
 	r.append(callEvent)
 
 	output := result.Result.EventOutput()
 	rawObservation := result.Step.Observation
 	toolError := cloneToolError(result.Result.Error)
-	if toolResultIsSensitive(toolName) {
+	if redact {
 		output = sensitiveToolResultRedaction
 		rawObservation = ""
 		if toolError != nil {
@@ -303,6 +314,23 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 		IsError:        result.Result.IsError(),
 		ToolError:      toolError,
 	}
+	if calls := result.Result.deviceCalls; len(calls) > 0 {
+		if redactInput {
+			calls = slices.Clone(calls)
+			for i := range calls {
+				calls[i].Input = deviceCLIOperationInput(calls[i].Tool, calls[i].Input)
+			}
+		}
+		resultEvent.Metadata = map[string]any{"device_cli_calls": calls}
+	}
+
+	if len(result.Result.deviceFrame.ImageBytes) > 0 {
+		if resultEvent.Metadata == nil {
+			resultEvent.Metadata = make(map[string]any)
+		}
+		resultEvent.Metadata["has_screenshot"] = true
+	}
+
 	if result.Result.Duration > 0 {
 		durationMs := result.Result.Duration.Milliseconds()
 		resultEvent.DurationMs = &durationMs

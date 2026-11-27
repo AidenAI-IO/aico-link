@@ -56,10 +56,11 @@ device** (`/api/concurrent` is always 1) and needs no Docker.
 ## Unicode text with ADBKeyBoard
 
 For Chinese, emoji, multiline text, and literal `%s`, select ADBKeyBoard in the
-Launcher. When the ADB bridge starts, it installs the selected IME if it is
-missing. The bridge downloads the pinned upstream v2.5-dev APK and verifies its
-SHA-256 before installing it. The upstream APK includes the receiver fix for
-recent Android versions. Manual installation is optional:
+Launcher. The bridge installs the selected IME if needed when an input capability
+check or Unicode insertion first requests it. It downloads the pinned upstream
+v2.5-dev APK and verifies its SHA-256 before installing it. The upstream APK
+includes the receiver fix for recent Android versions. Manual installation is
+optional:
 
 ```bash
 curl -fL https://github.com/senzhk/ADBKeyBoard/releases/download/v2.5-dev/keyboardservice-debug.apk -o /tmp/ADBKeyboard.apk

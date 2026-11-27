@@ -463,20 +463,20 @@ parse_failure_limit = 3
 
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
-| `enabled`                    | `true`  | 启用分级循环检测和优雅终止 |
-| `max_seconds`                | `0`     | 每条指令的挂钟时间预算；`0` 表示禁用时间预算，被消费的 steer 会开启新的预算 |
-| `repeat_action_limit`        | `3`     | 出现这么多次结果相同的相同工具调用（包括在相同屏幕上执行相同的 UI 操作）后停止 |
-| `same_result_limit`          | `3`     | 被视为停滞的重复相同结果次数 |
-| `soft_notice_stall_score`    | `2`     | 注入一次性策略调整提示的停滞分数 |
-| `restrict_tools_stall_score` | `4`     | 在运行结束前追加最终警告的停滞分数 |
-| `terminate_stall_score`      | `6`     | 优雅结束运行的停滞分数 |
-| `parse_failure_limit`        | `3`     | 连续出现这么多次无法解析的模型输出后停止 |
+| `enabled` | `true` | 启用循环提示以及执行预算和解析失败检查 |
+| `max_seconds` | `0` | 每条指令的实际耗时预算。`0` 表示禁用。收到并处理用户引导后重新计时 |
+| `repeat_action_limit` | `3` | 非 UI 循环触发更强提示所需的重复调用次数 |
+| `same_result_limit` | `3` | 判定为停滞所需的相同结果次数 |
+| `soft_notice_stall_score` | `2` | 触发一次策略调整提示的停滞分数 |
+| `restrict_tools_stall_score` | `4` | 触发更强策略调整提示的停滞分数 |
+| `terminate_stall_score` | `6` | 为配置兼容性保留，达到此分数不会停止运行 |
+| `parse_failure_limit` | `3` | 连续出现这么多次无法解析的模型输出后停止 |
 
 三个停滞分数阈值必须满足 `soft_notice_stall_score < restrict_tools_stall_score < terminate_stall_score`。
 
-循环防护只捕捉明显的循环；某个操作是否奏效，由模型根据截图判断。UI 操作（点按、滑动、按键、文本输入、启动应用）只有在完全重复上一个 UI 操作、且屏幕与上一个操作之后的状态完全相同（没有任何进度网格块发生变化）时，才会计入循环。在两者之间调用的工具，例如 `screenshot` 或 `shell`，既不会掩盖也不会重置该计数。达到 `repeat_action_limit`（默认是第三次）的相同 UI 操作会结束本次运行；当限制大于 2 时，第二次相同的 UI 操作会先追加一条提示，告诉模型不要再重复。在未变化的屏幕上执行不同操作，或持续改变屏幕的重复操作，永远不会被计数，防护也从不阻止工具；屏幕不断变化的循环交给 `max_iterations` 和 `max_seconds` 处理。
+当 UI 操作完全重复上一个 UI 操作且画面不变时，循环防护才计数。中间调用 `screenshot` 或 `shell` 不会重置计数。第二次相同的 UI 操作会为这一串重复操作添加一条提示。改变操作或画面会开始新的计数。
 
-停滞分数涵盖其他所有情况：重复相同的非 UI 调用加 1 分，再次得到相同结果加 2 分，相同的截图被视为相同结果。新的结果会重置分数。提示分级会在 `soft_notice_stall_score` 时追加警告，在 `restrict_tools_stall_score` 时追加最终警告，并在 `terminate_stall_score` 时结束运行。
+对其他工具，重复相同调用增加 1 分，再次获得相同结果增加 2 分。相同截图视为相同结果。新结果重置分数。防护在 `soft_notice_stall_score` 和 `restrict_tools_stall_score` 时添加提示。迭代上限、耗时预算、取消和连续解析失败仍可停止运行。
 
 ## `[model_settings.providers.<name>]`
 
@@ -631,7 +631,7 @@ api_mode = "responses"
 
 ## `[model_settings.decision]`
 
-可选的决策模型，用于在确定性工作流中回答固定选项的问题（选择题、是/否题、图像中的框选）。它与主模型相互独立：只返回类型化的答案，不做规划，也不输出面向用户的文本。它默认关闭；开启需要 `api_key`。关闭时，所有决策都由主模型完成。同一时间只有一个提供商生效；其密钥独立于主模型的密钥。支持以下提供商：
+可选的决策模型，用于在确定性工作流中回答固定选项的问题（选择题、是/否题、图像中的框选）。它与主模型相互独立：只返回类型化的答案，不做规划，也不输出面向用户的文本。它默认关闭；开启需要 `api_key`。关闭时，原本支持由主模型决策的工作流继续使用主模型。同一时间只有一个提供商生效；其密钥独立于主模型的密钥。支持以下提供商：
 
 - `typesafe`：TypeSafe 的 System One API（Jev）。可回答选择、是/否和框选问题，因此也能定位点按目标。
 - `openai`：OpenAI 的 Decisions API（GPT-6 Luna，公开测试版）。可回答选择和是/否（谓词）问题，但没有框选答案，因此点按目标类决策（`app_search`、`paste_menu`、Android 搜索框）始终由主模型完成。

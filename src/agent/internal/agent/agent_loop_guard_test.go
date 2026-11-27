@@ -129,9 +129,8 @@ func TestAgentLoopPersistsSoftNoticeInContext(t *testing.T) {
 	}
 }
 
-// The same UI action on an identical screen gets a notice on its second run
-// and ends the run on its third; the guard never blocks the action itself.
-func TestAgentLoopStopsRepeatedIdenticalUIAction(t *testing.T) {
+// Repeating the same UI action on an identical screen gives the model a notice.
+func TestAgentLoopContinuesRepeatedIdenticalUIAction(t *testing.T) {
 	t.Parallel()
 
 	screen := terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})
@@ -140,6 +139,7 @@ func TestAgentLoopStopsRepeatedIdenticalUIAction(t *testing.T) {
 		toolCallResponse("call-2", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
 		toolCallResponse("call-3", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
 		toolCallResponse("call-4", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
+		contentResponse("Done after the notice."),
 	}}
 	manager, err := freshNewContextManager("system", "swipe until done", nil, t.TempDir())
 	if err != nil {
@@ -153,21 +153,15 @@ func TestAgentLoopStopsRepeatedIdenticalUIAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(output, "not making measurable progress") {
-		t.Fatalf("output = %q, want loop-guard stop message", output)
-	}
-	if model.callCount != 3 {
-		t.Fatalf("model call count = %d, want termination after the third response", model.callCount)
+	if output != "Done after the notice." || model.callCount != 5 {
+		t.Fatalf("output = %q, model calls = %d, want continuation through the final response", output, model.callCount)
 	}
 	notices := collectMessagesByRole(manager.MessageListDump().Messages, messages.MessageRoleNotice)
-	if len(notices) != 2 {
-		t.Fatalf("persisted notices = %d, want one warning and the termination", len(notices))
+	if len(notices) != 1 {
+		t.Fatalf("persisted notices = %d, want one warning", len(notices))
 	}
 	if !strings.Contains(notices[0].Content, "Loop guard: the same UI action was repeated and the screen stayed identical.") {
 		t.Fatalf("warning notice = %#v", notices[0])
-	}
-	if !strings.HasPrefix(notices[1].Content, "Interrupt [loop_detected]:") {
-		t.Fatalf("termination notice = %q", notices[1].Content)
 	}
 }
 

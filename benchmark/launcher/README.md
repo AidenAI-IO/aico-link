@@ -99,6 +99,15 @@ fixed ports under the instance's advanced options.
 | Virtual iPhone | A [vphone-cli](../../docs/10-benchmark/vphone-cli-setup-guide-en.md) virtual iPhone | macOS with a running vphone VM. See [Virtual iPhone](#virtual-iphone). |
 | Custom bridge | Any service that implements the [Environment Bridge Protocol](../environment_bridge.md) | A running bridge. Enter the URL the Agent container should use, normally `http://host.docker.internal:<port>`; `127.0.0.1` and `localhost` are rewritten to `host.docker.internal` for the container. The launcher checks `/health` at the address containers reach this computer at and derives the device type from the reported platform. On Linux that address is the Docker bridge gateway (usually `172.17.0.1`), so a bridge on this computer must listen on `0.0.0.0` or that gateway; a bridge that listens only on `127.0.0.1` is reported by **Check** and refused at start. |
 
+Launcher-started MobileGym environments enable an active simulated Aico App for
+each Agent route by default. The Agent state therefore reports
+`app_connected=true` and `app_fgs_enabled=false` by default. A task can
+explicitly enable the Android foreground service; iOS PiP is not simulated.
+ConAct and Skill-UTG are enabled for backend Device CLI runs in Launcher
+MobileGym environments.
+Standalone MobileGym benchmark environments still opt in to simulated App state
+per task.
+
 Bridge types that the host cannot run (for example the iPhone types on Linux)
 are shown greyed out with the reason. Some types show setup notes under their
 fields and extra buttons next to **Check**, such as **Install dependencies**.
@@ -369,6 +378,9 @@ such as `registry-mirrors` in Docker Desktop's Docker Engine configuration.
 - **"build or pull the image first".** The selected image does not exist
   locally and has no registry or namespace to pull from. Build it, or enter a
   full reference such as `registry.example/aico/aico-link:<tag>`.
+- **`device-cli: not found` in the Agent shell.** Use **Build from this checkout**
+  and select the new image for the instance. A running container keeps its old
+  image; recreate it with the rebuilt image and keep its saved data volume.
 - **A port is already in use.** Another program uses a fixed port you set.
   Clear the port fields to let the launcher choose, or pick other ports.
 - **The ADB device is unauthorized.** Unlock the phone and accept the USB

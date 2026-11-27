@@ -16,6 +16,7 @@ type RoleProfile struct {
 
 func agentRoleRules() []string {
 	rules := []string{
+		"For visible target UI work, load device-operator with skill_read before the first screenshot or UI action unless its full instructions are already present.",
 		"Treat the currently exposed tool list as the runtime-validated source of truth for tool availability. Do not infer that a hidden direct tool is available from stale state or prior turns.",
 		"For app launch requests, inspect the latest screenshot first. If the requested app icon or app card is clearly visible, unique, and unobscured, you MUST call touch_gesture to tap its visible non-overlapping center; this direct visible-target rule overrides any general preference for open_app or system search. Call open_app with a semantic app name only when the target is not clearly and reliably tappable in the latest screenshot, or when one direct visible-target tap produced no verified effect. For HTTP or HTTPS webpages and SMS, email, or telephone links, call open_url.",
 		"For launch-only requests to open an app or URL, report completion only after post-action verification: require screen_changed=true or equivalent visual confirmation that the requested app or page is now visible. If the direct tool returns ok=true with screen_changed=false or an omitted screen_changed field and the screenshot does not visually confirm the target, treat the launch as unverified and continue verification or use another strategy.",
@@ -30,6 +31,24 @@ func agentRoleRules() []string {
 	}
 	return rules
 }
+
+func deviceCLIRoleRules() []string {
+	return []string{
+		`For all target UI operations call the shell tool with a foreground command. Example tool input: {"command":"device-cli tap 500 600"}. device-cli is a shell executable, not a tool name. Invoke shell as an actual tool call; printing command text in a reply does not execute it. Do not call legacy UI tools even if named in earlier context.`,
+		`Prefer a single foreground shell call with && for known steps that do not need an intervening screenshot, e.g. {"command":"device-cli tap 500 600 && device-cli app type 'hello'"} when the field is visibly editable and a companion route is available. Focus the field before typing. If paste may have reached the field, inspect the screen before retrying or changing routes. Stop the chain before the next step that depends on a new layout or requires confirmation.`,
+		`For text entry, prefer device-cli app type when any of app_connected, app_pip_enabled, or app_fgs_enabled is true, subject to the clipboard route's prerequisites. Otherwise use device-cli type for device-only input when appropriate.`,
+		`For multiline text, pass one single-quoted shell argument containing literal line breaks. Example shell tool input (JSON): {"command":"device-cli app type 'First line\nSecond line'"}. The JSON newline escape becomes a real line break in the shell command. Do not use Bash-style $'...' quoting or pass literal backslash-n as text.`,
+		`Use device-cli app for clipboard, calendar, contacts, and sending notifications. Connected, FGS, or PiP state permits an attempt; supported data commands can also use BLE Wake or the return entry when available. Read existing notifications with bridge_notification action=query when exposed. Do not call direct Bridge tools for operations covered by device-cli app.`,
+		`To open an app, tap a clearly visible app at its center or use device-cli open APP when it is not visible. For URLs, including sms: and tel: links, use device-cli url URL rather than device-cli open. Verify the final screen before claiming completion. The shell attaches a single final screenshot, even for a chain.`,
+		`When asked how many items exist, count every visible item in the requested set, including inactive items, unless the user limits the count to a subset. Distinguish the total from the active count.`,
+		`Use normalized integer coordinates (0–1000) measured on the latest image. For scrollable UI, use device-cli swipe X1 Y1 X2 Y2 starting inside the region. Use device-cli wait N for a fixed delay in milliseconds, or device-cli wait 0 to attach a fresh screen at shell exit without a delay. It does not detect stability. Use device-cli look only to save a screenshot file.`,
+		`Use device-cli home and device-cli back for system navigation. Use device-cli quick ACTION for semantic shortcuts.`,
+		`For Device CLI work, including App data commands that do not touch the screen, load device-cli with skill_read before the first command unless its full instructions are already present. The aico skill is not a substitute. If syntax is uncertain or rejected, use the command’s --help, then correct the invocation. Use only the latest screenshot to choose a visual action.`,
+		`Call request_user_action when the task requires credentials, human verification, or a confirmation you cannot perform. Never ask the user to send credentials or verification codes in chat.`,
+	}
+}
+
+const conactFoldRoleRule = `When you have verified that a visual subtask is complete and another goal remains, call fold_subtask before switching goals. Record exact verified facts and the next goal so intermediate observations can be replaced with a fresh screen. Do not fold an unfinished subtask or after the overall request is complete.`
 
 func buildProfile(
 	cfg AgentConfig,

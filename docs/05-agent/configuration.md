@@ -560,13 +560,13 @@ parse_failure_limit = 3
 
 | Field                        | Default | Description                                                                                                 |
 | ---------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
-| `enabled`                    | `true`  | Enable tiered loop detection and graceful termination                                                       |
+| `enabled`                    | `true`  | Enable loop notices and policy checks for execution budgets and parse failures                                                       |
 | `max_seconds`                | `0`     | Wall-clock budget per instruction; `0` disables the time budget, and a consumed steer starts a fresh budget |
-| `repeat_action_limit`        | `3`     | Stop after this many identical tool calls with identical results, including the same UI action on an identical screen |
+| `repeat_action_limit`        | `3`     | Repeated call threshold for the stronger notice on non-UI loops |
 | `same_result_limit`          | `3`     | Number of repeated identical results considered stalled                                                     |
 | `soft_notice_stall_score`    | `2`     | Stall score that injects a one-shot strategy-change notice                                                  |
-| `restrict_tools_stall_score` | `4`     | Stall score that adds a final warning before the run ends                                                   |
-| `terminate_stall_score`      | `6`     | Stall score that ends the run gracefully                                                                    |
+| `restrict_tools_stall_score` | `4`     | Stall score that adds a stronger strategy-change notice                                                   |
+| `terminate_stall_score`      | `6`     | Legacy setting retained for config compatibility. It does not stop the run.                                                                    |
 | `parse_failure_limit`        | `3`     | Stop after this many consecutive unparseable model outputs                                                  |
 
 The three stall-score thresholds must satisfy
@@ -577,19 +577,16 @@ model to judge from its screenshot. A UI action (tap, swipe, key press, text
 entry, app launch) counts toward a loop only when it repeats the previous UI
 action exactly and leaves the screen identical to what that action left, with
 no progress-grid block changed. Tools called in between, such as `screenshot`
-or `shell`, neither hide nor reset that count. The identical UI action that
-reaches `repeat_action_limit` (the third, by default) ends the run; when the
-limit is greater than 2, the second identical UI action first adds a notice
-telling the model not to repeat it again. A different action on an unchanged screen, or a repeated action
-that keeps changing the screen, is never counted, and the guard never blocks a
-tool; a loop on a screen that keeps moving is left to `max_iterations` and
-`max_seconds`.
+or `shell`, neither hide nor reset that count. The second identical UI action
+adds one notice for the streak. A different action on an unchanged screen or a
+repeated action that changes the screen starts a new streak.
 
-The stall score covers everything else: repeating the same non-UI call adds 1,
-and getting the same result again adds 2, with identical screenshots treated
-as the same result. A new result resets the score. The notice tiers add a
-warning at `soft_notice_stall_score`, a final warning at
-`restrict_tools_stall_score`, and end the run at `terminate_stall_score`.
+For other tools, repeating the same call adds 1 to the stall score and getting
+the same result again adds 2. Identical screenshots count as the same result.
+A new result resets the score. The guard adds notices at
+`soft_notice_stall_score` and `restrict_tools_stall_score`. Repeated actions
+and stalls only produce notices. Iteration limits, configured time budgets,
+cancellation, and repeated parse failures can still stop the run.
 
 ## `[model_settings.providers.<name>]`
 
@@ -850,8 +847,8 @@ Official references: [model capabilities and limits](https://api-docs.deepseek.c
 An optional decision model that answers fixed-choice questions (choice, yes/no,
 box in an image) inside deterministic workflows. It is separate from the main
 model: it returns typed answers without planning or user-facing text. It is off
-by default; turning it on requires `api_key`. When it is off every decision
-stays with the main model.
+by default; turning it on requires `api_key`. When it is off, workflows with a
+main-model decision keep using it.
 One provider is active at a time; its key is independent of the main model key.
 The following providers are supported:
 

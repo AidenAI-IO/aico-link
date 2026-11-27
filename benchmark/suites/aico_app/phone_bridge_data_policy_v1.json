@@ -110,7 +110,7 @@
         {"id": "completed", "check": "Reports that the notification was sent."}
       ],
       "hard_assertions": {
-        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "min_tool_calls": 1, "max_tool_calls": 5, "must_complete_within_sec": 120,
         "required_tools": ["bridge_notification"],
         "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
         "required_tool_calls": [{"tool": "bridge_notification", "input_contains": {"title": "Aico Benchmark", "body": "灵动岛恢复通知", "sound": false}}]

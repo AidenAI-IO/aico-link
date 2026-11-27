@@ -1184,6 +1184,7 @@ class MobileGymBridge(BridgeType):
             bridge_bind_host=bind_host,
             benchmark_dir=ctx.repo_root / "benchmark",
             parallel_envs=int(ctx.config.get("envs") or 1),
+            default_aico_app=True,
         )
         # Keep the container when it dies so its output can be read; start()
         # and stop() remove it explicitly.

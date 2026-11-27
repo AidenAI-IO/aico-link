@@ -14,17 +14,18 @@ import (
 	"testing"
 )
 
-func TestTerminationPolicyRepeatWithoutProgressTerminates(t *testing.T) {
+func TestTerminationPolicyRepeatedShellOnlyWarns(t *testing.T) {
 	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
-	observation := terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})
-	for i := 0; i < 2; i++ {
-		if decision := policy.AfterToolCall("touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`, observation, false); decision.Stop {
-			t.Fatalf("iteration %d: unexpected stop: %#v", i+1, decision)
+	warned := false
+	for i := 0; i < 12; i++ {
+		decision := policy.AfterToolCall("shell", `{"command":"device-cli swipe 500 800 500 200"}`, "(no output)", false)
+		if decision.Stop || policy.CheckBeforeIteration(context.Background(), i+1, 20).Stop {
+			t.Fatalf("iteration %d: unexpected stop: %+v", i+1, decision)
 		}
+		warned = warned || decision.Notice != ""
 	}
-	decision := policy.AfterToolCall("touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`, observation, false)
-	if !decision.Stop || decision.Reason != StopReasonLoopDetected {
-		t.Fatalf("expected loop termination, got %#v", decision)
+	if !warned {
+		t.Fatal("expected a loop notice")
 	}
 }
 
@@ -63,8 +64,8 @@ func TestTerminationPolicyDetectsRotatingArtifactRecoveryPaths(t *testing.T) {
 		if index < len(paths)-1 && decision.Stop {
 			t.Fatalf("artifact read %d stopped too early: %#v", index+1, decision)
 		}
-		if index == len(paths)-1 && (!decision.Stop || decision.Reason != StopReasonLoopDetected) {
-			t.Fatalf("rotating artifact reads were not terminated: %#v", decision)
+		if index == len(paths)-1 && (decision.Stop || decision.Notice == "") {
+			t.Fatalf("rotating artifact reads did not issue a notice: %#v", decision)
 		}
 	}
 }
@@ -162,13 +163,12 @@ func TestTerminationPolicyDetectsAlternatingArtifactQueries(t *testing.T) {
 		input, _ := json.Marshal(map[string]string{"command": command})
 		decision := policy.AfterToolCall("shell", string(input), observation, i%2 == 0)
 		if decision.Stop {
-			if decision.Reason != StopReasonLoopDetected {
-				t.Fatalf("unexpected stop: %+v", decision)
-			}
-			return
+			t.Fatalf("unexpected stop: %+v", decision)
+		}
+		if (i == 2) != (decision.Notice != "") {
+			t.Fatalf("iteration %d: expected one notice at the third call, got %+v", i+1, decision)
 		}
 	}
-	t.Fatal("alternating artifact queries returning the same error did not stop")
 }
 
 func TestTerminationPolicyAllowsArtifactReadProgress(t *testing.T) {
@@ -199,7 +199,7 @@ func TestTerminationPolicyResetsArtifactRecoveryStreak(t *testing.T) {
 			case "new output":
 				policy.AfterToolCall("shell", `{"command":"fq '.summary[100:200]' /userdata/tool-results/tr_original.data"}`, "new page", false)
 			}
-			if decision := read(3); decision.Stop {
+			if decision := read(3); decision.Stop || decision.Notice != "" {
 				t.Fatalf("stale recovery streak survived %s: %+v", reset, decision)
 			}
 		})

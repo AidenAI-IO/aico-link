@@ -27,6 +27,10 @@ type ToolResult struct {
 	Error            *ToolError
 	Terminate        bool
 	Duration         time.Duration
+	deviceFrame      visualScreenshotObservation
+	deviceCalls      []deviceCLIToolEvidence
+
+	liveActivityHandled bool
 }
 
 func (r ToolResult) IsError() bool { return r.Error != nil }
@@ -127,11 +131,17 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 	}
 
 	ctx2, _ := WithToolError(ctx)
-	ctx2 = context.WithValue(ctx2, benchmarkToolCallContextKey{}, action.ToolID)
+	if action.ToolID != "" {
+		ctx2 = context.WithValue(ctx2, benchmarkToolCallContextKey{}, action.ToolID)
+	}
 	if progressHandler, ok := execution.Callback.(toolProgressCallbackHandler); ok {
 		ctx2 = withToolProgressReporter(ctx2, func(progress ToolProgress) {
 			progressHandler.HandleToolProgress(ctx, call, progress)
 		})
+	}
+	var capture deviceCLICapture
+	if _, ok := ctx.Value(deviceCLIRuntimeKey{}).(*Runtime); ok && spec.Name == "shell" {
+		ctx2 = context.WithValue(ctx2, deviceCLICaptureKey{}, &capture)
 	}
 	output, err := spec.Tool.Call(ctx2, input)
 	var toolErr *ToolError
@@ -157,17 +167,23 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 		}
 	} else if attached := ToolErrorFromContext(ctx2); attached != nil {
 		// Adopt only intentional top-level SetToolError + toolErrorString
-		// results. Nested helpers (e.g. ClipboardTool inside enter_text /
+		// results, or a rejected action with a recovery screenshot. Nested
+		// helpers (e.g. ClipboardTool inside enter_text /
 		// search_launch_app) may leave a leftover ToolError while the parent
 		// recovers and returns its own observation — do not overwrite that.
-		if strings.TrimSpace(output) == "" || output == attached.Message {
+		if actionNotDispatched(attached) || strings.TrimSpace(output) == "" || output == attached.Message {
 			toolErr = attached
 		}
 	}
 	result := ToolResult{
-		Output:   output,
+		Output:      output,
+		deviceFrame: capture.frame,
+		deviceCalls: capture.calls,
+
 		Error:    toolErr,
 		Duration: time.Since(call.StartedAt),
+
+		liveActivityHandled: capture.activityReported,
 	}
 	if err == nil && toolErr != nil && strings.TrimSpace(result.Output) == "" {
 		result.Output = toolErr.Message
@@ -183,7 +199,7 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 
 	result = runAfterToolCallHook(ctx, execution, call, result)
 	emitToolResult(ctx, execution.Callback, call, result)
-	return resultForToolCall(call, result, nil, true)
+	return resultForToolCall(call, result, nil, !actionNotDispatched(result.Error))
 }
 
 func withToolProgressReporter(ctx context.Context, reporter func(ToolProgress)) context.Context {
@@ -286,7 +302,7 @@ func normalizeToolResult(result ToolResult) ToolResult {
 	if result.Error != nil {
 		if result.Output == "" {
 			result.Output = result.Error.Message
-		} else if result.Output != result.Error.Message {
+		} else if result.Output != result.Error.Message && !actionNotDispatched(result.Error) {
 			result.Error.Message = result.Output
 		}
 	}

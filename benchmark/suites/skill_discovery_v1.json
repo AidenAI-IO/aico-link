@@ -31,6 +31,7 @@
         "max_tool_calls": 8,
         "must_complete_within_sec": 90,
         "response_required": true,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "current_time",
@@ -58,6 +59,7 @@
         "max_tool_calls": 14,
         "must_complete_within_sec": 150,
         "response_required": true,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "current_time",
@@ -88,6 +90,7 @@
         "max_tool_calls": 16,
         "must_complete_within_sec": 180,
         "response_required": true,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "current_time",
@@ -115,6 +118,7 @@
         "max_tool_calls": 16,
         "must_complete_within_sec": 180,
         "response_required": true,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "current_time",

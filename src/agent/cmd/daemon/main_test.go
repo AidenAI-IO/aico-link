@@ -9,7 +9,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,6 +26,7 @@ import (
 	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/messages"
 	"aico-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agent/screenprovider"
 	"aico-agent/internal/agenttask"
 	"aico-agent/internal/logging"
 	streamcontract "aico-agent/internal/stream"
@@ -147,7 +151,7 @@ func TestRealtimeSessionConfigTransfersRuntimeToolsWhenBackendDisabled(t *testin
 		agent.ProxyConfig{},
 		agent.WithWaitForWakeupController(agent.NewWaitForWakeupController()),
 	)
-	runtime := agent.NewRuntimeWithDeps(agent.Config{}, nil, nil, toolSet, agent.NewSkillIndex())
+	runtime := agent.NewRuntimeWithDeps(agent.Config{InputMode: "realtime"}, nil, nil, toolSet, agent.NewSkillIndex())
 	defer runtime.Close()
 
 	backendDisabledConfigs := []agent.Config{
@@ -163,12 +167,12 @@ func TestRealtimeSessionConfigTransfersRuntimeToolsWhenBackendDisabled(t *testin
 				definitions[definition.Name] = definition
 				counts[definition.Name]++
 			}
-			for _, name := range []string{"weather", "web_search", "screenshot"} {
+			for _, name := range []string{"weather", "web_search", "shell"} {
 				if _, ok := definitions[name]; !ok {
 					t.Fatalf("backend-disabled setup missing transferred runtime tool %q", name)
 				}
 			}
-			for _, name := range []string{realtimeCreateTaskTool, realtimeCancelTaskTool, realtimeUpdateTaskTool, realtimeQueryTaskTool, realtimeResponseUserActionTool, "request_user_action", "wait_for_wakeup"} {
+			for _, name := range []string{realtimeCreateTaskTool, realtimeCancelTaskTool, realtimeUpdateTaskTool, realtimeQueryTaskTool, realtimeResponseUserActionTool, "request_user_action", "wait_for_wakeup", "screenshot", "touch_gesture", "open_app"} {
 				if _, ok := definitions[name]; ok {
 					t.Fatalf("backend-disabled setup exposed control tool %q", name)
 				}
@@ -198,7 +202,7 @@ func TestRealtimeSessionConfigTransfersRuntimeToolsWhenBackendDisabled(t *testin
 		for _, definition := range retained.Tools {
 			retainedNames[definition.Name] = true
 		}
-		for _, name := range []string{"weather", "web_search", "screenshot"} {
+		for _, name := range []string{"weather", "web_search", "shell"} {
 			if retainedNames[name] {
 				t.Fatalf("backend-agent mode unexpectedly exposed runtime tool %q for model %q", name, model)
 			}
@@ -772,6 +776,50 @@ func TestRealtimeToolCallAndResultPersistInUserContext(t *testing.T) {
 	}
 	if got[1].ToolCalls[0].Name != realtimeCreateTaskTool || got[2].ToolResults[0].ToolCallID != "call_1" {
 		t.Fatalf("tool messages = %+v", got[1:])
+	}
+}
+
+type realtimeFixtureScreen []byte
+
+func (s realtimeFixtureScreen) LatestFrameWithFormat(string, int, bool, screenprovider.CropHint) (*screenprovider.FrameMetadata, []byte, screenprovider.CaptureInfo, error) {
+	return &screenprovider.FrameMetadata{Width: 8, Height: 12, PixelFormat: "jpeg", Bytes: uint64(len(s))}, s, screenprovider.CaptureInfo{}, nil
+}
+
+func TestRealtimeDeviceCLIShellReturnsScreenshot(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl required")
+	}
+	var frame bytes.Buffer
+	if err := jpeg.Encode(&frame, image.NewRGBA(image.Rect(0, 0, 8, 12)), nil); err != nil {
+		t.Fatal(err)
+	}
+	cfg := agent.Config{InputMode: "realtime"}
+	tools := agent.NewBuiltinToolSetFromConfig(cfg, agent.ProxyConfig{}, agent.WithScreenProvider(realtimeFixtureScreen(frame.Bytes())))
+	runtime := agent.NewRuntimeWithDeps(cfg, nil, nil, tools, agent.NewSkillIndex())
+	defer runtime.Close()
+	executor := newRealtimeVoiceToolExecutor(runtime, nil, runtime.AvailableTools())
+	// Exercise the CLI's scoped request protocol without requiring an installed binary.
+	args, err := json.Marshal(map[string]string{"command": `curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["wait","0"]' "$AICO_DEVICE_CLI_URL/command"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := executor.result(context.Background(), realtimevoice.Event{Name: "shell", CallID: "call_1", Arguments: string(args)})
+	if result.visual == nil || !strings.Contains(result.output, "[Image omitted:") {
+		t.Fatalf("expected a screenshot with text-only fallback, got %q", result.output)
+	}
+	sender := &recordingToolResultSender{}
+	if err := sendRealtimeToolResult(context.Background(), sender, sender, result); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.images) != 1 || !bytes.Equal(sender.images[0].Data, frame.Bytes()) ||
+		!strings.Contains(sender.images[0].Caption, "Device CLI screenshot.") {
+		t.Fatalf("expected one Device CLI screenshot, got %d images", len(sender.images))
+	}
+
+	failure := executor.result(context.Background(), realtimevoice.Event{Name: "shell", Arguments: `{"command":"echo failed >&2; exit 1"}`})
+	var output map[string]string
+	if err := json.Unmarshal([]byte(failure.output), &output); err != nil || !strings.Contains(output["error"], "failed") {
+		t.Fatalf("expected shell failure to reach the provider, got %q", failure.output)
 	}
 }
 

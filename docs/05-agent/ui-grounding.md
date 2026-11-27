@@ -82,10 +82,9 @@ Preprocessing and decoding match the validated board runner: half-pixel
 bilinear letterbox padded with 114, score equal to objectness times class
 probability, NMS on normalized source coordinates, at most 50 boxes. The runner
 was tuned for recall (confidence 0, NMS IoU 0.8), which leaves several
-near-identical boxes on one control. The Agent passes `--confidence 0.3
---nms-iou 0.6` instead, so each mark is distinct, accepting that some controls
-go unmarked. On the UI-DETR example screenshot this keeps 32 of the runner's
-50 boxes.
+near-identical boxes on one control. The Agent passes `--confidence 0.5
+--nms-iou 0.5` instead, so each mark is distinct, accepting that some controls
+go unmarked.
 
 ## Helper process
 

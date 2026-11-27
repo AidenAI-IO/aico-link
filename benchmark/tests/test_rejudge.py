@@ -182,7 +182,8 @@ def test_deferred_scoring_preserves_all_deterministic_gates(tmp_path, monkeypatc
     assert scored["metrics"]["agent_eligible"] is (initial == "yes" and check != "missing_memory")
 
 
-def test_rejudge_refreshes_screenshot_evidence_but_preserves_execution_trace(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cli", [False, True])
+def test_rejudge_refreshes_screenshot_evidence_but_preserves_execution_trace(tmp_path, monkeypatch, cli):
     attempt = tmp_path / "tasks" / "home"
     attempt.mkdir(parents=True)
     history = [
@@ -192,6 +193,16 @@ def test_rejudge_refreshes_screenshot_evidence_but_preserves_execution_trace(tmp
     episode = {"events": [{"type": "tool_result", "tool_name": "quick_action", "screenshot_ref": "artifacts/step_004.jpeg"}]}
     trace = {"tool_calls": [{"tool": "quick_action", "has_screenshot": False, "is_error": False,
                               "input": {"action": "home"}}], "final_response": "done", "extra_evidence": "keep"}
+    if cli:
+        nested = {"tool": "quick_action", "input": {"action": "home"}, "is_error": False}
+        command = {"command": "device-cli home"}
+        history[0].update(tool_name="shell", tool_input=json.dumps(command))
+        history[1]["tool_name"] = "shell"
+        history.append({"type": "state", "content": "Device CLI screenshot sheet.",
+                        "attachments": [{"kind": "image"}]})
+        episode["events"][0] = {"type": "tool_result", "tool_name": "shell",
+                                  "metadata": {"device_cli_calls": [nested]}}
+        trace["tool_calls"][0].update(tool="shell", input=command, device_cli_calls=[nested])
     for name, value in [("history", history), ("episode", episode), ("trace", trace)]:
         (attempt / f"{name}.json").write_text(json.dumps(value))
     row = {"task_id": "home", "attempt": 1, "status": "failed", "rubric_total": 1,

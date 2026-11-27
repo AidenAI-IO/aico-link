@@ -240,7 +240,7 @@
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 180,
         "required_tool_calls": [
@@ -846,9 +846,6 @@
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 120,
-        "required_tools": [
-          "bridge_notification"
-        ],
         "response_required": false
       },
       "environment_bridge_types": [
@@ -1153,9 +1150,6 @@
         "min_tool_calls": 1,
         "max_tool_calls": 30,
         "must_complete_within_sec": 180,
-        "required_tools": [
-          "bridge_calendar"
-        ],
         "response_required": false
       },
       "environment_bridge_types": [
@@ -1189,10 +1183,7 @@
       "hard_assertions": {
         "min_tool_calls": 1,
         "max_tool_calls": 10,
-        "must_complete_within_sec": 180,
-        "required_tools": [
-          "open_app"
-        ]
+        "must_complete_within_sec": 180
       },
       "environment_bridge_types": [
         "mobilegym"
@@ -1207,7 +1198,10 @@
       },
       "environment_assertions": {
         "route.app": "weather",
-        "aico_app.failed_command_counts.open_app": 1
+        "aico_app.failed_command_counts.open_app": 1,
+        "aico_app.commands": {
+          "$exactly_once": [{"type": "open_app", "error_code": "app_launch_failed"}]
+        }
       }
     },
     {

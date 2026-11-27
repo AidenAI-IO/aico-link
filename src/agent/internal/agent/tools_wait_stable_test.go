@@ -131,6 +131,22 @@ func TestWaitStableScreenToolReturnsScreenshotObservationJSON(t *testing.T) {
 	}
 }
 
+func TestWaitStableScreenToolHonorsExplicitTimeout(t *testing.T) {
+	client := &fakeWaitStableFrameClient{rawFrames: []fakeWaitStableFrame{
+		{meta: frameMetadata{Seq: 1, Width: 2, Height: 2, PixelFormat: "nv12"}, data: make([]byte, 6)},
+	}}
+	tool := &WaitStableScreenTool{client: client, defaults: ScreenStableDefaults{TimeoutMs: 2000, StableMs: 500, DiffThreshold: 2}}
+	result, err := tool.wait(context.Background(), `{"timeout_ms":15}`)
+	if err != nil || !result.OK || result.Stable || result.ElapsedMs >= 1000 {
+		t.Fatalf("expected short timeout with a best-effort observation: result=%+v err=%v", result, err)
+	}
+	for _, input := range []string{`{"timeout_ms":0}`, `{"timeout_ms":30001}`} {
+		if _, err := tool.wait(context.Background(), input); err == nil {
+			t.Errorf("accepted invalid timeout: %s", input)
+		}
+	}
+}
+
 func TestWaitStableScreenToolPropagatesContextCancellation(t *testing.T) {
 	rawFrame := []byte{128, 128, 128, 128, 128, 128}
 	client := &fakeWaitStableFrameClient{
@@ -285,7 +301,10 @@ func (p *dragRecoveryProvider) DragStart(context.Context, float64, float64, stri
 	return nil
 }
 
-func (p *dragRecoveryProvider) DragRelease(_ context.Context, x, y float64) error {
+func (p *dragRecoveryProvider) DragRelease(ctx context.Context, x, y float64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !p.dragActive {
 		return errors.New("drag is not active")
 	}

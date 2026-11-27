@@ -133,10 +133,8 @@ committed Unicode through the optional
 ADBKeyBoard is the default: the bridge temporarily selects it for Base64 input
 and restores the original keyboard. To use Appium Settings' UnicodeIME instead,
 start Android mode with `--unicode-input-method appium`. The bridge automatically
-installs the selected IME if it is missing and the device is ready at startup.
-If that installation fails, startup stops before the bridge server starts.
-If the device is not ready, installation is deferred until the device responds
-to a later capability probe or text insertion. A running bridge retains ASCII
+installs the selected IME on demand during a capability probe or Unicode text
+insertion. A running bridge retains ASCII
 input when the selected IME cannot be installed. The Appium path sends modified
 UTF-7 through `adb input text`; it cannot send literal `%s`. The two paths are selected when
 the bridge starts and do not fall back to each other. See the
@@ -160,6 +158,8 @@ python3 scripts/local_agent.py ios --bridge-url http://127.0.0.1:8896
 Use `--agent-binary` to reuse a native binary, `--python` for a prepared bridge
 environment, and `--no-open` to print URLs without opening a browser. Override
 `--agent-port`, `--config-port`, `--bridge-port`, or `--share-port` when necessary.
+In Device CLI mode, a supplied Agent needs an executable `device-cli` beside it
+or on `PATH`.
 Run `python3 scripts/local_agent.py --help` for all options.
 
 ## Stop, Recover, or Switch Modes

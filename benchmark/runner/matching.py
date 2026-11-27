@@ -41,6 +41,8 @@ def dict_contains(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
 def value_matches(actual: Any, expected: Any) -> bool:
     if isinstance(expected, dict):
         keys = set(expected)
+        if keys == {"$one_of"}:
+            return any(value_matches(actual, alternative) for alternative in expected["$one_of"])
         if keys == {"$contains"}:
             needle = expected["$contains"]
             if isinstance(actual, str) and isinstance(needle, str):

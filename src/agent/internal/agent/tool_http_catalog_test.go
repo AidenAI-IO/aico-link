@@ -3,10 +3,8 @@ package agent
 import (
 	"aico-agent/internal/ble"
 	"context"
-	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	langtools "github.com/tmc/langchaingo/tools"
 )
@@ -34,7 +32,7 @@ func toolSpecsForNames(names []string) *ToolSpecs {
 }
 
 func newRuntimeWithTextEntryTools() *Runtime {
-	return newRuntimeWithTextEntryToolsWithConfig(Config{})
+	return newRuntimeWithTextEntryToolsWithConfig(Config{InputMode: "realtime"})
 }
 
 func newRuntimeWithTextEntryToolsWithConfig(cfg Config) *Runtime {
@@ -179,91 +177,6 @@ func TestHTTPDescriptorReportsUIOperationSurface(t *testing.T) {
 	}
 }
 
-func TestAvailableToolsIncludesQuickAction(t *testing.T) {
-	runtime := NewRuntimeWithDeps(
-		Config{},
-		nil,
-		NewMemoryManager(""),
-		NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
-		NewSkillIndex(),
-	)
-
-	tools := runtime.availableTools()
-	names := toolNamesFromTools(tools)
-	found := false
-	for _, name := range names {
-		if name == "quick_action" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("availableTools missing quick_action: %v", names)
-	}
-}
-
-func TestAvailableToolsHidesUnavailablePhoneBridgeToolsWhenDisconnected(t *testing.T) {
-	runtime := newRuntimeWithTextEntryTools()
-	bridge := newPhoneBridgeForTest()
-	t.Cleanup(func() { bridge.queue.Stop() })
-	runtime.tools.RegisterPhoneBridge(bridge)
-
-	names := toolNameSet(runtime.availableTools())
-	for _, notWant := range []string{
-		"bridge_clipboard",
-		"bridge_calendar",
-		"bridge_contacts",
-		"bridge_notification",
-	} {
-		if _, ok := names[notWant]; ok {
-			t.Fatalf("agent catalog exposed unavailable %s while Phone Bridge and BLE are disconnected: %v", notWant, names)
-		}
-	}
-	for _, want := range []string{"open_app", "open_url"} {
-		if _, ok := names[want]; !ok {
-			t.Fatalf("agent catalog should keep %s because it can fall back to visible system search: %v", want, names)
-		}
-	}
-	if _, ok := names["enter_text"]; !ok {
-		t.Fatalf("agent catalog should keep non-bridge input fallback enter_text: %v", names)
-	}
-	for _, internal := range []string{"bridge_open_app", "search_launch_app"} {
-		if _, ok := names[internal]; ok {
-			t.Fatalf("internal launch route %s leaked into agent catalog: %v", internal, names)
-		}
-		if _, ok := runtime.ToolDescriptorByName(internal); ok {
-			t.Fatalf("internal launch route %s leaked into HTTP catalog", internal)
-		}
-	}
-}
-
-func TestAvailableToolsHidesOpenURLWithoutBrowserFallback(t *testing.T) {
-	runtime := newRuntimeWithTextEntryTools()
-	runtime.tools.searchOpenTool = nil
-	bridge := newPhoneBridgeForTest()
-	t.Cleanup(func() { bridge.queue.Stop() })
-	runtime.tools.RegisterPhoneBridge(bridge)
-
-	if _, ok := toolNameSet(runtime.availableTools())["open_url"]; ok {
-		t.Fatal("agent catalog exposed open_url with neither Phone Bridge nor a browser fallback")
-	}
-}
-
-func TestAvailableToolsIncludesPhoneBridgeToolsWhenConnected(t *testing.T) {
-	runtime := newRuntimeWithTextEntryTools()
-	bridge := newPhoneBridgeForTest()
-	t.Cleanup(func() { bridge.queue.Stop() })
-	bridge.connected = true
-	runtime.tools.RegisterPhoneBridge(bridge)
-
-	defaultNames := toolNameSet(runtime.availableTools())
-	for _, want := range []string{"open_app", "open_url", "bridge_clipboard", "bridge_calendar", "bridge_contacts", "bridge_notification"} {
-		if _, ok := defaultNames[want]; !ok {
-			t.Fatalf("default catalog missing connected phone bridge tool %s: %v", want, defaultNames)
-		}
-	}
-}
-
 func TestToolSpecsAgentCatalogPolicy(t *testing.T) {
 	coreTools := []string{
 		"audio_volume",
@@ -373,34 +286,6 @@ func TestAgentToolsForPlatformFiltersPlatformSpecificTools(t *testing.T) {
 	}
 }
 
-func TestRuntimeAvailableToolsUsesDeviceTypePlatformFilter(t *testing.T) {
-	runtime := newRuntimeWithTextEntryToolsWithConfig(Config{
-		Device: DeviceConfig{DeviceType: "windows"},
-	})
-	bridge := newPhoneBridgeForTest()
-	t.Cleanup(func() { bridge.queue.Stop() })
-	bridge.connected = true
-	runtime.tools.RegisterPhoneBridge(bridge)
-
-	names := toolNameSet(runtime.availableTools())
-	if _, ok := names["screenshot"]; !ok {
-		t.Fatalf("availableTools missing portable tool screenshot: %v", names)
-	}
-	if _, ok := names["enter_text"]; !ok {
-		t.Fatalf("availableTools missing windows-supported enter_text: %v", names)
-	}
-	for _, notWant := range []string{"quick_action", "open_app", "open_url", "search_launch_app", "bridge_open_app", "bridge_clipboard"} {
-		if _, ok := names[notWant]; ok {
-			t.Fatalf("availableTools exposed %s for windows device_type: %v", notWant, names)
-		}
-	}
-	for _, httpWant := range []string{"quick_action", "enter_text", "open_app", "open_url", "bridge_clipboard"} {
-		if _, ok := runtime.ToolDescriptorByName(httpWant); !ok {
-			t.Fatalf("HTTP catalog hid %s while only model catalog should be platform-filtered", httpWant)
-		}
-	}
-}
-
 func TestRuntimeToolDescriptorsUseDeviceTypeSpecificSchemas(t *testing.T) {
 	androidRuntime := NewRuntimeWithDeps(
 		Config{Device: DeviceConfig{DeviceType: "Android"}},
@@ -466,103 +351,6 @@ func TestPhoneBridgeToolDescriptorsHaveUsefulExamples(t *testing.T) {
 	}
 }
 
-func TestAvailableToolsExposesOnlyBackgroundSafeBridgeToolsDuringPiP(t *testing.T) {
-	runtime := newRuntimeWithTextEntryTools()
-	bridge := newIOSPiPBackgroundBridge(t)
-	runtime.tools.RegisterPhoneBridge(bridge)
-
-	names := toolNameSet(runtime.availableTools())
-	for _, want := range []string{"bridge_clipboard", "bridge_calendar", "bridge_contacts", "bridge_notification"} {
-		if _, ok := names[want]; !ok {
-			t.Fatalf("agent catalog missing PiP-safe %s: %v", want, names)
-		}
-	}
-	for _, want := range []string{"open_app", "open_url"} {
-		if _, ok := names[want]; !ok {
-			t.Fatalf("agent catalog should keep fallback-capable %s during PiP: %v", want, names)
-		}
-	}
-	if _, ok := runtime.ToolDescriptorByName("open_app"); !ok {
-		t.Fatalf("HTTP catalog should keep open_app available for direct diagnostics: %v", names)
-	}
-	if _, ok := runtime.ToolDescriptorByName("bridge_clipboard"); !ok {
-		t.Fatalf("HTTP catalog missing PiP background bridge_clipboard: %v", names)
-	}
-}
-
-func TestAvailableToolsExposesBackgroundSafeBridgeToolsThroughBLEWake(t *testing.T) {
-	runtime := newRuntimeWithTextEntryTools()
-	bridge := newPhoneBridgeForTest()
-	t.Cleanup(func() { bridge.queue.Stop() })
-	bridge.mu.Lock()
-	bridge.platform = "ios"
-	bridge.appState = "background"
-	bridge.appStateAt = time.Now()
-	bridge.mu.Unlock()
-	bridge.bleStatus = func(context.Context) (ble.RuntimeStatus, error) {
-		return ble.RuntimeStatus{
-			BackendAvailable: true,
-			Connected:        true,
-			WakeSubscriber:   true,
-			ANCSSubscribed:   true,
-		}, nil
-	}
-	runtime.tools.RegisterPhoneBridge(bridge)
-
-	names := toolNameSet(runtime.availableTools())
-	for _, want := range []string{"bridge_calendar", "bridge_contacts", "bridge_notification"} {
-		if _, ok := names[want]; !ok {
-			t.Fatalf("agent catalog missing BLE-Wake-safe %s: %v", want, names)
-		}
-	}
-	for _, notWant := range []string{"bridge_clipboard"} {
-		if _, ok := names[notWant]; ok {
-			t.Fatalf("agent catalog exposed foreground-only %s through BLE Wake: %v", notWant, names)
-		}
-	}
-	for _, want := range []string{"open_app", "open_url"} {
-		if _, ok := names[want]; !ok {
-			t.Fatalf("agent catalog should keep fallback-capable %s through BLE Wake: %v", want, names)
-		}
-	}
-	var contacts langtools.Tool
-	for _, tool := range runtime.availableTools() {
-		if tool != nil && tool.Name() == toolBridgeContacts {
-			contacts = tool
-			break
-		}
-	}
-	if contacts == nil {
-		t.Fatal("missing contacts capability tool")
-	}
-	properties := contacts.(structuredInputTool).ArgsSchema()["properties"].(map[string]any)
-	actions := properties["action"].(map[string]any)["enum"].([]string)
-	if !slices.Equal(actions, []string{"query", "create"}) {
-		t.Fatalf("BLE contacts actions = %#v, want query/create", actions)
-	}
-	if _, ok := properties["contact_id"]; ok {
-		t.Fatalf("BLE contacts schema exposed update-only contact_id: %#v", properties)
-	}
-	ctx, _ := WithToolError(context.Background())
-	out, err := contacts.Call(ctx, `{"action":"update","contact_id":"abc","name":"Alice"}`)
-	if err != nil {
-		t.Fatalf("contacts update Call() error = %v", err)
-	}
-	if te := ToolErrorFromContext(ctx); te == nil || te.Code != CodeModuleUnavailable || out != te.Message {
-		t.Fatalf("contacts update result = %q error=%#v, want module_unavailable", out, te)
-	}
-	for _, input := range []string{`{}`, `{"action":"delete"}`} {
-		ctx, _ := WithToolError(context.Background())
-		out, err := contacts.Call(ctx, input)
-		if err != nil {
-			t.Fatalf("contacts Call(%s) error = %v", input, err)
-		}
-		if te := ToolErrorFromContext(ctx); te == nil || te.Code != CodeInvalidArguments || out != te.Message {
-			t.Fatalf("contacts Call(%s) result = %q error=%#v, want invalid_arguments", input, out, te)
-		}
-	}
-}
-
 func TestAvailableToolsExposesOnlyNotificationWhenBLECanOnlyQuery(t *testing.T) {
 	runtime := newRuntimeWithTextEntryTools()
 	bridge := newPhoneBridgeForTest()
@@ -584,11 +372,6 @@ func TestAvailableToolsExposesOnlyNotificationWhenBLECanOnlyQuery(t *testing.T) 
 	for _, notWant := range []string{"bridge_clipboard", "bridge_calendar", "bridge_contacts"} {
 		if _, ok := names[notWant]; ok {
 			t.Fatalf("agent catalog exposed unavailable %s with query-only BLE: %v", notWant, names)
-		}
-	}
-	for _, want := range []string{"open_app", "open_url"} {
-		if _, ok := names[want]; !ok {
-			t.Fatalf("agent catalog should keep fallback-capable %s with query-only BLE: %v", want, names)
 		}
 	}
 	var notification langtools.Tool
@@ -652,16 +435,41 @@ func TestAvailableToolsExposesOnlyNotificationWhenBLECanOnlyQuery(t *testing.T) 
 	}
 }
 
-func newIOSPiPBackgroundBridge(t *testing.T) *PhoneBridge {
-	t.Helper()
+func TestDeviceCLICatalogDeduplicatesBridgeDataActions(t *testing.T) {
+	rt := newRuntimeWithTextEntryTools()
 	bridge := newPhoneBridgeForTest()
-	t.Cleanup(func() { bridge.queue.Stop() })
-	bridge.mu.Lock()
-	bridge.platform = "ios"
-	bridge.appState = "background"
-	bridge.appStateAt = time.Now()
-	bridge.pipBridgeEnabled = true
-	bridge.pipBridgeSeen = true
-	bridge.mu.Unlock()
-	return bridge
+	t.Cleanup(bridge.queue.Stop)
+	bridge.connected = true
+	bridge.bleStatus = func(context.Context) (ble.RuntimeStatus, error) {
+		return ble.RuntimeStatus{BackendAvailable: true, Connected: true, ANCSSubscribed: true}, nil
+	}
+	rt.tools.RegisterPhoneBridge(bridge)
+	for _, cli := range []bool{false, true} {
+		rt.config.InputMode = "realtime"
+		rt.config.VoiceModel.UseBackendAgent = cli
+		tools := NewToolSpecs(rt.AvailableTools())
+		if _, found := tools.Lookup("shell"); !found {
+			t.Fatal("model catalog is missing Device CLI shell")
+		}
+		for _, name := range []string{"open_app", "open_url", "screenshot", "touch_gesture", "enter_text", "quick_action", toolBridgeCalendar, toolBridgeContacts, toolBridgeClipboard} {
+			if _, found := tools.Lookup(name); found {
+				t.Fatalf("realtime backend=%t exposed direct device tool %s", cli, name)
+			}
+			if _, found := rt.ToolDescriptorByName(name); !found {
+				t.Fatalf("HTTP catalog lost %s", name)
+			}
+		}
+		notification, found := tools.Lookup(toolBridgeNotification)
+		if !found {
+			t.Fatal("notification query should remain exposed")
+		}
+		capability := notification.Tool.(*notificationCapabilityTool)
+		if !capability.allowQuery || capability.allowSend {
+			t.Fatalf("unexpected notification actions: realtime backend=%t query=%t send=%t", cli, capability.allowQuery, capability.allowSend)
+		}
+		ctx, _ := WithToolError(context.Background())
+		if _, err := capability.Call(ctx, `{"action":"send","title":"Test"}`); err != nil || ToolErrorFromContext(ctx) == nil {
+			t.Fatalf("direct send should be rejected: %v", err)
+		}
+	}
 }

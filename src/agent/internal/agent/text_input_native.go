@@ -31,10 +31,11 @@ func (e *textInputEngine) runNativeTextInsertionWithFocus(ctx context.Context, a
 		return textInputResult{Reason: "native text verification is not configured"}, true
 	}
 	if resolveFocus != nil {
-		args.Focus, err = resolveFocus(ctx)
+		focus, err := resolveFocus(ctx)
 		if err != nil {
 			return textInputResult{Reason: err.Error()}, true
 		}
+		args.Focus = &focus
 	}
 	if err := e.applyFocus(ctx, args.Focus); err != nil {
 		return textInputFailure(err), true

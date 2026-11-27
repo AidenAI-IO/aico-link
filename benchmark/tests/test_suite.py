@@ -1667,6 +1667,7 @@ def test_aico_app_connection_capabilities_suite_covers_real_proxy_contract():
 
 
 @pytest.mark.parametrize("bounds, message", [
+    ({"$one_of": []}, "must be the only key and a non-empty array"),
     ({"$gte": "746"}, "must be a finite number"),
     ({"$lte": None}, "must be a finite number"),
     ({"$gte": True}, "must be a finite number"),

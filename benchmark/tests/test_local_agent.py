@@ -33,6 +33,26 @@ def args(tmp_path, monkeypatch):
         "--bridge-port", str(ports[2]), "--share-port", str(ports[3])])
 
 
+@pytest.mark.parametrize("location", ["sibling", "path", "missing", "legacy"])
+def test_supplied_agent_checks_device_cli(args, tmp_path, monkeypatch, location):
+    args.agent_binary = tmp_path / "agent"
+    args.agent_binary.touch(mode=0o755)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.delenv("AICO_LEGACY_DEVICE_TOOLS", raising=False)
+    if location in {"sibling", "path"}:
+        cli_dir = tmp_path if location == "sibling" else bin_dir
+        (cli_dir / "device-cli").touch(mode=0o755)
+    if location == "legacy":
+        monkeypatch.setenv("AICO_LEGACY_DEVICE_TOOLS", "1")
+    if location in {"missing", "legacy"}:
+        with pytest.raises(RuntimeError, match="device-cli"):
+            launcher.agent_binary(args)
+    else:
+        assert launcher.agent_binary(args) == str(args.agent_binary.resolve())
+
+
 def test_target_config_is_preserved_and_cannot_be_shared_between_modes(args, tmp_path):
     args.config = tmp_path / "import.toml"
     args.config.write_text("original configuration")

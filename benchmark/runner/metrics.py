@@ -6,7 +6,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any
 from runner.models import TaskResult
-from runner.trace import tool_result_failed
+from runner.trace import episode_device_cli_calls, tool_result_failed
 
 
 FAILURE_CLASSES = ("agent", "environment", "evaluation", "skipped", "unknown")
@@ -52,6 +52,11 @@ def _is_device_action(tool_name: str, tool_input: Any) -> bool:
     if tool_name == "quick_action" and parsed_input.get("list") is True:
         return False
     action = str(parsed_input.get("action") or "").lower()
+    if not action and not parsed_input and tool_name in {
+        "bridge_calendar", "bridge_clipboard", "bridge_contacts", "bridge_notification",
+    }:
+        # Older episode records may have redacted every argument.
+        return False
     return not (
         tool_name.startswith("bridge_")
         and action in {"query", "read", "get", "inspect", "list", "search"}
@@ -232,6 +237,10 @@ def derive_episode_metrics(episode: Mapping[str, Any] | None) -> dict[str, Any]:
     device_execution_ms = 0
     device_actions_seen = 0
     device_durations_seen = 0
+    direct_action_calls = 0
+    cli_action_count = 0
+    cli_evidence_seen = False
+    fold_seen = False
     tool_errors = 0
     replan_count = 0
     replan_seen = False
@@ -245,14 +254,27 @@ def derive_episode_metrics(episode: Mapping[str, Any] | None) -> dict[str, Any]:
             replan_seen = True
             replan_count += int(bool(event.get("needs_replan")))
         tool_name = str(event.get("tool_name") or "")
+        fold_seen |= event.get("type") == "conact_fold"
         if event.get("type") == "tool_call":
             last_tool_inputs[tool_name] = event.get("tool_input")
+            direct_action_calls += int(_is_device_action(tool_name, event.get("tool_input")))
         if event.get("type") != "tool_result":
             continue
         duration = event.get("duration_ms")
         tool_input = event.get("tool_input")
         if tool_input is None:
             tool_input = last_tool_inputs.get(tool_name)
+        cli_calls = episode_device_cli_calls(event)
+        cli_evidence_seen |= bool(cli_calls)
+        cli_actions = [call for call in cli_calls if _is_device_action(call.tool, call.input)]
+        for call in cli_actions:
+            if call.not_dispatched:
+                continue
+            device_actions_seen += 1
+            cli_action_count += 1
+            if call.duration_ms is not None:
+                device_execution_ms += call.duration_ms
+                device_durations_seen += 1
         is_device_action = _is_device_action(tool_name, tool_input)
         if is_device_action:
             device_actions_seen += 1
@@ -263,7 +285,10 @@ def derive_episode_metrics(episode: Mapping[str, Any] | None) -> dict[str, Any]:
             tool_errors += 1
             if first_error_ref is None:
                 first_error_ref = f"episode.json#/events/{index}"
-                first_error_stage = "device_execution" if is_device_action else "unknown"
+                first_error_stage = ("device_execution" if is_device_action or any(c.is_error for c in cli_actions)
+                                     else "unknown")
+    if cli_evidence_seen or fold_seen:
+        metrics["device_actions"] = direct_action_calls + cli_action_count
     metrics["device_execution_ms"] = (
         device_execution_ms
         if events and device_actions_seen == device_durations_seen

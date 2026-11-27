@@ -163,7 +163,7 @@ func TestTerminationPolicyIgnoresDifferentActionsOnUnchangedScreen(t *testing.T)
 	}
 }
 
-func TestTerminationPolicyStopsIdenticalUIActionOnIdenticalScreen(t *testing.T) {
+func TestTerminationPolicyWarnsForIdenticalUIActionOnIdenticalScreen(t *testing.T) {
 	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
 	screen := progressTestObservation(t)
 	tap := `{"type":"tap","point":{"x":500,"y":500}}`
@@ -179,8 +179,8 @@ func TestTerminationPolicyStopsIdenticalUIActionOnIdenticalScreen(t *testing.T) 
 	}
 	policy.AfterToolCall("wait_for_stable_screen", `{}`, screen, false)
 	decision = policy.AfterToolCall("touch_gesture", tap, screen, false)
-	if !decision.Stop || decision.Reason != StopReasonLoopDetected {
-		t.Fatalf("third identical tap: %#v, want a loop stop", decision)
+	if decision.Stop || decision.Notice != "" {
+		t.Fatalf("third identical tap: %#v, want continuation without a duplicate notice", decision)
 	}
 }
 
@@ -210,15 +210,19 @@ func TestTerminationPolicyNeverRestrictsUITools(t *testing.T) {
 }
 
 // Identical screenshots repeated with nothing in between are still a loop.
-func TestTerminationPolicyStopsRepeatedIdenticalObservations(t *testing.T) {
+func TestTerminationPolicyWarnsForRepeatedIdenticalObservations(t *testing.T) {
 	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
 	screen := progressTestObservation(t)
-	var decision TerminationDecision
-	for i := 0; i < 10 && !decision.Stop; i++ {
-		decision = policy.AfterToolCall("screenshot", `{}`, screen, false)
+	warned := false
+	for i := 0; i < 10; i++ {
+		decision := policy.AfterToolCall("screenshot", `{}`, screen, false)
+		if decision.Stop {
+			t.Fatalf("repeated observation stopped the run: %+v", decision)
+		}
+		warned = warned || decision.Notice != ""
 	}
-	if !decision.Stop {
-		t.Fatal("repeated identical screenshots never stopped the run")
+	if !warned {
+		t.Fatal("expected a notice for identical screenshots")
 	}
 	fresh := NewTerminationPolicy(DefaultTerminationPolicyConfig())
 	for i := 0; i < 10; i++ {

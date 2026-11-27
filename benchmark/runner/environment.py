@@ -629,6 +629,7 @@ def build_mobilegym_environment_command(
     benchmark_dir: Path,
     bridge_port: int = 9090,
     parallel_envs: int = DEFAULT_MOBILEGYM_PARALLEL_ENVS,
+    default_aico_app: bool = False,
 ) -> list[str]:
     """Build docker run command for MobileGym environment."""
     parallel_envs = max(1, int(parallel_envs))
@@ -669,6 +670,7 @@ def build_mobilegym_environment_command(
                 f"--bridge-port {bridge_port} "
                 f"--parallel-envs {parallel_envs} "
                 "--headless"
+                + (" --default-aico-app" if default_aico_app else "")
             ),
         ]
     )

@@ -118,7 +118,8 @@ Web UI 检查器会列出未完成的后台任务，并可以通过以下端点�
 | 未恢复的模型请求失败 | `Interrupt [model_error]`。 |
 | 模型在给出回复或工具调用之前达到输出 token 上限（通常发生在推理过程中） | `Interrupt [output_truncated]`。空的模型轮次不会被保存，因此下一次请求可以继续对话。 |
 | 上下文预算、压缩或其他执行失败 | `Interrupt [execution_error]`。既没有回复也没有工具调用的模型轮次不会保存到历史中。 |
-| 迭代/时间预算、重复操作、无进展或重复解析失败 | 带有循环守卫停止原因的 `Interrupt`。现有的守卫警告和停止结果仍然可用。 |
+| 用尽迭代或耗时预算，或连续解析失败 | 带有停止原因的 `Interrupt`。 |
+| 重复操作或工具结果停滞 | 循环防护添加提示，运行继续。 |
 | 设备触控模式不兼容 | `Interrupt [device_mode_mismatch]`。 |
 | 运行时 panic | 在仍能持久化时写入 `Interrupt [panic]`；panic 会被重新抛出。 |
 | 进程意外退出且没有记录结束 | `Interrupt [agent_restart]`，在下一次后台输入之前恢复；完成情况未知。 |

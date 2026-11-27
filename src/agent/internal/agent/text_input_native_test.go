@@ -42,7 +42,7 @@ func (v *nativeVerificationStub) AnalyzeScreen(_ context.Context, _ screenshotRe
 }
 
 func TestNativeTextEnterTextNoIMEAndNoReplay(t *testing.T) {
-	for _, mode := range []string{"append", "middle_insertion", "replace", "partial_failure", "unverified", "candidate_only", "vision_failure"} {
+	for _, mode := range []string{"append", "already_focused", "middle_insertion", "replace", "partial_failure", "unverified", "candidate_only", "vision_failure"} {
 		t.Run(mode, func(t *testing.T) {
 			sink := &nativeInsertionStub{supported: true}
 			vision := &nativeVerificationStub{analysis: textInputScreenAnalysis{TargetMatched: true, FieldText: "中文🔋"}}
@@ -69,8 +69,14 @@ func TestNativeTextEnterTextNoIMEAndNoReplay(t *testing.T) {
 			}, vision, testNoWaitSleep)
 			tool := &EnterTextTool{engine: engine}
 			tool.SetDeviceTypeFunc(func() string { return "iOS" })
-			out, err := tool.enterTextInner(context.Background(), `{"text":"中文🔋","focus":{"x":350,"y":940}}`, enterTextOptions{replaceField: mode == "replace"})
-			wantOK := mode == "append" || mode == "middle_insertion" || mode == "replace"
+			input := `{"text":"中文🔋","focus":{"x":350,"y":940}}`
+			wantFocusCalls := 1
+			if mode == "already_focused" {
+				input = `{"text":"中文🔋"}`
+				wantFocusCalls = 0
+			}
+			out, err := tool.enterTextInner(context.Background(), input, enterTextOptions{replaceField: mode == "replace"})
+			wantOK := mode == "already_focused" || mode == "append" || mode == "middle_insertion" || mode == "replace"
 			if err != nil || enterTextOutputOK(out, err) != wantOK {
 				t.Fatalf("result = %s, %v", out, err)
 			}
@@ -80,10 +86,10 @@ func TestNativeTextEnterTextNoIMEAndNoReplay(t *testing.T) {
 			if sink.calls != 1 || sink.text != "中文🔋" || sink.replace != (mode == "replace") {
 				t.Fatalf("insertion = %+v", sink)
 			}
-			if len(keyboard.calls) != 0 || len(focus.calls) != 1 {
+			if len(keyboard.calls) != 0 || len(focus.calls) != wantFocusCalls {
 				t.Fatalf("unexpected IME fallback or refocus: keyboard=%v focus=%v", keyboard.calls, focus.calls)
 			}
-			if mode != "partial_failure" && (vision.calls != 1 || vision.request.MatchTextSuffix ||
+			if mode != "partial_failure" && (vision.calls != 1 || (vision.request.Focus == nil) != (mode == "already_focused") || vision.request.MatchTextSuffix ||
 				(vision.request.InsertionBefore != nil) != (mode != "replace")) {
 				t.Fatalf("verification = %+v", vision)
 			}

@@ -170,6 +170,7 @@ EOF
             "${ROOTFS_DIR}/usr/lib/aico/platform/contract.json"
         install -m 0644 /aico-business.deb "${ROOTFS_DIR}/tmp/aico-business.deb"
         chroot "${ROOTFS_DIR}" dpkg -i /tmp/aico-business.deb
+        chroot "${ROOTFS_DIR}" /usr/lib/aico/device-cli --help >/dev/null
         rm -f "${ROOTFS_DIR}/tmp/aico-business.deb"
     else
         echo 'Missing /aico-business.deb; business package is required' >&2

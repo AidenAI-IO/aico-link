@@ -13,6 +13,7 @@ from runner.runtask import run_one_task
 from runner.suite import (
     HardAssertions,
     MockEnvironmentSpec,
+    RequiredToolCallSpec,
     RubricItem,
     Suite,
     TaskSpec,
@@ -1833,6 +1834,32 @@ def test_unverifiable_required_calls_are_evaluation_errors_not_agent_failures(tm
     assert result.metrics["failure_class"] == "agent"
 
 
+@pytest.mark.parametrize("keep_pending_call", [False, True])
+def test_timeout_keeps_tool_evidence_from_ahead_of_history(tmp_path, keep_pending_call):
+    call = {"type": "tool_call", "tool_name": "shell", "tool_input": '{"command":"device-cli app clipboard read"}'}
+    result = {"type": "tool_result", "tool_name": "shell", "content": "ok", "metadata": {
+        "device_cli_calls": [{"tool": "bridge_clipboard", "input": {}, "is_error": False}],
+    }}
+    earlier = [{"type": "tool_call", "tool_name": "skill_read", "tool_input": '{"name":"device-cli"}'},
+               {"type": "tool_result", "tool_name": "skill_read", "content": "ok"}]
+    history = earlier + ([call] if keep_pending_call else [])
+    task = TaskSpec(id="clipboard", category="device", prompt="Read clipboard", description_for_judge="Read clipboard",
+                    rubric=[], hard_assertions=HardAssertions(response_required=False,
+                        required_tools=["bridge_clipboard"], required_tool_calls=[
+                            RequiredToolCallSpec("bridge_clipboard", {"action": "read"}),
+                        ]))
+    suite = Suite(name="test", tasks=[task], global_reset={}, sha256="sha", source_path=tmp_path / "suite.json")
+    row = runtask_mod.evaluate_task_history(
+        suite=suite, task=task, history=history, episode={"events": earlier + [call, result]},
+        attempt=1, artifact_dir=tmp_path, judge_cfg=None, judge_cache_dir=None, run_id="test", timed_out=True,
+    )
+    assert row.status == "timeout"
+    assert row.metrics["episode_tool_evidence"] == "applied"
+    assert row.metrics["tool_calls"] == 2
+    assert [f.id for f in row.hard_assertion_failures] == ["timeout"]
+    assert json.loads((tmp_path / "history.json").read_text()) == history
+
+
 def test_required_calls_use_episode_evidence_when_it_aligns(tmp_path: Path):
     from runner.runtask import evaluate_task_history
 
@@ -1849,3 +1876,74 @@ def test_required_calls_use_episode_evidence_when_it_aligns(tmp_path: Path):
     )
     assert result.status == "passed"
     assert result.metrics["episode_tool_evidence"] == "applied"
+
+
+@pytest.mark.parametrize("mode", ["legacy", "cli", "folded", "shell_error", "skipped", "unrecorded", "mixed_shell", "forbidden_action"])
+def test_device_action_evidence_reaches_hard_assertions_and_judge(tmp_path, monkeypatch, mode):
+    command = 'device-cli tap 100 200 && device-cli type "send café\ntext"'
+    tap = {"type": "tap", "point": {"x": 100, "y": 200}}
+    text = {"text": "send café\ntext"}
+    calls = [("touch_gesture", tap), ("enter_text", text)] if mode == "legacy" else [
+        ("shell", {"command": command + ("; pwd" if mode == "mixed_shell" else "")})
+    ]
+    history, events = [], []
+    for tool, args in calls:
+        call = {"type": "tool_call", "tool_name": tool, "tool_input": json.dumps(args)}
+        result = {"type": "tool_result", "tool_name": tool, "content": "ok"}
+        history.extend([call, result])
+        events.extend([call, {**result, "duration_ms": 20}])
+    if mode not in {"legacy", "unrecorded"}:
+        nested = [{"tool": "touch_gesture", "input": tap, "is_error": mode == "skipped", "duration_ms": 3}]
+        if mode != "skipped":
+            nested.append({"tool": "enter_text", "input": text, "is_error": False, "duration_ms": 7})
+        else:
+            nested[0]["not_dispatched"] = True
+        if mode in {"skipped", "shell_error"}:
+            events[-1]["is_error"] = True
+        events[-1]["metadata"] = {"device_cli_calls": nested}
+        history.append({"type": "state", "content": "Device CLI screenshot sheet.",
+                        "attachments": [{"kind": "image"}]})
+    if mode == "folded":
+        events.append({"type": "conact_fold", "tool_name": "fold_subtask"})
+        history = [{"type": "state", "content": "Subtask memory", "attachments": [{"kind": "image"}]}]
+    history.append({"type": "assistant", "content": "Done"})
+    task = TaskSpec(
+        id="task", category="device", prompt="Tap, then enter text", description_for_judge="Tap then type",
+        hard_assertions=HardAssertions(
+            min_tool_calls=2 if mode == "folded" else 0,
+            max_tool_calls=2 if mode == "legacy" else 1,
+            forbidden_tools=["shell", "enter_text"] if mode == "forbidden_action" else ["shell"],
+            allow_device_cli=True,
+            prohibited_actions=["send"],
+            required_tools=["touch_gesture"],
+            required_tool_calls=[RequiredToolCallSpec("touch_gesture", tap, first_attempt=True),
+                                 RequiredToolCallSpec("enter_text", text)],
+        ),
+        rubric=[RubricItem("text", "Text was entered")],
+    )
+    suite = Suite(name="test", tasks=[task], global_reset={}, sha256="sha", source_path=tmp_path / "suite.json")
+    judged = []
+
+    def judge(**kwargs):
+        judged.append(kwargs["trace"])
+        return JudgeOutput([RubricVerdict("text", "yes", "Entered")], "", "key", "")
+
+    monkeypatch.setattr(runtask_mod, "judge_task", judge)
+    result = runtask_mod.evaluate_task_history(
+        suite=suite, task=task, history=history, episode={"events": events}, attempt=1,
+        artifact_dir=tmp_path, judge_cfg=JudgeConfig(), judge_cache_dir=None, run_id="test", timed_out=False,
+    )
+    assert result.metrics["tool_calls"] == len(calls)
+    assert result.metrics["device_actions"] == (0 if mode in {"skipped", "unrecorded"} else 2)
+    assert result.hard_assertions.forbidden_tools == (mode != "forbidden_action")
+    assert result.hard_assertions.required_tool_calls == (mode not in {"skipped", "unrecorded"})
+    assert result.hard_assertions.prohibited_actions == (mode not in {"unrecorded", "mixed_shell"})
+    assert result.status == ("passed" if mode in {"legacy", "cli", "folded", "shell_error"} else "failed")
+    if mode in {"cli", "folded", "shell_error"}:
+        assert judged[0]["tool_calls"][0]["device_cli_calls"][1]["input"] == text
+        assert len(judged[0]["tool_results"]) == 1
+        assert result.metrics["device_execution_ms"] == 10  # not the whole shell
+        assert result.metrics["screenshots_taken"] == (0 if mode == "folded" else 1)
+    if mode == "skipped":
+        assert result.metrics["first_failure_stage"] == "device_execution"
+        assert result.metrics["device_execution_ms"] == 0

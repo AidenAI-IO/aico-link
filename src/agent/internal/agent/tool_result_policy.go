@@ -134,7 +134,7 @@ func (defaultToolResultPolicy) Prepare(_ context.Context, input ToolResultPrepar
 	previewBudget := min(toolResultPreviewTargetToken, contentBudget)
 	preview, structured := projectToolResultWithKind(input.Call, output, previewBudget)
 	prepared.Summary = boundTextToTokens(preview, 256)
-	sensitive := toolResultIsSensitive(toolCallName(input.Call))
+	sensitive := toolResultIsSensitive(toolCallName(input.Call)) || input.Result.containsPrivateDeviceData()
 	if input.ContextManager != nil && !sensitive {
 		mimeType := "text/plain"
 		if structured {
@@ -196,6 +196,15 @@ func failedPreparedToolResult(result ToolResult, actionCompleted bool) PreparedT
 	}
 }
 
+func (r ToolResult) containsPrivateDeviceData() bool {
+	for _, call := range r.deviceCalls {
+		if !call.NotDispatched && toolResultIsSensitive(call.Tool) {
+			return true
+		}
+	}
+	return false
+}
+
 func toolResultIsSensitive(toolName string) bool {
 	switch strings.TrimSpace(toolName) {
 	case toolBridgeClipboard, toolBridgeCalendar, toolBridgeContacts, toolBridgeNotification:
@@ -242,7 +251,7 @@ func prepareCompleteToolResult(input ToolResultPrepareInput, prepared PreparedTo
 	contentBudget := min(toolResultInlineMaxTokens, max(256, limit))
 	preview, _ := projectToolResultWithKind(input.Call, input.Result.Output, min(256, contentBudget))
 	prepared.Summary = boundTextToTokens(preview, 256)
-	if input.ContextManager != nil && !toolResultIsSensitive(toolCallName(input.Call)) {
+	if input.ContextManager != nil && !toolResultIsSensitive(toolCallName(input.Call)) && !input.Result.containsPrivateDeviceData() {
 		stored, err := input.ContextManager.StoreArtifact("text/plain", []byte(input.Result.Output), contextmanager.ArtifactMetadata{
 			ToolName:   input.Call.Spec.Name,
 			ToolCallID: input.Call.Action.ToolID,

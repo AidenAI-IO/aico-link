@@ -645,6 +645,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/skills/reload", s.handleSkillsReload)
 	mux.HandleFunc("/api/tools", s.handleTools)
 	mux.HandleFunc("/api/tools/", s.handleTools)
+	mux.HandleFunc("/api/device-cli/drag", s.handleDeviceCLIDrag)
+	mux.HandleFunc("/api/device-cli/app", s.handleDeviceCLIApp)
 	mux.HandleFunc("/mcp", s.handleMCP)
 	mux.HandleFunc("/api/providers/screenshot", s.handleProviderScreenshot)
 	mux.HandleFunc("/api/providers/mnk", s.handleProviderMNK)
@@ -683,10 +685,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/diagnostics/incident-log", s.handleServiceIncidentLog)
 	mux.HandleFunc("/api/storage/cleanup", s.handleStorageCleanup)
 
-	// Coordinate debug tool. Live frames come from POST /api/providers/screenshot.
-	mux.HandleFunc("/api/coordinate-debug/tap", s.handleCoordinateDebugTap)
-	mux.HandleFunc("/coordinate-debug", s.handleCoordinateDebug)
-	mux.HandleFunc("/coordinate-debug.html", s.handleCoordinateDebug)
+	// Debug workspace. Live frames come from POST /api/providers/screenshot.
+	mux.HandleFunc("/debug", s.handleDebug)
+	mux.HandleFunc("/api/debug/utg", s.handleDebugUTG)
+	mux.HandleFunc("/api/debug/coordinate/tap", s.handleCoordinateDebugTap)
+	mux.HandleFunc("/api/coordinate-debug/tap", s.handleCoordinateDebugTap) // compatibility
 	mux.HandleFunc("/keyboard-tap-android-keys", s.handleKeyboardTapAndroidKeys)
 
 	mux.HandleFunc("/user_files", s.handleUserFiles)
@@ -707,7 +710,7 @@ func (s *Server) Handler() http.Handler {
 		// /mcp is intentionally omitted: long support_bundle/device_status calls must
 		// not hold configOperations for the whole request. Runtime tool paths take
 		// the lock inside mcpServerBackend.CallRuntimeTool / DescribeRuntimeTool.
-		if s.runtime != nil && (strings.HasPrefix(r.URL.Path, "/api/tools/") || r.URL.Path == "/api/providers/mnk" || r.URL.Path == "/api/providers/screenshot" || r.URL.Path == "/api/coordinate-debug/tap") {
+		if s.runtime != nil && (strings.HasPrefix(r.URL.Path, "/api/tools/") || strings.HasPrefix(r.URL.Path, "/api/device-cli/") || r.URL.Path == "/api/providers/mnk" || r.URL.Path == "/api/providers/screenshot" || r.URL.Path == "/api/coordinate-debug/tap" || r.URL.Path == "/api/debug/coordinate/tap") {
 			s.runtime.configOperations.RLock()
 			defer s.runtime.configOperations.RUnlock()
 		}
@@ -1825,13 +1828,16 @@ func (s *Server) beginChatRun(req ChatRequest, input TurnInput, userMessage Mess
 
 func (s *Server) newChatRunRequest(run *chatRunSession, input TurnInput, episodeID, requestID string, handler func(RunEvent)) RunRequest {
 	return RunRequest{
-		Input:                   input.InputText,
-		Attachments:             input.Attachments,
-		Turn:                    input,
-		EpisodeID:               episodeID,
-		RequestID:               requestID,
-		DeviceEnvironment:       s.bridgeEnvironment(),
-		EventHandler:            handler,
+		Input:             input.InputText,
+		Attachments:       input.Attachments,
+		Turn:              input,
+		EpisodeID:         episodeID,
+		RequestID:         requestID,
+		DeviceEnvironment: s.bridgeEnvironment(),
+		EventHandler:      handler,
+		LiveActivityEventHandler: func(event RunEvent) {
+			s.liveActivity.UpdateFromRunEvent(requestID, event)
+		},
 		StreamSink:              s.semanticEvents,
 		StreamScope:             streamcontract.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: requestID, RunID: requestID},
 		AsyncEpisodeMaintenance: true,
@@ -4071,6 +4077,17 @@ func (s *Server) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Context().Value(deviceCLICaptureKey{}) != nil {
+		// Scripted benchmark fixtures must see CLI actions as well as direct tools.
+		cfg := s.runtime.ConfigSnapshot()
+		tools := benchmarkHeadlessTools(cfg, benchmarkMockTools(cfg, []langtools.Tool{spec.Tool}))
+		if len(tools) == 0 {
+			http.Error(w, fmt.Sprintf("Unknown tool: %s", toolName), http.StatusNotFound)
+			return
+		}
+		spec.Tool = tools[0]
+	}
+
 	rawInput, err := decodeToolInvokeInput(r.Body)
 	if err != nil {
 		http.Error(w, "Invalid request: "+err.Error(), http.StatusBadRequest)
@@ -4080,7 +4097,10 @@ func (s *Server) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	executionCtx := r.Context()
 	cancelExecution := context.CancelFunc(func() {})
-	if httpToolExecutionSurvivesClientDisconnect(toolName) {
+	// A drag_start is not safe to leave held when the caller has already
+	// disconnected. Release operations still finish independently of the client.
+	startingDrag := toolName == "touch_gesture" && dragStartRecoveredPoint(rawInput) != nil
+	if !startingDrag && r.Context().Value(deviceCLICaptureKey{}) == nil && httpToolExecutionSurvivesClientDisconnect(toolName) {
 		executionCtx, cancelExecution = detachedHTTPToolExecutionContext(r.Context())
 	}
 	defer cancelExecution()

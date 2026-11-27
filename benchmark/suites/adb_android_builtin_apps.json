@@ -21,6 +21,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -47,6 +48,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 20,
         "must_complete_within_sec": 210,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -73,6 +75,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 30,
         "must_complete_within_sec": 300,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -99,6 +102,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 16,
         "must_complete_within_sec": 210,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -125,6 +129,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 18,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -144,6 +149,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 28,
         "must_complete_within_sec": 300,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -163,6 +169,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 40,
         "must_complete_within_sec": 420,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -189,6 +196,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 18,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -215,6 +223,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 16,
         "must_complete_within_sec": 210,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -234,6 +243,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 30,
         "must_complete_within_sec": 360,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -260,6 +270,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 18,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -286,6 +297,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 28,
         "must_complete_within_sec": 300,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -312,6 +324,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 16,
         "must_complete_within_sec": 210,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -331,6 +344,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 30,
         "must_complete_within_sec": 300,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -357,6 +371,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 20,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -376,6 +391,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 30,
         "must_complete_within_sec": 300,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -395,6 +411,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 20,
         "must_complete_within_sec": 210,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -414,6 +431,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 45,
         "must_complete_within_sec": 480,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -440,6 +458,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 30,
         "must_complete_within_sec": 300,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1
@@ -466,6 +485,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 30,
         "must_complete_within_sec": 300,
+        "allow_device_cli": true,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1

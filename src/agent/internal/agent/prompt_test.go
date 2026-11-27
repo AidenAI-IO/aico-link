@@ -44,6 +44,36 @@ func TestRolePromptCarriesNoDate(t *testing.T) {
 	}
 }
 
+func TestRolePromptRoutesDeviceControlThroughCLI(t *testing.T) {
+	rt := NewRuntimeWithDeps(Config{ConfigDir: t.TempDir()}, nil, nil, nil, NewSkillIndex())
+	prompt := rt.buildAgentProfile(rt.skills, nil, "").SystemPrompt
+	if strings.Contains(prompt, "device-operator") || !strings.Contains(prompt, "load device-cli with skill_read") {
+		t.Fatal("runtime prompt must route device work through the Device CLI skill")
+	}
+}
+
+func TestConactFoldGuidanceFollowsSessionEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{name: "backend", want: true},
+		{name: "realtime with backend", cfg: Config{InputMode: "realtime", VoiceModel: VoiceModelConfig{UseBackendAgent: true}}, want: true},
+		{name: "standalone realtime", cfg: Config{InputMode: "realtime"}},
+		{name: "headless benchmark", cfg: Config{Benchmark: BenchmarkConfig{Headless: true}}},
+		{name: "scripted benchmark", cfg: Config{Benchmark: BenchmarkConfig{MockTools: true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime := NewRuntimeWithDeps(tc.cfg, nil, nil, nil, NewSkillIndex())
+			profile := runtime.buildAgentProfile(runtime.skills, nil, "")
+			if got := strings.Contains(profile.SystemPrompt, conactFoldRoleRule); got != tc.want {
+				t.Fatalf("ConAct fold guidance present = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRolePromptExplainsNotificationMemoryAndRawHistoryLookup(t *testing.T) {
 	profile := testPromptProfile(AgentConfig{})
 	for _, want := range []string{"Phone notifications", "recall_memory", "/userdata/agent/memory/notifications/events/", "YYYY-MM-DD.jsonl", "exact original notification"} {
@@ -492,6 +522,65 @@ func TestRolePromptOmitsRuntimeAndMemoryContext(t *testing.T) {
 	for _, unwanted := range []string{"## Runtime context", "Phone bridge status", "session memory tail"} {
 		if strings.Contains(profile.SystemPrompt, unwanted) {
 			t.Fatalf("system prompt should not include dynamic context %q:\n%s", unwanted, profile.SystemPrompt)
+		}
+	}
+}
+
+func TestStateHookInjectsUTGLandmarksOnlyAtConversationStart(t *testing.T) {
+	cfg := Config{ConfigDir: t.TempDir()}
+	runtime := NewRuntimeWithDeps(cfg, nil, nil, &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
+	path := skillUTGPath(cfg, runtime.devicePlatformFromState())
+	graph := skillUTG{Nodes: map[string]*utgNode{
+		"phone_home":      {Label: "phone_home", Summary: "Home screen with app icons"},
+		"settings_screen": {Label: "settings_screen", Summary: "System settings list"},
+	}}
+	if err := saveSkillUTG(path, graph); err != nil {
+		t.Fatal(err)
+	}
+	manager := newPromptTestContextManager(t)
+	runtime.contextManager = manager
+	manager.AddAppendMessageHook(runtime.getStateHook())
+	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "Open settings"}); err != nil {
+		t.Fatal(err)
+	}
+	list := manager.CloneMessageList()
+	if len(list) != 2 || list[0].Role != messages.MessageRoleState || list[1].Role != messages.MessageRoleUser {
+		t.Fatalf("turn messages order = %#v; want UTG/state before user", list)
+	}
+	if !strings.Contains(list[0].Content, "Optional Skill-UTG landmarks") || !strings.Contains(list[0].Content, "phone_home") || !strings.Contains(list[0].Content, "settings_screen") {
+		t.Fatalf("UTG landmarks missing from prefatory state: %q", list[0].Content)
+	}
+	if strings.Contains(list[1].Content, "Optional Skill-UTG landmarks") {
+		t.Fatalf("UTG banner leaked into user message: %q", list[1].Content)
+	}
+	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "Now open the app"}); err != nil {
+		t.Fatal(err)
+	}
+	list = manager.CloneMessageList()
+	for _, msg := range list[2:] {
+		if strings.Contains(msg.Content, "Optional Skill-UTG landmarks") {
+			t.Fatalf("UTG landmarks were reinjected after conversation start: %#v", msg)
+		}
+	}
+}
+
+func TestStateHookDoesNotInjectUTGLandmarksInStandaloneRealtime(t *testing.T) {
+	cfg := Config{ConfigDir: t.TempDir(), InputMode: "realtime"}
+	runtime := NewRuntimeWithDeps(cfg, nil, nil, &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
+	if err := saveSkillUTG(skillUTGPath(cfg, runtime.devicePlatformFromState()), skillUTG{Nodes: map[string]*utgNode{
+		"phone_home": {Label: "phone_home", Summary: "Home screen"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	manager := newPromptTestContextManager(t)
+	runtime.contextManager = manager
+	manager.AddAppendMessageHook(runtime.getStateHook())
+	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "Hello"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range manager.CloneMessageList() {
+		if strings.Contains(msg.Content, "Optional Skill-UTG landmarks") {
+			t.Fatalf("standalone realtime injected a UTG banner: %q", msg.Content)
 		}
 	}
 }

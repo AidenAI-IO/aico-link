@@ -23,6 +23,29 @@ def test_below_min_tool_calls_fails():
     assert out.failures[0].requirement == "Use at least 2 tool call(s)."
     assert out.failures[0].actual == "Used 1 tool call(s)."
 
+def test_tool_call_minimum_counts_successful_cli_batch_without_inflating_maximum():
+    trace = make_trace(1)
+    shell = trace.tool_calls[0]
+    shell.tool = "shell"
+    shell.is_error = True  # Partial effects still count when a later command fails.
+    shell.device_cli_calls = [
+        ToolCall(step=1, tool="touch_gesture", input={}),
+        ToolCall(step=1, tool="quick_action", input={}),
+        ToolCall(step=1, tool="quick_action", input={}, is_error=True),
+        ToolCall(step=1, tool="touch_gesture", input={}, not_dispatched=True),
+        ToolCall(step=1, tool="touch_gesture", input={}, has_result=False),
+    ]
+    assert evaluate_hard_assertions(trace, HardAssertions(min_tool_calls=2, max_tool_calls=1), False).all_passed
+    failures = evaluate_hard_assertions(trace, HardAssertions(min_tool_calls=3), False).failures
+    assert [(failure.id, failure.actual) for failure in failures] == [("min_tool_calls", "Used 2 tool call(s).")]
+
+
+def test_command_text_in_an_answer_does_not_count_as_a_tool_call():
+    trace = make_trace(0, response="<command>device-cli back</command>")
+    result = evaluate_hard_assertions(trace, HardAssertions(min_tool_calls=1), False)
+    assert result.results.min_tool_calls is False
+
+
 def test_above_max_tool_calls_fails():
     spec = HardAssertions(min_tool_calls=1, max_tool_calls=2)
     out = evaluate_hard_assertions(make_trace(5), spec, timed_out=False)
@@ -908,3 +931,25 @@ def test_expected_option_answer_requires_label_separator():
     for text in ("answer b", "option:b", "choice: b", "Answer\tB", "B", "Explanation\r\nAnswer: B\r\nMore text"):
         result = assertions.evaluate_expected_answer(text, "(b)", "option_letter")
         assert result.predicted_answer == "(b)"
+
+
+def test_cli_compatible_case_allows_shell_without_crediting_unexecuted_actions():
+    shell = ToolCall(step=1, tool="shell", input={"command": "device-cli scroll-to top"}, is_error=True)
+    trace = Trace(tool_calls=[shell], final_response="Done", total_tool_calls=1, total_duration_ms=0)
+    spec = HardAssertions(forbidden_tools=["shell", "touch_gesture"], required_tools=["quick_action"])
+    assert not evaluate_hard_assertions(trace, spec, timed_out=False).results.forbidden_tools
+    spec.allow_device_cli = True
+    results = evaluate_hard_assertions(trace, spec, timed_out=False).results
+    assert results.forbidden_tools and not results.required_tools
+    shell.device_cli_calls = [ToolCall(step=1, tool="touch_gesture", input={})]
+    assert not evaluate_hard_assertions(trace, spec, timed_out=False).results.forbidden_tools
+
+
+def test_app_identifier_alternatives_still_require_the_correct_app():
+    spec = HardAssertions(required_tool_calls=[RequiredToolCallSpec(
+        tool="open_app", input_contains={"app": {"$one_of": ["Settings", "com.android.settings"]}},
+    )])
+    for app, expected in [("Settings", True), ("com.android.settings", True), ("Camera", False)]:
+        trace = Trace(tool_calls=[ToolCall(step=1, tool="open_app", input={"app": app})],
+                      final_response="Done", total_tool_calls=1, total_duration_ms=0)
+        assert evaluate_hard_assertions(trace, spec, timed_out=False).all_passed is expected

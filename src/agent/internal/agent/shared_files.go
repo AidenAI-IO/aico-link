@@ -119,9 +119,13 @@ func sharedFileInfo(rel string, info os.FileInfo) sharedFile {
 	return item
 }
 
+func openSharedFile(root *os.Root, rel string) (*os.File, error) {
+	return openSharedFileWithFlags(root, rel, os.O_RDONLY)
+}
+
 // os.Root confines resolution even if another process swaps a path for a symlink.
 // Reject symlinks as well so only explicitly shared regular files are exposed.
-func openSharedFile(root *os.Root, rel string) (*os.File, error) {
+func openSharedFileWithFlags(root *os.Root, rel string, flags int) (*os.File, error) {
 	if rel == "" {
 		return root.Open(".")
 	}
@@ -138,7 +142,7 @@ func openSharedFile(root *os.Root, rel string) (*os.File, error) {
 			return nil, os.ErrNotExist
 		}
 	}
-	return root.Open(rel)
+	return root.OpenFile(rel, flags, 0)
 }
 
 func sharedFileMetadata(filename string) (sharedFile, error) {

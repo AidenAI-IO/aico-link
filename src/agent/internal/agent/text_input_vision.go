@@ -20,7 +20,7 @@ type textInputScreenAnalysisRequest struct {
 	InsertionBefore        *screenshotResult
 	CandidateTargetText    string
 	CandidateCommittedText string
-	Focus                  focusPointArgs
+	Focus                  *focusPointArgs
 	Segments               []string
 }
 
@@ -68,11 +68,11 @@ type textInputProbeAnalysis struct {
 }
 
 type textInputProbeVision interface {
-	ProbeInputMode(ctx context.Context, screenshot screenshotResult, platform string, focus focusPointArgs) (textInputProbeAnalysis, error)
+	ProbeInputMode(ctx context.Context, screenshot screenshotResult, platform string, focus *focusPointArgs) (textInputProbeAnalysis, error)
 }
 
 type textInputProbeCleanupVision interface {
-	VerifyProbeCleanup(ctx context.Context, before, after screenshotResult, platform string, focus focusPointArgs) (bool, error)
+	VerifyProbeCleanup(ctx context.Context, before, after screenshotResult, platform string, focus *focusPointArgs) (bool, error)
 }
 
 type llmTextInputVision struct {
@@ -157,12 +157,12 @@ func (v *llmTextInputVision) DecideCandidateAction(ctx context.Context, screensh
 	return action, nil
 }
 
-func (v *llmTextInputVision) ProbeInputMode(ctx context.Context, screenshot screenshotResult, platform string, focus focusPointArgs) (textInputProbeAnalysis, error) {
+func (v *llmTextInputVision) ProbeInputMode(ctx context.Context, screenshot screenshotResult, platform string, focus *focusPointArgs) (textInputProbeAnalysis, error) {
 	analysis, _, err := decide(ctx, v.decider, v.probeDecision(screenshot, platform, focus))
 	return analysis, err
 }
 
-func (v *llmTextInputVision) probeInputModeLLM(ctx context.Context, screenshot screenshotResult, platform string, focus focusPointArgs) (textInputProbeAnalysis, error) {
+func (v *llmTextInputVision) probeInputModeLLM(ctx context.Context, screenshot screenshotResult, platform string, focus *focusPointArgs) (textInputProbeAnalysis, error) {
 	prompt := buildTextInputProbePrompt(platform, focus)
 	raw, err := v.visionJSON(ctx, "ime_probe", prompt, screenshot)
 	if err != nil {
@@ -201,10 +201,10 @@ func (v *llmTextInputVision) probeInputModeLLM(ctx context.Context, screenshot s
 	}, nil
 }
 
-func buildTextInputProbePrompt(platform string, focus focusPointArgs) string {
+func buildTextInputProbePrompt(platform string, focus *focusPointArgs) string {
 	return strings.TrimSpace(fmt.Sprintf(`Determine the active keyboard input mode from this screenshot immediately after the automation typed the single lowercase letter "a".
 Platform: %q
-Focused field location (normalized 0-1000): (%.0f, %.0f)
+%s
 
 This is an input-mode probe only. Do not judge or transcribe the user's eventual target text.
 The device may use either a desktop-style IME or an on-screen keyboard. An on-screen keyboard may be visible or completely absent; its absence is normal and is never sufficient reason to return unknown.
@@ -223,15 +223,15 @@ Classification rules:
 - A visible text cursor beside "a" does not prove ASCII mode. IME preedit text can also show a cursor.
 - The absence of an underline does not prove ASCII mode. Candidate popup evidence takes priority.
 - Keyboard autocorrect suggestions for already committed English text are not an IME composition state.
-- When a keyboard is visible, distinguish ordinary autocorrect suggestions from an active IME candidate state by also checking the focused input position.`, platform, focus.X, focus.Y))
+- When a keyboard is visible, distinguish ordinary autocorrect suggestions from an active IME candidate state by also checking the focused input position.`, platform, textInputFocusHint(focus)))
 }
 
-func (v *llmTextInputVision) VerifyProbeCleanup(ctx context.Context, before, after screenshotResult, platform string, focus focusPointArgs) (bool, error) {
+func (v *llmTextInputVision) VerifyProbeCleanup(ctx context.Context, before, after screenshotResult, platform string, focus *focusPointArgs) (bool, error) {
 	remove, _, err := decide(ctx, v.decider, v.probeCleanupDecision(before, after, platform, focus))
 	return remove, err
 }
 
-func (v *llmTextInputVision) verifyProbeCleanupLLM(ctx context.Context, before, after screenshotResult, platform string, focus focusPointArgs) (bool, error) {
+func (v *llmTextInputVision) verifyProbeCleanupLLM(ctx context.Context, before, after screenshotResult, platform string, focus *focusPointArgs) (bool, error) {
 	prompt := buildTextInputProbeCleanupPrompt(platform, focus)
 	raw, err := v.visionJSONWithScreenshots(ctx, "probe_cleanup", prompt, before, after)
 	if err != nil {
@@ -254,22 +254,22 @@ func (v *llmTextInputVision) verifyProbeCleanupLLM(ctx context.Context, before, 
 	return *parsed.ProbeCharacterVisible, nil
 }
 
-func buildTextInputProbeCleanupPrompt(platform string, focus focusPointArgs) string {
+func buildTextInputProbeCleanupPrompt(platform string, focus *focusPointArgs) string {
 	return strings.TrimSpace(fmt.Sprintf(`Compare these two screenshots to verify whether the probe character "a" remains in the input field after the undo operation.
 The first screenshot was captured immediately before automation typed the probe character. The second screenshot was captured after automation sent undo.
 Platform: %q
-Focused field location (normalized 0-1000): (%.0f, %.0f)
+%s
 
 Return JSON only using exactly this shape:
 {"probe_character_visible":false,"cleanup_safe":false,"evidence":"short visual reason"}
 
 Verification rules:
-- Inspect the focused input field at the specified coordinates in both screenshots.
+- Inspect the focused input field in both screenshots; use the coordinate hint only when supplied.
 - Set probe_character_visible=true only if the second screenshot shows the lowercase letter "a" at the probe insertion position as committed text or uncommitted preedit text.
 - Set cleanup_safe=true only if the comparison confirms that this visible "a" was injected by this probe and a single Backspace will remove that probe character without deleting pre-existing user text.
 - Set both fields false when the probe character was removed by undo.
 - If the before screenshot is unclear, the insertion position cannot be identified, or the identity of the visible "a" is ambiguous, set cleanup_safe=false. A destructive cleanup must never be recommended based on the after screenshot alone.
-- Focus on the cursor position and immediate surrounding text; ignore any "a" characters already present in the first screenshot.`, platform, focus.X, focus.Y))
+- Focus on the cursor position and immediate surrounding text; ignore any "a" characters already present in the first screenshot.`, platform, textInputFocusHint(focus)))
 }
 
 // PartitionComposition splits one long IME run at natural language boundaries.
@@ -467,7 +467,7 @@ Platform: %q
 Target text: %q
 Verification scope: %q
 Typed segments: %s
-Focus (normalized 0-1000): (%.0f, %.0f)
+%s
 %s
 
 Return JSON only:
@@ -486,7 +486,7 @@ Rules:
 - composition_pending: true whenever the just-typed content is still in an IME preedit/candidate state and requires confirmation, including an ASCII part shown with an IME candidate box
 - observed_mode: ascii=direct Latin entry with no active candidate/preedit box; composition=any active IME candidate/preedit state, including a candidate box shown for an ASCII part such as "4k60"
 - wrong_ime_suspected: true when field shows raw romanization instead of target script
-- suggest_switch_ime: true only when confident the wrong keyboard/IME is active`, req.Platform, req.TargetText, verificationScope, segments, req.Focus.X, req.Focus.Y, phaseHint, targetMatchRule))
+- suggest_switch_ime: true only when confident the wrong keyboard/IME is active`, req.Platform, req.TargetText, verificationScope, segments, textInputFocusHint(req.Focus), phaseHint, targetMatchRule))
 }
 
 func buildTextInputCandidateActionPrompt(req textInputScreenAnalysisRequest) string {
@@ -498,7 +498,7 @@ func buildTextInputCandidateActionPrompt(req textInputScreenAnalysisRequest) str
 Verification target for the just-entered text: %q
 Current IME part: %q
 Text already selected within the current IME part: %q
-Focus (normalized 0-1000): (%.0f, %.0f)
+%s
 
 Return JSON only in one of these forms:
 {"action":"select","offset":0,"text":"visible candidate text","completes_part":true}
@@ -520,7 +520,7 @@ Rules:
 - If no exact-prefix candidate is visible and expansion is unavailable or cannot be determined, use none
 - offset is the signed number of moves from the highlighted candidate: positive=Right, negative=Left, zero=select the highlighted candidate
 - text must exactly transcribe the visible candidate selected and is used only for logging
-- When the visible text or its relationship to the remaining target is uncertain, use none`, req.TargetText, candidateTarget, req.CandidateCommittedText, req.Focus.X, req.Focus.Y))
+- When the visible text or its relationship to the remaining target is uncertain, use none`, req.TargetText, candidateTarget, req.CandidateCommittedText, textInputFocusHint(req.Focus)))
 }
 
 func (v *llmTextInputVision) visionJSON(ctx context.Context, operation, prompt string, screenshot screenshotResult) (string, error) {
@@ -633,7 +633,7 @@ type stubTextInputVision struct {
 	actions  []textInputCandidateAction
 }
 
-func (s *stubTextInputVision) ProbeInputMode(_ context.Context, _ screenshotResult, _ string, _ focusPointArgs) (textInputProbeAnalysis, error) {
+func (s *stubTextInputVision) ProbeInputMode(_ context.Context, _ screenshotResult, _ string, _ *focusPointArgs) (textInputProbeAnalysis, error) {
 	if len(s.analyses) == 0 {
 		return textInputProbeAnalysis{Mode: textInputModeComposition, Evidence: "stub default"}, nil
 	}
@@ -683,7 +683,14 @@ func (s *stubTextInputVision) DecideCandidateAction(_ context.Context, _ screens
 	return action, nil
 }
 
-func (s *stubTextInputVision) VerifyProbeCleanup(_ context.Context, _, _ screenshotResult, _ string, _ focusPointArgs) (bool, error) {
+func (s *stubTextInputVision) VerifyProbeCleanup(_ context.Context, _, _ screenshotResult, _ string, _ *focusPointArgs) (bool, error) {
 	// Stub always returns false (probe character successfully removed)
 	return false, nil
+}
+
+func textInputFocusHint(focus *focusPointArgs) string {
+	if focus == nil {
+		return "Identify the already-focused editable field by its caret, selection, or other visible focus indicators; do not guess if unclear."
+	}
+	return fmt.Sprintf("Focused field location (normalized 0-1000): (%.0f, %.0f)", focus.X, focus.Y)
 }

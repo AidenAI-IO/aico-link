@@ -186,6 +186,9 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"command":"pwd"}`,
 	},
+	conactFold:   {Category: "memory", InputMode: toolInputModeJSON, HTTPExposed: toolSpecBoolPtr(false)},
+	conactSearch: {Category: "memory", InputMode: toolInputModeJSON, HTTPExposed: toolSpecBoolPtr(false)},
+	conactGoto:   {Category: "memory", InputMode: toolInputModeJSON, HTTPExposed: toolSpecBoolPtr(false)},
 	"skill_list": {
 		Category:     "skills",
 		InputMode:    toolInputModeJSON,
@@ -232,9 +235,10 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		ExampleInput: `{"url":"https://example.com"}`,
 	},
 	toolReadImage: {
+		HTTPExposed:  toolSpecBoolPtr(false),
 		Category:     "observation",
 		InputMode:    toolInputModeJSON,
-		ExampleInput: `{"path":"/share/photo.jpg"}`,
+		ExampleInput: `{"path":"/tmp/device-cli-example.jpg"}`,
 	},
 	"wait_for_stable_screen": {
 		Category:     "observation",

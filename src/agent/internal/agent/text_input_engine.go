@@ -70,7 +70,7 @@ type textInputEngine struct {
 
 type textInputArgs struct {
 	Text             string            `json:"text"`
-	Focus            focusPointArgs    `json:"focus"`
+	Focus            *focusPointArgs   `json:"focus,omitempty"`
 	CurrentIMEPart   string            `json:"-"`
 	VerifyTextSuffix bool              `json:"-"`
 	ReplaceField     bool              `json:"-"`
@@ -345,7 +345,7 @@ func (e *textInputEngine) planCompositionSegmentsForChunks(ctx context.Context, 
 	return segments, nil
 }
 
-func (e *textInputEngine) probeTextInputMode(ctx context.Context, platform string, focus focusPointArgs, replaceField bool) (mode textInputMode, vlmCalls int, err error) {
+func (e *textInputEngine) probeTextInputMode(ctx context.Context, platform string, focus *focusPointArgs, replaceField bool) (mode textInputMode, vlmCalls int, err error) {
 	undoKeys, err := textInputKeyboardKeysForUndo(platform)
 	if err != nil {
 		return textInputModeUnknown, vlmCalls, err
@@ -694,7 +694,10 @@ func (e *textInputEngine) decideCandidateAction(ctx context.Context, platform st
 	return action, 1, err
 }
 
-func (e *textInputEngine) applyFocus(ctx context.Context, focus focusPointArgs) error {
+func (e *textInputEngine) applyFocus(ctx context.Context, focus *focusPointArgs) error {
+	if focus == nil {
+		return nil
+	}
 	_, err := callTextInputTool(ctx, e.hw.touchGesture, jsonString(map[string]any{
 		"type":  "tap",
 		"point": map[string]any{"x": focus.X, "y": focus.Y},

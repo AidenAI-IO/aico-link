@@ -3,7 +3,7 @@ import json
 import pytest
 
 from runner.models import ToolCall, Trace
-from runner.trace import extract_trace, extract_step_screenshots, trace_has_skill_read
+from runner.trace import apply_episode_tool_evidence, extract_trace, extract_step_screenshots, tool_execution_history, trace_has_skill_read
 
 HISTORY = [
     {"type": "user", "content": "请打开设置"},
@@ -23,6 +23,51 @@ def test_extract_trace_collects_tool_calls_in_order():
     assert trace.tool_calls[1].tool == "touch_gesture"
     assert trace.tool_calls[1].input == {"type": "tap", "point": {"x": 540, "y": 1200}}
     assert trace.final_response == "已打开。"
+
+def test_folded_trace_uses_episode_order_and_keeps_surviving_screenshot():
+    def shell_exchange(command):
+        return [
+            {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+            {"type": "tool_result", "tool_name": "shell", "content": "ok"},
+        ]
+
+    first, second, latest = (shell_exchange(f"device-cli tap {x} 100") for x in (100, 200, 300))
+    second[1]["metadata"] = {"has_screenshot": True}
+    pending = shell_exchange("device-cli back")[0]
+    fold = {"type": "conact_fold", "tool_name": "fold_subtask"}
+    episode = {"events": first + [fold] + second + [fold] + latest}
+    history = first + latest + [
+        {"type": "state", "content": "Device CLI screenshot.", "attachments": [{"kind": "image"}]},
+        pending,
+        {"type": "assistant", "content": "<command>device-cli home</command>"},
+    ]
+    trace = extract_trace(tool_execution_history(history, episode))
+
+    assert trace.total_tool_calls == 4
+    assert [tc.input for tc in trace.tool_calls] == [
+        json.loads(event["tool_input"]) for event in (first[0], second[0], latest[0], pending)
+    ]
+    assert apply_episode_tool_evidence(trace, episode)
+    assert [tc.has_screenshot for tc in trace.tool_calls] == [False, True, True, False]
+    assert not trace.tool_calls[-1].has_result
+    assert trace.final_response == history[-1]["content"]
+
+    # The recorder may finish an execution before its result reaches history.
+    trace = extract_trace(tool_execution_history(first + latest[:1], episode))
+    assert trace.total_tool_calls == 3
+    assert trace.tool_calls[-1].has_result
+
+
+def test_episode_tail_is_ignored_when_history_prefix_does_not_match():
+    def shell_call(command):
+        return {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})}
+
+    result = {"type": "tool_result", "tool_name": "shell"}
+    history = [shell_call("device-cli tap 100 200"), result]
+    episode = {"events": [shell_call("device-cli tap 300 400"), result,
+                          shell_call("device-cli app clipboard read"), result]}
+    assert tool_execution_history(history, episode) == history
+
 
 def test_extract_trace_marks_has_screenshot_when_data_present():
     trace = extract_trace(HISTORY)
@@ -293,3 +338,162 @@ def test_tool_result_evidence_preserves_non_image_data():
     history = [{"type": "tool_result", "tool_name": "skill_read", "content": '{"data":"skill contents"}'}]
 
     assert tool_result_evidence(history) == history
+
+
+@pytest.mark.parametrize("suffix, recover", [("", True), ('; echo "EXIT:$?"', True), ("; eval \"$extra\"", False)])
+def test_episode_evidence_recovers_redacted_app_data_args_from_literal_shell(suffix, recover):
+    from runner.trace import apply_episode_tool_evidence
+
+    command = '''device-cli app contacts query '{"query":"A && B"}' '''.strip() + suffix
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+        {"type": "tool_result", "tool_name": "shell", "content": "omitted"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": "bridge_contacts", "input": {}, "is_error": True, "not_dispatched": True},
+        ]},
+    }]})
+    call, = trace.tool_calls[0].device_cli_calls
+    assert call.input == ({"action": "query", "query": "A && B"} if recover else {})
+    assert call.is_error and call.not_dispatched
+
+
+@pytest.mark.parametrize("command, recorded, expected", [
+    ('device-cli app contacts query --query Biden --limit 5; echo "EXIT:$?"',
+     ["bridge_contacts"], [{"action": "query", "query": "Biden", "limit": 5}]),
+    ("device-cli app clipboard write 'A; B' && echo 'device-cli app clipboard read' "
+     "&& device-cli app clipboard read > /tmp/clip.txt; wc -c < /tmp/clip.txt; od -c /tmp/clip.txt | head -20",
+     ["bridge_clipboard", "bridge_clipboard"], [{"action": "write", "text": "A; B"}, {"action": "read"}]),
+    ("device-cli app clipboard write 'marker' && echo extra && device-cli app clipboard read",
+     ["bridge_clipboard"], [{}]),
+    ('device-cli app contacts query --query "$NAME"; echo extra', ["bridge_contacts"], [{}]),
+])
+def test_episode_recovers_literal_cli_arguments_with_shell_diagnostics(command, recorded, expected):
+    from runner.trace import apply_episode_tool_evidence, is_device_cli_shell
+
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+        {"type": "tool_result", "tool_name": "shell"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": name, "input": {}, "is_error": False} for name in recorded
+        ]},
+    }]})
+    outer, = trace.tool_calls
+    assert [call.input for call in outer.device_cli_calls] == expected
+    assert not is_device_cli_shell(outer)
+
+
+@pytest.mark.parametrize("suffix, tools, recovered", [
+    (" && device-cli tap 142 590", ["bridge_clipboard", "touch_gesture"], True),
+    (" && device-cli tap 142 590", ["bridge_clipboard"], False),
+    (" && printf nope", ["bridge_clipboard"], False),
+])
+def test_mixed_cli_batch_recovers_only_aligned_recorded_arguments(suffix, tools, recovered):
+    from runner.trace import apply_episode_tool_evidence
+
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({
+            "command": "device-cli app clipboard write 'marker && text'" + suffix,
+        })},
+        {"type": "tool_result", "tool_name": "shell", "content": "omitted"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": name, "input": {}, "is_error": False} for name in tools
+        ]},
+    }]})
+    calls = trace.tool_calls[0].device_cli_calls
+    assert [call.tool for call in calls] == tools
+    assert calls[0].input == ({"action": "write", "text": "marker && text"} if recovered else {})
+
+
+@pytest.mark.parametrize("flags, recovered", [
+    ("--start=2037-11-18T00:00:00+08:00 --end 2037-11-19T00:00:00+08:00", True),
+    ("--from 2037-11-18T00:00:00+08:00 --end=2037-11-19T00:00:00+08:00", True),
+    ("--from 2037-11-18T00:00:00+08:00 --start 2037-11-18T00:00:00+08:00 --end 2037-11-19T00:00:00+08:00", False),
+])
+def test_episode_evidence_recovers_calendar_query_aliases(flags, recovered):
+    from runner.trace import apply_episode_tool_evidence
+
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({
+            "command": f"device-cli app calendar query {flags}",
+        })},
+        {"type": "tool_result", "tool_name": "shell"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": "bridge_calendar", "input": {}, "is_error": False},
+        ]},
+    }]})
+    call, = trace.tool_calls[0].device_cli_calls
+    assert call.input == ({"action": "query", "from": "2037-11-18T00:00:00+08:00",
+                           "to": "2037-11-19T00:00:00+08:00"} if recovered else {})
+
+
+def test_episode_evidence_recovers_calendar_flags_from_a_batch():
+    from runner.trace import apply_episode_tool_evidence
+
+    command = ("device-cli app calendar create --title 'Weekly sync' --start-at 2037-01-01T10:00:00Z "
+               "--alarm-minutes-before=10 --all-day && device-cli app calendar delete --event-id e1")
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+        {"type": "tool_result", "tool_name": "shell"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": "bridge_calendar", "input": {}, "is_error": False},
+            {"tool": "bridge_calendar", "input": {}, "is_error": True},
+        ]},
+    }]})
+    create, delete = trace.tool_calls[0].device_cli_calls
+    assert create.input == {"action": "create", "title": "Weekly sync", "start_at": "2037-01-01T10:00:00Z",
+                            "alarm_minutes_before": 10, "all_day": True}
+    assert delete.input == {"action": "delete", "event_id": "e1"}
+    assert delete.is_error
+
+
+def test_episode_evidence_recovers_contact_and_notification_flags_from_a_batch():
+    from runner.trace import apply_episode_tool_evidence
+
+    command = ("device-cli app contacts update --contact-id c1 --phone-number +15550100 "
+               "--phone-number=+15550101 --email a@example.test --email=b@example.test "
+               "&& device-cli app notification send --title Reminder --sound=false --badge 0")
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+        {"type": "tool_result", "tool_name": "shell"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": "bridge_contacts", "input": {}, "is_error": False},
+            {"tool": "bridge_notification", "input": {}, "is_error": True},
+        ]},
+    }]})
+    contacts, notification = trace.tool_calls[0].device_cli_calls
+    assert contacts.input == {"action": "update", "contact_id": "c1", "phone_numbers": ["+15550100", "+15550101"],
+                              "emails": ["a@example.test", "b@example.test"]}
+    assert notification.input == {"action": "send", "title": "Reminder", "sound": False, "badge": 0}
+    assert notification.is_error
+
+
+@pytest.mark.parametrize("failed, recovered", [(True, True), (False, False)])
+def test_short_circuited_cli_chain_recovers_only_recorded_prefix(failed, recovered):
+    from runner.trace import apply_episode_tool_evidence
+
+    command = "device-cli app clipboard write A && device-cli app contacts query --query X && device-cli app clipboard read"
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+        {"type": "tool_result", "tool_name": "shell"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "is_error": True, "metadata": {"device_cli_calls": [
+            {"tool": "bridge_clipboard", "input": {"action": "write"}, "is_error": False},
+            {"tool": "bridge_contacts", "input": {"action": "query"}, "is_error": failed},
+        ]},
+    }]})
+    write, query = trace.tool_calls[0].device_cli_calls
+    assert write.input == ({"action": "write", "text": "A"} if recovered else {"action": "write"})
+    assert query.is_error == failed

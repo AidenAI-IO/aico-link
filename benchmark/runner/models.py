@@ -11,6 +11,9 @@ class ToolCall:
     is_error: bool = False
     # False when history recorded the call but no result for it.
     has_result: bool = True
+    duration_ms: int | None = None
+    not_dispatched: bool = False
+    device_cli_calls: list[ToolCall] = dc.field(default_factory=list)
 
 @dc.dataclass
 class Trace:

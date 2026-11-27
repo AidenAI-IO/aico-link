@@ -3,10 +3,10 @@ import dataclasses as dc
 import json
 import re
 from typing import Any
-from runner.models import HardAssertionFailure, HardAssertionResults, Trace
+from runner.models import HardAssertionFailure, HardAssertionResults, ToolCall, Trace
 from runner.matching import dict_contains, value_matches
 from runner.suite import HardAssertions, TraceObservationSpec, is_list_assertion, is_range_assertion
-from runner.trace import trace_has_skill_read
+from runner.trace import effective_tool_calls, is_device_cli_shell, trace_has_skill_read
 
 
 PROHIBITED_ACTION_PATTERNS = {
@@ -156,7 +156,7 @@ def _trace_has_tool_call(trace: Trace, tool_name: str, input_contains: dict[str,
     target = tool_name.strip()
     if not target:
         return False
-    for tc in trace.tool_calls:
+    for tc in effective_tool_calls(trace):
         if tc.tool != target:
             continue
         if dict_contains(tc.input if isinstance(tc.input, dict) else {}, input_contains):
@@ -165,7 +165,23 @@ def _trace_has_tool_call(trace: Trace, tool_name: str, input_contains: dict[str,
 
 
 def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool) -> AssertionOutcome:
-    tools_used = [tc.tool for tc in trace.tool_calls]
+    calls = effective_tool_calls(trace)
+    # A shell batch can satisfy a minimum through its recorded operations.
+    # Replace the wrapper count, rather than counting it again. Keep the
+    # maximum on outer calls: it caps model interactions, not device actions.
+    minimum_count = trace.total_tool_calls + sum(
+        max(0, sum(call.has_result and not call.is_error and not call.not_dispatched
+                   for call in outer.device_cli_calls) - 1)
+        for outer in trace.tool_calls if outer.tool == "shell" and outer.has_result
+    )
+    tools_used = [tc.tool for tc in calls]
+    forbidden = [tc for tc in calls if tc.tool in spec.forbidden_tools
+                 and not (spec.allow_device_cli and tc.tool == "shell")]
+    # Preserve legacy presence checks; a failed nested request isn't evidence
+    # that a device command was performed. Forbidden checks still see attempts.
+    required_tools_used = {tc.tool for tc in trace.tool_calls}
+    required_tools_used.update(call.tool for tc in trace.tool_calls for call in tc.device_cli_calls
+                               if not call.is_error)
     unique_tools = _unique_preserve_order(tools_used)
     prohibited_action_offenders = _prohibited_action_offenders(trace, spec.prohibited_actions)
     missing_tool_calls: list[Any] = []
@@ -175,8 +191,8 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
     # calls.
     for req_index, requirement in enumerate(spec.required_tool_calls):
         matched_index = None
-        for trace_index in range(search_start, len(trace.tool_calls)):
-            tc = trace.tool_calls[trace_index]
+        for trace_index in range(search_start, len(calls)):
+            tc = calls[trace_index]
             if tc.tool != requirement.tool:
                 continue
             # A failed or unfinished call is an attempt, not the required action.
@@ -191,10 +207,10 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
             break
         search_start = matched_index + 1
     results = HardAssertionResults(
-        min_tool_calls=trace.total_tool_calls >= spec.min_tool_calls,
+        min_tool_calls=minimum_count >= spec.min_tool_calls,
         max_tool_calls=trace.total_tool_calls <= spec.max_tool_calls,
-        required_tools=all(tool in tools_used for tool in spec.required_tools),
-        forbidden_tools=not any(tool in tools_used for tool in spec.forbidden_tools),
+        required_tools=all(tool in required_tools_used for tool in spec.required_tools),
+        forbidden_tools=not forbidden,
         prohibited_actions=not prohibited_action_offenders if spec.prohibited_actions else None,
         required_tool_calls=not missing_tool_calls if spec.required_tool_calls else None,
         timeout=not timed_out,
@@ -225,7 +241,7 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
                 id="min_tool_calls",
                 label="Min Tool Calls",
                 requirement=f"Use at least {spec.min_tool_calls} tool call(s).",
-                actual=f"Used {trace.total_tool_calls} tool call(s).",
+                actual=f"Used {minimum_count} tool call(s).",
             )
         )
     if results.max_tool_calls is False:
@@ -238,7 +254,7 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
             )
         )
     if results.required_tools is False:
-        missing = [tool for tool in spec.required_tools if tool not in tools_used]
+        missing = [tool for tool in spec.required_tools if tool not in required_tools_used]
         failures.append(
             HardAssertionFailure(
                 id="required_tools",
@@ -253,8 +269,7 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
     if results.forbidden_tools is False:
         offenders = [
             f"{tc.tool} at step {tc.step}"
-            for tc in trace.tool_calls
-            if tc.tool in spec.forbidden_tools
+            for tc in forbidden
         ]
         failures.append(
             HardAssertionFailure(
@@ -569,8 +584,11 @@ def _prohibited_action_offenders(trace: Trace, prohibited_actions: list[str]) ->
         for action in prohibited_actions
     ]
     offenders: list[str] = []
-    for tc in trace.tool_calls:
-        for label, value in _semantic_trace_values(tc.tool, tc.input):
+    for tc in effective_tool_calls(trace):
+        # A qualifying shell command is transport, not evidence about its text args.
+        # Its recorded device calls are still visited by effective_tool_calls.
+        values = [("tool", tc.tool)] if is_device_cli_shell(tc) else _semantic_trace_values(tc.tool, tc.input)
+        for label, value in values:
             text = str(value)
             for _, pattern in patterns:
                 if pattern.search(text):

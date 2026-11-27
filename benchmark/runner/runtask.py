@@ -25,7 +25,13 @@ from runner.models import HardAssertionFailure, HardAssertionResults, RubricVerd
 from runner.recovery import prepare_task_isolation, recover_agent_after_timeout
 from runner.reset import ResetError, SetupAssertionError, assert_memory_results, read_memory_results
 from runner.suite import Suite, TaskSpec, effective_mock_environment
-from runner.trace import extract_trace, apply_episode_tool_evidence, tool_result_evidence, human_handoff_requested
+from runner.trace import (
+    apply_episode_tool_evidence,
+    extract_trace,
+    human_handoff_requested,
+    tool_execution_history,
+    tool_result_evidence,
+)
 from runner.report import now_iso
 
 
@@ -176,10 +182,11 @@ def evaluate_task_history(
             json.dumps(episode, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    trace = extract_trace(history)
+    execution_history = tool_execution_history(history, episode)
+    trace = extract_trace(execution_history)
     episode_evidence_applied = apply_episode_tool_evidence(trace, episode)
     base.metrics["episode_tool_evidence"] = "applied" if episode_evidence_applied else "unavailable"
-    handoff = human_handoff_requested(history)
+    handoff = human_handoff_requested(execution_history)
     base.metrics["human_handoff_requested"] = handoff
     if episode and isinstance(episode.get("outcome"), dict):
         episode_answer = episode["outcome"].get("final_answer")
@@ -210,7 +217,7 @@ def evaluate_task_history(
         ]
     trace_dict = {
         "tool_calls": [dc.asdict(tc) for tc in trace.tool_calls],
-        "tool_results": tool_result_evidence(history),
+        "tool_results": tool_result_evidence(execution_history),
         "final_response": trace.final_response,
         "total_tool_calls": trace.total_tool_calls,
     }

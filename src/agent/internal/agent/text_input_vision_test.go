@@ -141,7 +141,7 @@ func TestCandidateActionParsesUpWithoutSelectionFields(t *testing.T) {
 func TestTextInputProbeParsesCompositionResponse(t *testing.T) {
 	model := &textInputVisionRecordingModel{content: `{"mode":"composition","evidence":"candidate 啊 is visible"}`}
 	vision := &llmTextInputVision{models: model}
-	analysis, err := vision.ProbeInputMode(context.Background(), screenshotResult{Data: "ZmFrZQ=="}, "ios", focusPointArgs{X: 500, Y: 300})
+	analysis, err := vision.ProbeInputMode(context.Background(), screenshotResult{Data: "ZmFrZQ=="}, "ios", &focusPointArgs{X: 500, Y: 300})
 	if err != nil {
 		t.Fatalf("ProbeInputMode() error = %v", err)
 	}
@@ -161,7 +161,7 @@ func TestTextInputProbeCJKCandidatePopupOverridesASCIIClassification(t *testing.
 		"evidence":"a has a cursor but numbered Chinese candidates are visible below it"
 	}`}
 	vision := &llmTextInputVision{models: model}
-	analysis, err := vision.ProbeInputMode(context.Background(), screenshotResult{Data: "ZmFrZQ=="}, "ios", focusPointArgs{})
+	analysis, err := vision.ProbeInputMode(context.Background(), screenshotResult{Data: "ZmFrZQ=="}, "ios", &focusPointArgs{})
 	if err != nil {
 		t.Fatalf("ProbeInputMode() error = %v", err)
 	}
@@ -178,7 +178,7 @@ func TestTextInputProbeCleanupRejectsUnsafeVisibleCharacter(t *testing.T) {
 		screenshotResult{Data: "YmVmb3Jl"},
 		screenshotResult{Data: "YWZ0ZXI"},
 		"ios",
-		focusPointArgs{},
+		&focusPointArgs{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "cleanup is unsafe") {
 		t.Fatalf("VerifyProbeCleanup() error=%v, want unsafe cleanup error", err)
@@ -193,7 +193,7 @@ func TestTextInputProbeCleanupRejectsMissingVisibilityDecision(t *testing.T) {
 		screenshotResult{Data: "YmVmb3Jl"},
 		screenshotResult{Data: "YWZ0ZXI"},
 		"ios",
-		focusPointArgs{},
+		&focusPointArgs{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "missing probe_character_visible") {
 		t.Fatalf("VerifyProbeCleanup() error=%v, want missing decision error", err)

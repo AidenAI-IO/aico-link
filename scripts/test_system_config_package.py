@@ -267,7 +267,7 @@ class RuntimeConfigTests(unittest.TestCase):
     def test_production_packager_builds_one_verified_package(self):
         apps = self.root / "apps"
         (apps / "bin").mkdir(parents=True)
-        for name in "agent audio_service audio_service_cli ble_service mcu_service cpu_vad ekho frame_service frame_service_cli rknn_vad smart_turn_helper ui_grounding_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail ota abctl aico-environment ttyd".split():
+        for name in "agent device-cli audio_service audio_service_cli ble_service mcu_service cpu_vad ekho frame_service frame_service_cli rknn_vad smart_turn_helper ui_grounding_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail ota abctl aico-environment ttyd".split():
             binary = apps / "bin" / name
             binary.write_text("#!/bin/sh\nexit 0\n")
             binary.chmod(0o755)
@@ -313,6 +313,7 @@ class RuntimeConfigTests(unittest.TestCase):
         extracted = self.root / "extracted-production"
         subprocess.run(["dpkg-deb", "--extract", str(package), str(extracted)], check=True)
         self.assertTrue((extracted / "usr/lib/aico/ekho").stat().st_mode & 0o111)
+        self.assertTrue((extracted / "usr/lib/aico/device-cli").stat().st_mode & 0o111)
         installed_web = extracted / "usr/share/aico/config-web"
         self.assertEqual((installed_web / "index.html").read_text(),
                          "<!doctype html><title>Config Web fixture</title>\n")

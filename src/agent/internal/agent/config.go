@@ -497,6 +497,11 @@ func (c Config) RealtimeProviderType() string {
 	return provider
 }
 
+// usesBackendAgent reports whether this session runs device work through the backend.
+func (c Config) usesBackendAgent() bool {
+	return c.InputModeOrDefault() != "realtime" || c.UseBackendAgentEffective()
+}
+
 // UseBackendAgentEffective reports whether the realtime session should use the
 // backend agent. The stored use_backend_agent value is preserved; Moss Live
 // cannot inject task-update text, so it always runs as false without rewriting

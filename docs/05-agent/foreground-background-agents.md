@@ -256,7 +256,8 @@ delivery retain their own lifecycle.
 | Unrecovered model request failure | `Interrupt [model_error]`. |
 | Model reached its output token limit, usually while reasoning, before a reply or tool call | `Interrupt [output_truncated]`. The empty model turn is not stored, so the next request can resume the conversation. |
 | Context budget, compaction, or other execution failure | `Interrupt [execution_error]`. A model turn with no reply and no tool call is not stored in history. |
-| Iteration/time budget, repeated actions, no progress, or repeated parsing failures | `Interrupt` with the loop guard's stop reason. Existing guard warnings and stop results remain available. |
+| Iteration or time budget exhausted, or repeated parsing failures | `Interrupt` with the stop reason. |
+| Repeated actions or stalled tool results | The loop guard adds a notice and the run continues. |
 | Incompatible device touch mode | `Interrupt [device_mode_mismatch]`. |
 | Runtime panic | `Interrupt [panic]`, when persistence remains possible; the panic is rethrown. |
 | Abrupt process exit with no recorded end | `Interrupt [agent_restart]`, recovered before the next backend input; completion is unknown. |

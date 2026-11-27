@@ -117,17 +117,20 @@ through `shell` and Python. An attached file reaches the model as its absolute
 path in the user message.
 
 To look at an image file, the Agent calls `read_image` with its path. The tool
-reads PNG, JPEG, or GIF (first frame) files below `/share` only, with the same
-rules as downloads: hidden entries, symbolic links, and paths outside the root
-are refused. Every image is fully decoded first, so a truncated file is
-refused rather than sent. A GIF's first frame is placed on its full canvas.
+reads PNG, JPEG, or GIF (first frame) from regular files under `/tmp` or the
+configured shared directory (`/share` by default). Path resolution stays within
+its selected directory, and shared files follow the existing hidden-file and
+symlink rules. Every image is fully
+decoded first, so a truncated file is refused rather than sent. A GIF's first
+frame is placed on its full canvas.
 Images whose longer side exceeds 1568 px are scaled down and sent
 as JPEG, with transparency flattened onto white; files over 25 MiB or 40
 megapixels are refused. The image is attached to the next model request with a
 caption naming the file and stating that it is not the connected display, so
 its coordinates are not used for `touch_gesture`; it is also not recorded as
 the latest display screenshot. The transcript keeps only the
-path, size, and format. `read_image` is a backend tool: the realtime foreground does not receive it.
+path, size, and format. `read_image` is available only to the backend Agent, not through Tools HTTP,
+MCP, or the standalone realtime foreground.
 
 Each user turn's state message also carries a `shared_files` entry that lists
 the 20 most recently modified files below `/share`, newest first, with size,

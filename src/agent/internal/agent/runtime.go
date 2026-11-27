@@ -107,6 +107,7 @@ type Runtime struct {
 	ttsManager              *tts.ProviderManager
 	ttsManagerOnce          sync.Once
 	episodeMaintenance      asyncRuntimeWork
+	utgReflectionRunning    atomic.Bool
 	telemetryExports        asyncRuntimeWork
 	episodeMemoryInitErr    error
 	routines                *routines.Manager
@@ -150,6 +151,8 @@ type RunRequest struct {
 	StreamWriter      io.Writer
 	MaxTokens         int
 	EventHandler      func(RunEvent)
+	// LiveActivityEventHandler receives display-only updates for nested device actions.
+	LiveActivityEventHandler func(RunEvent)
 	// StreamSink receives typed v2 events in addition to the legacy event
 	// handler. It is optional so existing callers retain their current output.
 	StreamSink  stream.EventSink
@@ -370,6 +373,8 @@ type RunEvent struct {
 	Timestamp        time.Time  `json:"timestamp"`
 	IsError          bool       `json:"is_error,omitempty"`
 	ToolError        *ToolError `json:"tool_error,omitempty"`
+
+	liveActivityHandled bool
 }
 
 // ContextWindowFn returns the active model's spec. It is called on demand so a
@@ -1022,7 +1027,7 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// transferred tools itself. Take the decision under the same config snapshot
 	// the rest of the run reads, so a reload cannot flip it mid-run.
 	cfg := r.ConfigSnapshot()
-	if cfg.InputModeOrDefault() == "realtime" && !cfg.UseBackendAgentEffective() {
+	if !cfg.usesBackendAgent() {
 		return RunResult{}, fmt.Errorf("backend agent is disabled for this realtime session; all processing should be handled by the realtime voice session")
 	}
 
@@ -1365,6 +1370,10 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 			r.logger.Warn("[memory] refresh user profile section failed: %v", err)
 		}
 	}
+	if episodeRecorder != nil {
+		// Benchmark fixtures check original arguments even after a context fold.
+		episodeRecorder.benchmarkToolEvidence = cfg.Benchmark.Token != ""
+	}
 	// A request to keep a secret may come a turn before the secret itself.
 	episodeRecorder.setPriorUserTexts(recentUserTexts(r.contextManager, priorUserTurnsForMemoryRequests))
 	if req.ResumeSessionID != "" {
@@ -1438,6 +1447,8 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		return RunResult{}, err
 	}
 
+	conactEnabled := cfg.supportsConact()
+
 	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, r.contextManager)
 	agentLoop.notices = notices
 	agentLoop.ScreenState = r.screenState
@@ -1457,7 +1468,14 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 	agentLoop.ContextOverflowRecovery = contextBudget.recoverOverflow
 
-	output, err = agentLoop.Run(ctx, normalizedInput, callOptions...)
+	loopCtx := context.WithValue(ctx, deviceCLIRuntimeKey{}, r)
+	if req.LiveActivityEventHandler != nil {
+		loopCtx = context.WithValue(loopCtx, deviceCLIActivityKey{}, req.LiveActivityEventHandler)
+	}
+	if conactEnabled {
+		agentLoop.conact = newConactRun(r)
+	}
+	output, err = agentLoop.Run(loopCtx, normalizedInput, callOptions...)
 	// If the agent couldn't parse the LLM output format, extract the raw
 	// text and return it as the response instead of failing.
 	if errors.Is(err, agents.ErrUnableToParseOutput) {
@@ -1579,6 +1597,18 @@ func (r *Runtime) sessionChunkWriter() *SessionChunkWriter {
 	return NewSessionChunkWriter(agentpath.ContextManagerSessionFolder(configDir), extraction)
 }
 
+func (r *Runtime) hasPriorUserMessage() bool {
+	if r.contextManager == nil {
+		return false
+	}
+	for _, message := range r.contextManager.CloneMessageList() {
+		if message.Role == messages.MessageRoleUser {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 	return func(message messages.Message) contextmanager.AppendMessageHookResult {
 		// if not user message, just skip
@@ -1604,12 +1634,6 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 		}
 		recalled := recalledMemoriesText(turn().Recalled)
 		entries := r.stateManager.GetAllStates()
-		// If neither runtime state nor a screenshot is available, just skip.
-		if len(entries) == 0 && attachment == nil && recalled == "" {
-			return contextmanager.AppendMessageHookResult{
-				Message: &message,
-			}
-		}
 		// format state entries into a list
 		// example:
 		// key1: value1
@@ -1622,10 +1646,18 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 			}
 			fmt.Fprintf(&formated, "%s: %s\n", entry.Key, entry.Value)
 		}
-		if caption := screenshotGroundingCaption(grounding); caption != "" {
+		if caption := screenshotGroundingCaption(grounding, "touch_gesture coordinates"); caption != "" {
 			formated.WriteString(caption + "\n")
 		}
 		formated.WriteString(recalled)
+		if !r.hasPriorUserMessage() {
+			if hint := r.conactLandmarkHint(); hint != "" {
+				if formated.Len() != 0 {
+					formated.WriteByte('\n')
+				}
+				formated.WriteString(hint)
+			}
+		}
 		if formated.Len() == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
 				Message: &message,
@@ -1718,6 +1750,7 @@ func (r *Runtime) captureStateScreenshot(keep func() bool) (*messages.Attachment
 		return nil, nil
 	}
 	observation, ok := parseScreenshotObservation(output)
+	observation = compressCLIFrame(observation)
 	if !ok {
 		if r.logger != nil {
 			r.logger.Debug("[state] screenshot output is not a valid visual observation")
@@ -1735,23 +1768,7 @@ func (r *Runtime) captureStateScreenshot(keep func() bool) (*messages.Attachment
 		return nil, nil
 	}
 	attachment.Source = messages.AttachmentSourceScreenshotObservation
-	grounding := observation.Result.Grounding
-	if r.usesVisualCoordinateProtocol() {
-		// touch_gesture takes screenshot pixels under the visual coordinate
-		// protocol; the tool path converts in its wrapper, this one here.
-		grounding = pixelGrounding(grounding, observation.Result.Width, observation.Result.Height)
-	}
-	return &attachment, grounding
-}
-
-// usesVisualCoordinateProtocol reports whether the current model takes
-// screenshot pixels for touch_gesture (see AgentLoop.Run).
-func (r *Runtime) usesVisualCoordinateProtocol() bool {
-	if r == nil || r.models == nil {
-		return false
-	}
-	spec := r.models.Spec()
-	return IsAnthropicModel(spec.Provider, spec.Name)
+	return &attachment, observation.Result.Grounding
 }
 
 func (r *Runtime) beginSession(ctx context.Context, req SessionBeginRequest) (SessionBeginResult, error) {
@@ -2096,6 +2113,24 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		return nil
 	}
 	tools := NewToolSpecs(r.toolSnapshot().All()).AgentToolsForPlatform(r.devicePlatformFromState())
+	filtered := tools[:0]
+	for _, tool := range tools {
+		// Keep the underlying Bridge handlers registered for CLI dispatch,
+		// but give the model only one entry point for these operations.
+		switch tool.Name() {
+		case toolBridgeClipboard, toolBridgeCalendar, toolBridgeContacts:
+			continue
+		}
+		if !builtInToolSpecMetadata[tool.Name()].UIOperation {
+			if shell, ok := tool.(*ShellTool); ok {
+				copy := *shell
+				copy.deviceCLI = true
+				tool = &copy
+			}
+			filtered = append(filtered, tool)
+		}
+	}
+	tools = filtered
 	if r.mcpClients != nil {
 		for _, tool := range r.mcpClients.Tools() {
 			tools = append(tools, tool)
@@ -2133,59 +2168,28 @@ func (r *Runtime) Tool(name string) (langtools.Tool, bool) {
 }
 
 func (r *Runtime) filterPhoneBridgeAgentTools(tools []langtools.Tool) []langtools.Tool {
-	if r == nil || r.toolSnapshot() == nil || r.toolSnapshot().phoneBridge == nil {
-		return tools
-	}
 	bridge := r.toolSnapshot().phoneBridge
+	if bridge == nil {
+		return slices.DeleteFunc(tools, func(tool langtools.Tool) bool {
+			return tool != nil && tool.Name() == toolBridgeNotification
+		})
+	}
 	bridge.SetConfiguredPlatform(r.devicePlatformFromState())
-	status := bridge.getStatus()
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	capabilities := bridge.bleCapabilities(ctx)
-	cancel()
-
-	// HTTP(S) URLs fall back to the visible browser, so open_url stays
-	// available whenever that route is configured.
-	openURLAvailable := openURLBridgeRouteAvailable(status) || r.toolSnapshot().openURLBrowserFallbackAvailable()
-	clipboardAvailable := phoneBridgeCommandAvailable(status, "clipboard_read", capabilities.Wake) ||
-		phoneBridgeCommandAvailable(status, "clipboard_write", capabilities.Wake)
-	calendarAvailable := phoneBridgeCommandAvailable(status, "calendar_create", capabilities.Wake) ||
-		phoneBridgeCommandAvailable(status, "calendar_query", capabilities.Wake) ||
-		phoneBridgeCommandAvailable(status, "calendar_delete", capabilities.Wake)
-	contactsQueryAvailable := phoneBridgeCommandAvailable(status, "contacts_query", capabilities.Wake)
-	contactsCreateAvailable := phoneBridgeCommandAvailable(status, "contacts_create", capabilities.Wake)
-	contactsUpdateAvailable := phoneBridgeCommandAvailable(status, "contacts_update", capabilities.Wake)
-	contactsAvailable := contactsQueryAvailable || contactsCreateAvailable || contactsUpdateAvailable
-	notificationSendAvailable := phoneBridgeCommandAvailable(status, "notification_send", capabilities.Wake)
-	notificationQueryAvailable := capabilities.NotificationQuery
-	notificationAvailable := notificationSendAvailable || notificationQueryAvailable
-
+	defer cancel()
+	canQueryNotifications := bridge.bleCapabilities(ctx).NotificationQuery
 	filtered := make([]langtools.Tool, 0, len(tools))
 	for _, tool := range tools {
 		if tool == nil {
 			continue
 		}
-		available := true
-		switch tool.Name() {
-		case toolOpenURL:
-			available = openURLAvailable
-		case toolBridgeClipboard:
-			available = clipboardAvailable
-		case toolBridgeCalendar:
-			available = calendarAvailable
-		case toolBridgeContacts:
-			available = contactsAvailable
-		case toolBridgeNotification:
-			available = notificationAvailable
-		}
-		if available {
-			switch tool.Name() {
-			case toolBridgeContacts:
-				tool = newContactsCapabilityTool(tool, contactsQueryAvailable, contactsCreateAvailable, contactsUpdateAvailable)
-			case toolBridgeNotification:
-				tool = newNotificationCapabilityTool(tool, notificationSendAvailable, notificationQueryAvailable)
+		if tool.Name() == toolBridgeNotification {
+			if !canQueryNotifications {
+				continue
 			}
-			filtered = append(filtered, tool)
+			tool = newNotificationCapabilityTool(tool, false, true)
 		}
+		filtered = append(filtered, tool)
 	}
 	return filtered
 }
@@ -2456,16 +2460,21 @@ func (r *Runtime) exportEpisodeBestEffort(episode TaskEpisode, promptCapture *te
 }
 
 func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool, userProfile string) RoleProfile {
+	cfg := r.ConfigSnapshot()
+	rules := deviceCLIRoleRules()
+	if cfg.supportsConact() {
+		rules = append(rules, conactFoldRoleRule)
+	}
 	profile := buildProfile(
 		AgentConfig{
-			Instruction: r.ConfigSnapshot().Instruction,
-			Prompt:      r.ConfigSnapshot().Prompt,
-			Locale:      r.ConfigSnapshot().LocaleOrDefault(),
-			Timezone:    r.ConfigSnapshot().TimezoneOrDefault(),
+			Instruction: cfg.Instruction,
+			Prompt:      cfg.Prompt,
+			Locale:      cfg.LocaleOrDefault(),
+			Timezone:    cfg.TimezoneOrDefault(),
 		},
 		skills,
 		availableTools,
-		agentRoleRules(),
+		rules,
 	)
 	// A new session has no earlier section to keep, so on a read failure the
 	// caller passes an empty profile; the next run's refresh adds it once the
@@ -2773,6 +2782,15 @@ func (h *runtimeCallbackHandler) AfterToolCall(ctx context.Context, call ToolCal
 func (h *runtimeCallbackHandler) HandleToolCallResult(ctx context.Context, call ToolCall, result ToolResult) {
 	output := publicToolResultContent(result)
 	logOutput := result.EventOutput()
+	toolError := cloneToolError(result.Error)
+	// A shell can carry the same private data as the underlying Bridge tool.
+	if result.containsPrivateDeviceData() {
+		output, logOutput = sensitiveToolResultRedaction, sensitiveToolResultRedaction
+		if toolError != nil {
+			toolError.Message = sensitiveToolResultRedaction
+			toolError.Details = nil
+		}
+	}
 	if h.logger != nil {
 		if result.IsError() {
 			h.logger.Error("Tool result: name=%s output=%s", call.Spec.Name, truncateForLog(logOutput, 240))
@@ -2789,7 +2807,9 @@ func (h *runtimeCallbackHandler) HandleToolCallResult(ctx context.Context, call 
 		Content:    output,
 		Timestamp:  time.Now(),
 		IsError:    result.IsError(),
-		ToolError:  cloneToolError(result.Error),
+		ToolError:  toolError,
+
+		liveActivityHandled: result.liveActivityHandled,
 	})
 }
 

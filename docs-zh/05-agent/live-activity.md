@@ -96,6 +96,8 @@ App 只在高价值的状态转换时请求一次性系统提醒：首次建立 
 
 普通模型输出使用 `tool_status=processing`。只有非空的流式推理增量才会把它改为 `thinking`；实时活动使用安全的固定文案，不显示原始推理流。成功的 App 启动请求会一直使用 `verifying`，直到之后的屏幕观察能确认目标 App 已可见。
 
+Device CLI 会在 shell 内执行每项设备操作时更新当前任务。一次批处理可以在一个 BLE 更新间隔内执行多项操作。卡片显示最新动作，并在 Bridge 操作需要时提示用户返回 Aico。CLI 进度使用本地化标签，省略原始命令、工具输出和私密参数。
+
 `phone_app_state` 事件还会报告 `return_entry` 和 `return_entry_available`。当 iOS App 处于后台或非活动状态时，它可以报告 `return_entry="dynamic_island"`，让开发板端的恢复逻辑知道有一个可见的配套 App 入口可以把用户带回 App。
 
 ## API

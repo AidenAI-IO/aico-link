@@ -41,8 +41,8 @@ UI grounding: the numbered boxes in this image are these elements, with center a
 
 检测器是 UI-DETR V6 学生模型：一个单类别 YOLOv5 模型，输入为 960×960，针对 RV1106 NPU 量化为 INT8。它只查找“界面组件”。它不识别文字，也不对控件分类，并且可能漏掉某个控件，或对同一个控件框出多次，因此模型仍需通过阅读图像来选择目标。模型、锚框和来源信息位于 [`assets/business/models/ui-detr/`](../../assets/business/models/ui-detr/README.md)。
 
-预处理和解码与经过验证的开发板运行器一致：半像素双线性 letterbox，填充值为 114，得分等于 objectness 乘以类别概率，在归一化的源坐标上做 NMS，最多 50 个框。该运行器针对召回率调优（置信度 0，NMS IoU 0.8），会在一个控件上留下多个几乎相同的框。Agent 改为传入 `--confidence 0.3
---nms-iou 0.6`，使每个标记都彼此区分，代价是一些控件没有被标注。在 UI-DETR 示例截图上，这会保留运行器 50 个框中的 32 个。
+预处理和解码与经过验证的开发板运行器一致：半像素双线性 letterbox，填充值为 114，得分等于 objectness 乘以类别概率，在归一化的源坐标上做 NMS，最多 50 个框。该运行器针对召回率调优（置信度 0，NMS IoU 0.8），会在一个控件上留下多个几乎相同的框。Agent 改为传入 `--confidence 0.5
+--nms-iou 0.5`，使每个标记都彼此区分。部分控件可能不会被标注。
 
 ## 辅助进程
 

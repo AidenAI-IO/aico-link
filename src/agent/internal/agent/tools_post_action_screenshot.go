@@ -23,6 +23,11 @@ import (
 
 const postActionScreenshotDelay = time.Second
 const postActionCompletedDetail = "action_completed"
+const actionDispatchedDetail = "action_dispatched"
+
+func actionNotDispatched(err *ToolError) bool {
+	return err != nil && err.Details[actionDispatchedDetail] == false
+}
 
 type postActionScreenshotResult struct {
 	screenshotResult
@@ -182,6 +187,8 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	touchscreenRCALogf("post_action start inner=%q input_len=%d", t.inner.Name(), len(input))
 	timing := postActionTiming{tool: t.inner.Name(), started: time.Now()}
 	defer timing.log()
+	cli, _ := ctx.Value(deviceCLICaptureKey{}).(*deviceCLICapture)
+	deferObservation := cli != nil && cli.deferObservation
 	seenWidth, seenHeight, seenOK := t.screen.ScreenshotDimensions()
 	// An unconfirmed landscape touch is observed as early as possible: its
 	// reaction shows the turn direction and can fade within seconds, so the
@@ -191,16 +198,27 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	if reporter, ok := t.inner.(landscapeTurnChecker); ok {
 		turnPending = reporter.landscapeTurnCheck(input)
 	}
-	var baselineOutput string
 	var baselineImage image.Image
-	if !turnPending {
-		baselineOutput, baselineImage = t.captureBaseline(ctx)
+	release := releasesHeldContact(t.inner.Name(), input)
+	checkOrientation := seenOK && !release
+	if deferObservation && t.screen != nil && !release {
+		// Baseline captures also update screen state. Keep comparing to the
+		// orientation from the start of the shell (or first available frame).
+		if cli.guardDimensions[0] == 0 && seenOK {
+			cli.guardDimensions = [2]int{seenWidth, seenHeight}
+		}
+		seenWidth, seenHeight = cli.guardDimensions[0], cli.guardDimensions[1]
+		checkOrientation = seenWidth > 0 && seenHeight > 0
 	}
-	timing.mark(&timing.baselineMs)
-	if seenOK && baselineImage != nil && !releasesHeldContact(t.inner.Name(), input) {
-		bounds := baselineImage.Bounds()
-		if (seenWidth > seenHeight) != (bounds.Dx() > bounds.Dy()) {
-			return t.turnedScreenResult(seenWidth, seenHeight, bounds, baselineOutput), nil
+	if !turnPending && (!deferObservation || checkOrientation) {
+		var baselineOutput string
+		baselineOutput, baselineImage = t.captureBaseline(ctx)
+		timing.mark(&timing.baselineMs)
+		if checkOrientation && baselineImage != nil {
+			bounds := baselineImage.Bounds()
+			if (seenWidth > seenHeight) != (bounds.Dx() > bounds.Dy()) {
+				return t.turnedScreenResult(ctx, seenWidth, seenHeight, bounds, baselineOutput), nil
+			}
 		}
 	}
 	pointerBefore := t.pointer.current()
@@ -222,8 +240,36 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		return toolErrorString(te), nil
 	}
 
+	// Arm recovery only after the provider actually accepted drag_start, before
+	// waiting or capturing can fail. CLI commands own the guard through their
+	// final response; direct tool calls own it through this observation.
+	drag, _ := ctx.Value(compositeDragKey{}).(*compositeDrag)
+	var startPoint *normalizedPoint
+	localDrag := drag == nil
+	if t.inner.Name() == "touch_gesture" {
+		startPoint = dragStartRecoveredPoint(input)
+		if drag != nil && releasesHeldContact(t.inner.Name(), input) {
+			drag.release = nil
+		} else if recoverer, ok := t.inner.(unstableScreenRecoverer); ok && startPoint != nil {
+			if localDrag {
+				drag = &compositeDrag{}
+				defer drag.cleanup(ctx)
+			}
+			drag.release = func(cleanupCtx context.Context) error {
+				if err := recoverer.recoverAfterUnstableScreen(cleanupCtx, input); err != nil {
+					return err
+				}
+				t.pointer.set(startPoint)
+				return nil
+			}
+		}
+	}
+
 	pointerAfter := pointerFinalPoint(t.inner.Name(), input, actionOutput)
 	t.pointer.set(pointerAfter)
+	if deferObservation {
+		return actionOutput, nil
+	}
 
 	reportToolProgress(ctx, ToolProgress{
 		Status:  "verifying",
@@ -238,7 +284,7 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	if waitStable {
 		touchscreenRCALogf("post_action wait_stable start inner=%q", t.inner.Name())
 		if waiter, ok := t.waitStable.(stableScreenWaiter); ok {
-			waitResult, err = waiter.wait(ctx, t.waitInput)
+			waitResult, err = waiter.wait(ctx, "{}")
 			if err != nil {
 				touchscreenRCALogf("post_action wait_stable error inner=%q err_type=%T", t.inner.Name(), err)
 				return postActionErrorResultf(ctx, postActionErrorCode(err), "%s completed with output %q, but stable-screen wait failed: %v", t.inner.Name(), actionOutput, err), nil
@@ -275,6 +321,9 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 					return postActionErrorResultf(ctx, postActionErrorCode(err), "%s completed with output %q, but unstable-screen recovery failed: %v", t.inner.Name(), actionOutput, err), nil
 				}
 				if recovered := dragStartRecoveredPoint(input); recovered != nil {
+					if drag != nil {
+						drag.release = nil
+					}
 					pointerAfter = recovered
 					t.pointer.set(recovered)
 				}
@@ -355,7 +404,7 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		payload.StableWaitMs = &elapsed
 		payload.LastDiff = waitResult.LastDiff
 	}
-	if t.inner.Name() == "touch_gesture" {
+	if t.inner.Name() == "touch_gesture" && ctx.Value(deviceCLICaptureKey{}) == nil {
 		if marker, ok := parseTouchGesturePostMarker(input); ok {
 			markers := []touchGesturePostMarkerInfo{marker}
 			if turnPending && !(marker.X == 500 && marker.Y == 500) {
@@ -379,6 +428,19 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 
 	timing.mark(&timing.markerMs)
 	out, _ := json.Marshal(payload)
+	if drag != nil && drag.release != nil && startPoint != nil {
+		if err := ctx.Err(); err != nil {
+			return postActionErrorResultf(ctx, postActionErrorCode(err), "drag_start observation canceled: %v", err), nil
+		}
+		if visual, ok := parseScreenshotObservation(string(out)); !ok || visual.Result.ScreenStable == nil || !*visual.Result.ScreenStable {
+			return postActionErrorResultf(ctx, CodeToolExecutionFailed, "drag_start did not return a stable screenshot"), nil
+		} else if _, _, err := image.DecodeConfig(bytes.NewReader(visual.ImageBytes)); err != nil {
+			return postActionErrorResultf(ctx, CodeToolExecutionFailed, "drag_start returned an invalid screenshot: %v", err), nil
+		}
+		if localDrag {
+			drag.release = nil
+		}
+	}
 	return string(out), nil
 }
 
@@ -665,7 +727,7 @@ func releasesHeldContact(toolName, input string) bool {
 // turnedScreenResult returns the pre-action screenshot without sending the
 // action: its coordinates were chosen on a screen that has since turned
 // between portrait and landscape, so they point somewhere else now.
-func (t *postActionScreenshotTool) turnedScreenResult(seenWidth, seenHeight int, now image.Rectangle, baselineOutput string) string {
+func (t *postActionScreenshotTool) turnedScreenResult(ctx context.Context, seenWidth, seenHeight int, now image.Rectangle, baselineOutput string) string {
 	logging.Infof("agent", "tools_post_action_screenshot", "screen turned before action: tool=%s seen=%dx%d now=%dx%d; action not sent", t.inner.Name(), seenWidth, seenHeight, now.Dx(), now.Dy())
 	var result screenshotResult
 	_ = json.Unmarshal([]byte(baselineOutput), &result)
@@ -676,6 +738,7 @@ func (t *postActionScreenshotTool) turnedScreenResult(seenWidth, seenHeight int,
 			seenWidth, seenHeight, now.Dx(), now.Dy()),
 		ScreenChanged: &changed,
 	}
+	SetToolError(ctx, NewToolErrorWithDetails(CodeStepExpectationUnmet, payload.ActionOutput, map[string]any{actionDispatchedDetail: false}))
 	out, _ := json.Marshal(payload)
 	return string(out)
 }

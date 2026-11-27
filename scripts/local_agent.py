@@ -167,6 +167,9 @@ def agent_binary(args):
         binary = args.agent_binary.expanduser().resolve()
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise RuntimeError("--agent-binary must be an executable native Agent")
+        cli_name = "device-cli.exe" if os.name == "nt" else "device-cli"
+        if not (shutil.which(str(binary.with_name(cli_name))) or shutil.which(cli_name)):
+            raise RuntimeError(f"--agent-binary requires an executable {cli_name} beside the Agent or on PATH")
         return str(binary)
     if not shutil.which("go"):
         raise RuntimeError("Install Go 1.26+, or pass --agent-binary")
@@ -178,6 +181,8 @@ def agent_binary(args):
     env.pop("GOOS", None)
     env.pop("GOARCH", None)
     subprocess.run(["go", "build", "-o", str(binary), "./cmd/daemon"], cwd=ROOT / "src/agent", env=env, check=True)
+    cli = binary.with_name("device-cli.exe" if os.name == "nt" else "device-cli")
+    subprocess.run(["go", "build", "-o", str(cli), "./cmd/device-cli"], cwd=ROOT / "src/agent", env=env, check=True)
     return str(binary)
 
 

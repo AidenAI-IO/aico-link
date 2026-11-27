@@ -41,6 +41,13 @@ func TestEpisodeRecorderRecordsStructuredToolError(t *testing.T) {
 }
 
 func TestEpisodeRecorderDoesNotPersistSensitiveToolResultContent(t *testing.T) {
+	for _, toolName := range []string{toolBridgeClipboard, "shell"} {
+		t.Run(toolName, func(t *testing.T) { testEpisodeRedactsSensitiveToolResult(t, toolName) })
+	}
+}
+
+func testEpisodeRedactsSensitiveToolResult(t *testing.T, toolName string) {
+	t.Helper()
 	root := t.TempDir()
 	recorder := NewPersistentEpisodeRecorder(
 		MemoryRetrieveRequest{Input: "read clipboard"},
@@ -48,16 +55,26 @@ func TestEpisodeRecorderDoesNotPersistSensitiveToolResultContent(t *testing.T) {
 		NewTaskEpisodeStore(root),
 	)
 	secret := "SENSITIVE_EPISODE_MARKER_8f2d"
-	action := schema.AgentAction{Tool: toolBridgeClipboard, ToolInput: `{"action":"get"}`}
+	action := schema.AgentAction{Tool: toolName, ToolInput: jsonString(map[string]any{"action": "write", "text": secret})}
+	var deviceCalls []deviceCLIToolEvidence
+	if toolName == "shell" {
+		action.ToolInput = jsonString(map[string]any{"command": "device-cli app clipboard write " + secret})
+		duration := int64(42)
+		deviceCalls = []deviceCLIToolEvidence{
+			{Tool: toolBridgeClipboard, Input: map[string]any{"action": "write", "text": secret}, DurationMs: &duration},
+			{Tool: "touch_gesture", Input: map[string]any{"type": "tap"}, IsError: true, NotDispatched: true},
+		}
+	}
 	recorder.RecordExecution(ToolCallExecutionResult{
 		Call: ToolCall{
-			Spec:   ToolSpec{Name: toolBridgeClipboard},
+			Spec:   ToolSpec{Name: toolName},
 			Action: action,
 		},
 		Step: schema.AgentStep{Action: action, Observation: secret},
 		Result: ToolResult{
-			Output:  secret,
-			Summary: secret,
+			Output:      secret,
+			deviceCalls: deviceCalls,
+			Summary:     secret,
 			Error: NewToolErrorWithDetails(
 				CodeToolExecutionFailed,
 				secret,
@@ -73,6 +90,14 @@ func TestEpisodeRecorderDoesNotPersistSensitiveToolResultContent(t *testing.T) {
 			continue
 		}
 		foundRedactedResult = true
+		if toolName == "shell" {
+			calls, ok := event.Metadata["device_cli_calls"].([]deviceCLIToolEvidence)
+			if !ok || len(calls) != 2 || calls[0].Tool != toolBridgeClipboard || calls[0].Input["action"] != "write" || len(calls[0].Input) != 1 ||
+				calls[0].DurationMs == nil || *calls[0].DurationMs != 42 || calls[1].Input == nil || len(calls[1].Input) != 0 ||
+				!calls[1].NotDispatched || !calls[1].IsError || deviceCalls[0].Input["text"] != secret {
+				t.Fatalf("redaction must clear only persisted nested inputs: %+v", calls)
+			}
+		}
 		if event.Content != sensitiveToolResultRedaction || event.RawObservation != "" {
 			t.Fatalf("sensitive tool result event = %#v", event)
 		}
@@ -108,6 +133,32 @@ func TestEpisodeRecorderDoesNotPersistSensitiveToolResultContent(t *testing.T) {
 	if filesScanned == 0 {
 		t.Fatal("expected persisted episode files")
 	}
+}
+
+func TestEpisodeRecorderBenchmarkKeepsResolvedDeviceInput(t *testing.T) {
+	recorder := NewEpisodeRecorder(MemoryRetrieveRequest{}, MemoryContext{})
+	recorder.benchmarkToolEvidence = true
+	action := schema.AgentAction{Tool: "shell", ToolInput: `{"command":"device-cli app clipboard write \"$fixture_value\""}`}
+	recorder.RecordExecution(ToolCallExecutionResult{
+		Call: ToolCall{Spec: ToolSpec{Name: "shell"}, Action: action},
+		Result: ToolResult{
+			Output: "private response",
+			deviceCalls: []deviceCLIToolEvidence{{Tool: toolBridgeClipboard, Input: map[string]any{
+				"action": "write", "text": "resolved fixture value",
+			}}},
+		},
+	})
+	for _, event := range recorder.Finish("", nil, nil, nil, nil).Events {
+		if event.Type != "tool_result" {
+			continue
+		}
+		calls := event.Metadata["device_cli_calls"].([]deviceCLIToolEvidence)
+		if calls[0].Input["text"] != "resolved fixture value" || event.Content != sensitiveToolResultRedaction {
+			t.Fatalf("expected resolved benchmark argument and redacted output, got %+v", event)
+		}
+		return
+	}
+	t.Fatal("missing tool_result event")
 }
 
 func TestMaterializeEventArtifactUsesExistingReference(t *testing.T) {

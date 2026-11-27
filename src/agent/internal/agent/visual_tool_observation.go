@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"strings"
 
 	"aico-agent/internal/agent/contextmanager"
@@ -37,6 +38,23 @@ type VisualImage struct {
 	Caption  string
 	MIMEType string
 	Data     []byte
+}
+
+// RunRealtimeShell uses the same scoped Device CLI execution as the backend loop.
+func (r *Runtime) RunRealtimeShell(ctx context.Context, tool langtools.Tool, input string) VisualToolObservation {
+	ctx = context.WithValue(ctx, deviceCLIRuntimeKey{}, r)
+	execution := executeToolCall(ctx, ToolCallExecution{
+		Specs:  NewToolSpecs([]langtools.Tool{tool}),
+		Action: schema.AgentAction{Tool: "shell", ToolInput: input},
+	})
+	content := execution.Result.Output
+	if execution.Result.IsError() {
+		content = jsonString(map[string]string{"error": content})
+	}
+	return VisualToolObservation{
+		toolContent: content,
+		followups:   deviceCLIStateMessages(execution.Result.deviceFrame),
+	}
 }
 
 // SplitVisualToolOutput splits the output of a tool that returns a visual

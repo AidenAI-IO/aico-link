@@ -214,7 +214,7 @@ func newScreenshotGrounding(elements []uiGroundingElement, groundingErr error) *
 // screenshotGroundingCaption is the grounding text added to the state
 // message that carries a grounded screenshot, so the element list travels
 // with the image it describes and leaves the tool result unchanged.
-func screenshotGroundingCaption(grounding *screenshotGrounding) string {
+func screenshotGroundingCaption(grounding *screenshotGrounding, coordinates string) string {
 	if grounding == nil {
 		return ""
 	}
@@ -222,5 +222,5 @@ func screenshotGroundingCaption(grounding *screenshotGrounding) string {
 		return "UI grounding failed, so this screenshot has no numbered boxes: " + grounding.Error
 	}
 	data, _ := json.Marshal(grounding)
-	return "UI grounding: the numbered boxes in this image are these elements, with center and box in touch_gesture coordinates: " + string(data)
+	return "UI grounding: the numbered boxes in this image are these elements, with center and box in " + coordinates + ": " + string(data)
 }

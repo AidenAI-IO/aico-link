@@ -26,18 +26,25 @@ const (
 
 type ShellTool struct {
 	execution shellExecutionConfig
+	deviceCLI bool
 }
 
 type shellExecutionConfig struct {
-	proxy              ProxyConfig
-	temporaryDirectory string
-	screenshot         *shellScreenshotExport
+	proxy                        ProxyConfig
+	temporaryDirectory           string
+	screenshot                   *shellScreenshotExport
+	deviceCLIURL, deviceCLIToken string
 }
 
 func (t *ShellTool) Name() string { return "shell" }
 
 func (t *ShellTool) Description() string {
+	device := ""
+	if t.deviceCLI {
+		device = ` To operate the target UI, call THIS shell tool in the foreground with a command such as {"command":"device-cli swipe 500 800 500 300"}; inspect the attached screenshot state. device-cli is not a tool name. `
+	}
 	return `Execute a shell command or manage a running shell session on the Aico Link hardware controller. ` +
+		device +
 		`For one-shot commands, pass "command" and read the returned output. Shell can also inspect the controller's precise clock or timezone and perform deterministic calculations with available command-line utilities; these results describe the controller, not the target device shown in screenshots. ` +
 		`When a screenshot has been taken, commands get the latest one the model saw: $AICO_SCREENSHOT_JPEG, and $AICO_SCREENSHOT_PPM as uncompressed binary PPM (header "P6\n<width> <height>\n255\n", then RGB bytes row by row from the top left; readable with the Python standard library), with $AICO_SCREENSHOT_WIDTH and $AICO_SCREENSHOT_HEIGHT. Their pixel coordinates are the screenshot's own: pass a measured point in the units the coordinate tool declares (pixels as measured, or normalized with this width and height). The export happens when a command or background session starts, so a running session's size variables can be stale and its files may already hold a later screen: read each new screenshot with a new one-shot command. ` +
 		`Original phone-notification records are stored as date-sharded JSONL files under "/userdata/agent/memory/notifications/events/". Each UTC "YYYY-MM-DD.jsonl" file contains one record per line; inspect these files with normal read-only shell utilities and do not modify them. ` +
@@ -98,12 +105,50 @@ func (t *ShellTool) Call(ctx context.Context, input string) (string, error) {
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs*float64(time.Second)))
 	defer cancel()
 
-	result, runErr := shellRunForeground(execCtx, command, workdir, usePTY, t.execution)
-	if contextErr := contextError(execCtx, runErr); errors.Is(contextErr, context.Canceled) {
-		return "", contextErr
+	execution := t.execution
+	var finishDeviceCLI func(bool) error
+	var cliKeyError *ToolError
+	if rt, ok := ctx.Value(deviceCLIRuntimeKey{}).(*Runtime); ok {
+		if capture, ok := ctx.Value(deviceCLICaptureKey{}).(*deviceCLICapture); ok {
+			capture.deferObservation = true
+			u, token, closeScope, err := openDeviceCLIScope(execCtx, rt, capture)
+			if err != nil {
+				return toolErrorResultf(ctx, CodeToolExecutionFailed, "device CLI setup: %v", err), nil
+			}
+			finishDeviceCLI = func(succeeded bool) error {
+				closeScope()
+				cliKeyError = capture.keyError
+				return capture.finishShell(ctx, rt, succeeded && cliKeyError == nil)
+			}
+			execution.deviceCLIURL, execution.deviceCLIToken = u, token
+		}
 	}
-	if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
+	result, runErr := shellRunForeground(execCtx, command, workdir, usePTY, execution)
+	commandContextErr := contextError(execCtx, runErr)
+	if finishDeviceCLI != nil {
+		if err := finishDeviceCLI(runErr == nil && commandContextErr == nil); err != nil && commandContextErr == nil {
+			if runErr == nil && cliKeyError == nil {
+				return toolErrorResultf(ctx, CodeToolExecutionFailed, "%s\n%s", result, err), nil
+			}
+			result += "\n" + err.Error()
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if errors.Is(commandContextErr, context.Canceled) {
+		return "", commandContextErr
+	}
+	if errors.Is(commandContextErr, context.DeadlineExceeded) {
 		return toolErrorResultf(ctx, CodeDeadlineExceeded, "Error: command timed out after %.0f seconds", timeoutSecs), nil
+	}
+	// A pipe or a later successful command can hide the CLI's nonzero exit.
+	// Report controller-side key failures independently of the shell status.
+	if cliKeyError != nil {
+		if !strings.Contains(result, cliKeyError.Message) {
+			result += "\nDevice CLI key failed: " + cliKeyError.Message
+		}
+		return toolErrorResultString(ctx, cliKeyError.Code, result), nil
 	}
 	if runErr != nil {
 		return toolErrorResultString(ctx, CodeToolExecutionFailed, result), nil

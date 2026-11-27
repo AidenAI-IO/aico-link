@@ -166,9 +166,9 @@ func (f *openURLBrowserFallback) run(ctx context.Context, url, reason string) (s
 // returns the route that entered the URL, or "" when neither was confirmed.
 func (f *openURLBrowserFallback) enterURL(ctx context.Context, engine *textInputEngine, url string, focus focusPointArgs) (string, error) {
 	platform := f.platform()
-	args := textInputArgs{Text: url, Focus: focus, ReplaceField: true}
+	args := textInputArgs{Text: url, Focus: &focus, ReplaceField: true}
 	if bridgeTool := f.search.entryTool.bridgeTool; bridgeTool != nil && openURLBackgroundClipboardUsable(bridgeTool.currentBridge(), platform) {
-		result := bridgeTool.runClipboardWritePasteFlow(ctx, platform, args)
+		result := bridgeTool.runClipboardWritePasteFlow(ctx, platform, args, true)
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}

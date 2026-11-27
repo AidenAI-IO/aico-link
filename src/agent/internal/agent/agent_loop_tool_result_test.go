@@ -240,7 +240,7 @@ func latestToolResultArtifactPath(messageList []llms.MessageContent) string {
 	return ""
 }
 
-func TestAgentLoopTerminatesRecursiveArtifactRecovery(t *testing.T) {
+func TestAgentLoopWarnsDuringRecursiveArtifactRecovery(t *testing.T) {
 	rawOutput := strings.Repeat("Guangzhou attraction result ", 100)
 	if len(rawOutput) >= toolResultInlineMaxBytes || tokencounter.EstimateTextTokens(rawOutput) >= toolResultInlineMaxTokens {
 		t.Fatal("test result must be context-large rather than intrinsically large")
@@ -264,11 +264,15 @@ func TestAgentLoopTerminatesRecursiveArtifactRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(answer, string(StopReasonLoopDetected)) {
-		t.Fatalf("Run() answer = %q, want loop_detected stop", answer)
+	if !strings.Contains(answer, string(StopReasonBudgetExceeded)) || tool.calls != 8 {
+		t.Fatalf("answer = %q, shell calls = %d, want all eight calls before the iteration budget stops the run", answer, tool.calls)
 	}
-	if tool.calls > 4 {
-		t.Fatalf("shell calls = %d, want recursive recovery stopped by the fourth call", tool.calls)
+	warned := false
+	for _, message := range manager.MessageListDump().Messages {
+		warned = warned || strings.HasPrefix(message.Content, "Loop guard:")
+	}
+	if !warned {
+		t.Fatal("expected a notice during artifact recovery")
 	}
 	if len(model.artifactPaths) < 2 {
 		t.Fatalf("artifact recovery paths = %#v, want repeated recovery attempts", model.artifactPaths)

@@ -113,6 +113,7 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 			}
 		}
 	}
+	request.LiveActivityEventHandler = func(event agent.RunEvent) { r.activity.Event(taskID, event) }
 	request.SteerInterrupt = agenttask.SteerInterruptFromContext(ctx)
 	result, err := r.runtime.Run(ctx, request)
 	if err != nil && ctx.Err() != nil {

@@ -1,11 +1,13 @@
 package agent
 
 import (
-	"aico-agent/internal/logging"
 	"context"
 	"encoding/json"
 	"strings"
 	"time"
+
+	"aico-agent/internal/devicecli"
+	"aico-agent/internal/logging"
 )
 
 // EnterTextTool is the single public text-entry tool. It prefers Phone Bridge
@@ -24,6 +26,7 @@ type EnterTextTool struct {
 type enterTextArgs struct {
 	Text  string          `json:"text"`
 	Focus *focusPointArgs `json:"focus"`
+	Route string          `json:"route,omitempty"`
 }
 
 // Search owns the whole query field, while public enter_text may append to an
@@ -41,7 +44,7 @@ type enterTextToolResult struct {
 func (a enterTextArgs) toEngineArgs() textInputArgs {
 	return textInputArgs{
 		Text:  a.Text,
-		Focus: *a.Focus,
+		Focus: a.Focus,
 	}
 }
 
@@ -81,10 +84,10 @@ func (t *EnterTextTool) platform() string {
 func (t *EnterTextTool) Description() string {
 	return `Enter exact text into a visible, focused input field or composer. ` +
 		`When an environment bridge advertises native text insertion (such as macOS iPhone Mirroring), it inserts the original Unicode text through the host and verifies the field, without phone IME probing or candidate selection. ` +
-		`First prefers the Phone Bridge clipboard route when it is currently usable, including long, multiline, CJK, and non-ASCII text; it pastes and verifies the complete target. ` +
-		`If Bridge is unavailable or its restore/paste attempt fails, the field must already be focused for the local HID/IME fallback. The local path holds the pointer-free keyboard isolation profile for the whole operation, probes the current ENG/IME state with a temporary "a", and maintains that state while entering parts in order. ` +
+		`Unless route is specified, first prefers the Phone Bridge clipboard route when it is currently usable, including long, multiline, CJK, and non-ASCII text; it pastes and verifies the complete target. Explicit route=app reports successful paste dispatch without visual field verification. ` +
+		`If Bridge is unavailable or fails before paste dispatch, the local HID/IME path uses the current focus. If paste may already have changed the field, inspect it before retrying. The local path holds the pointer-free keyboard isolation profile for the whole operation, probes the current ENG/IME state with a temporary "a", and maintains that state while entering parts in order. ` +
 		`ASCII parts are typed directly in ENG mode without a vision verification step. IME parts are typed in IME mode and use vision-guided candidate selection until the part is committed. The local path never uses mouse input. ` +
-		`Precondition: the latest screenshot must clearly show the editable field or composer, and focus coordinates must identify that field for bridge paste and visual analysis; never use a guessed blank-space coordinate. ` +
+		`Before calling, focus the intended editable field yourself and inspect the screen. ` +
 		`Provide the exact original text only: this tool detects ASCII and IME parts and derives required IME keystrokes internally. ` +
 		`The result contains only ok, plus a next-step suggestion when ok is false.`
 }
@@ -92,8 +95,9 @@ func (t *EnterTextTool) Description() string {
 func (t *EnterTextTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
 		"text":  stringArgSchema("Exact text that must appear in the field when done."),
-		"focus": focusPointArgSchema("Coordinates inside a clearly visible editable field or composer."),
-	}, "text", "focus")
+		"focus": focusPointArgSchema("Optional legacy hint. Omit when the Agent has already focused the field."),
+		"route": stringEnumArgSchema("Optional: device uses native input or HID/IME without Phone Bridge; app uses the companion clipboard via a connected, FGS, or PiP route, reports paste dispatch without visual verification, and never falls back to device typing.", devicecli.TextRouteDevice, devicecli.TextRouteApp),
+	}, "text")
 }
 
 func (t *EnterTextTool) Call(ctx context.Context, input string) (string, error) {
@@ -120,10 +124,7 @@ func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, option
 		}
 		var publicArgs enterTextArgs
 		if err := decodeStrictJSONObject(input, &publicArgs); err != nil {
-			return enterTextToolFailure(batchCtx, CodeInvalidArguments, "Call enter_text again with valid JSON containing text and focus."), nil
-		}
-		if publicArgs.Focus == nil {
-			return enterTextToolFailure(batchCtx, CodeInvalidArguments, "Call enter_text again with valid JSON containing text and focus."), nil
+			return enterTextToolFailure(batchCtx, CodeInvalidArguments, "Provide valid JSON containing text."), nil
 		}
 		metrics.characters.Store(int64(len([]rune(publicArgs.Text))))
 		args := publicArgs.toEngineArgs()
@@ -131,27 +132,45 @@ func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, option
 		if strings.TrimSpace(args.Text) == "" {
 			return enterTextToolFailure(batchCtx, CodeInvalidArguments, "Provide non-empty text, then retry enter_text."), nil
 		}
-		if result, handled := t.engine.runNativeTextInsertion(batchCtx, args); handled {
+		switch publicArgs.Route {
+		case "", devicecli.TextRouteDevice, devicecli.TextRouteApp:
+		default:
+			return enterTextToolFailure(batchCtx, CodeInvalidArguments, "Omit route or use device or app."), nil
+		}
+		appOnly := publicArgs.Route == devicecli.TextRouteApp
+		if appOnly {
+			bridge := t.bridgeTool.currentBridge()
+			if !phoneBridgeCanAttemptAppCLI(bridge) {
+				return enterTextToolFailure(batchCtx, CodeBridgeNotConnected, appCLIRouteUnavailable), nil
+			}
+		} else if result, handled := t.engine.runNativeTextInsertion(batchCtx, args); handled {
 			if !result.OK {
 				logging.Warnf("agent", "text_input", "native text insertion failed: %s", result.Reason)
 				return enterTextToolFailure(batchCtx, CodeToolExecutionFailed, enterTextFailureSuggestion(result)), nil
 			}
 			return enterTextToolResultString(result), nil
 		}
+		if appOnly || (!options.disableBridge && publicArgs.Route != devicecli.TextRouteDevice && t.bridgeAvailable(args)) {
+			bridgeResult, attempted := t.bridgeTool.runClipboardFirstResult(batchCtx, args, !appOnly)
+			if attempted && bridgeResult.OK {
+				return enterTextToolResultString(bridgeResult), nil
+			}
+			if bridgeResult.TextMayBeInserted {
+				logging.Warnf("agent", "text_input", "Bridge paste outcome uncertain; skipping HID fallback: %s", bridgeResult.Reason)
+				return enterTextToolFailure(batchCtx, CodeToolExecutionFailed, enterTextFailureSuggestion(bridgeResult)), nil
+			}
+			if appOnly {
+				if !attempted {
+					return enterTextToolFailure(batchCtx, CodeModuleUnavailable, "The companion app cannot paste into the current field. Check its clipboard route and app state."), nil
+				}
+				return enterTextToolFailure(batchCtx, CodeToolExecutionFailed, "App text entry failed before paste. Check the app connection and field focus."), nil
+			}
+			// The legacy automatic route may fall back if no paste was sent.
+		}
 		platform := t.platform()
 		localController := controller
 		if localController == nil {
 			localController = iosKeyboardIsolationControllerFromContext(batchCtx)
-		}
-		if !options.disableBridge && t.bridgeAvailable(args) {
-			bridgeResult, attempted := t.bridgeTool.runClipboardFirstResult(batchCtx, args)
-			if attempted && bridgeResult.OK {
-				return enterTextToolResultString(bridgeResult), nil
-			}
-			// A Bridge attempt is an optimization, not a hard dependency. In
-			// particular, restoring the companion app through Dynamic Island can
-			// fail after the route was selected. Continue with the local HID/IME
-			// path so enter_text remains usable on the phone's visible UI.
 		}
 		if platform == "ios" && localController == nil && !t.allowIOSKeyboardIsolationBypass {
 			return enterTextToolFailure(batchCtx, CodeModuleUnavailable, "Enable iOS keyboard isolation, then retry enter_text."), nil

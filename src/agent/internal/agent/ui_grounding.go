@@ -33,9 +33,9 @@ const (
 	// The detector's validated defaults (confidence 0, NMS IoU 0.8) favor
 	// recall and leave several near-identical boxes on one control. Marks the
 	// model reads must be distinct, so drop low scores and merge boxes that
-	// overlap by more than 60%, accepting that a few controls go unmarked.
-	uiGroundingConfidence = "0.3"
-	uiGroundingNMSIoU     = "0.6"
+	// overlap by more than 50%, accepting that a few controls go unmarked.
+	uiGroundingConfidence = "0.5"
+	uiGroundingNMSIoU     = "0.5"
 )
 
 // uiElementBox is one detected interface component in source image pixels.

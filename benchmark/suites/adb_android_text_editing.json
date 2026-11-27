@@ -28,6 +28,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -57,6 +58,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -87,6 +89,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"
@@ -124,6 +127,7 @@
         "min_tool_calls": 1,
         "max_tool_calls": 24,
         "must_complete_within_sec": 240,
+        "allow_device_cli": true,
         "forbidden_tools": [
           "shell",
           "request_user_action"

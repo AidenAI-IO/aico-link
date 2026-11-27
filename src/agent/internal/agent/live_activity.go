@@ -454,6 +454,12 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 		m.mu.Unlock()
 		return nil
 	}
+	// Keep the inner action's state unless the shell reports a new failure.
+	if event.liveActivityHandled && ((!event.IsError && event.ToolError == nil) ||
+		state.Status == LiveActivityStatusNeedsApp || state.ToolStatus == "failed") {
+		m.mu.Unlock()
+		return &state
+	}
 	text := m.getLiveActivityText()
 	switch event.Type {
 	case "role_output", "assistant_output":
@@ -528,6 +534,8 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 			state.Status = LiveActivityStatusNeedsApp
 			state.Phase = LiveActivityPhaseWaitingApp
 			state.CurrentAction = "open_aico"
+			state.CurrentStep = text.OpenCompanionAppToContinue
+			state.ShowsProgress = false
 		}
 		state.LastError = ""
 	case runEventToolCall:
@@ -589,10 +597,10 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 			// Private tools (clipboard, contacts, ...) can echo their data in
 			// the error; the phone's lock screen must not show it.
 			state.LastError = ""
-			if !toolResultIsSensitive(event.ToolName) {
+			if event.ToolName != "shell" && !toolResultIsSensitive(event.ToolName) {
 				state.LastError = truncateLiveActivityText(errText, 160)
 			}
-			if liveActivityResultNeedsApp(event, errText) {
+			if event.ToolStatus == "waiting_app" || liveActivityResultNeedsApp(event, errText) {
 				state.Status = LiveActivityStatusNeedsApp
 				state.Phase = LiveActivityPhaseWaitingApp
 				state.CurrentAction = "open_aico"
