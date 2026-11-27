@@ -1884,3 +1884,29 @@
 .ds-code__copy--done {
   color: var(--color-success);
 }
+
+/* Status values and diagnostics are often needed when configuring or
+   troubleshooting a device. Keep controls native-like, but let touch users
+   long-press the read-only text that is useful outside this page. */
+@media (hover: none) and (pointer: coarse) {
+  .ds-row:not(.ds-row--tappable) .ds-row__value,
+  .ds-row:not(.ds-row--tappable) .ds-row__description,
+  .ds-product__version,
+  .ds-log,
+  .ds-field__error,
+  .ds-card__note--danger,
+  .local-application p,
+  [role='alert'] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Swipe rows own the long-press and drag gesture, including their children. */
+  .ds-swipe__content,
+  .ds-swipe__content .ds-row__value,
+  .ds-swipe__content .ds-row__description,
+  .ds-swipe__content [role='alert'] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
