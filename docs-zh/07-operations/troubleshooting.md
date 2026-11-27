@@ -206,7 +206,7 @@ amixer sget 'DAC LINEOUT'
 
 建议：
 
-- 先运行 `scripts/setup_audio_volume.sh`；
+- 先运行 `scripts/board/setup_audio_volume.sh`；
 - 确认 `[voice_settings.classic.audio].socket` 路径与服务一致；
 - 使用 `record-stream` 和 `play-stream` 分别验证录音和播放；
 - TTS 失败时检查 `ffmpeg` 是否存在。

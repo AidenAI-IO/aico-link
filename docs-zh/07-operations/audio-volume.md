@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # 音频音量初始化与调节
 
-`scripts/setup_audio_volume.sh` 用于在 Luckfox Pico Zero 上把音频输出混音器音量设为最大。
+`scripts/board/setup_audio_volume.sh` 用于在 Luckfox Pico Zero 上把音频输出混音器音量设为最大。
 
 ## 默认设置
 
@@ -16,7 +16,7 @@ sidebar_position: 2
 ## 部署脚本
 
 ```bash
-scp scripts/setup_audio_volume.sh root@<device-ip>:/root/
+scp scripts/board/setup_audio_volume.sh root@<device-ip>:/root/
 ```
 
 登录设备后执行：

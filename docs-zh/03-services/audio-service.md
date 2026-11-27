@@ -159,7 +159,7 @@ FIFO 优先级 10 下达到了离线 8 ms 跳步的时间预算，但实际端�
 `audio_service` 对外提供 `0..100` 的逻辑音量。底层设备的最大音量可以通过以下命令初始化：
 
 ```bash
-scripts/setup_audio_volume.sh
+scripts/board/setup_audio_volume.sh
 ```
 
 详情参见[音量初始化与调整](../07-operations/audio-volume.md)。

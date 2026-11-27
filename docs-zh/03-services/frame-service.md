@@ -116,7 +116,7 @@ TC358743 和未识别的桥接芯片保留原生 NV12 采集。在 RK628 上，�
 `venc_kernel_abi_unsupported`，并在平台模块更新之前使用软件编码。这样可以避免之前出现的
 `jpege_seek_bits` 内核故障以及随后的 `RK_ERR_VENC_BUF_EMPTY` 超时。
 
-要验证一块开发板，请在设备上运行 `scripts/board_jpeg_smoke.py`。它会测试冷启动的 JPEG 请求、质量变化、
+要验证一块开发板，请在设备上运行 `scripts/board/board_jpeg_smoke.py`。它会测试冷启动的 JPEG 请求、质量变化、
 完整帧和裁剪帧（包括需要行填充的宽度）、反复的通道尺寸变化，以及并发的原始帧/JPEG 客户端。
 将保存的 JPEG 样本复制到主机上进行完整解码和图像检查。确认存在 `venc_encoded` 记录且没有
 `software_fallback`，检查 `/proc/vcodec/enc/venc_info` 中已完成的硬件数据包，并检查内核日志中是否有故障。

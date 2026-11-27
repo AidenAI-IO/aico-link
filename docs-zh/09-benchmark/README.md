@@ -453,6 +453,10 @@ pull request 和 fork 的 ref 仍然无法手动分派。
 
 手动分派工作流时，使用 `model` 下拉菜单为该次运行选择 Agent 模型。手动分派默认使用
 `google/gemini-3.5-flash-lite`，这也是定时运行所用的模型。
+带有 `internal/` 前缀的模型（例如 `internal/qwen3.6-35b`）在 Agent 请求中使用 OpenAI 兼容的 `openai` provider、
+已配置的 `BENCHMARK_JUDGE_BASE_URL` 变量和 `BENCHMARK_JUDGE_API_KEY` secret。工作流会先去掉 `internal/` 前缀，
+再把模型名传给 runner，因此 `internal/qwen3.6-35b` 实际以 `qwen3.6-35b` 发送。如果缺少这些设置，internal 运行会在配置校验阶段失败。
+其他 Agent 模型使用 `BENCHMARK_AGENT_PROVIDER`、`BENCHMARK_AGENT_BASE_URL` 和 `BENCHMARK_AGENT_API_KEY`。
 
 工作流需要以下 GitHub 配置值。面向 GitHub 的名称省略了 `AICO_` 前缀；工作流会将它们映射到下文所述的 runner 变量。
 
