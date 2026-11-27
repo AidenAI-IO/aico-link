@@ -1,0 +1,8 @@
+{
+  "label": "Hardware",
+  "position": 2.5,
+  "link": {
+    "type": "generated-index",
+    "description": "Adapt Aico Link board hardware and verify new or repaired boards."
+  }
+}

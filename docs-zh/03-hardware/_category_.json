@@ -1,0 +1,8 @@
+{
+  "label": "硬件",
+  "position": 2.5,
+  "link": {
+    "type": "generated-index",
+    "description": "适配 Aico Link 开发板硬件，并验证新板或返修板。"
+  }
+}
