@@ -26,6 +26,7 @@ import (
 
 type deviceCLIRuntimeKey struct{}
 type deviceCLICaptureKey struct{}
+type deviceCLIActivityKey struct{}
 
 type deviceCLIToolEvidence struct {
 	Tool          string         `json:"tool"`
@@ -38,13 +39,15 @@ type deviceCLIToolEvidence struct {
 const maxDeviceCLIActions = 64
 
 type deviceCLICapture struct {
-	calls            []deviceCLIToolEvidence
-	deferObservation bool // foreground shell, not standalone HTTP
-	needsScreenshot  bool
-	keyError         *ToolError // first failed key request, even if shell masks its exit status
-	guardDimensions  [2]int     // screenshot orientation used for coordinates in this shell
-	frame            visualScreenshotObservation
-	drag             compositeDrag
+	calls             []deviceCLIToolEvidence
+	deferObservation  bool // foreground shell, not standalone HTTP
+	needsScreenshot   bool
+	keyError          *ToolError // first failed key request, even if shell masks its exit status
+	guardDimensions   [2]int     // screenshot orientation used for coordinates in this shell
+	frame             visualScreenshotObservation
+	drag              compositeDrag
+	activityReported  bool
+	activitySucceeded bool
 }
 
 func (r *Runtime) deviceCLIEnabled() bool {
@@ -293,6 +296,13 @@ func (c *deviceCLICapture) finishShell(ctx context.Context, r *Runtime, succeede
 	// shell with no more CLI calls may have done other work since the wait.
 	shotCtx, cancel := context.WithTimeout(context.WithValue(ctx, deviceCLICaptureKey{}, c), 5*time.Second)
 	s := &Server{runtime: r, logger: r.logger}
+	if c.activityReported {
+		shotCtx = withToolProgressReporter(shotCtx, func(ToolProgress) {})
+		if c.activitySucceeded {
+			report := ctx.Value(deviceCLIActivityKey{}).(func(RunEvent))
+			report(RunEvent{Type: runEventToolProgress, ToolStatus: "verifying", Content: "Reading the screen after the action"})
+		}
+	}
 	result, err := invokeDeviceHTTP(shotCtx, s, devicecli.Call{Tool: "screenshot", Input: map[string]any{}})
 	cancel()
 	if err := ctx.Err(); err != nil {
@@ -331,6 +341,17 @@ func (c *deviceCLICapture) finishShell(ctx context.Context, r *Runtime, succeede
 // Record the controller outcome, not what the shell text requested. Internal
 // fallback screenshots and cleanup calls do not count as user-facing actions.
 func (c *deviceCLICapture) invoke(ctx context.Context, s *Server, call devicecli.Call) (ToolInvokeResponse, error) {
+	report, _ := ctx.Value(deviceCLIActivityKey{}).(func(RunEvent))
+	if report != nil {
+		c.activityReported = true
+		report(RunEvent{Type: runEventToolCall, ToolName: call.Tool, ToolInput: deviceCLIActivityInput(call), Timestamp: time.Now()})
+		ctx = withToolProgressReporter(ctx, func(progress ToolProgress) {
+			switch progress.Status {
+			case "running", "preparing", "verifying", "waiting_app":
+				report(RunEvent{Type: runEventToolProgress, ToolName: call.Tool, ToolStatus: progress.Status})
+			}
+		})
+	}
 	result, err := invokeDeviceHTTP(ctx, s, call)
 	completed := result.ToolError != nil && result.ToolError.Details[postActionCompletedDetail] == true
 	skipped := actionNotDispatched(result.ToolError)
@@ -342,7 +363,32 @@ func (c *deviceCLICapture) invoke(ctx context.Context, s *Server, call devicecli
 		evidence.DurationMs = &result.DurationMs
 	}
 	c.calls = append(c.calls, evidence)
+	if report != nil {
+		c.activitySucceeded = !evidence.IsError
+		event := RunEvent{Type: "tool_result", ToolName: call.Tool, IsError: evidence.IsError}
+		if event.IsError && result.ToolError != nil &&
+			(liveActivityToolRequiresApp(call.Tool) || (call.Tool == "enter_text" && call.Input["route"] == "app")) {
+			switch result.ToolError.Code {
+			case CodeBridgeNotConnected, CodeAppBackgrounded:
+				event.ToolStatus = "waiting_app"
+			}
+		}
+		report(event)
+	}
 	return result, err
+}
+
+// Keep only operation names used by Live Activity's localized labels.
+func deviceCLIActivityInput(call devicecli.Call) string {
+	switch call.Tool {
+	case toolBridgeClipboard, toolBridgeCalendar, toolBridgeContacts, toolBridgeNotification:
+		action, _ := call.Input["action"].(string)
+		switch action {
+		case "read", "write", "query", "create", "update", "delete", "send":
+			return jsonString(map[string]any{"action": action})
+		}
+	}
+	return ""
 }
 
 // App data also inherits the per-command BLE Wake and return-entry routes

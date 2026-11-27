@@ -29,6 +29,8 @@ type ToolResult struct {
 	Duration         time.Duration
 	deviceFrame      visualScreenshotObservation
 	deviceCalls      []deviceCLIToolEvidence
+
+	liveActivityHandled bool
 }
 
 func (r ToolResult) IsError() bool { return r.Error != nil }
@@ -177,8 +179,11 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 		Output:      output,
 		deviceFrame: capture.frame,
 		deviceCalls: capture.calls,
-		Error:       toolErr,
-		Duration:    time.Since(call.StartedAt),
+
+		Error:    toolErr,
+		Duration: time.Since(call.StartedAt),
+
+		liveActivityHandled: capture.activityReported,
 	}
 	if err == nil && toolErr != nil && strings.TrimSpace(result.Output) == "" {
 		result.Output = toolErr.Message

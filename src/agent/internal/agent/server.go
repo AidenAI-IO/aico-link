@@ -1802,13 +1802,16 @@ func (s *Server) beginChatRun(req ChatRequest, input TurnInput, userMessage Mess
 
 func (s *Server) newChatRunRequest(run *chatRunSession, input TurnInput, episodeID, requestID string, handler func(RunEvent)) RunRequest {
 	return RunRequest{
-		Input:                   input.InputText,
-		Attachments:             input.Attachments,
-		Turn:                    input,
-		EpisodeID:               episodeID,
-		RequestID:               requestID,
-		DeviceEnvironment:       s.bridgeEnvironment(),
-		EventHandler:            handler,
+		Input:             input.InputText,
+		Attachments:       input.Attachments,
+		Turn:              input,
+		EpisodeID:         episodeID,
+		RequestID:         requestID,
+		DeviceEnvironment: s.bridgeEnvironment(),
+		EventHandler:      handler,
+		LiveActivityEventHandler: func(event RunEvent) {
+			s.liveActivity.UpdateFromRunEvent(requestID, event)
+		},
 		StreamSink:              s.semanticEvents,
 		StreamScope:             streamcontract.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: requestID, RunID: requestID},
 		AsyncEpisodeMaintenance: true,

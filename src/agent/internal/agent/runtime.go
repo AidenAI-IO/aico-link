@@ -151,6 +151,8 @@ type RunRequest struct {
 	StreamWriter      io.Writer
 	MaxTokens         int
 	EventHandler      func(RunEvent)
+	// LiveActivityEventHandler receives display-only updates for nested device actions.
+	LiveActivityEventHandler func(RunEvent)
 	// StreamSink receives typed v2 events in addition to the legacy event
 	// handler. It is optional so existing callers retain their current output.
 	StreamSink  stream.EventSink
@@ -371,6 +373,8 @@ type RunEvent struct {
 	Timestamp        time.Time  `json:"timestamp"`
 	IsError          bool       `json:"is_error,omitempty"`
 	ToolError        *ToolError `json:"tool_error,omitempty"`
+
+	liveActivityHandled bool
 }
 
 // ContextWindowFn returns the active model's spec. It is called on demand so a
@@ -1465,6 +1469,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	loopCtx := ctx
 	if r.deviceCLIEnabled() {
 		loopCtx = context.WithValue(ctx, deviceCLIRuntimeKey{}, r)
+		if req.LiveActivityEventHandler != nil {
+			loopCtx = context.WithValue(loopCtx, deviceCLIActivityKey{}, req.LiveActivityEventHandler)
+		}
 		if conactEnabled {
 			agentLoop.conact = newConactRun(r)
 		}
@@ -2862,6 +2869,8 @@ func (h *runtimeCallbackHandler) HandleToolCallResult(ctx context.Context, call 
 		Timestamp:  time.Now(),
 		IsError:    result.IsError(),
 		ToolError:  toolError,
+
+		liveActivityHandled: result.liveActivityHandled,
 	})
 }
 

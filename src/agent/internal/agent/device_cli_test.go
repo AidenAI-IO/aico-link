@@ -66,8 +66,9 @@ func TestDeviceCLIChainCapturesOnlyFinalState(t *testing.T) {
 	shot := &stubTool{name: "screenshot"}
 	gesture := &stubTool{name: "touch_gesture", output: "ok"}
 	text := &stubTool{name: "enter_text", output: "ok"}
+	open := &stubTool{name: toolOpenApp, output: "ok"}
 	shot.callFn = func(context.Context, string) (string, error) {
-		if len(gesture.inputs) != 2 || len(text.inputs) != 1 {
+		if len(gesture.inputs) != 2 || len(text.inputs) != 1 || len(open.inputs) != 1 {
 			t.Error("screenshot taken before the chain ended")
 		}
 		return terminationPolicyScreenshotObservation(t, 400, 600, image.Rectangle{}), nil
@@ -76,13 +77,44 @@ func TestDeviceCLIChainCapturesOnlyFinalState(t *testing.T) {
 		"screenshot":    shot,
 		"touch_gesture": newPostActionScreenshotTool(gesture, shot, 0),
 		"enter_text":    newPostActionScreenshotTool(text, shot, 0),
+		toolOpenApp:     newPostActionScreenshotTool(open, shot, 0),
 	}}}
 	ctx := context.WithValue(context.Background(), deviceCLIRuntimeKey{}, rt)
+	manager := NewLiveActivityManager(LiveActivityConfig{}, "en-US", nil)
+	manager.StartTask("request", "Use phone")
+	var nested []RunEvent
+	ctx = context.WithValue(ctx, deviceCLIActivityKey{}, func(event RunEvent) {
+		nested = append(nested, event)
+		manager.UpdateFromRunEvent("request", event)
+	})
+	var outer []RunEvent
+	callback := &runtimeCallbackHandler{eventHandler: func(event RunEvent) {
+		outer = append(outer, event)
+		manager.UpdateFromRunEvent("request", event)
+	}}
 	input, _ := json.Marshal(map[string]string{"command": `cli() { curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d "$1" "$AICO_DEVICE_CLI_URL/command"; }
- cli '["tap","200","400"]' && cli '["swipe","500","800","500","300"]' && cli '["type","hello"]' && false && cli '["tap","0","0"]'`})
-	got := executeToolCall(ctx, ToolCallExecution{Specs: NewToolSpecs([]langtools.Tool{&ShellTool{}}), Action: schema.AgentAction{Tool: "shell", ToolInput: string(input)}}).Result
-	if !got.IsError() || len(got.deviceCalls) != 3 || got.deviceCalls[2].Input["text"] != "hello" {
+ cli '["open","Settings"]' && cli '["tap","200","400"]' && cli '["swipe","500","800","500","300"]' && cli '["type","hello"]' && false && cli '["tap","0","0"]'`})
+	got := executeToolCall(ctx, ToolCallExecution{Specs: NewToolSpecs([]langtools.Tool{&ShellTool{}}), Action: schema.AgentAction{Tool: "shell", ToolInput: string(input)}, Callback: callback}).Result
+	if !got.IsError() || len(got.deviceCalls) != 4 || got.deviceCalls[3].Input["text"] != "hello" {
 		t.Fatalf("expected only the operations before the error: %+v", got.deviceCalls)
+	}
+	var started []string
+	for _, event := range nested {
+		if event.Type == runEventToolCall {
+			started = append(started, event.ToolName)
+		}
+		if strings.Contains(event.ToolInput+event.Content, "hello") {
+			t.Fatal("typed text leaked into Live Activity")
+		}
+	}
+	if !reflect.DeepEqual(started, []string{toolOpenApp, "touch_gesture", "touch_gesture", "enter_text"}) {
+		t.Fatalf("unexpected Live Activity actions: %v", started)
+	}
+	if len(outer) != 2 || outer[0].ToolName != "shell" || outer[1].ToolName != "shell" {
+		t.Fatalf("nested events reached the run stream: %+v", outer)
+	}
+	if state := manager.Snapshot("request"); state.LastToolName != "enter_text" || state.ToolStatus != "verifying" {
+		t.Fatalf("shell result replaced the last action: %+v", state)
 	}
 	states := deviceCLIStateMessages(got.deviceFrame)
 	if len(shot.inputs) != 1 || len(states) != 1 || len(states[0].Parts) != 2 {
@@ -416,6 +448,40 @@ func (d *cliTestKeyboard) Write(data []byte) error {
 	return nil
 }
 func (*cliTestKeyboard) Close() {}
+
+func TestDeviceCLILiveActivityPreservesBridgeRecovery(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl required")
+	}
+	rt := &Runtime{tools: &ToolSet{}}
+	manager := NewLiveActivityManager(LiveActivityConfig{}, "en-US", nil)
+	manager.StartTask("request", "Check contacts")
+	ctx := context.WithValue(context.Background(), deviceCLIRuntimeKey{}, rt)
+	ctx = context.WithValue(ctx, deviceCLIActivityKey{}, func(event RunEvent) {
+		state := manager.UpdateFromRunEvent("request", event)
+		if state.CurrentTarget != "" || strings.Contains(state.CurrentStep, "Private Name") {
+			t.Errorf("private contact query reached Live Activity: %+v", state)
+		}
+	})
+	callback := &runtimeCallbackHandler{eventHandler: func(event RunEvent) {
+		manager.UpdateFromRunEvent("request", event)
+	}}
+	input := jsonString(map[string]any{"command": `curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["app","contacts","query","--query","Private Name"]' "$AICO_DEVICE_CLI_URL/command"`})
+	got := executeToolCall(ctx, ToolCallExecution{
+		Specs: NewToolSpecs([]langtools.Tool{&ShellTool{}}), Callback: callback,
+		Action: schema.AgentAction{Tool: "shell", ToolInput: input},
+	}).Result
+	if len(got.deviceCalls) != 1 || !got.deviceCalls[0].NotDispatched {
+		t.Fatalf("expected a rejected Bridge operation in the shell evidence: %+v", got.deviceCalls)
+	}
+	state := manager.Snapshot("request")
+	if state.Status != LiveActivityStatusNeedsApp || state.ToolStatus != "waiting_app" || !state.RequiresApp || state.LastError != "" {
+		t.Fatalf("shell completion must preserve the Bridge recovery prompt: %+v", state)
+	}
+	if state := manager.CompleteTask("request", "Finished"); state.Status != LiveActivityStatusCompleted {
+		t.Fatalf("expected terminal task status: %+v", state)
+	}
+}
 
 func TestDeviceCLIAppDataRequiresTransportWithoutCapturingScreen(t *testing.T) {
 	for _, tc := range []struct {

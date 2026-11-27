@@ -447,6 +447,9 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 	if m == nil || strings.TrimSpace(requestID) == "" {
 		return nil
 	}
+	if event.liveActivityHandled {
+		return m.Snapshot(requestID)
+	}
 	m.mu.Lock()
 	requestID = strings.TrimSpace(requestID)
 	state, ok := m.states[requestID]
@@ -528,6 +531,8 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 			state.Status = LiveActivityStatusNeedsApp
 			state.Phase = LiveActivityPhaseWaitingApp
 			state.CurrentAction = "open_aico"
+			state.CurrentStep = text.OpenCompanionAppToContinue
+			state.ShowsProgress = false
 		}
 		state.LastError = ""
 	case runEventToolCall:
@@ -589,10 +594,10 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 			// Private tools (clipboard, contacts, ...) can echo their data in
 			// the error; the phone's lock screen must not show it.
 			state.LastError = ""
-			if !toolResultIsSensitive(event.ToolName) {
+			if event.ToolName != "shell" && !toolResultIsSensitive(event.ToolName) {
 				state.LastError = truncateLiveActivityText(errText, 160)
 			}
-			if liveActivityResultNeedsApp(event, errText) {
+			if event.ToolStatus == "waiting_app" || liveActivityResultNeedsApp(event, errText) {
 				state.Status = LiveActivityStatusNeedsApp
 				state.Phase = LiveActivityPhaseWaitingApp
 				state.CurrentAction = "open_aico"

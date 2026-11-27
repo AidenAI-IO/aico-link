@@ -136,6 +136,12 @@ copy and does not display the raw reasoning stream. Successful app-launch
 requests use `verifying` until a later screen observation can establish that
 the target app is visible.
 
+Device CLI updates the current task as each device action executes inside the
+shell. A batch can advance through several actions within one BLE update
+interval. The card shows the latest action and prompts the user to return to
+Aico when a Bridge action requires it. CLI progress uses localized labels and
+omits raw commands, tool output, and private arguments.
+
 `phone_app_state` events additionally report `return_entry` and
 `return_entry_available`. When the iOS app is backgrounded or inactive, it can
 report `return_entry="dynamic_island"` so board-side recovery logic knows that a
