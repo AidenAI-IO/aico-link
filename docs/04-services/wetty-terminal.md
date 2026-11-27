@@ -80,7 +80,7 @@ so `sudo apt update` uses the same route as the login shell. Authentication is
 still required. After installing this fix, existing terminals can reload it with
 `. /etc/profile.d/aico-env.sh`; newly opened login terminals load it automatically.
 An SSH one-shot command does not load a login profile; use
-`ssh luckfox 'bash -lc "COMMAND"'` when it needs the same environment.
+`ssh aico@<device-ip> 'bash -lc "COMMAND"'` when it needs the same environment.
 
 ## Mobile browser defaults
 
