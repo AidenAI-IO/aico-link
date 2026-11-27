@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Audio Volume Initialization and Adjustment
 
-`scripts/setup_audio_volume.sh` is used to set audio output mixer volumes to maximum on Luckfox Pico Zero.
+`scripts/board/setup_audio_volume.sh` is used to set audio output mixer volumes to maximum on Luckfox Pico Zero.
 
 ## Default Settings
 
@@ -16,7 +16,7 @@ The script sets:
 ## Deploy Script
 
 ```bash
-scp scripts/setup_audio_volume.sh root@<device-ip>:/root/
+scp scripts/board/setup_audio_volume.sh root@<device-ip>:/root/
 ```
 
 After logging into the device, execute:

@@ -23,7 +23,7 @@ RUN_LOGS=1
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/board_low_level_smoke.sh [options]
+  sudo sh board_low_level_smoke.sh [options]
 
 Runs all board-local low-level smoke checks by delegating to:
   - board_low_level_system.sh

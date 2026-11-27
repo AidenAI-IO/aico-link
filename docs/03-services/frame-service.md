@@ -134,7 +134,7 @@ using VENC. An application-only upgrade on an older BSP logs
 updated. This avoids the former `jpege_seek_bits` kernel fault and subsequent
 `RK_ERR_VENC_BUF_EMPTY` timeout.
 
-To validate a board, run `scripts/board_jpeg_smoke.py` on the device. It tests
+To validate a board, run `scripts/board/board_jpeg_smoke.py` on the device. It tests
 a cold JPEG request, quality changes, full and cropped frames (including a
 width that requires row padding), repeated channel size changes, and concurrent
 raw/JPEG clients. Copy the saved JPEG samples to a host for full decoding and

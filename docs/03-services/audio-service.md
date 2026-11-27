@@ -182,7 +182,7 @@ handling; they cannot validate NPU inference or microphone quality.
 `audio_service` exposes a logical volume of `0..100`. The underlying device maximum volume can be initialized with:
 
 ```bash
-scripts/setup_audio_volume.sh
+scripts/board/setup_audio_volume.sh
 ```
 
 See [Volume Initialization and Adjustment](../07-operations/audio-volume.md) for details.

@@ -1,0 +1,68 @@
+# Settings for the board hardware suites (board_hw_*.sh).
+#
+# Copy this file, uncomment what you need and pass it to any suite or to the
+# entry point:
+#   sudo sh board_hw_test.sh --config /tmp/board/board_hw.conf
+# or set AICO_HW_CONFIG=/path/to/file. The file is read as a shell script of
+# VARIABLE=value lines. Precedence: built-in defaults < this file < options on
+# the command line. Values shown are the defaults.
+#
+# Keep site-specific values (network names, servers, URLs) in your own copy;
+# the suites never need them unless you enable the matching check.
+
+# ---------------------------------------------------------------- common
+# INTERACTIVE=0                # 1 = include steps that need a person
+
+# ---------------------------------------------------------------- audio
+# CAPTURE_DEVICE=default
+# PLAYBACK_DEVICE=default
+# CHANNELS=auto                # auto = 2 when the device allows, else 1
+# RATE=16000
+# NOISE_SECONDS=3
+# VOICE_SECONDS=4
+# VOLUME_STEPS="30 60 90"
+# MAX_NOISE_DBFS=-45
+# MIN_SNR_DB=15
+# STOP_SERVICE=0               # 1 = stop audio_service during ALSA tests
+# AUDIO_SOCKET=/run/audio_service/audio_service.sock
+
+# ---------------------------------------------------------------- hdmi
+# EXPECT_SIZE=                 # e.g. 1920x1080; empty = any nonzero size
+# MODES=                       # e.g. "1080p30 1080p60" (space separated)
+# FPS_SECONDS=5
+# MIN_FPS=10
+# SETTLE_SECONDS=90
+# HOTPLUG=0                    # 1 = cable unplug/replug (interactive)
+# SLEEP_TEST=0                 # 1 = source sleep and wake (interactive)
+# JPEG=1                       # 0 = skip the JPEG smoke test
+# FRAME_SOCKET=/run/frame_service/frame_service.sock
+# HDMI_MODE_FILE=/userdata/system/hdmi-mode
+
+# ---------------------------------------------------------------- mcu
+# BATTERY_SAMPLES=5
+# EVENT_SECONDS=30
+# TEST_CHARGER=0               # 1 = charger unplug/replug (interactive)
+# TEST_POWER_KEY=0             # 1 = short power-switch press (interactive)
+# MCU_SOCKET=/run/mcu_service/mcu_service.sock
+
+# ---------------------------------------------------------------- peripherals
+# RUN_GROUPS=                  # e.g. "wifi storage"; empty = all groups
+# SKIP_GROUPS=
+# WIFI_IFACE=                  # empty = the first wireless interface
+# EXPECT_SSID=                 # empty = any network (the name is only reported)
+# MIN_RSSI=-75
+# DNS_HOST=aico.link
+# INTERNET=0                   # 1 = HTTPS request through Wi-Fi
+# HTTPS_URL=                   # empty = https://$DNS_HOST/
+# IPERF_SERVER=                # host[:port] running iperf3 -s
+# DOWNLOAD_URL=                # large file for a download speed figure
+# MIN_WIFI_MBPS=5
+# BLE_CONNECT=0                # 1 = wait for a phone (interactive)
+# BLE_PAIR=0
+# BLE_SECONDS=90
+# BLE_SOCKET=/run/ble_service/ble_service.sock
+# STORAGE_DIR=/userdata
+# STORAGE_MB=32
+# MIN_WRITE_MBS=5
+# MIN_READ_MBS=10
+# MAX_TEMP_C=80
