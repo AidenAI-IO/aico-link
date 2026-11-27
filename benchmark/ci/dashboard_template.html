@@ -33,9 +33,47 @@
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
   .num { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .cap { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
-  #workflow-summary-values[hidden] { display: none; }
-  #workflow-summary .num { font-variant-numeric: normal; }
-  .workflow-model { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .kpi { min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; }
+  .kpi .num { margin: 2px 0 4px; line-height: 1.15; }
+  .kpi-primary .num { font-size: 38px; }
+  .kpi-meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .kpi-meta + .kpi-meta { margin-top: 2px; }
+  .kpi-title { margin: 6px 0 6px; font-size: 20px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+  .weekly-facts { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .weekly-facts b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .area-head, .area > summary, .area-suite { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(150px, 1.5fr) 96px 76px; gap: 14px; align-items: center; }
+  .area-head { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; padding: 0 0 8px; border-bottom: 1px solid var(--line); }
+  .area { border-bottom: 1px solid var(--line); }
+  .area:last-child { border-bottom: 0; }
+  .area > summary { margin: 0; padding: 10px 0; list-style: none; }
+  .area > summary::-webkit-details-marker { display: none; }
+  .area > summary:hover, .area-suite:hover { background: var(--bg); }
+  .area-name { min-width: 0; overflow-wrap: anywhere; }
+  .area > summary .area-name::before { content: "▸"; display: inline-block; width: 16px; color: var(--muted); transition: transform .15s; }
+  .area[open] > summary .area-name::before { transform: rotate(90deg); }
+  .area-suites { padding-bottom: 8px; }
+  .area-suite { padding: 6px 0; font-size: 13px; }
+  .area-suite .area-name { padding-left: 16px; }
+  .area-sub { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .area > summary .area-sub { padding-left: 16px; }
+  .area-head .n, .area-cell.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rate { display: flex; align-items: center; gap: 10px; }
+  .rate-value { width: 48px; flex: none; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bar { position: relative; flex: 1; height: 8px; border-radius: 4px; background: var(--line); }
+  .bar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--accent); }
+  .bar .prev, .prev-key { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); opacity: .6; }
+  .prev-key { position: relative; display: inline-block; top: 2px; height: 12px; margin: 0 2px 0 6px; }
+  .tag { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 11px; font-weight: 400; }
+  button.dataset.weekly-dataset { font-weight: 400; }
+  @media (max-width: 700px) {
+    .area-head { display: none; }
+    .area > summary, .area-suite { grid-template-columns: 1fr auto; gap: 6px 12px; }
+    .area-name, .area-cell.rate-cell { grid-column: 1 / -1; }
+    .area-cell.n { text-align: left; }
+    .area-cell[data-label]::before { content: attr(data-label) " "; color: var(--muted); font-size: 12px; }
+    .area-suite .area-cell { padding-left: 16px; }
+  }
   .bad { color: var(--bad); }
   .good { color: var(--good); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -94,7 +132,7 @@
   button.dataset[aria-pressed="true"] { font-weight: 700; }
   select:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   [hidden] { display: none !important; }
-  .tabs { display: flex; gap: 6px; padding: 5px; margin-bottom: 20px; width: fit-content; max-width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); position: sticky; top: 8px; z-index: 2; }
+  .tabs { display: flex; gap: 6px; padding: 5px; margin-bottom: 16px; width: fit-content; max-width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); position: sticky; top: 8px; z-index: 2; }
   .tabs button { border: 0; border-radius: 6px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; background: transparent; color: var(--muted); }
   .tabs button[aria-selected="true"] { background: var(--accent); color: white; }
   .tabs button:hover:not([aria-selected="true"]) { background: var(--bg); color: var(--text); }
@@ -157,23 +195,40 @@
 <div class="wrap">
   <h1>Benchmark Dashboard</h1>
   <div class="sub" id="sub"></div>
-  <section class="panel" id="workflow-summary" aria-labelledby="workflow-summary-title">
-    <h2 id="workflow-summary-title">Latest workflow run</h2>
-    <div class="cards" id="workflow-summary-values" hidden>
-      <div><div class="cap" id="workflow-model-label">Agent model</div><div class="workflow-model" id="workflow-model"></div></div>
-      <div>
+  <div class="tabs" id="mode-tabs" role="tablist" aria-label="Report period">
+    <button id="mode-weekly" role="tab" type="button" data-mode="weekly" aria-selected="true" aria-controls="weekly-summary view-trends" tabindex="0">Last 7 days</button>
+    <button id="mode-latest" role="tab" type="button" data-mode="latest" aria-selected="false" aria-controls="weekly-summary view-latest" tabindex="-1">Latest run</button>
+  </div>
+  <section class="panel" id="weekly-summary" aria-labelledby="summary-title">
+    <div class="section-actions"><h2 id="summary-title">Summary</h2><span class="empty" id="summary-scope"></span></div>
+    <div class="kpis">
+      <div class="kpi kpi-primary">
         <div class="cap">Overall pass rate (pass@1)</div>
-        <div class="num" id="workflow-pass-rate"></div>
-        <div class="empty" id="workflow-pass-count"></div>
+        <div class="num" id="summary-pass-rate">—</div>
+        <div class="kpi-meta" id="summary-pass-count"></div>
+        <div class="kpi-meta" id="summary-pass-baseline"></div>
+      </div>
+      <div class="kpi">
+        <div class="cap">Evaluation coverage</div>
+        <div class="num" id="summary-coverage">—</div>
+        <div class="kpi-meta" id="summary-coverage-count"></div>
+        <div class="kpi-meta" id="summary-coverage-baseline"></div>
+      </div>
+      <div class="kpi">
+        <div class="cap" id="summary-context-label"></div>
+        <div class="kpi-title" id="summary-context"></div>
+        <div class="kpi-meta" id="summary-context-meta"></div>
+        <div class="kpi-meta" id="summary-context-note"></div>
       </div>
     </div>
-    <p class="empty" id="latest-run-note"></p>
+    <div class="weekly-facts" id="summary-facts"></div>
+    <div id="summary-areas-section">
+      <div class="area-head" aria-hidden="true"><span>Test area</span><span>pass@1 <span class="prev-key"></span> <span id="summary-marker-label"></span></span><span class="n" id="summary-change-label"></span><span class="n">Coverage</span></div>
+      <div id="summary-areas"></div>
+    </div>
+    <p class="empty" id="summary-empty" hidden></p>
   </section>
-  <div class="tabs" id="dashboard-tabs" role="tablist" aria-label="Dashboard view">
-    <button id="tab-latest" role="tab" type="button" aria-selected="true" aria-controls="view-latest" tabindex="0">Latest results</button>
-    <button id="tab-trends" role="tab" type="button" aria-selected="false" aria-controls="view-trends" tabindex="-1">Weekly trends</button>
-  </div>
-  <section id="view-latest" role="tabpanel" aria-labelledby="tab-latest">
+  <section id="view-latest" role="tabpanel" aria-labelledby="mode-latest" hidden>
   <div class="panel" id="overview-panel"><h2>Latest results</h2>
     <p class="empty">Changes are relative to each dataset’s previous run.</p>
     <p class="empty">Test area</p><div id="change-summary" class="filters" role="group" aria-label="Filter latest datasets by test area"></div>
@@ -188,7 +243,7 @@
     <p class="empty" id="failures-empty" hidden>No datasets match these filters.</p>
   </div>
   </section>
-  <section id="view-trends" role="tabpanel" aria-labelledby="tab-trends" hidden>
+  <section id="view-trends" role="tabpanel" aria-labelledby="mode-weekly">
   <div class="panel" id="dataset-panel">
     <div class="section-actions"><h2>Dataset trends</h2><button class="action" id="selected-failures" type="button">View latest failure details →</button></div>
     <p class="empty">Test area</p><div id="trend-capabilities" class="filters" role="group" aria-label="Filter dataset trends by test area"></div>
@@ -230,26 +285,127 @@ el("reading-notes-label").textContent = `Metric definitions${DATA.warnings.lengt
 
 el("sub").textContent = `Last 7 days · ${when(DATA.windowStart)} — ${when(DATA.generatedAt)} · ${runs.length} workflow runs · ${DATA.suites.length} datasets`;
 
-const latestRun = runs.at(-1);
-if (latestRun) {
-  const models = [...new Set(latestRun.suites.map(suite => suite.agent_model?.trim() || "Unknown"))].sort();
-  el("workflow-summary-values").hidden = false;
-  el("workflow-model-label").textContent = models.length > 1 ? "Agent models" : "Agent model";
-  el("workflow-model").textContent = models.join(", ");
-  el("workflow-pass-rate").textContent = pct(latestRun.pass_at_1);
-  let passCount = `${latestRun.passed} of ${latestRun.eligible_tasks} eligible first attempts passed`;
-  if (!latestRun.metrics_complete) {
-    passCount = "First-attempt counts are incomplete.";
-  } else if (!latestRun.eligible_tasks) {
-    passCount = "No eligible first attempts.";
-  }
-  el("workflow-pass-count").textContent = passCount;
-  el("latest-run-note").innerHTML = `${esc(when(latestRun.timestamp))} · ${esc(latestRun.git_branch || "Unknown branch")} · ${commitLink(latestRun.commit_sha)}`;
-} else {
-  el("latest-run-note").textContent = "No workflow runs in this period.";
-}
-
 const datasets = DATA.suites;
+
+// Summary: the last 7 days (the Lark weekly card) or the newest workflow run,
+// each compared with the period before it.
+const num = v => v === null || v === undefined ? "—" : Number(v).toLocaleString();
+const known = v => v !== null && v !== undefined;
+const weekChange = d => {
+  if (!known(d)) return '<span class="empty">—</span>';
+  const points = Math.round(d * 1000) / 10;
+  if (points === 0) return '<span class="empty">0.0 pp</span>';
+  return `<span class="${points > 0 ? "good" : "bad"}">${points > 0 ? "↑ +" : "↓ "}${points.toFixed(1)} pp</span>`;
+};
+const rateBar = (rate, previous, label) => `<span class="rate"><span class="rate-value">${pct(rate)}</span><span class="bar">` +
+  (known(rate) ? `<span class="fill" style="width:${(rate * 100).toFixed(1)}%"></span>` : "") +
+  (known(previous) ? `<span class="prev" style="left:${(previous * 100).toFixed(1)}%" title="${esc(label)} ${pct(previous)}"></span>` : "") +
+  "</span></span>";
+const datasetIndexByName = name => datasets.findIndex(dataset => dataset.suite === name.replace(/ \[[^\]]*\]$/, ""));
+const workflowLink = summary => DATA.repo && summary.workflow_run_id
+  ? safeLink(`https://github.com/${DATA.repo.split('/').map(encodeURIComponent).join('/')}/actions/runs/${encodeURIComponent(summary.workflow_run_id)}`,
+      `Workflow #${summary.workflow_run_number || summary.workflow_run_id}` + (summary.workflow_run_attempt > 1 ? ` · attempt ${summary.workflow_run_attempt}` : ""))
+  : "";
+const summaryModes = {
+  weekly: {
+    data: () => DATA.weekly, previous: "Previous 7 days", marker: "last week", change: "vs last week",
+    noRuns: "No benchmark runs in the last 7 days.", unit: "this week",
+    context: (summary, totals) => {
+      el("summary-context-label").textContent = "Period";
+      el("summary-context").textContent = `${num(totals.run_count)} workflow run${totals.run_count === 1 ? "" : "s"}`;
+      el("summary-context-meta").textContent = `${num(totals.suite_runs)} dataset runs` +
+        (known(totals.cost_usd_sum) ? ` · cost $${totals.cost_usd_sum.toFixed(3)}` : "");
+      el("summary-context-note").textContent = `${when(summary.start)} — ${when(summary.end)}`;
+    },
+  },
+  latest: {
+    data: () => DATA.latestRun, previous: "Previous run", marker: "previous run", change: "vs previous run",
+    noRuns: "No workflow runs in the last 7 days.", unit: "in this run",
+    context: (summary, totals) => {
+      const models = (summary.agent_models || []).map(model => model || "Unknown");
+      el("summary-context-label").textContent = models.length > 1 ? "Latest run · agent models" : "Latest run · agent model";
+      el("summary-context").textContent = models.join(", ") || "Unknown";
+      el("summary-context-meta").innerHTML = `${esc(when(summary.start))} · ${esc(summary.git_branch || "Unknown branch")} · ${commitLink(summary.commit_sha)}`;
+      el("summary-context-note").innerHTML = [workflowLink(summary), `${num(totals.suite_runs)} dataset runs`,
+        known(totals.cost_usd_sum) ? `cost $${totals.cost_usd_sum.toFixed(3)}` : ""].filter(Boolean).join(" · ");
+    },
+  },
+};
+let summaryMode = "weekly";
+function renderSummary(mode) {
+  summaryMode = mode;
+  const config = summaryModes[mode];
+  const summary = config.data();
+  el("summary-scope").textContent = mode === "weekly"
+    ? "Last 7 days compared with the 7 days before" : "Newest workflow run compared with the run before it";
+  el("summary-marker-label").textContent = config.marker;
+  el("summary-change-label").textContent = config.change;
+  const totals = summary?.totals;
+  const empty = !totals || !totals.suite_runs;
+  el("summary-areas-section").hidden = empty;
+  el("summary-empty").hidden = !empty;
+  el("summary-empty").textContent = config.noRuns;
+  if (empty) {
+    for (const id of ["summary-pass-rate", "summary-coverage", "summary-context"]) el(id).textContent = "—";
+    for (const id of ["summary-pass-count", "summary-pass-baseline", "summary-coverage-count", "summary-coverage-baseline",
+      "summary-context-label", "summary-context-meta", "summary-context-note", "summary-facts", "summary-areas"]) el(id).innerHTML = "";
+    return;
+  }
+  const previous = summary.previous_totals || {};
+  const baseline = (current, before) => !known(before) ? `No data from the ${config.previous.toLowerCase()}`
+    : `${config.previous} ${pct(before)} · ${weekChange(known(current) ? current - before : null)}`;
+  el("summary-pass-rate").textContent = pct(totals.pass_at_1);
+  el("summary-pass-count").textContent = `${num(totals.passed)} of ${num(totals.eligible_tasks)} eligible first attempts passed`;
+  el("summary-pass-baseline").innerHTML = baseline(totals.pass_at_1, previous.pass_at_1);
+  el("summary-coverage").textContent = pct(totals.coverage);
+  const failures = totals.failure_counts || {};
+  const excluded = [["evaluation", "evaluation errors"], ["environment", "environment errors"], ["skipped", "skipped"]]
+    .filter(([kind]) => known(failures[kind])).map(([kind, label]) => `${num(failures[kind])} ${label}`);
+  el("summary-coverage-count").textContent = `${num(totals.eligible_tasks)} of ${num(totals.tasks)} first attempts evaluated` +
+    (excluded.length ? ` · excluded: ${excluded.join(", ")}` : "");
+  el("summary-coverage-baseline").innerHTML = baseline(totals.coverage, previous.coverage);
+  config.context(summary, totals);
+
+  const facts = [];
+  const compared = summary.compared_pass_at_1;
+  if (summary.compared_datasets && compared)
+    facts.push(`<span>Same ${num(summary.compared_datasets)} datasets as the ${config.previous.toLowerCase()}: ${pct(compared.previous)} → <b>${pct(compared.current)}</b> ${weekChange(summary.change)}</span>`);
+  const reconfigured = (summary.suites || []).filter(s => known(s.change) && s.config_changes?.length).length;
+  if (reconfigured)
+    facts.push(`<span>${reconfigured} compared datasets changed configuration (marked <span class="tag">config</span>)</span>`);
+  el("summary-facts").innerHTML = facts.join("");
+
+  const suiteRow = suite => {
+    const index = datasetIndexByName(suite.suite);
+    const name = index >= 0
+      ? `<button type="button" class="dataset weekly-dataset" data-weekly-dataset="${index}" title="${mode === "latest" ? "View failure details" : "View dataset trends"}">${esc(suite.suite)}</button>`
+      : esc(suite.suite);
+    const configTag = suite.config_changes?.length && known(suite.change)
+      ? `<span class="tag" title="${esc(suite.config_changes.map(c => `${c.field}: ${c.previous} → ${c.current}`).join("\n"))}">config</span>` : "";
+    let detail = `${num(suite.passed)} / ${num(suite.eligible_tasks)} passed` + (mode === "weekly" ? ` · ${num(suite.suite_runs)} runs` : "");
+    if (!known(suite.pass_at_1)) {
+      detail = `No valid evaluation ${config.unit}`;
+      if (suite.last_valid) detail += ` · last valid ${pct(suite.last_valid.pass_at_1)} (${when(suite.last_valid.timestamp)})`;
+    }
+    return `<div class="area-suite"><span class="area-name">${name}${suite.new ? '<span class="tag">new</span>' : ""}${configTag}<span class="area-sub">${esc(detail)}</span></span>
+      <span class="area-cell rate-cell">${rateBar(suite.pass_at_1, suite.previous_pass_at_1, config.previous)}</span>
+      <span class="area-cell n" data-label="${esc(config.change)}">${weekChange(suite.change)}</span>
+      <span class="area-cell n" data-label="Coverage">${pct(suite.coverage)}</span></div>`;
+  };
+  // Keep expanded areas open across the toggle.
+  const open = new Set([...document.querySelectorAll("#summary-areas details[open]")].map(node => node.dataset.area));
+  el("summary-areas").innerHTML = (summary.capabilities || []).map(area => {
+    const names = new Set(area.suites);
+    const rows = (summary.suites || []).filter(suite => names.has(suite.suite));
+    const change = known(area.pass_at_1) && known(area.previous_pass_at_1) ? area.pass_at_1 - area.previous_pass_at_1 : null;
+    return `<details class="area" data-area="${esc(area.capability)}"${open.has(area.capability) ? " open" : ""}><summary>
+      <span class="area-name"><b>${esc(area.capability)}</b><span class="area-sub">${rows.length} dataset${rows.length === 1 ? "" : "s"} · ${num(area.passed)} / ${num(area.eligible_tasks)} passed</span></span>
+      <span class="area-cell rate-cell">${rateBar(area.pass_at_1, area.previous_pass_at_1, config.previous)}</span>
+      <span class="area-cell n" data-label="${esc(config.change)}">${weekChange(change)}</span>
+      <span class="area-cell n" data-label="Coverage">${pct(area.coverage)}</span>
+    </summary><div class="area-suites">${rows.map(suiteRow).join("")}</div></details>`;
+  }).join("");
+}
 const safeLink = (url, label) => {
   try {
     const parsed = new URL(url);
@@ -266,7 +422,6 @@ const evidenceHTML = check => {
     ${check.expected || check.actual ? `<dl class="evidence-values">${check.expected ? `<div><dt>Expected</dt><dd>${esc(check.expected)}</dd></div>` : ""}${check.actual ? `<div class="evidence-actual"><dt>Actual</dt><dd>${esc(check.actual)}</dd></div>` : ""}</dl>` : ""}</div>`;
 };
 const detailDatasets = [...datasets].sort((a, b) => b.latest.timestamp.localeCompare(a.latest.timestamp));
-const expandedDataset = detailDatasets.find(dataset => dataset.latest.failure_details?.length);
 el("failure-details").innerHTML = detailDatasets.map(dataset => {
   const latest = dataset.latest;
   const rows = latest.failure_details || [];
@@ -278,7 +433,7 @@ el("failure-details").innerHTML = detailDatasets.map(dataset => {
     available ? "No failed or excluded attempts" : "Failure details unavailable";
   const note = available || !rows.length ? "" : latest.failure_details_status === "partial" ? " · Partial details" : " · Details unavailable";
   const index = datasets.indexOf(dataset);
-  return `<details class="failure-dataset" id="failure-dataset-${index}" data-filter-dataset="${index}"${dataset === expandedDataset ? " open" : ""}>
+  return `<details class="failure-dataset" id="failure-dataset-${index}" data-filter-dataset="${index}">
     <summary><b>${esc(dataset.suite)}</b> · ${headline}${note}</summary>
     <div class="section-actions"><p class="sub">${coverage}${!available ? ". Missing outputs may contain additional failures." : ""}</p><button class="action" type="button" data-trend-dataset="${index}">View dataset trends →</button></div>
     ${Object.entries(latest.failure_details_errors || {}).map(([reason, count]) => `<p class="empty">${esc(reason)} · ${count}</p>`).join("")}
@@ -592,29 +747,35 @@ if (datasets.length && typeof Chart !== "undefined") {
     },
   });
 }
-const views = ["latest", "trends"];
-function showView(view) {
-  if (!views.includes(view)) return;
-  for (const name of views) {
-    const active = name === view;
-    el("view-" + name).hidden = !active;
-    el("tab-" + name).setAttribute("aria-selected", String(active));
-    el("tab-" + name).tabIndex = active ? 0 : -1;
+// The period switch drives the summary and its detail view: the newest run's
+// results and failures, or the last 7 days' dataset trends.
+const modes = ["weekly", "latest"];
+function showMode(mode) {
+  if (!modes.includes(mode)) return;
+  for (const name of modes) {
+    const active = name === mode;
+    el("mode-" + name).setAttribute("aria-selected", String(active));
+    el("mode-" + name).tabIndex = active ? 0 : -1;
   }
+  el("view-latest").hidden = mode !== "latest";
+  el("view-trends").hidden = mode !== "weekly";
+  renderSummary(mode);
+  try { history.replaceState(null, "", "#" + mode); } catch {}
   // Charts created in a hidden panel need their visible container dimensions.
-  for (const instance of view === "latest" ? [] : [chart, ...measurementCharts.map(item => item.chart)]) {
+  for (const instance of mode === "weekly" ? [chart, ...measurementCharts.map(item => item.chart)] : []) {
     if (instance) { instance.resize(); instance.update("none"); }
   }
 }
-for (const [index, view] of views.entries()) {
-  el("tab-" + view).addEventListener("click", () => showView(view));
-  el("tab-" + view).addEventListener("keydown", event => {
-    const targets = { ArrowRight: (index + 1) % views.length, ArrowLeft: (index + views.length - 1) % views.length, Home: 0, End: views.length - 1 };
+const showView = view => showMode(view === "trends" ? "weekly" : "latest");
+for (const [index, mode] of modes.entries()) {
+  el("mode-" + mode).addEventListener("click", () => showMode(mode));
+  el("mode-" + mode).addEventListener("keydown", event => {
+    const targets = { ArrowRight: (index + 1) % modes.length, ArrowLeft: (index + modes.length - 1) % modes.length, Home: 0, End: modes.length - 1 };
     if (!(event.key in targets)) return;
     event.preventDefault();
-    const target = views[targets[event.key]];
-    showView(target);
-    el("tab-" + target).focus();
+    const target = modes[targets[event.key]];
+    showMode(target);
+    el("mode-" + target).focus();
   });
 }
 function openDataset(index) {
@@ -647,6 +808,12 @@ el("diagnostic-results").addEventListener("click", event => {
   const button = event.target.closest("button[data-dataset]");
   if (button) openDataset(Number(button.dataset.dataset));
 });
+el("summary-areas").addEventListener("click", event => {
+  const button = event.target.closest("button[data-weekly-dataset]");
+  if (!button) return;
+  // Stay in the current period: trends for the week, failures for the newest run.
+  (summaryMode === "latest" ? openFailures : openDataset)(Number(button.dataset.weeklyDataset));
+});
 el("selected-failures").addEventListener("click", () => openFailures(datasets.indexOf(selected)));
 el("selected-failures").disabled = !datasets.length;
 el("back-overview").addEventListener("click", () => {
@@ -662,6 +829,7 @@ for (const id of capabilityControls) {
 document.querySelectorAll('.metric-nav a[href="#history-panel"]').forEach(link => link.addEventListener("click", () => { el("history-panel").open = true; }));
 el("chart-unavailable").hidden = typeof Chart !== "undefined";
 applyDatasetFilters();
+showMode(typeof location !== "undefined" && location.hash === "#latest" ? "latest" : "weekly");
 
 </script>
 </body>

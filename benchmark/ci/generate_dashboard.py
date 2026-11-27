@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp, comparison_key, fetch_benchmark_history
-from ci.weekly_report import AREA_ORDER, DIAGNOSTIC_SUITES, capability_of, environment_of, summarize_weekly, render_weekly
+from ci.weekly_report import (AREA_ORDER, DIAGNOSTIC_SUITES, capability_of, environment_of, render_weekly,
+                              summarize_latest_run, summarize_weekly)
 from ci.dashboard_metrics import METRIC_CHARTS
 
 
@@ -56,6 +57,8 @@ def generate_dashboard(
     suites = _summarize_suites(runs)
     warnings = warnings or []
     weekly = summarize_weekly(history, end=report_end)
+    # The newest run in the display window, compared with the run before it.
+    latest_run = summarize_latest_run(history, end=report_end) if runs else None
     if weekly_output is not None:
         weekly_output.parent.mkdir(parents=True, exist_ok=True)
         weekly_output.write_text(render_weekly(weekly, warnings), encoding="utf-8")
@@ -77,6 +80,7 @@ def generate_dashboard(
                     "history": history,
                     "warnings": warnings,
                     "weekly": weekly,
+                    "latest_run": latest_run,
                 },
                 indent=2,
             ),
@@ -86,7 +90,8 @@ def generate_dashboard(
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text(
         _render_html(runs=runs, suites=suites, repo=repo,
-                     warnings=warnings, report_end=report_end),
+                     warnings=warnings, report_end=report_end,
+                     weekly=weekly, latest_run=latest_run),
         encoding="utf-8",
     )
 
@@ -317,6 +322,8 @@ def _render_html(
     repo: str,
     warnings: list[str],
     report_end: datetime | None = None,
+    weekly: dict[str, Any] | None = None,
+    latest_run: dict[str, Any] | None = None,
 ) -> str:
     """
     Render the dashboard HTML with its data embedded as JSON.
@@ -329,6 +336,8 @@ def _render_html(
         runs: Workflow runs, sorted oldest first
         suites: Per-suite summaries
         repo: GitHub repository ("owner/repo") for commit links
+        weekly: The weekly summary also sent to Lark, shown as the page headline
+        latest_run: The same summary for the newest workflow run
 
     Returns:
         A self-contained HTML document
@@ -350,6 +359,8 @@ def _render_html(
         "capabilities": [name for name in AREA_ORDER
                          if any(suite["capability"] == name for suite in suites)],
         "warnings": display_warnings,
+        "weekly": weekly,
+        "latestRun": latest_run,
         "metricCharts": sorted(METRIC_CHARTS, key=lambda spec:
                                ("latency", "timings", "calls", "reliability", "tokens", "cost").index(spec["id"])),
         "dataCompleteness": {

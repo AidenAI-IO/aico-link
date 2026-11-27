@@ -528,6 +528,13 @@ global.Chart = function(element, config) {
 """
     verification = """
 if (elements.get('suites').innerHTML.includes('<img')) process.exit(1);
+// The newest run holds only an unscored 'other' run; the week holds every dataset.
+renderSummary('latest');
+if (!elements.get('summary-areas').innerHTML.includes('No valid evaluation in this run')) process.exit(10);
+renderSummary('weekly');
+const summaryHTML = elements.get('summary-areas').innerHTML;
+if (summaryHTML.includes('<img') || !summaryHTML.includes('&lt;img')) process.exit(10);
+if (elements.get('summary-pass-rate').textContent === '—') process.exit(11);
 if (!elements.get('suites').innerHTML.includes('&lt;img')) process.exit(2);
 if (selected.suite !== 'other') process.exit(3);
 if (JSON.stringify(chart.data.datasets[0].data) !== '[25,null]') process.exit(4);
@@ -554,7 +561,10 @@ if (['retry_count', 'replan_count', 'time_to_first_token_ms', 'vision_llm_time_m
 if (!['llm_time_ms', 'cost_usd', 'screenshot_capture_ms'].every(metric => chartMetrics.includes(metric))) process.exit(48);
 if (!elements.get('latest').innerHTML.includes('Latest commit')) process.exit(27);
 const overviewHTML = elements.get('suites').innerHTML;
-if (!elements.get('latest-run-note').innerHTML.includes('https://github.com/owner/repo/commit/aaaaaaaa1111') ||
+renderSummary('latest');
+const latestContext = elements.get('summary-context-meta').innerHTML;
+renderSummary('weekly');
+if (!latestContext.includes('https://github.com/owner/repo/commit/aaaaaaaa1111') ||
     overviewHTML.includes('/commit/')) process.exit(36);
 if (!overviewHTML.includes('Tool calls · mean') || !overviewHTML.includes('LLM calls · mean') ||
     !overviewHTML.includes('Task time · p50') || !overviewHTML.includes('4.5 calls') ||
@@ -648,9 +658,13 @@ assert(sourceDiffLink({...memoryComparison, latest: {...memoryComparison.latest,
 assert.equal(sourceDiffLink(memoryComparison), '');
 assert.equal(activeFilter, 'Memory');
 assert.equal(el('view-trends').hidden, false);
+assert.equal(el('view-latest').hidden, true);
+assert.equal(el('mode-weekly')['aria-selected'], 'true');
 openFailures(memoryIndex);
 assert.equal(activeFilter, 'Memory');
 assert.equal(el('view-latest').hidden, false);
+assert.equal(el('view-trends').hidden, true);
+assert(el('summary-scope').textContent.startsWith('Newest workflow run'));
 assert.equal(el('failure-dataset-' + memoryIndex).open, true);
 clickFilter('trend-capabilities', 'all');
 assert.equal(selected.suite, 'memory_v1');
