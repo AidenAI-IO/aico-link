@@ -311,6 +311,7 @@ suites:
       python3 scripts/test_hybrid_update.py
       python3 scripts/check_normalized_coords.py
       bash scripts/test_check_normalized_coords.sh
+      sh scripts/test_board_hw_tests.sh
     dependencies: [bash, sh, python3, jq, git, openssl, rg]
     required: true
     timeout_seconds: 1200
