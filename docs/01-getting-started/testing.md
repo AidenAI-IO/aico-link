@@ -26,8 +26,10 @@ It is not a substitute for the full test gate. Before merging, run:
 make check-full
 ```
 
-CI runs `make check-full` on every PR, including the suites omitted by the quick
-profile. `make test` is also an alias for the full check. To run one suite while
+CI skips its test jobs on PRs limited to `docs/`, `docs-zh/`, and the root
+`README.md` and `AGENTS.md` files. Other PRs and pushes to `main` run
+`make check-full`, including the suites omitted by the quick profile.
+`make test` is also an alias for the full check. To run one suite while
 iterating, use `bash scripts/run_tests_in_docker.sh --suite go-unit` (or another
 name from `bash scripts/run_tests_in_docker.sh --list`). All commands still run
 inside the same Docker test image.
