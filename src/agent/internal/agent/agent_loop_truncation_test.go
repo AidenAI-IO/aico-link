@@ -11,6 +11,7 @@ import (
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
+	langtools "github.com/tmc/langchaingo/tools"
 )
 
 func reasoningOnlyResponse(stopReason string) *llms.ContentResponse {
@@ -162,6 +163,75 @@ func TestAgentLoopRetriesEmptyTurnOnceAndNeverPersistsIt(t *testing.T) {
 				t.Fatalf("model calls = %d, want 2", calls)
 			}
 			requireNoEmptyAssistantTurns(t, messages.ConvertMessageList(loop.contextManager.CloneMessageList()))
+		})
+	}
+}
+
+func TestWritesToolCallAsText(t *testing.T) {
+	offered := []langtools.Tool{&staticTool{name: "bridge_calendar"}, &staticTool{name: "shell"}, &staticTool{name: "request_user_action"}}
+	cases := []struct {
+		content string
+		want    bool
+	}{
+		// Final answers that gemini-3.5-flash-lite produced in benchmark runs.
+		{"<tts>Checking the calendar.</tts><call>default_api:bridge_calendar{action:query,from:2026-07-25T00:00:00+08:00}</call>", true},
+		{"<tts>Writing text.</tts><router-call:default_api:bridge_clipboard{action:write,text:Cedar room 619}/>", true},
+		{"<tts>Opening settings</tts><call:default_api:shell{command:device-cli tap 174 701}", true},
+		{"Manual action is needed.\nrequest_user_action(reason='permission_confirmation', details='Calendar access is required.')", true},
+		{"<memo>call:default_api.recall_memory{entities:[delivery]}</memo>", true},
+		{"bridge_calendar {action: query}", true},
+		{"Your calendar has two events: Standup at 09:30 and Product review at 14:00.", false},
+		{"I used bridge_calendar to check June 2; there are no events.", false},
+		{"Call `bridge_calendar(action=query)` to list events.", false},
+		{"The subshell{} syntax groups commands.", false},
+		{"<tts>Locating search.</tts><parcel_point>{\"x\": 934, \"y\": 77}</parcel_point>", false},
+	}
+	for _, tc := range cases {
+		if got := writesToolCallAsText(tc.content, offered); got != tc.want {
+			t.Errorf("writesToolCallAsText(%q) = %v, want %v", tc.content, got, tc.want)
+		}
+	}
+}
+
+// A final answer that writes a tool call as text is retried once with a notice
+// and kept out of history; a second consecutive one is accepted as the answer.
+func TestAgentLoopRetriesToolCallWrittenAsTextOnce(t *testing.T) {
+	const textCall = "<tts>Checking.</tts><call>default_api:bridge_calendar{action:query}</call>"
+	cases := []struct {
+		name       string
+		textTurns  int
+		wantAnswer string
+	}{
+		{"recovers_after_one_text_call", 1, "done"},
+		{"accepts_second_consecutive_text_call", 2, textCall},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			model := &interruptTestModel{generate: func(_ context.Context, input []llms.MessageContent) (*llms.ContentResponse, error) {
+				calls++
+				if calls > 1 {
+					if !runtimeModelCallContains(input, textToolCallRetryNotice) {
+						t.Fatal("retry did not receive the text tool call notice")
+					}
+					if runtimeModelCallContains(input, "default_api:") {
+						t.Fatal("the text tool call was replayed to the model")
+					}
+				}
+				if calls <= tc.textTurns {
+					return contentResponse(textCall), nil
+				}
+				return contentResponse("done"), nil
+			}}
+			loop := newInterruptTestLoop(t, model, &staticTool{name: "bridge_calendar", output: "[]"})
+
+			answer, err := loop.Run(context.Background(), "task")
+			if err != nil || answer != tc.wantAnswer {
+				t.Fatalf("Run() = %q, %v; want %q", answer, err, tc.wantAnswer)
+			}
+			if calls != 2 {
+				t.Fatalf("model calls = %d, want 2", calls)
+			}
 		})
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/schema"
+	langtools "github.com/tmc/langchaingo/tools"
 )
 
 const agentLoopOutputKey = "output"
@@ -46,10 +48,60 @@ const maxEmptyModelTurnRetries = 1
 
 const emptyModelTurnRetryNotice = "Your previous response was empty: it contained no text and no tool call. Continue the current task from the latest observation: call the next tool, or give the final answer if the task is complete."
 
+// maxTextToolCallRetries bounds how many consecutive final answers one run
+// retries because they wrote a tool call as text.
+const maxTextToolCallRetries = 1
+
+const textToolCallRetryNotice = "Your previous response wrote a tool call as text instead of calling the tool, so nothing ran. If the task needs that action, call the tool through function calling now. If the task is complete, give the final answer in plain words without tool-call syntax."
+
+var textToolCallAPIPattern = regexp.MustCompile(`\bdefault_api\s*[:.]\s*[A-Za-z_]\w*`)
+
+// writesToolCallAsText reports a final answer that spells out a tool call
+// instead of making one. Some models (for example gemini-3.5-flash-lite)
+// occasionally emit their call in text such as
+// `<call>default_api:bridge_calendar{action:query}</call>` with no native tool
+// call, which would otherwise end the run with nothing executed. It matches a
+// `default_api` call or an offered tool name followed by `(` or `{`; a name in
+// inline code or plain prose does not match.
+func writesToolCallAsText(content string, offered []langtools.Tool) bool {
+	if textToolCallAPIPattern.MatchString(content) {
+		return true
+	}
+	for _, tool := range offered {
+		name := tool.Name()
+		if name == "" {
+			continue
+		}
+		for start := 0; ; {
+			i := strings.Index(content[start:], name)
+			if i < 0 {
+				break
+			}
+			i += start
+			start = i + len(name)
+			if i > 0 {
+				if before := content[i-1]; before == '_' || before == '`' || isASCIIAlnum(before) {
+					continue
+				}
+			}
+			rest := strings.TrimLeft(content[start:], " \t")
+			if rest != "" && (rest[0] == '(' || rest[0] == '{') {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isASCIIAlnum(b byte) bool {
+	return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
 // runIterationState carries per-run recovery bookkeeping across iterations.
 type runIterationState struct {
 	contextOverflowRecoveryUsed bool
 	emptyTurnRetries            int
+	textToolCallRetries         int
 }
 
 // noReturnError wraps agents.ErrAgentNoReturn with which case produced it and
@@ -483,6 +535,17 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		if answer == "" {
 			return "", iterationContinue, noReturnError("model finished with an empty answer", contentResp.Choices[0], iteration)
 		}
+		if state.textToolCallRetries < maxTextToolCallRetries && writesToolCallAsText(answer, parser.Tools) {
+			state.textToolCallRetries++
+			logging.Warnf("agent", "agent_loop", "tool call written as text; retrying (%d/%d): %s iteration=%d",
+				state.textToolCallRetries, maxTextToolCallRetries, describeModelTurn(contentResp.Choices[0]), iteration)
+			// Like an empty turn, the text call stays out of history: replaying it
+			// would show the model its own malformed call as an example.
+			if err := l.contextManager.AppendMessage(messages.Message{Role: messages.MessageRoleNotice, Content: textToolCallRetryNotice}); err != nil {
+				return "", iterationContinue, err
+			}
+			return "", iterationContinue, nil
+		}
 		if err := llmExecutor.AppendMessage(messages.ConvertChoiceToContextManagerMessage(*contentResp.Choices[0])); err != nil {
 			return "", iterationContinue, err
 		}
@@ -501,6 +564,7 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 	if len(actions) == 0 {
 		return "", iterationContinue, noReturnError("parser returned neither an action nor a finish", contentResp.Choices[0], iteration)
 	}
+	state.textToolCallRetries = 0
 
 	// Problem 4: Check for pending steer after LLM returns actions (before tool execution)
 	if steer, hasPending := l.checkPendingSteer(ctx); hasPending {

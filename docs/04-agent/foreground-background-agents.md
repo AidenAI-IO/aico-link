@@ -262,6 +262,14 @@ delivery retain their own lifecycle.
 | Abrupt process exit with no recorded end | `Interrupt [agent_restart]`, recovered before the next backend input; completion is unknown. |
 | Successful `request_user_action` or `wait_for_wakeup` | `Pause [...]`; intentional suspension is not task completion. |
 
+Two malformed model turns are retried once in the same run instead of ending
+it. A turn with no reply and no tool call is retried with a notice; a second
+consecutive one fails the run as above. A final answer that writes a tool call
+as text, such as `default_api:bridge_calendar{...}` or an offered tool's name
+followed by `(` or `{`, with no native tool call, is retried with a notice
+asking for a real tool call. A second consecutive one is accepted as the
+answer. Neither malformed turn is stored in history.
+
 The runtime atomically records `.pending-run.json` in `sessions/backend` before
 execution. It clears the record after a normal end or after persisting an
 interruption. A failed notice write leaves a recovery record; if recovery also
