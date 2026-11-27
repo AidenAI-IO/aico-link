@@ -315,6 +315,13 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 		resultEvent.Metadata = map[string]any{"device_cli_calls": calls}
 	}
 
+	if len(result.Result.deviceFrame.ImageBytes) > 0 {
+		if resultEvent.Metadata == nil {
+			resultEvent.Metadata = make(map[string]any)
+		}
+		resultEvent.Metadata["has_screenshot"] = true
+	}
+
 	if result.Result.Duration > 0 {
 		durationMs := result.Result.Duration.Milliseconds()
 		resultEvent.DurationMs = &durationMs

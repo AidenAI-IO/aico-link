@@ -3,7 +3,7 @@ import json
 import pytest
 
 from runner.models import ToolCall, Trace
-from runner.trace import extract_trace, extract_step_screenshots, tool_execution_history, trace_has_skill_read
+from runner.trace import apply_episode_tool_evidence, extract_trace, extract_step_screenshots, tool_execution_history, trace_has_skill_read
 
 HISTORY = [
     {"type": "user", "content": "请打开设置"},
@@ -32,6 +32,7 @@ def test_folded_trace_uses_episode_order_and_keeps_surviving_screenshot():
         ]
 
     first, second, latest = (shell_exchange(f"device-cli tap {x} 100") for x in (100, 200, 300))
+    second[1]["metadata"] = {"has_screenshot": True}
     pending = shell_exchange("device-cli back")[0]
     fold = {"type": "conact_fold", "tool_name": "fold_subtask"}
     episode = {"events": first + [fold] + second + [fold] + latest}
@@ -46,7 +47,8 @@ def test_folded_trace_uses_episode_order_and_keeps_surviving_screenshot():
     assert [tc.input for tc in trace.tool_calls] == [
         json.loads(event["tool_input"]) for event in (first[0], second[0], latest[0], pending)
     ]
-    assert [tc.has_screenshot for tc in trace.tool_calls] == [False, False, True, False]
+    assert apply_episode_tool_evidence(trace, episode)
+    assert [tc.has_screenshot for tc in trace.tool_calls] == [False, True, True, False]
     assert not trace.tool_calls[-1].has_result
     assert trace.final_response == history[-1]["content"]
 

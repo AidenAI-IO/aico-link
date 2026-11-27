@@ -113,8 +113,8 @@ func TestDeviceCLIChainCapturesOnlyFinalState(t *testing.T) {
 	if len(outer) != 2 || outer[0].ToolName != "shell" || outer[1].ToolName != "shell" {
 		t.Fatalf("nested events reached the run stream: %+v", outer)
 	}
-	if state := manager.Snapshot("request"); state.LastToolName != "enter_text" || state.ToolStatus != "verifying" {
-		t.Fatalf("shell result replaced the last action: %+v", state)
+	if state := manager.Snapshot("request"); state.ToolStatus != "failed" || state.LastError != "" {
+		t.Fatalf("expected a display-safe shell failure after successful actions: %+v", state)
 	}
 	states := deviceCLIStateMessages(got.deviceFrame)
 	if len(shot.inputs) != 1 || len(states) != 1 || len(states[0].Parts) != 2 {
@@ -401,6 +401,9 @@ func TestDeviceCLIShellRecordsBenchmarkFixtureResultInEpisode(t *testing.T) {
 		if event.Type != "tool_result" || event.ToolName != "shell" {
 			continue
 		}
+		if event.Metadata["has_screenshot"] != true {
+			t.Fatalf("episode did not record screenshot evidence: %+v", event.Metadata)
+		}
 		raw, err := json.Marshal(event.Metadata["device_cli_calls"])
 		if err != nil || !strings.Contains(string(raw), `"tool":"touch_gesture","input":{"point":{"x":180,"y":310},"type":"tap"},"is_error":false`) {
 			t.Fatalf("unexpected exported metadata: %s, %v", raw, err)
@@ -466,13 +469,13 @@ func TestDeviceCLILiveActivityPreservesBridgeRecovery(t *testing.T) {
 	callback := &runtimeCallbackHandler{eventHandler: func(event RunEvent) {
 		manager.UpdateFromRunEvent("request", event)
 	}}
-	input := jsonString(map[string]any{"command": `curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["app","contacts","query","--query","Private Name"]' "$AICO_DEVICE_CLI_URL/command"`})
+	input := jsonString(map[string]any{"command": `curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '["app","contacts","query","--query","Private Name"]' "$AICO_DEVICE_CLI_URL/command" && exit 1`})
 	got := executeToolCall(ctx, ToolCallExecution{
 		Specs: NewToolSpecs([]langtools.Tool{&ShellTool{}}), Callback: callback,
 		Action: schema.AgentAction{Tool: "shell", ToolInput: input},
 	}).Result
-	if len(got.deviceCalls) != 1 || !got.deviceCalls[0].NotDispatched {
-		t.Fatalf("expected a rejected Bridge operation in the shell evidence: %+v", got.deviceCalls)
+	if !got.IsError() || len(got.deviceCalls) != 1 || !got.deviceCalls[0].NotDispatched {
+		t.Fatalf("expected shell failure with evidence of a rejected Bridge operation: %+v", got)
 	}
 	state := manager.Snapshot("request")
 	if state.Status != LiveActivityStatusNeedsApp || state.ToolStatus != "waiting_app" || !state.RequiresApp || state.LastError != "" {

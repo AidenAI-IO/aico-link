@@ -447,15 +447,18 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 	if m == nil || strings.TrimSpace(requestID) == "" {
 		return nil
 	}
-	if event.liveActivityHandled {
-		return m.Snapshot(requestID)
-	}
 	m.mu.Lock()
 	requestID = strings.TrimSpace(requestID)
 	state, ok := m.states[requestID]
 	if !ok || state.EndedAt != nil {
 		m.mu.Unlock()
 		return nil
+	}
+	// Keep the inner action's state unless the shell reports a new failure.
+	if event.liveActivityHandled && ((!event.IsError && event.ToolError == nil) ||
+		state.Status == LiveActivityStatusNeedsApp || state.ToolStatus == "failed") {
+		m.mu.Unlock()
+		return &state
 	}
 	text := m.getLiveActivityText()
 	switch event.Type {

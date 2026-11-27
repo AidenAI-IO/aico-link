@@ -398,7 +398,9 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
     for (result, normalized), tool_call in zip(results, completed):
         tool_call.device_cli_calls = episode_device_cli_calls(result, tool_call.step)
         _restore_app_data_args(tool_call)
-        if isinstance(result.get("screenshot_ref"), str) and result["screenshot_ref"].strip():
+        metadata = result.get("metadata")
+        if (isinstance(metadata, dict) and metadata.get("has_screenshot") is True
+                or isinstance(result.get("screenshot_ref"), str) and result["screenshot_ref"].strip()):
             tool_call.has_screenshot = True
         tool_error = result.get("tool_error")
         details = tool_error.get("details") if isinstance(tool_error, dict) else None
