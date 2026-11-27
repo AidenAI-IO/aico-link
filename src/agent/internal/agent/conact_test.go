@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/executor"
@@ -191,8 +192,11 @@ func TestSkillUTGPreservesIntentAndRejectsUnsupportedEvidence(t *testing.T) {
 }
 
 type utgReflectionModel struct {
+	model.Model
 	seen    []messages.Message
 	content string
+	started chan struct{}
+	resume  chan struct{}
 }
 
 func (*utgReflectionModel) Call(context.Context, string, ...llms.CallOption) (string, error) {
@@ -201,7 +205,13 @@ func (*utgReflectionModel) Call(context.Context, string, ...llms.CallOption) (st
 func (*utgReflectionModel) GenerateContent(context.Context, []llms.MessageContent, ...llms.CallOption) (*llms.ContentResponse, error) {
 	panic("expected native message list")
 }
-func (m *utgReflectionModel) GenerateContentFromMessageList(_ context.Context, list []messages.Message, opts ...llms.CallOption) (*llms.ContentResponse, error) {
+func (m *utgReflectionModel) GenerateContentFromMessageList(ctx context.Context, list []messages.Message, opts ...llms.CallOption) (*llms.ContentResponse, error) {
+	close(m.started)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-m.resume:
+	}
 	m.seen = list
 	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: m.content}}}, nil
 }
@@ -232,14 +242,33 @@ func TestSkillUTGReflectionForkDoesNotAppendOrLearnHiddenFrames(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	mod := &utgReflectionModel{content: `{"states":[
+	mod := &utgReflectionModel{started: make(chan struct{}), resume: make(chan struct{}), content: `{"states":[
 		{"label":"hidden_screen","summary":"Unknown earlier screen","step":1,"side":"before"},
 		{"label":"phone_home","summary":"Phone home screen","step":2,"side":"before"},
 		{"label":"phone_settings","summary":"Phone settings screen","step":2,"side":"after"}],
 		"edges":[{"from":"phone_home","to":"phone_settings","intent":"open","guide":"Open the Settings app","step":2}]}`}
 	count := len(manager.CloneMessageList())
-	c.consolidate(ctx, executor.NewLLMExecutor(mod, manager), nil)
-	if len(manager.CloneMessageList()) != count || len(mod.seen) != count+1 || mod.seen[count-1].Content != "Settings opened." || strings.Contains(mod.seen[count].Content, "step 1: tap") {
+	rt.models = mod
+	turnCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	c.startReflection(turnCtx, manager, nil)
+	cancel()
+	waitCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+	defer stop()
+	defer rt.episodeMaintenance.closeAndWait(waitCtx)
+	select {
+	case <-mod.started:
+	case <-waitCtx.Done():
+		t.Fatal("background reflection did not start")
+	}
+	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "A later request"}); err != nil {
+		t.Fatal(err)
+	}
+	close(mod.resume)
+	if err := rt.episodeMaintenance.closeAndWait(waitCtx); err != nil {
+		t.Fatal(err)
+	}
+	if len(manager.CloneMessageList()) != count+1 || len(mod.seen) != count+1 || mod.seen[count-1].Content != "Settings opened." || strings.Contains(mod.seen[count].Content, "step 1: tap") {
 		t.Fatalf("reflection must fork, using only current evidence, saw %d messages", len(mod.seen))
 	}
 	g := newConactRun(rt).graph

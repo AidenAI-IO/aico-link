@@ -108,6 +108,7 @@ type Runtime struct {
 	ttsManager              *tts.ProviderManager
 	ttsManagerOnce          sync.Once
 	episodeMaintenance      asyncRuntimeWork
+	utgReflectionRunning    atomic.Bool
 	telemetryExports        asyncRuntimeWork
 	episodeMemoryInitErr    error
 	routines                *routines.Manager

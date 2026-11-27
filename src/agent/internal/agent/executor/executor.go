@@ -82,31 +82,25 @@ func (e *LLMExecutor) AppendMessages(messagesToAppend []messages.Message) error 
 }
 
 func (e *LLMExecutor) GenerateContent(ctx context.Context, options ...llms.CallOption) (*llms.ContentResponse, error) {
-	return e.generateContent(ctx, nil, options...)
-}
-
-// GenerateContentWithSuffix forks the current model context without appending
-// the new instruction to session history or executing any returned tool call.
-func (e *LLMExecutor) GenerateContentWithSuffix(ctx context.Context, suffix messages.Message, options ...llms.CallOption) (*llms.ContentResponse, error) {
-	return e.generateContent(ctx, []messages.Message{suffix}, options...)
-}
-
-func (e *LLMExecutor) generateContent(ctx context.Context, suffix []messages.Message, options ...llms.CallOption) (*llms.ContentResponse, error) {
 	messageList := e.contextManager.CloneMessageList()
 	for _, transform := range e.transforms {
-		if transform == nil {
-			continue
+		if transform != nil {
+			messageList = transform.Transform(messageList)
 		}
-		messageList = transform.Transform(messageList)
 	}
-	messageList = append(messageList, suffix...)
+	return GenerateContentFromSnapshot(ctx, e.model, messageList, options...)
+}
+
+// GenerateContentFromSnapshot sends a detached message list while preserving
+// provider-specific transcript metadata.
+func GenerateContentFromSnapshot(ctx context.Context, model llms.Model, messageList []messages.Message, options ...llms.CallOption) (*llms.ContentResponse, error) {
 	var contentResponse *llms.ContentResponse
 	var err error
-	if model, ok := e.model.(contextMessageContentModel); ok {
-		contentResponse, err = model.GenerateContentFromMessageList(ctx, messageList, options...)
+	if contextModel, ok := model.(contextMessageContentModel); ok {
+		contentResponse, err = contextModel.GenerateContentFromMessageList(ctx, messageList, options...)
 	} else {
 		standard := messages.ConvertMessageList(messageList)
-		contentResponse, err = e.model.GenerateContent(ctx, standard, options...)
+		contentResponse, err = model.GenerateContent(ctx, standard, options...)
 	}
 	if err != nil {
 		return nil, MarkLLMCallError(err)

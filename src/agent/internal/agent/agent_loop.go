@@ -514,7 +514,7 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		}
 		answer, err = l.finishRun(ctx, answer)
 		if err == nil && l.conact != nil {
-			l.conact.consolidate(ctx, llmExecutor, turnOptions)
+			l.conact.startReflection(ctx, llmExecutor.ContextManager(), turnOptions)
 		}
 		return answer, iterationDone, err
 	}

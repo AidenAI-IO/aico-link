@@ -401,9 +401,32 @@ func (c *conactRun) observe(result ToolResult) {
 	}
 }
 
-// consolidate forks the finished prompt once. A bad proposal, timeout or
-// filesystem error must not change the answer or replay a device action.
-func (c *conactRun) consolidate(ctx context.Context, exec *executor.LLMExecutor, opts []llms.CallOption) {
+// startReflection hands off the finished transcript to runtime maintenance.
+// Skip overlapping reflections so consecutive turns cannot queue model calls.
+func (c *conactRun) startReflection(ctx context.Context, manager *contextmanager.ContextManager, opts []llms.CallOption) {
+	rt := c.runtime
+	if ctx.Err() != nil || c.path == "" || c.privateDeviceData || len(c.steps) == 0 || rt.models == nil ||
+		!rt.utgReflectionRunning.CompareAndSwap(false, true) {
+		return
+	}
+	parent, ok := rt.episodeMaintenance.begin()
+	if !ok {
+		rt.utgReflectionRunning.Store(false)
+		return
+	}
+	transcript := manager.CloneMessageList()
+	// Use the runtime model directly. The foreground wrapper writes to the
+	// completed run's metrics and prompt capture.
+	reflectionModel := rt.models
+	forkOpts := append([]llms.CallOption(nil), opts...)
+	go func() {
+		defer rt.episodeMaintenance.done()
+		defer rt.utgReflectionRunning.Store(false)
+		c.consolidate(parent, reflectionModel, transcript, forkOpts)
+	}()
+}
+
+func (c *conactRun) consolidate(ctx context.Context, model llms.Model, transcript []messages.Message, opts []llms.CallOption) {
 	started := time.Now()
 	outcome := "skipped"
 	var reason string
@@ -435,7 +458,7 @@ func (c *conactRun) consolidate(ctx context.Context, exec *executor.LLMExecutor,
 	// semantic labels from those ledger indexes alone.
 	visible := make(map[int]bool)
 	seenScreen := false
-	for _, msg := range exec.ContextManager().CloneMessageList() {
+	for _, msg := range transcript {
 		for _, attachment := range msg.Attachments {
 			if attachment.Source != messages.AttachmentSourceScreenshotObservation {
 				continue
@@ -479,7 +502,7 @@ Controller ledger:
 			o.MaxTokens = 2048
 		}
 	})
-	res, err := exec.GenerateContentWithSuffix(forkCtx, messages.Message{Role: messages.MessageRoleUser, Content: prompt}, forkOpts...)
+	res, err := executor.GenerateContentFromSnapshot(forkCtx, model, append(transcript, messages.Message{Role: messages.MessageRoleUser, Content: prompt}), forkOpts...)
 	if err != nil || forkCtx.Err() != nil {
 		outcome, reason = "failed", "model_error"
 		switch {

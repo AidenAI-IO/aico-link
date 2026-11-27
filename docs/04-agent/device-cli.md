@@ -177,9 +177,11 @@ headless/scripted benchmark fixtures.
   Successful memory
   calls use a separate bounded allowance, not the normal action-iteration limit.
 
-A completed run can make one best-effort reflection request to the same
-model, with a 30-second timeout. It uses the live prompt
-and a bounded ledger of individually attributable controller transitions;
+After a run produces its final answer, UTG can make one best-effort background
+reflection request with a 30-second timeout. The task can finish while reflection
+runs. Overlapping reflections on the same Agent are skipped. Reflection uses a
+snapshot of the finished transcript and a bounded ledger of individually
+attributable controller transitions;
 chained UI actions are not learned as individual edges. It saves reusable
 labels, guidance, and coarse screenshot fingerprints under
 `<config-dir>/memory/skill-utg/<platform>.json`, scoped to the local Agent
