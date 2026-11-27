@@ -150,18 +150,24 @@ def _environment_url(
                     ["adb", "-s", serial, "shell", "am", "force-stop", ANDROID_BRIDGE_PACKAGE],
                     check=True, stdout=log_file, stderr=log_file, timeout=adb_timeout,
                 )
+        command = [
+            python,
+            "-m",
+            "runner",
+            "start-adb-android-env",
+            "--name",
+            run_id,
+            "--adb-serial",
+            serial,
+            "--json",
+        ]
+        if case.android_phone_bridge:
+            # The board has no native text insertion. Without it the Agent
+            # pastes Unicode through the Aico App as it does on the board,
+            # instead of the ADBKeyBoard route these cases cannot observe.
+            command += ["--unicode-input-method", "none"]
         payload = _run_json(
-            [
-                python,
-                "-m",
-                "runner",
-                "start-adb-android-env",
-                "--name",
-                run_id,
-                "--adb-serial",
-                serial,
-                "--json",
-            ],
+            command,
             environment=environment,
             log_file=log_file,
             timeout_seconds=timeout_seconds,
