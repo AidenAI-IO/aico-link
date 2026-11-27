@@ -23,9 +23,11 @@ make check
 make check-full
 ```
 
-CI 在每个 PR 上运行 `make check-full`，包括 quick 配置中省略的测试套件。`make test` 也是完整检查的别名。
-迭代时如果只想运行一个测试套件，使用 `bash scripts/run_tests_in_docker.sh --suite go-unit`
-（或 `bash scripts/run_tests_in_docker.sh --list` 中的其他名称）。所有命令仍在同一个 Docker 测试镜像中运行。
+如果 PR 只改动 `docs/`、`docs-zh/` 或根目录的 `README.md`、`AGENTS.md`，CI 会跳过测试任务。
+其他 PR 和推送到 `main` 的提交会运行 `make check-full`，包括 quick 配置中省略的测试套件。
+`make test` 也是完整检查的别名。迭代时如果只想运行一个测试套件，使用
+`bash scripts/run_tests_in_docker.sh --suite go-unit`（或 `bash scripts/run_tests_in_docker.sh --list` 中的其他名称）。
+所有命令仍在同一个 Docker 测试镜像中运行。
 
 需要主机 Docker 套接字的、基于 Docker 的软件包测试是显式的，并与常规清单分开，因为该套接字会授予对
 Docker 守护进程的访问权限：
