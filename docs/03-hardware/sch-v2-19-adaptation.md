@@ -165,5 +165,8 @@ from this change:
 - `/dev/i2c-1` with a device attached to J2-13/14.
 - VDD_ARM at several CPU frequencies with the JW5292.
 - Recovery entry through J2-18 in debug mode.
+- The GX8002 image itself: the `configs/aico_link_sch_v2_19.config` preset
+  on branch `hw-v2` of `gx8002-lvp-tws` drives the wake line low for 100 ms
+  per recognition and logs on UART0. It has not been built or flashed.
 - GX8002 firmware download and its UART protocol on `/dev/ttyS4`, which this
   change does not implement.
