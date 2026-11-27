@@ -688,4 +688,7 @@ assert.equal(skillReadRate({skill_discovery:{read:0,observed:4}}),0);
 assert.equal(skillReadRate({skill_discovery:{read:2,observed:1}}),null);
 assert.equal(skillReadRate({}),null);
 """
-    subprocess.run(["node", "-e", prefix + script + verification], check=True)
+    # A file, not `node -e`: Linux caps a single argument at 128 KiB.
+    runner = tmp_path / "dashboard_test.js"
+    runner.write_text(prefix + script + verification, encoding="utf-8")
+    subprocess.run(["node", str(runner)], check=True)
