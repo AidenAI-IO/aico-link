@@ -632,6 +632,13 @@ work the same way, because the label, not the author, starts the run.
 pull request code on the self-hosted runner, and only when `pull_request_target`
 reacts to `labeled` events alone.
 
+The label is a trust decision. The labeled commit runs on the self-hosted
+runner with the benchmark credentials, and its own benchmark code writes the
+results that `main`'s `ci.gate_verdict` then judges. A pull request that
+changes the benchmark runner could therefore report results it did not earn.
+Add the label only after reviewing the change, including any change under
+`benchmark/`.
+
 To make the gate a merge requirement, add `baseline-gate` as a required status
 check in the `main` ruleset. Branches in this repository can also be checked
 without a pull request:

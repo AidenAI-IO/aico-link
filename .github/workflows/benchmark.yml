@@ -53,10 +53,13 @@ concurrency:
   # on the same branch. A new gate label on a pull request cancels the gate
   # run of its previous label. Labels for other purposes get their own group
   # so they never cancel a gate run.
+  # Each branch yields a nonempty string: '' is falsy in expressions, so a
+  # `cond && '' || other` form would always fall through to `other`.
   group: >-
-    ${{ github.event_name == 'pull_request_target'
-    && format('benchmark-gate-pr-{0}{1}', github.event.pull_request.number,
-              github.event.label.name == 'run-baseline-gate' && '' || format('-{0}', github.run_id))
+    ${{ (github.event_name == 'pull_request_target' && github.event.label.name == 'run-baseline-gate')
+    && format('benchmark-gate-pr-{0}', github.event.pull_request.number)
+    || github.event_name == 'pull_request_target'
+    && format('benchmark-label-{0}', github.run_id)
     || format('benchmark-{0}-{1}', github.ref, inputs.profile == 'baseline-gate' && 'gate' || 'full') }}
   cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
@@ -635,6 +638,7 @@ jobs:
           ANDROID_SERIAL: ${{ steps.android_devices.outputs.serials || env.ANDROID_SERIAL }}
           AIDENBRIDGE_READY: ${{ (steps.aidenbridge_install.outcome == 'failure' || steps.aidenbridge_routing.outcome == 'failure') && '0' || '1' }}
         run: >-
+          BENCHMARK_AGENT_MODEL="${BENCHMARK_AGENT_MODEL#internal/}"
           uv run python -m ci.run_cases
           --matrix-json "$MATRIX"
           --run-id-prefix "$RUN_ID_PREFIX"
@@ -930,9 +934,12 @@ jobs:
           set -uo pipefail
           summary="$RUNNER_TEMP/gate-summary.md"
           if [[ -d "$RUNS_DIR" ]]; then
+            # Actions runs this script with bash -e: capture the verdict's exit
+            # status in the same command, or a failing gate would exit here
+            # before the status and comment are posted.
+            code=0
             python3 -m ci.gate_verdict --runs-dir "$RUNS_DIR" \
-              --run-id-prefix "$PREFIX" --run-id-prefix "$PREFIX-retry" --enforce > "$summary"
-            code=$?
+              --run-id-prefix "$PREFIX" --run-id-prefix "$PREFIX-retry" --enforce > "$summary" || code=$?
           else
             printf '## Baseline gate\n\nThe gate job produced no results (setup failure or cancellation).\n' > "$summary"
             code=2
