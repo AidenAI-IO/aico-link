@@ -89,7 +89,7 @@ creating another top-level section.
 - [Directory layout](#directory-layout)
 - [Config Web: the device config page](#config-web-the-device-config-page)
 - [Minimal config examples](#minimal-config-examples)
-- [Top-level fields](#top-level-fields)
+- [Grouped runtime fields](#grouped-runtime-fields)
 - [`[basic_settings.device]`](#basic_settingsdevice)
 - [`[basic_settings.device.hid]`](#basic_settingsdevicehid)
 - [`[model_settings.model]`](#model_settingsmodel)
@@ -98,7 +98,7 @@ creating another top-level section.
 - [`[voice_settings.classic.audio]`](#voice_settingsclassicaudio)
 - [`[voice_settings.realtime]`](#voice_settingsrealtime)
 - [`[voice_settings.realtime.providers.<name>]`](#voice_settingsrealtimeprovidersname)
-- [`[advanced_settings.hardware.frame_service]`](#advanced_settingshardwareframeservice)
+- [`[advanced_settings.hardware.frame_service]`](#advanced_settingshardwareframe_service)
 - [Quick Capture](#quick-capture)
 - [`[memory_settings.notification]`](#memory_settingsnotification)
 - [`[advanced_settings.hardware.hid]`](#advanced_settingshardwarehid)
@@ -533,7 +533,7 @@ button in both modes.
 | `voice_speaker_max_profiles`    | `1`                                                         | Classic is single-owner only. Matching uses the newest enrolled profile; re-enrollment writes canonical id `speaker` and then removes legacy extras. Values above 1 are ignored                                                                 |
 | `voice_streaming_tts_enabled`   | `true`                                                      | Feed the LLM streaming output into TTS sentence by sentence, reducing the wait before the first sentence plays                                                                         |
 | `voice_tool_call_speech`        | `true`                                                      | Whether to asynchronously read the `content` of a tool-call event; this content comes only from the assistant content in the same LLM tool-call response, and stays silent when absent |
-| `voice_progress_speech_enabled` | `true`                                                      | Whether to announce a short progress message when a todo item enters `in_progress`; todo state is still sent to the UI/trace                                                           |
+| `voice_progress_speech_enabled` | `true`                                                      | Parsed, defaulted, and reported in config snapshots, but no runtime code reads it, so it has no effect on speech; todo state is still sent to the UI/trace                            |
 
 Classic STT Agent turns use the main model's `max_response_tokens` output limit; there is no separate voice output-token setting. After upgrading, any existing `voice_max_response_tokens` key is ignored, so set `model_settings.model.max_response_tokens` if you need to control the voice output limit (by default no limit is sent, except that native Anthropic uses the model's advertised output limit). Voice replies should still be kept short through the voice instructions rather than a second token cap.
 

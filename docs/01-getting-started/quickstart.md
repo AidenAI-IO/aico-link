@@ -35,7 +35,7 @@ The self-assembled board covered in this step is legacy and no longer maintained
 - The Pico Zero exposes `/dev/hidg0` for keyboard input, `/dev/hidg1` for pointer/touch input, and `/dev/hidg2` for Android extension keys or Consumer Control media keys back to the target over USB;
 - Audio goes through the Pico Zero's onboard codec / ALSA; networking goes through Wi-Fi or the USB gadget network.
 
-To control an iOS device over USB HID, turn on `Settings > Accessibility > Zoom` and turn off `Settings > Accessibility > Touch > AssistiveTouch` on the target device.
+To control an iOS device over USB HID with current firmware, turn on `Settings > Accessibility > Zoom` and turn off `Settings > Accessibility > Touch > AssistiveTouch` on the target device. The legacy firmware for this assembly needs AssistiveTouch on instead; see [iOS HID Prerequisites](hardware.md#ios-hid-prerequisites).
 
 ## 2. Flash the Firmware
 
@@ -118,12 +118,13 @@ by `aico-agent.service` and starts with the firmware.
 
 ### Target Device Setup (iPhone)
 
-To control an iPhone via USB HID, enable these settings on the target device:
+To control an iPhone via USB HID with current firmware, enable these settings on the target device:
 
 1. **Settings > Accessibility > Zoom** - On. Required for HID touch input
 2. **Settings > Accessibility > Touch > AssistiveTouch** - Off. While it is on, iOS ignores the board's touch input
 
-See [Hardware & Wiring](hardware.md#ios-hid-prerequisites) for details.
+The legacy firmware uses an absolute-coordinate mouse and needs AssistiveTouch on
+instead. See [Hardware & Wiring](hardware.md#ios-hid-prerequisites) for details.
 
 ### Verification
 

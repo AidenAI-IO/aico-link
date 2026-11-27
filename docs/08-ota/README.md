@@ -15,8 +15,9 @@ OTA manifest schema version 2.
 ## Scope
 
 - Target hardware: Luckfox Pico Zero / RV1106 + eMMC.
-- Distribution: manually triggered dev/staging/prod GitHub Releases, local build
-  artifacts, or a manually hosted HTTP(S) directory. Channel releases select a
+- Distribution: dev GitHub Releases published automatically by the hourly
+  scheduled build when `main` changes, manually triggered dev/staging/prod
+  GitHub Releases, local build artifacts, or a manually hosted HTTP(S) directory. Channel releases select a
   business package or complete signed OTA from source changes; see
   [Channel Releases](channel-release.md).
 - Update method: The device-side `/usr/lib/aico/ota` fetches the manifest, verifies signatures, validates SHA256, writes to the inactive slot, switches `misc`, and reboots.

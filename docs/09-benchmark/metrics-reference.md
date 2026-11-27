@@ -472,8 +472,9 @@ The evaluation order explains why these two values can differ:
 2. Configured expected-answer and memory-recall checks run next. A mismatch
    receives zero; unavailable required recall evidence produces an evaluation
    error with unknown quality.
-3. If the judge is disabled, passing the preceding gates yields quality 1.
-   Otherwise, quality is `rubric_pass_count / rubric_total`, where a pass is a
+3. A task without a rubric passes the preceding gates with quality 1. If the
+   judge is disabled, a rubric task is `skipped` with unknown quality and is
+   ineligible until rejudged. Otherwise, quality is `rubric_pass_count / rubric_total`, where a pass is a
    `yes` verdict. Full task success requires all rubric checks to pass. Judge
    errors leave quality unknown. With zero rubric items and zero passed checks,
    the result passes and quality is 1.

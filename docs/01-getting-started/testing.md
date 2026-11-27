@@ -99,12 +99,24 @@ cat /tmp/record.pcm | audio_service_cli --socket /run/audio_service/audio_servic
 
 ## USB HID Validation
 
+`example_usb_hid` is not part of the device image. Build it with
+`scripts/debian-apps/build-apps.sh all` and copy it to the device temporarily:
+
 ```bash
-sudo example_usb_hid setup composite
-sudo example_usb_hid keyboard tap ENTER
-sudo example_usb_hid keyboard text "hello from pico"
-sudo example_usb_hid touch click 16000 16000
+scp output/debian-apps/apps/bin/example_usb_hid root@<device-ip>:/userdata/example_usb_hid
 ```
+
+Then run it on the device by its copied path:
+
+```bash
+sudo /userdata/example_usb_hid setup composite
+sudo /userdata/example_usb_hid keyboard tap ENTER
+sudo /userdata/example_usb_hid keyboard text "hello from pico"
+sudo /userdata/example_usb_hid touch click 16000 16000
+```
+
+Remove the copy with `sudo rm /userdata/example_usb_hid` when the test is
+complete.
 
 ## Agent Validation
 

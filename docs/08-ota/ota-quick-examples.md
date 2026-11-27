@@ -9,9 +9,18 @@ complete firmware, signs `manifest.json`, and writes local artifacts to
 `output/debian/image/`. The current distribution path is a local or
 self-hosted HTTP(S) endpoint; the build does not publish to GitHub.
 
+Use a test device that is not configured for a managed channel (`dev`,
+`staging`, or `prod`). A managed device accepts only manifests signed for its
+own channel with a `<channel>-v<semver>` version, even through
+`--manifest-url`, so it rejects these examples with `signed manifest does not
+belong to configured channel`. See
+[OTA for External Developers](ota-external-developers.md).
+
 ## Example 1: Local Development
 
-Serve the generated files from a host that the device can reach:
+Serve the generated files from a host that the device can reach. The server
+runs in the background from a subshell, so the following steps still run from
+the repository root:
 
 ```bash
 VERSION="dev-$(date +%Y%m%d-%H%M%S)"
@@ -29,8 +38,15 @@ OTA_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 OTA_BASE_URL="$BASE_URL" \
 ./debian_build.sh
 
-cd output/debian/image
-python3 -m http.server 8000 --bind 0.0.0.0
+(cd output/debian/image && python3 -m http.server 8000 --bind 0.0.0.0) &
+SERVER_PID=$!
+```
+
+Copy the public key to the device:
+
+```bash
+DEVICE_IP="192.168.42.1"
+scp ota_public_key.pem "root@$DEVICE_IP:/userdata/ota/dev_pubkey.pem"
 ```
 
 On the device, verify downloads and signatures without switching slots:
@@ -41,6 +57,9 @@ ota update \
   --public-key /userdata/ota/dev_pubkey.pem \
   --dry-run
 ```
+
+Keep the server running until the dry run finishes, then stop it on the host
+with `kill "$SERVER_PID"`.
 
 ## Example 2: Self-Hosted HTTP(S)
 
@@ -72,7 +91,7 @@ ota update \
 
 ## Example 3: Custom GitHub Release
 
-Official dev/staging/prod releases use the [manual channel workflow](channel-release.md).
+Official dev/staging/prod releases use the [channel release workflow](channel-release.md).
 This example publishes to a separate custom repository and uses a test device
 configured for that custom source.
 
@@ -84,12 +103,14 @@ OTA_PRIVATE_KEY_PATH="$PWD/ota_private_key.pem" \
 OTA_PUBLIC_KEY_PATH="$PWD/ota_public_key.pem" \
 AGENT_CONFIG_PATH="$PWD/agent.toml" \
 OTA_REPO="$REPO" \
+OTA_BASE_URL="https://github.com/$REPO/releases/download/$TAG" \
 OTA_CHANNEL=custom \
 OTA_BUILD_VERSION="$TAG" \
 OTA_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 ./debian_build.sh
 
 gh release create "$TAG" \
+  --repo "$REPO" \
   --title "Custom Firmware $TAG" \
   output/debian/image/boot_a.img.tar.gz \
   output/debian/image/boot_b.img.tar.gz \

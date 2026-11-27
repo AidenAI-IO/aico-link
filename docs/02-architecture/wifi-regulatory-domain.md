@@ -17,7 +17,7 @@ vendor command:
 
 1. The migration service creates the default `country=CN` configuration.
 2. The Wi-Fi driver service loads the driver.
-3. The agent applies the persisted country code to each Wi-Fi PHY.
+3. The agent applies the persisted country code to the `wlan0` wiphy.
 4. `wpa_supplicant` starts after the PHY country code has been applied.
 5. Runtime changes update the candidate configuration, apply it to the PHY,
    restart the supplicant when required, and commit the configuration only

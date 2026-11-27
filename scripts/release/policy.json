@@ -1,7 +1,7 @@
 {
   "format": 1,
   "ignore": [
-    "docs/**", "tests/**", "benchmark/**", "**/*_test.go", "**/testdata/**",
+    "docs/**", "docs-zh/**", "tests/**", "benchmark/**", "**/*_test.go", "**/testdata/**",
     "scripts/test_*", "README*", "AGENTS.md", "LICENSE*", ".github/ISSUE_TEMPLATE/**"
   ],
   "system": [

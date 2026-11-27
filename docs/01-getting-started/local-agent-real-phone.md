@@ -22,6 +22,11 @@ Install Git, Go 1.26 or newer, Python 3.10 or newer, and
 [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for isolated
 phone-bridge dependencies. Have a model provider and API key ready.
 
+The first launch builds the Config Web assets into `src/config_web/dist` with
+`scripts/build-config-web.sh`, which needs Docker and `rsync`. Later launches
+reuse the built assets, so Docker is only needed again for `--rebuild-web`.
+The Agent itself still runs natively, not in a Docker sandbox.
+
 ```bash
 git clone https://github.com/AidenAI-IO/aico-link.git
 cd aico-link

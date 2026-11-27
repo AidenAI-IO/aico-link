@@ -142,12 +142,19 @@ SkillOpt converts every benchmark `TaskResult` into a rollout score:
 | `hard` | `1` if the task status is `passed`, else `0`. |
 | `soft` | Rubric pass count divided by rubric total, or `hard` when no rubric exists. |
 
-Phase score is the mean across tasks:
+Phase score is the weighted mean of per-task scores over the tasks included in
+scoring:
 
 ```text
-hard = fully passed tasks / total tasks
-soft = passed rubric items / total rubric items
+hard = sum(weight_i * hard_i) / sum(weight_i)
+soft = sum(weight_i * soft_i) / sum(weight_i)
 ```
+
+Each task's sample quality sets its weight: clean results weigh `1`, timeouts
+`0.35`, and external blockers (login walls, unavailable apps, and similar)
+`0.5`. System errors and agent format errors (no tool calls, empty reply, or an
+internal JSON plan) are excluded from both sums. If no task is included, both
+scores are `0`.
 
 The validation gate uses `hard` as the primary score. A candidate is accepted
 only when it improves the current validation hard score by more than
