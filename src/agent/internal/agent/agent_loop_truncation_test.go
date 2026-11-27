@@ -187,6 +187,11 @@ func TestWritesToolCallAsText(t *testing.T) {
 		{"Run `echo shell(x)` in a terminal.", false},
 		{"Example:\n```\nshell(command=\"pwd\")\n```", false},
 		{"See `shell` docs.\nshell(command=\"pwd\")", true},
+		{"Example:\n~~~text\nshell(command=\"pwd\")\n~~~", false},
+		{"````\n```\nshell(command=\"pwd\")\n````", false},
+		{"Use ``a ` b`` then shell(command=\"pwd\")", true},
+		{"```\nshell(command=\"pwd\")", false},
+		{"Done.\n~~~\nexample\n~~~\nshell(command=\"pwd\")", true},
 		{"The subshell{} syntax groups commands.", false},
 		{"<tts>Locating search.</tts><parcel_point>{\"x\": 934, \"y\": 77}</parcel_point>", false},
 	}

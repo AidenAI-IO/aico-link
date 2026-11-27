@@ -54,11 +54,93 @@ const maxTextToolCallRetries = 1
 
 const textToolCallRetryNotice = "Your previous response wrote a tool call as text instead of calling the tool, so nothing ran. If the task needs that action, call the tool through function calling now. If the task is complete, give the final answer in plain words without tool-call syntax."
 
-var (
-	textToolCallAPIPattern = regexp.MustCompile(`\bdefault_api\s*[:.]\s*[A-Za-z_]\w*`)
-	// Fenced blocks first, so their backticks do not pair as inline spans.
-	markdownCodePattern = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`")
-)
+var textToolCallAPIPattern = regexp.MustCompile(`\bdefault_api\s*[:.]\s*[A-Za-z_]\w*`)
+
+// stripMarkdownCode blanks fenced code blocks and inline code spans, following
+// CommonMark: a fence is three or more backticks or tildes indented at most
+// three spaces, closed by a line of the same character at least as long, or
+// by the end of the text; an inline span closes at the next backtick run of
+// the same length. Inline spans are kept to one line, so a stray backtick
+// cannot hide later text.
+func stripMarkdownCode(content string) string {
+	lines := strings.Split(content, "\n")
+	var fenceChar byte
+	fenceLen := 0
+	for i, line := range lines {
+		marker, length, rest := markdownFence(line)
+		if fenceLen > 0 {
+			if marker == fenceChar && length >= fenceLen && strings.TrimSpace(rest) == "" {
+				fenceLen = 0
+			}
+			lines[i] = ""
+			continue
+		}
+		if length > 0 && !(marker == '`' && strings.ContainsRune(rest, '`')) {
+			fenceChar, fenceLen = marker, length
+			lines[i] = ""
+			continue
+		}
+		lines[i] = stripInlineCode(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// markdownFence returns a line's fence character and run length, or a zero
+// length when the line does not start a fence.
+func markdownFence(line string) (byte, int, string) {
+	trimmed := strings.TrimLeft(line, " ")
+	if len(line)-len(trimmed) > 3 || trimmed == "" || (trimmed[0] != '`' && trimmed[0] != '~') {
+		return 0, 0, ""
+	}
+	n := 0
+	for n < len(trimmed) && trimmed[n] == trimmed[0] {
+		n++
+	}
+	if n < 3 {
+		return 0, 0, ""
+	}
+	return trimmed[0], n, trimmed[n:]
+}
+
+func stripInlineCode(line string) string {
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		if line[i] != '`' {
+			b.WriteByte(line[i])
+			i++
+			continue
+		}
+		n := 0
+		for i+n < len(line) && line[i+n] == '`' {
+			n++
+		}
+		end := -1
+		for j := i + n; j < len(line); {
+			if line[j] != '`' {
+				j++
+				continue
+			}
+			m := 0
+			for j+m < len(line) && line[j+m] == '`' {
+				m++
+			}
+			if m == n {
+				end = j + m
+				break
+			}
+			j += m
+		}
+		if end < 0 {
+			// An unmatched run is literal text.
+			b.WriteString(line[i : i+n])
+			i += n
+			continue
+		}
+		b.WriteByte(' ')
+		i = end
+	}
+	return b.String()
+}
 
 // writesToolCallAsText reports a final answer that spells out a tool call
 // instead of making one. Some models (for example gemini-3.5-flash-lite)
@@ -68,7 +150,7 @@ var (
 // `default_api` call or an offered tool name followed by `(` or `{`, outside
 // Markdown code; a name in code or plain prose does not match.
 func writesToolCallAsText(content string, offered []langtools.Tool) bool {
-	content = markdownCodePattern.ReplaceAllString(content, " ")
+	content = stripMarkdownCode(content)
 	if textToolCallAPIPattern.MatchString(content) {
 		return true
 	}
