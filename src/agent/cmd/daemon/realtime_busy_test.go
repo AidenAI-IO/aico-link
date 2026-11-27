@@ -1246,7 +1246,6 @@ func TestRealtimeInterruptedTaskResultIsFinishedUnlessUnwanted(t *testing.T) {
 					t.Fatal("result counted as heard while it was still playing")
 				}
 				s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStarted, ItemID: "speech-1"}
-				busyTestStillPlaying.Store(false)
 				deadline := time.Now().Add(3 * time.Second)
 				for !strings.Contains(s.lastText(), "Private note for the assistant") {
 					if time.Now().After(deadline) {
@@ -1254,6 +1253,9 @@ func TestRealtimeInterruptedTaskResultIsFinishedUnlessUnwanted(t *testing.T) {
 					}
 					time.Sleep(20 * time.Millisecond)
 				}
+				// Playback ends only once the speech has been handled, so the
+				// drain cannot count the result as heard first.
+				busyTestStillPlaying.Store(false)
 				if s.countTexts("Private note for the assistant") != 1 {
 					t.Fatalf("one interruption noted more than once")
 				}
@@ -1436,6 +1438,13 @@ func TestRealtimeInterruptedUserActionRequestIsToldAgain(t *testing.T) {
 	s.events <- realtimevoice.Event{Kind: realtimevoice.EventAudio, ResponseID: "r1", ItemID: "r1-item", PCM: make([]byte, 6400)}
 	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "r1", Status: "completed"}
 	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStarted, ItemID: "speech-1"}
+	deadline := time.Now().Add(3 * time.Second)
+	for !strings.Contains(s.lastText(), "Private note for the assistant") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no note about the interruption was added: %q", s.lastText())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	busyTestStillPlaying.Store(false)
 	s.events <- realtimevoice.Event{Kind: realtimevoice.EventSpeechStopped, ItemID: "speech-1"}
 	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptFinal, Role: "user", ItemID: "speech-1", Text: "stop"}

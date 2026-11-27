@@ -2222,6 +2222,13 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		interruptedWordsTimer = nil
 		interruptedWordsTimeout = nil
 	}
+	// armInterruptedWordsTimer (re)starts the wait for the user's words. It
+	// is restarted when their speech ends, so a long utterance is not cut off.
+	armInterruptedWordsTimer := func() {
+		stopInterruptedWordsTimer()
+		interruptedWordsTimer = time.NewTimer(realtimeInterruptedWordsWait)
+		interruptedWordsTimeout = interruptedWordsTimer.C
+	}
 	// settleInterruptedTaskUpdates drops the interrupted results when the user
 	// does not want the rest, and otherwise queues them to be finished once
 	// the user's turn has been answered.
@@ -2302,9 +2309,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		}
 		interruptedTaskUpdates = append(interruptedTaskUpdates, newly...)
 		interruptedWordsDue = true
-		stopInterruptedWordsTimer()
-		interruptedWordsTimer = time.NewTimer(realtimeInterruptedWordsWait)
-		interruptedWordsTimeout = interruptedWordsTimer.C
+		armInterruptedWordsTimer()
 		note := formatInterruptedTaskUpdatesNote(newly)
 		logging.Infof("agent", "realtime", "Task update interrupted by the user: tasks=%d", len(newly))
 		if err := textSession.SendText(ctx, note); err != nil {
@@ -2570,6 +2575,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			judgingTaskUpdates = withoutRealtimeTasks(judgingTaskUpdates, judged.tasks)
 			settleInterruptedTaskUpdates(judged.tasks, judged.verdict, "decided from the user's words")
 		case <-interruptedWordsTimeout:
+			if turnState.inputSpeechActive || realtimeAdmissionSpeechActive(admissionTurnEndpoint) {
+				// The user is still speaking; the wait starts again when they stop.
+				armInterruptedWordsTimer()
+				continue
+			}
 			settleWaitingTaskUpdates(agent.InterruptedReportUnsure, "the user's words were not transcribed in time")
 		case err := <-taskDrainDone:
 			stopTaskDrain()
@@ -2886,6 +2896,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			case realtimevoice.EventSpeechStopped:
 				turnState.speechStopped(event.Status)
 				logging.Infof("agent", "realtime", "Input speech stopped: provider=%s session_id=%s item_id=%s audio_end_ms=%d status=%s", providerName, info.ID, event.ItemID, event.AudioEndMS, event.Status)
+				if interruptedWordsDue {
+					// Their words are transcribed after they stop speaking.
+					armInterruptedWordsTimer()
+				}
 				if event.Status == "turn_invalid" {
 					if err := restoreRealtimePlaybackAfterInvalidTurn(&turnState, &playback, playbackAudio, outputFormat); err != nil {
 						return fmt.Errorf("restore realtime playback after invalid turn: %w", err)
@@ -3327,6 +3341,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					if !wasCanceled {
 						if feedbackStatus != "completed" {
 							finishErr = fmt.Errorf("task update response ended with status %q", feedbackStatus)
+						} else if !textOnly && spokenTaskUpdatesAudioBytes == 0 {
+							// A voice response that played nothing told the user nothing.
+							finishErr = errors.New("task update response produced no audio")
 						} else {
 							finishErr = playback.finishResponse(playbackAudio, true)
 						}
