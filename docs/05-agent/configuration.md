@@ -980,6 +980,15 @@ still finds them, and any memory not recalled automatically, by topic. An unsure
 request recalls nothing. The memory texts offered are sent to the decision
 model provider.
 
+When the user speaks over a background-task result in a realtime session,
+their words are judged once they are transcribed (`interrupted_report`): do
+they still want the rest of the result? Like the decisions in the table, both
+models are asked and a confident decision-model answer wins; without a
+decision model the main model answers alone, bounded at 8 seconds. The answer
+is "wanted", "unwanted", or "unsure", and a failed request counts as unsure.
+The result text and the user's words are sent to the model providers. See
+[Realtime Voice](realtime-voice.md) for what each answer does.
+
 The TypeSafe API is region-restricted (HTTP 451 outside supported regions);
 the Agent reaches every decision provider through the same proxy environment it
 uses for other model providers.

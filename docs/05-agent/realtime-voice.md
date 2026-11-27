@@ -162,6 +162,31 @@ idle. Notification responses are private speech responses: they are played
 through the speaker and acknowledged only after playback drains, but they are
 not added to user-visible conversation history.
 
+A task update counts as delivered only once the user has heard it: after the
+response that tells it completes and its playback drains. A chat sent while it
+is still playing waits for it to finish. A response that fails, is muted, or
+does not finish playing returns the update to the queue, marked so the model
+tells it again. While the speaker is muted, updates wait and are told once it
+is unmuted. An update whose response fails or does not finish playing three
+times counts as delivered, so a fault cannot repeat it for the whole session.
+When the user speaks over a result:
+
+- If none of the result has played yet, it is returned to the queue and told
+  in full after the user is answered.
+- Otherwise a private note tells the model the user may have missed it and to
+  answer only what they said. The user's words then decide what happens to the
+  result (decision op `interrupted_report`, see
+  [Configuration](configuration.md)): if they want it, it is told again briefly
+  once they are answered; if they do not, it is dropped; if that is unclear,
+  the model only asks whether they want to hear it. A result spoken over again
+  with unclear words is dropped, so it never comes back a third time.
+- A request for the user to act on the device (`request_user_action`) is
+  never dropped: the task waits for that action, so the request is told again
+  in full once the user is answered, whatever their words were.
+
+The board cannot tell how much of an interrupted result the user heard: it
+only sees when audio was sent, and voice clients play from their own buffer.
+
 ## Audio routes and the Web UI voice mode
 
 A realtime session takes its audio from a `RealtimeAudioIO` endpoint

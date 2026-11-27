@@ -749,10 +749,16 @@ func TestFormatRealtimeTaskUpdatesAggregatesResults(t *testing.T) {
 	message := formatRealtimeTaskUpdates([]agenttask.Task{
 		{ID: "task_1", Prompt: "first", Status: agenttask.StatusCompleted, Result: "done"},
 		{ID: "task_2", Prompt: "second", Status: agenttask.StatusFailed, Error: "boom"},
-	})
+	}, map[string]realtimeRetelling{"task_2": realtimeRetell})
 	for _, value := range []string{"task_1", "task_2", "done", "boom"} {
 		if !strings.Contains(message, value) {
 			t.Fatalf("aggregated message missing %q: %s", value, message)
+		}
+	}
+	// Only the update the user did not hear in full is marked to be told again.
+	for _, line := range strings.Split(message, "\n") {
+		if strings.Contains(line, "not_heard=true") != strings.Contains(line, "task_2") {
+			t.Fatalf("not_heard mark on the wrong line: %q", line)
 		}
 	}
 }
@@ -862,7 +868,7 @@ func TestRealtimeNoticePersistsAsNoticeInUserContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	notice := formatRealtimeTaskUpdates([]agenttask.Task{{ID: "task_news", Status: agenttask.StatusCompleted, Prompt: "read the news", Result: "three headlines"}})
+	notice := formatRealtimeTaskUpdates([]agenttask.Task{{ID: "task_news", Status: agenttask.StatusCompleted, Prompt: "read the news", Result: "three headlines"}}, nil)
 	if err := appendRealtimeNoticeMessage(manager, notice); err != nil {
 		t.Fatal(err)
 	}
