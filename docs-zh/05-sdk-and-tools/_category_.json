@@ -1,8 +1,0 @@
-{
-  "label": "SDK 与工具",
-  "position": 5,
-  "link": {
-    "type": "generated-index",
-    "description": "使用 C++ SDK、图像工具和示例程序。"
-  }
-}

@@ -961,7 +961,7 @@ class VPhoneBridge(HostProcessBridge):
 
     def notes(self, host: "HostFacts") -> list[str]:
         return [
-            "Start the vphone VM first with vphone-cli; see docs/09-benchmark/vphone-cli-setup-guide-en.md.",
+            "Start the vphone VM first with vphone-cli; see docs/10-benchmark/vphone-cli-setup-guide-en.md.",
             "The guest address changes on every VM boot; leave Guest SSH host empty to detect it.",
         ]
 

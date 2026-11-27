@@ -1,8 +1,0 @@
-{
-  "label": "设备服务",
-  "position": 3,
-  "link": {
-    "type": "generated-index",
-    "description": "运维 Aico Link 的设备、硬件、配置、终端和 Agent 服务。"
-  }
-}

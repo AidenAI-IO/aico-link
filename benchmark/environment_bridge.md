@@ -302,7 +302,7 @@ Schedulers should treat missing or invalid values as `1`.
 In environment-bridge mode, the Agent sends its Phone Bridge traffic to the
 bridge endpoint unless it runs with a local Phone Bridge. A bridge that answers
 these endpoints plays the Aico App's side of the
-[Phone Bridge protocol](../docs/04-agent/phone-bridge-protocol.md). A bridge that
+[Phone Bridge protocol](../docs/05-agent/phone-bridge-protocol.md). A bridge that
 does not implement them returns HTTP 404; the Agent then treats the phone as
 disconnected, hides the `bridge_*` tools, and launches apps through the screen.
 

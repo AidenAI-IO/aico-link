@@ -144,5 +144,5 @@ python3 scripts/local_agent.py ios --bridge-url http://127.0.0.1:8896
 
 手机桥接的联系人/日历 API，以及开发板的音频、GPIO、USB HID 和固件服务，都是独立的能力。
 仅有截图/输入连接并不能提供它们。基于容器的 Agent 参见 [在 PC 上试用 Aico](try-aico-on-pc.md)。
-验证好手机之后，继续阅读 [Benchmark](../09-benchmark/README.md) 了解测试套件、评分和报告。
+验证好手机之后，继续阅读 [Benchmark](../10-benchmark/README.md) 了解测试套件、评分和报告。
 各桥接的专属参考文档保留了手动启动命令，用于调试单个组件。

@@ -181,6 +181,6 @@ startup and recovery never replay a potentially delivered text/touch request.
 Phone Bridge contacts/calendar APIs and board audio, GPIO, USB HID, and firmware
 services are separate capabilities. A screenshot/input connection alone does
 not provide them. For a container-based Agent, see [Try Aico on PC](try-aico-on-pc.md).
-After verifying your phone, continue with [Benchmark](../09-benchmark/README.md)
+After verifying your phone, continue with [Benchmark](../10-benchmark/README.md)
 for suites, scoring, and reports. The bridge-specific references retain manual
 startup commands for debugging individual components.

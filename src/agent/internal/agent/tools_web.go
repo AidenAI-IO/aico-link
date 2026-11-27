@@ -569,7 +569,7 @@ func newScrapeTransport(proxy ProxyConfig) http.RoundTripper {
 	// the transport selects so those dials skip the destination guard; the
 	// target host is still validated before each request and redirect. The
 	// proxy resolves the target itself, so it is trusted to refuse private
-	// destinations (see docs/04-agent/configuration.md).
+	// destinations (see docs/05-agent/configuration.md).
 	var proxyAddrs sync.Map
 	if baseProxy := httpTransport.Proxy; baseProxy != nil {
 		httpTransport.Proxy = func(req *http.Request) (*url.URL, error) {
