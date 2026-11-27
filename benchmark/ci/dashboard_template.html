@@ -54,6 +54,8 @@
   .area[open] > summary .area-name::before { transform: rotate(90deg); }
   .area-suites { padding-bottom: 8px; }
   .area-suite { padding: 6px 0; font-size: 13px; }
+  .area-suite { align-items: start; }
+  .area-suite > .area-cell { padding-top: 2px; }
   .area-suite .area-name { padding-left: 16px; }
   .area-sub { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
   .area > summary .area-sub { padding-left: 16px; }
@@ -64,7 +66,12 @@
   .bar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--accent); }
   .bar .prev, .prev-key { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); opacity: .6; }
   .prev-key { position: relative; display: inline-block; top: 2px; height: 12px; margin: 0 2px 0 6px; }
-  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .config-changes { padding-left: 16px; color: var(--muted); font-size: 12px; }
+  .config-changes summary { margin: 2px 0 0; width: fit-content; }
+  .config-changes dl { margin: 6px 0 4px; padding: 8px 10px; border-radius: 6px; background: var(--bg); }
+  .config-changes dl > div + div { margin-top: 4px; }
+  .config-changes dt { color: var(--text); font-weight: 600; }
+  .config-changes dd { margin: 0; overflow-wrap: anywhere; }
   .tag { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 11px; font-weight: 400; }
   button.dataset.weekly-dataset { font-weight: 400; }
   @media (max-width: 700px) {
@@ -301,7 +308,9 @@ const weekChange = d => {
 const rateBar = (rate, previous, label) => `<span class="rate"><span class="rate-value">${pct(rate)}</span><span class="bar">` +
   (known(rate) ? `<span class="fill" style="width:${(rate * 100).toFixed(1)}%"></span>` : "") +
   (known(previous) ? `<span class="prev" style="left:${(previous * 100).toFixed(1)}%" title="${esc(label)} ${pct(previous)}"></span>` : "") +
-  "</span>" + (known(previous) ? `<span class="sr-only">${esc(label)} ${pct(previous)}</span>` : "") + "</span>";
+  "</span></span>";
+const changeCell = (change, previous, label) => weekChange(change) +
+  (known(previous) ? `<span class="delta empty">${esc(label)} ${pct(previous)}</span>` : "");
 const datasetIndexByName = name => datasets.findIndex(dataset => dataset.suite === name.replace(/ \[[^\]]*\]$/, ""));
 const workflowLink = summary => DATA.repo && summary.workflow_run_id
   ? safeLink(`https://github.com/${DATA.repo.split('/').map(encodeURIComponent).join('/')}/actions/runs/${encodeURIComponent(summary.workflow_run_id)}`,
@@ -384,16 +393,19 @@ function renderSummary(mode) {
     const changes = suite.config_changes?.length && known(suite.change) ? suite.config_changes : [];
     const changeText = changes.map(c => `${c.field}: ${c.previous} → ${c.current}`).join("; ");
     const configTag = changes.length
-      ? `<span class="tag" title="${esc(changeText)}" aria-hidden="true">config</span><span class="sr-only">Configuration changed. ${esc(changeText)}</span>` : "";
+      ? `<span class="tag" aria-hidden="true">config</span>` : "";
+    const configDetails = changes.length
+      ? `<details class="config-changes"><summary>Changed: ${esc(changes.map(c => c.field).join(", "))}</summary><dl>` +
+        changes.map(c => `<div><dt>${esc(c.field)}</dt><dd>${esc(c.previous)} → ${esc(c.current)}</dd></div>`).join("") +
+        "</dl></details>" : "";
     let detail = `${num(suite.passed)} / ${num(suite.eligible_tasks)} passed` + (mode === "weekly" ? ` · ${num(suite.suite_runs)} runs` : "");
     if (!known(suite.pass_at_1)) {
       detail = `No valid evaluation ${config.unit}`;
       if (suite.last_valid) detail += ` · last valid ${pct(suite.last_valid.pass_at_1)} (${when(suite.last_valid.timestamp)})`;
     }
-    if (changes.length) detail += ` · changed: ${changes.map(c => c.field).join(", ")}`;
-    return `<div class="area-suite"><span class="area-name">${name}${suite.new ? '<span class="tag">new</span>' : ""}${configTag}<span class="area-sub">${esc(detail)}</span></span>
+    return `<div class="area-suite"><span class="area-name">${name}${suite.new ? '<span class="tag">new</span>' : ""}${configTag}<span class="area-sub">${esc(detail)}</span>${configDetails}</span>
       <span class="area-cell rate-cell">${rateBar(suite.pass_at_1, suite.previous_pass_at_1, config.previous)}</span>
-      <span class="area-cell n" data-label="${esc(config.change)}">${weekChange(suite.change)}</span>
+      <span class="area-cell n" data-label="${esc(config.change)}">${changeCell(suite.change, suite.previous_pass_at_1, config.marker)}</span>
       <span class="area-cell n" data-label="Coverage">${pct(suite.coverage)}</span></div>`;
   };
   // Keep expanded areas open across the toggle.
@@ -405,7 +417,7 @@ function renderSummary(mode) {
     return `<details class="area" data-area="${esc(area.capability)}"${open.has(area.capability) ? " open" : ""}><summary>
       <span class="area-name"><b>${esc(area.capability)}</b><span class="area-sub">${rows.length} dataset${rows.length === 1 ? "" : "s"} · ${num(area.passed)} / ${num(area.eligible_tasks)} passed</span></span>
       <span class="area-cell rate-cell">${rateBar(area.pass_at_1, area.previous_pass_at_1, config.previous)}</span>
-      <span class="area-cell n" data-label="${esc(config.change)}">${weekChange(change)}</span>
+      <span class="area-cell n" data-label="${esc(config.change)}">${changeCell(change, area.previous_pass_at_1, config.marker)}</span>
       <span class="area-cell n" data-label="Coverage">${pct(area.coverage)}</span>
     </summary><div class="area-suites">${rows.map(suiteRow).join("")}</div></details>`;
   }).join("");
