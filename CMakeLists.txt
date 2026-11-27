@@ -21,7 +21,7 @@ set_property(CACHE AICO_TARGET_PLATFORM PROPERTY STRINGS
     rv1106-debian-glibc
 )
 
-set(SDK_PATH "${CMAKE_SOURCE_DIR}/pico-sdk" CACHE PATH "Luckfox Pico SDK path")
+set(SDK_PATH "${CMAKE_SOURCE_DIR}/pico-sdk" CACHE PATH "RV1106 BSP SDK path")
 set(_aico_platform_file
     "${CMAKE_SOURCE_DIR}/cmake/platforms/${AICO_TARGET_PLATFORM}.cmake")
 if(NOT EXISTS "${_aico_platform_file}")

@@ -337,8 +337,7 @@ on-board included, sends an [MCP access token](#mcp-access-tokens).
 SSH and the web terminal log in to the `aico` account with the device password.
 Without one the account's password is locked, so nobody can log in to a shell
 over USB or the LAN, not even with the image's former factory password; set a
-device password first (it may be `luckfox` if you choose). `root` stays
-key-only. sshd accepts sources outside `192.168.42.0/24`, `127.0.0.0/8`, and
+device password first. `root` stays key-only. sshd accepts sources outside `192.168.42.0/24`, `127.0.0.0/8`, and
 `::1` only while LAN access is on **and** a device password is applied;
 otherwise it refuses them for every account including `root`.
 
