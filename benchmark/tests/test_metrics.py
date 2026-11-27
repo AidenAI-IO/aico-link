@@ -517,6 +517,17 @@ def test_aggregate_rows_has_one_canonical_metric_shape():
     assert "failure_class_rates" not in agg
 
 
+def test_bridge_open_app_without_action_counts_as_device_execution():
+    events = [
+        {"type": "tool_call", "tool_name": "bridge_open_app", "tool_input": '{"app":"Settings"}'},
+        {"type": "tool_result", "tool_name": "bridge_open_app", "duration_ms": 19, "is_error": True},
+    ]
+    assert derive_history_metrics(events)["device_actions"] == 1
+    episode = derive_episode_metrics({"events": events})
+    assert episode["device_execution_ms"] == 19
+    assert episode["first_failure_stage"] == "device_execution"
+
+
 def test_episode_cli_metrics_exclude_redacted_reads_and_undispatched_actions():
     metrics = derive_episode_metrics({"events": [{
         "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [

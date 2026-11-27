@@ -135,6 +135,32 @@ func testEpisodeRedactsSensitiveToolResult(t *testing.T, toolName string) {
 	}
 }
 
+func TestEpisodeRecorderBenchmarkKeepsResolvedDeviceInput(t *testing.T) {
+	recorder := NewEpisodeRecorder(MemoryRetrieveRequest{}, MemoryContext{})
+	recorder.benchmarkToolEvidence = true
+	action := schema.AgentAction{Tool: "shell", ToolInput: `{"command":"device-cli app clipboard write \"$fixture_value\""}`}
+	recorder.RecordExecution(ToolCallExecutionResult{
+		Call: ToolCall{Spec: ToolSpec{Name: "shell"}, Action: action},
+		Result: ToolResult{
+			Output: "private response",
+			deviceCalls: []deviceCLIToolEvidence{{Tool: toolBridgeClipboard, Input: map[string]any{
+				"action": "write", "text": "resolved fixture value",
+			}}},
+		},
+	})
+	for _, event := range recorder.Finish("", nil, nil, nil, nil).Events {
+		if event.Type != "tool_result" {
+			continue
+		}
+		calls := event.Metadata["device_cli_calls"].([]deviceCLIToolEvidence)
+		if calls[0].Input["text"] != "resolved fixture value" || event.Content != sensitiveToolResultRedaction {
+			t.Fatalf("expected resolved benchmark argument and redacted output, got %+v", event)
+		}
+		return
+	}
+	t.Fatal("missing tool_result event")
+}
+
 func TestMaterializeEventArtifactUsesExistingReference(t *testing.T) {
 	store := NewTaskEpisodeStore(t.TempDir())
 	dir := filepath.Join(t.TempDir(), "episode")

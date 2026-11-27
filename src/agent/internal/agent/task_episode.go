@@ -277,7 +277,8 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 	input := normalizeToolInput(result.Call.Action.ToolInput)
 	content := toolContentFromAction(result.Call.Action)
 	redact := toolResultIsSensitive(toolName) || result.Result.containsPrivateDeviceData()
-	if redact && !r.benchmarkToolEvidence {
+	redactInput := redact && !r.benchmarkToolEvidence
+	if redactInput {
 		var fields map[string]any
 		_ = json.Unmarshal([]byte(input), &fields)
 		input = jsonString(deviceCLIOperationInput(toolName, fields))
@@ -314,7 +315,7 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 		ToolError:      toolError,
 	}
 	if calls := result.Result.deviceCalls; len(calls) > 0 {
-		if redact {
+		if redactInput {
 			calls = slices.Clone(calls)
 			for i := range calls {
 				calls[i].Input = deviceCLIOperationInput(calls[i].Tool, calls[i].Input)

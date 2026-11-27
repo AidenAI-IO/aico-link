@@ -52,9 +52,14 @@ def _is_device_action(tool_name: str, tool_input: Any) -> bool:
     if tool_name == "quick_action" and parsed_input.get("list") is True:
         return False
     action = str(parsed_input.get("action") or "").lower()
+    if not action and not parsed_input and tool_name in {
+        "bridge_calendar", "bridge_clipboard", "bridge_contacts", "bridge_notification",
+    }:
+        # Older episode records may have redacted every argument.
+        return False
     return not (
         tool_name.startswith("bridge_")
-        and (not action or action in {"query", "read", "get", "inspect", "list", "search"})
+        and action in {"query", "read", "get", "inspect", "list", "search"}
     )
 
 
