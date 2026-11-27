@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from ci import run_case as run_case_module
-from ci.plan import Catalog, CatalogError, SuiteCase, load_catalog, select_cases
+from ci.plan import Catalog, CatalogError, SuiteCase, load_catalog, load_gate, select_cases
 from ci.run_case import (
     _effective_exit_code,
     _incomplete_run_reasons,
@@ -48,6 +48,39 @@ def test_catalog_rejects_an_unclassified_suite(tmp_path: Path) -> None:
 
     with pytest.raises(CatalogError, match=r"unclassified suites: suites/new\.json"):
         load_catalog(catalog_path=catalog_path, suites_dir=suites_dir)
+
+
+
+@pytest.mark.parametrize(
+    ("entry", "error"),
+    [
+        ({"case": "local", "task_ids": ["a"]}, None),
+        ({"case": "missing", "task_ids": ["a"]}, r"unknown case"),
+        ({"case": "device", "task_ids": ["a"]}, r"needs external hardware"),
+        ({"case": "local", "task_ids": ["a", "z"]}, r"gate tasks not in case local: z"),
+        ({"case": "local", "task_ids": []}, r"unique non-empty"),
+    ],
+)
+def test_gate_narrows_catalog_cases_to_known_tasks(tmp_path: Path, entry, error) -> None:
+    suites_dir = tmp_path / "suites"
+    suites_dir.mkdir()
+    (suites_dir / "s.json").write_text(
+        '{"name":"s","tasks":[{"id":"a"},{"id":"b"}]}', encoding="utf-8"
+    )
+    catalog = Catalog(cases=(
+        SuiteCase(id="local", suite="suites/s.json", environment="isolated", max_concurrency=2),
+        SuiteCase(id="device", suite="suites/s.json", environment="external",
+                  environment_variable="DEVICE_URL"),
+    ))
+    gate_path = tmp_path / "gate.json"
+    gate_path.write_text(json.dumps({"version": 1, "cases": [entry]}), encoding="utf-8")
+
+    if error:
+        with pytest.raises(CatalogError, match=error):
+            load_gate(catalog, gate_path=gate_path, suites_dir=suites_dir)
+        return
+    (case,) = load_gate(catalog, gate_path=gate_path, suites_dir=suites_dir)
+    assert (case.id, case.task_ids, case.max_concurrency) == ("local", ["a"], 2)
 
 
 # Selection rules are tested on a synthetic catalog so adding, retiring, or
@@ -546,11 +579,10 @@ def test_workflow_artifacts_upload_only_named_files_from_benchmark_runs() -> Non
                 or name in {"pre.jpg", "post.jpg"}), f"{workflow}: {path}"
 
 
-def test_self_hosted_benchmark_job_never_runs_pull_request_code() -> None:
+def test_labeled_pull_request_runs_only_the_reviewed_head_commit() -> None:
+    # scripts/test_github_actions_self_hosted_safety.sh checks the job guard.
+    # This pins the checkout: without it, a push after the label is applied
+    # would run unreviewed code on the self-hosted runner.
     run_job = _workflow_job("run")
-
-    assert (
-        "    if: ${{ startsWith(github.ref, 'refs/heads/') "
-        "&& github.event_name != 'pull_request' "
-        "&& github.event_name != 'pull_request_target' }}"
-    ) in run_job.splitlines()
+    checkout = run_job.split("uses: actions/checkout@v4", 1)[1].split("- name:", 1)[0]
+    assert "ref: ${{ github.event.pull_request.head.sha || '' }}" in checkout

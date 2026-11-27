@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "case": "memory",
+      "task_ids": [
+        "update_changed_preference",
+        "use_filtered_subset"
+      ]
+    },
+    {
+      "case": "memory-admission",
+      "task_ids": [
+        "apply_saved_profile_fact_in_new_conversation",
+        "direct_question_returns_sensitive_memory",
+        "skip_when_user_declines"
+      ]
+    },
+    {
+      "case": "phone-bridge-policy",
+      "task_ids": [
+        "ios_dynamic_island_contacts_query"
+      ]
+    },
+    {
+      "case": "episode-reflection-v2",
+      "task_ids": [
+        "success_claim_without_proof_is_unknown",
+        "verified_success_procedure_applies"
+      ]
+    },
+    {
+      "case": "notification-memory",
+      "task_ids": [
+        "notification_noise_is_filtered"
+      ]
+    },
+    {
+      "case": "personamem-recall",
+      "task_ids": [
+        "personamem_family_relations_update_reason",
+        "personamem_music_recall_fact"
+      ]
+    },
+    {
+      "case": "quick-capture",
+      "task_ids": [
+        "find_old_snapshot_in_large_history",
+        "prefer_latest_snapshot"
+      ]
+    },
+    {
+      "case": "perception",
+      "task_ids": [
+        "select_exact_appointment_slot",
+        "task_5081"
+      ]
+    },
+    {
+      "case": "phone-control-mobilegym",
+      "task_ids": [
+        "open_settings",
+        "type_long_mixed_text"
+      ]
+    },
+    {
+      "case": "adb_android_basic",
+      "task_ids": [
+        "quick_action_home"
+      ]
+    }
+  ]
+}

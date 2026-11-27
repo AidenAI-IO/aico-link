@@ -56,7 +56,7 @@ jobs:
         working-directory: benchmark
         run: |
           uv sync --frozen --only-group dev
-          uv run pytest tests/test_ci_plan.py tests/test_ci_prepare_images.py tests/test_ci_run_cases.py tests/test_ci_publish_langfuse.py -q
+          uv run pytest tests/test_ci_plan.py tests/test_ci_gate_verdict.py tests/test_ci_prepare_images.py tests/test_ci_run_cases.py tests/test_ci_publish_langfuse.py -q
 
   github-actions-safety:
     needs: classify-pr

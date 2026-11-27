@@ -516,6 +516,8 @@ The execution policy is based only on whether CI can prepare the environment:
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (16 cases) |
 | Manual dispatch | `adb` | Native Android comparisons, built-in app workflows, and Bridge capabilities on the configured emulator |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
+| `run-baseline-gate` label on a pull request | `baseline-gate` | Must-pass tasks from `benchmark/ci/baseline_gate_v1.json` on the labeled head commit |
+| Manual dispatch | `baseline-gate` | The same must-pass tasks on any repository branch, such as a pull request branch before merging |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
 case whose environment is `isolated`, `mobilegym`, or `adb` and whose catalog
@@ -567,8 +569,83 @@ no matching case remains an error.
 Pull requests run the catalog and planner tests in the normal `CI` workflow, but
 do not receive Agent/Judge/Langfuse secrets and therefore do not operate a
 device. Real benchmark execution comes from the daily schedule on the default
-branch or a manual `workflow_dispatch` on any repository branch. Manual
-dispatch remains unavailable to pull request and fork refs.
+branch, a manual `workflow_dispatch` on any repository branch, or the
+maintainer-applied `run-baseline-gate` label described below.
+
+### Baseline gate
+
+`benchmark/ci/baseline_gate_v1.json` lists the tasks that baseline code must
+keep passing. Each entry names a catalog case and a subset of its `task_ids`, so
+a gated task keeps its case's environment, concurrency, and scoring contract.
+`plan.py validate` checks that every entry refers to an automatic catalog case
+and an existing task, so renaming or removing a gated task fails the `CI`
+workflow until the gate is updated.
+
+The tasks were chosen from the per-task results of the scheduled and dispatched
+runs between 2026-11-12 and 2026-11-25. A task qualified when it passed every
+scored attempt on `main` (at least five), at least 90% of scored attempts on all
+branches, and every attempt after the switch to `google/gemini-3.5-flash-lite`.
+From the 66 qualifying tasks the gate keeps one to three per capability and
+drops near-duplicates (for example `episode_reflection_v1`, whose cases
+`episode_reflection_v2` repeats, the Aico App text-entry variants of the same
+Settings search, and most of the fourteen similar PersonaMem recalls). It also
+leaves out the cases whose setup dominates their runtime: the built-in Android
+app workflows and the Aico App cases. The 18 tasks in 10 cases keep a gate run
+to about five minutes. Recalibrate the list when the Agent model or a gated
+suite changes.
+
+The `baseline-gate` profile runs each gated task once, with `BENCHMARK_REPEATS`
+forced to 1. `ci.gate_verdict` then reruns only the tasks that did not pass, and
+fails the job (check name `baseline-gate`) when a task passes in neither run.
+The job summary marks each such task as a `regression` when a run scored it as
+failed, or as `unverified` when no run produced a score (judge error, timeout,
+skipped, or missing result). A failed attempt that made no tool call but wrote
+tool-call markup such as `<parcel_call>` or `default_api:<tool>` into its reply
+is recorded as `model_format`. This is a model output defect, seen in about 5%
+of attempts with `google/gemini-3.5-flash-lite`, rather than a change in the
+Agent's decision. A task that fails only this way is reported as a warning
+and does not fail the gate. A gate run is not published to Langfuse and does
+not generate a dashboard, so task subsets never appear as suite regressions.
+
+#### Checking a pull request
+
+The repository is public and the benchmark runs on a self-hosted runner with
+benchmark credentials, so pull request code never runs there automatically. A
+maintainer who has reviewed a pull request adds the `run-baseline-gate` label.
+That triggers the Benchmark workflow through `pull_request_target`, whose
+definition always comes from `main`, so a pull request cannot change the
+trigger. The workflow:
+
+1. removes the label and sets a pending `baseline-gate` commit status on the
+   pull request's head commit;
+2. builds the task list from `main`'s `baseline_gate_v1.json`;
+3. checks out exactly the head commit that was labeled, runs the gate on the
+   self-hosted runner, and reruns tasks that did not pass once;
+4. judges the results with `main`'s `ci.gate_verdict` on a GitHub-hosted runner,
+   sets the `baseline-gate` status to success, failure, or error, and comments
+   the result table on the pull request.
+
+A later push is not tested until a maintainer adds the label again, which also
+cancels a gate run still in progress for that pull request. Fork pull requests
+work the same way, because the label, not the author, starts the run.
+`scripts/test_github_actions_self_hosted_safety.sh` accepts this one guard for
+pull request code on the self-hosted runner, and only when `pull_request_target`
+reacts to `labeled` events alone.
+
+The label is a trust decision. The labeled commit runs on the self-hosted
+runner with the benchmark credentials, and its own benchmark code writes the
+results that `main`'s `ci.gate_verdict` then judges. A pull request that
+changes the benchmark runner could therefore report results it did not earn.
+Add the label only after reviewing the change, including any change under
+`benchmark/`.
+
+To make the gate a merge requirement, add `baseline-gate` as a required status
+check in the `main` ruleset. Branches in this repository can also be checked
+without a pull request:
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f profile=baseline-gate
+```
 
 Use the `model` dropdown when manually dispatching the workflow to select the
 Agent model for that run. Manual dispatch defaults to

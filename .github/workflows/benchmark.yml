@@ -4,6 +4,13 @@ on:
   schedule:
     # 02:07 Asia/Shanghai daily (UTC 18:07 previous day).
     - cron: '7 18 * * *'
+  # Baseline gate for a pull request: a maintainer adds the run-baseline-gate
+  # label after reviewing the change. pull_request_target takes this workflow
+  # from main, so a pull request cannot change the trigger or the label check.
+  # Only the head commit at labeling time is tested; the label is removed at
+  # once, so testing a later push needs a new label.
+  pull_request_target:
+    types: [labeled]
   workflow_dispatch:
     inputs:
       profile:
@@ -16,6 +23,7 @@ on:
           - hardware
           - adb
           - all
+          - baseline-gate
       suite:
         description: Optional suite path or comma-separated paths, for example suites/memory_v1.json,suites/quick_capture_v1.json
         required: false
@@ -41,20 +49,51 @@ permissions:
   contents: read
 
 concurrency:
-  group: benchmark-${{ github.ref }}
-  cancel-in-progress: false
+  # A separate group keeps a queued gate run from replacing a queued full run
+  # on the same branch. A new gate label on a pull request cancels the gate
+  # run of its previous label. Labels for other purposes get their own group
+  # so they never cancel a gate run.
+  # Each branch yields a nonempty string: '' is falsy in expressions, so a
+  # `cond && '' || other` form would always fall through to `other`.
+  group: >-
+    ${{ (github.event_name == 'pull_request_target' && github.event.label.name == 'run-baseline-gate')
+    && format('benchmark-gate-pr-{0}', github.event.pull_request.number)
+    || github.event_name == 'pull_request_target'
+    && format('benchmark-label-{0}', github.run_id)
+    || format('benchmark-{0}-{1}', github.ref, inputs.profile == 'baseline-gate' && 'gate' || 'full') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   plan:
+    # Labels other than run-baseline-gate start nothing.
+    if: ${{ github.event_name != 'pull_request_target' || (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'run-baseline-gate') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       profile: ${{ steps.profile.outputs.profile }}
       timeout_minutes: ${{ steps.profile.outputs.timeout_minutes }}
     steps:
+      # Always the trusted default branch: the gate list comes from main.
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Consume the gate label and mark the pull request pending
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/run-baseline-gate" >/dev/null || true
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=pending \
+            -f context=baseline-gate -f target_url="$RUN_URL" \
+            -f description="Running the baseline gate" >/dev/null
       - id: profile
         name: Select scheduled profile
         env:
@@ -66,6 +105,8 @@ jobs:
             profile="${DISPATCH_PROFILE:-runnable}"
           elif [[ "$EVENT_NAME" == "schedule" ]]; then
             profile="runnable"
+          elif [[ "$EVENT_NAME" == "pull_request_target" ]]; then
+            profile="baseline-gate"
           else
             echo "Unsupported benchmark workflow event: $EVENT_NAME" >&2
             exit 1
@@ -76,6 +117,7 @@ jobs:
             hardware) timeout_minutes=4320 ;;
             adb) timeout_minutes=1440 ;;
             all) timeout_minutes=5760 ;;
+            baseline-gate) timeout_minutes=240 ;;
             *) echo "Unsupported benchmark profile: $profile" >&2; exit 1 ;;
           esac
           echo "timeout_minutes=$timeout_minutes" >> "$GITHUB_OUTPUT"
@@ -86,7 +128,13 @@ jobs:
           SUITE: ${{ inputs.suite }}
         run: |
           set -euo pipefail
-          if [[ -n "$SUITE" ]]; then
+          if [[ "$PROFILE" == "baseline-gate" ]]; then
+            if [[ -n "$SUITE" ]]; then
+              echo "The baseline-gate profile runs the tasks in benchmark/ci/baseline_gate_v1.json; leave suite empty" >&2
+              exit 1
+            fi
+            matrix="$(python3 benchmark/ci/plan.py gate-matrix)"
+          elif [[ -n "$SUITE" ]]; then
             matrix="$(python3 benchmark/ci/plan.py matrix --profile "$PROFILE" --suite "$SUITE")"
           else
             matrix="$(python3 benchmark/ci/plan.py matrix --profile "$PROFILE")"
@@ -103,11 +151,19 @@ jobs:
           cases = json.loads(os.environ["MATRIX"])["include"]
           print(f"## Benchmark plan: {os.environ['PROFILE']}")
           print(f"\n{len(cases)} case(s): " + ", ".join(case["id"] for case in cases))
+          if os.environ["PROFILE"] == "baseline-gate":
+              print(f"\n{sum(len(case['task_ids']) for case in cases)} gated task(s)")
           PY
 
   run:
     needs: plan
-    if: ${{ startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+    # A distinct check name lets the gate become a required status check.
+    name: ${{ needs.plan.outputs.profile == 'baseline-gate' && 'baseline-gate' || 'run' }}
+    # Pull request code reaches this self-hosted runner only through the
+    # maintainer-applied run-baseline-gate label on pull_request_target.
+    if: >-
+      ${{ (startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target')
+      || (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'run-baseline-gate') }}
     runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
     # One runner serves this label, so a job matrix could never start a second job:
     # every case ran back to back and repaid the checkout/uv/docker setup 13 times.
@@ -119,7 +175,9 @@ jobs:
     env:
       MATRIX: ${{ needs.plan.outputs.matrix }}
       BENCHMARK_CI_MAX_PARALLEL: '4'
-      BENCHMARK_REPEATS: ${{ inputs.repeats || vars.BENCHMARK_REPEATS || '1' }}
+      # The gate retries unpassed tasks itself, so each pass runs every task once.
+      BENCHMARK_REPEATS: ${{ needs.plan.outputs.profile == 'baseline-gate' && '1' || inputs.repeats || vars.BENCHMARK_REPEATS || '1' }}
+      GATE: ${{ needs.plan.outputs.profile == 'baseline-gate' && '1' || '0' }}
       BENCHMARK_AGENT_PROVIDER: ${{ startsWith(inputs.model, 'internal/') && 'openai' || vars.BENCHMARK_AGENT_PROVIDER }}
       DOCKER_BUILDKIT: 1
       BENCHMARK_AGENT_MODEL: ${{ inputs.model || 'google/gemini-3.5-flash-lite' }}
@@ -189,6 +247,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # A labeled pull request: the head commit the maintainer reviewed.
+          ref: ${{ github.event.pull_request.head.sha || '' }}
       - name: Reap orphaned benchmark containers and run directories
         # Every other cleanup is keyed to this job's RUN_ID, so a cancelled job or a
         # SIGKILLed runner leaks containers and run directories that nothing collects.
@@ -535,6 +595,10 @@ jobs:
       - name: Run benchmark cases
         # Each run is published to Langfuse as soon as its case finishes, while
         # later cases still run; the step ends once those publications finish.
+        # Gate runs are not published: their task subsets would read as suite
+        # regressions in the dashboard and weekly report. In a gate run an
+        # incomplete case is judged by the gate steps below instead.
+        continue-on-error: ${{ env.GATE == '1' }}
         working-directory: benchmark
         env:
           MATRIX: ${{ needs.plan.outputs.matrix }}
@@ -549,9 +613,47 @@ jobs:
           --matrix-json "$MATRIX"
           --run-id-prefix "$RUN_ID_PREFIX"
           --max-parallel "$BENCHMARK_CI_MAX_PARALLEL"
-          --publish-langfuse
+          ${{ env.GATE != '1' && '--publish-langfuse' || '' }}
           --publish-max-parallel 8
           --publish-run-timeout-sec 300
+      - name: Judge baseline gate first pass
+        id: gate_first
+        if: ${{ !cancelled() && env.GATE == '1' }}
+        working-directory: benchmark
+        env:
+          RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          uv run python -m ci.gate_verdict
+          --run-id-prefix "$RUN_ID_PREFIX"
+          --github-output "$GITHUB_OUTPUT"
+      - name: Retry unpassed gate tasks
+        # Agent and judge calls are nondeterministic; a task fails the gate
+        # only if it also fails this single rerun.
+        if: ${{ !cancelled() && env.GATE == '1' && steps.gate_first.outputs.failed != '0' }}
+        continue-on-error: true
+        working-directory: benchmark
+        env:
+          MATRIX: ${{ steps.gate_first.outputs.retry_matrix }}
+          RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}-retry
+          ANDROID_SERIAL: ${{ steps.android_devices.outputs.serials || env.ANDROID_SERIAL }}
+          AIDENBRIDGE_READY: ${{ (steps.aidenbridge_install.outcome == 'failure' || steps.aidenbridge_routing.outcome == 'failure') && '0' || '1' }}
+        run: >-
+          BENCHMARK_AGENT_MODEL="${BENCHMARK_AGENT_MODEL#internal/}"
+          uv run python -m ci.run_cases
+          --matrix-json "$MATRIX"
+          --run-id-prefix "$RUN_ID_PREFIX"
+          --max-parallel "$BENCHMARK_CI_MAX_PARALLEL"
+      - name: Enforce baseline gate
+        if: ${{ !cancelled() && env.GATE == '1' }}
+        working-directory: benchmark
+        env:
+          RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          uv run python -m ci.gate_verdict
+          --run-id-prefix "$RUN_ID_PREFIX"
+          --run-id-prefix "$RUN_ID_PREFIX-retry"
+          --summary-path "$GITHUB_STEP_SUMMARY"
+          --enforce
       - name: Clean up benchmark services
         if: ${{ always() }}
         env:
@@ -628,7 +730,7 @@ jobs:
           done
           wait
       - name: Publish runs missed during the cases
-        if: ${{ always() }}
+        if: ${{ always() && env.GATE != '1' }}
         # "Run benchmark cases" publishes each run when its case finishes and
         # marks it published. This step only publishes runs without that
         # marker: a failed publication, or every run when the case step was
@@ -652,7 +754,7 @@ jobs:
           --run-timeout-sec 300
           --summary-path "$GITHUB_STEP_SUMMARY"
       - name: Generate benchmark dashboard
-        if: ${{ always() }}
+        if: ${{ always() && env.GATE != '1' }}
         # The dashboard is a reporting side channel: losing it must not turn a
         # passing benchmark into a failed job.
         continue-on-error: true
@@ -794,3 +896,67 @@ jobs:
             echo "::warning::Both BENCHMARK_REPORT_PUBLISH_DIR and BENCHMARK_REPORT_BASE_URL are required for direct report links"
           fi
           uv run python -m ci.publish_reports "${args[@]}"
+
+  report:
+    # The pull request verdict comes from main's ci.gate_verdict and gate list
+    # on a GitHub-hosted runner, so the pull request's own code can neither
+    # weaken the gate nor fake the result. Posted as the baseline-gate commit
+    # status on the tested head and as a pull request comment.
+    needs: [plan, run]
+    if: ${{ always() && needs.plan.result == 'success' && github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download gate results
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gate
+      - name: Judge and report
+        working-directory: benchmark
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          RUNS_DIR: ${{ runner.temp }}/gate/runs
+        run: |
+          set -uo pipefail
+          summary="$RUNNER_TEMP/gate-summary.md"
+          if [[ -d "$RUNS_DIR" ]]; then
+            # Actions runs this script with bash -e: capture the verdict's exit
+            # status in the same command, or a failing gate would exit here
+            # before the status and comment are posted.
+            code=0
+            python3 -m ci.gate_verdict --runs-dir "$RUNS_DIR" \
+              --run-id-prefix "$PREFIX" --run-id-prefix "$PREFIX-retry" --enforce > "$summary" || code=$?
+          else
+            printf '## Baseline gate\n\nThe gate job produced no results (setup failure or cancellation).\n' > "$summary"
+            code=2
+          fi
+          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          passed="$(grep -oE '^[0-9]+/[0-9]+ gated task' "$summary" | head -1 | cut -d' ' -f1)"
+          case "$code" in
+            0) state=success; description="Passed ${passed:-}" ;;
+            1) state=failure; description="Failed ${passed:-}" ;;
+            *) state=error; description="Did not complete" ;;
+          esac
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state="$state" \
+            -f context=baseline-gate -f target_url="$RUN_URL" -f description="$description" >/dev/null
+          {
+            grep -v '^::' "$summary"
+            echo
+            echo "Tested commit ${HEAD_SHA:0:9} ([run]($RUN_URL)). Add the \`run-baseline-gate\` label again to test a later push."
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
+          exit "$code"

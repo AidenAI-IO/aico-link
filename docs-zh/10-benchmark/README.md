@@ -417,6 +417,8 @@ Langfuse 中查看，但除非使用未变更条目的交集，或针对新的�
 | 手动分派 | `hardware` | ADB、VPhone、桌面和真实手机桥接用例（16 个） |
 | 手动分派 | `adb` | 在配置的模拟器上进行原生 Android 对比、内置 App 工作流和 Bridge 能力测试 |
 | 手动分派 | `all` | 所有目录用例；需要所有环境均已配置 |
+| pull request 上的 `run-baseline-gate` 标签 | `baseline-gate` | 在打标签时的 head 提交上运行 `benchmark/ci/baseline_gate_v1.json` 中的必过任务 |
+| 手动分派 | `baseline-gate` | 在任意仓库分支上运行同样的必过任务，例如合入前的 pull request 分支 |
 
 定时全量运行每天 Asia/Shanghai 时间 02:07 执行。它会选择环境为 `isolated`、`mobilegym` 或 `adb`
 且目录中 `runnable` 标志为 true 的所有用例。这包括两组 ADB 对比（四个用例），以及在 runner 所配置的 Android
@@ -448,8 +450,55 @@ VPhone 目前被排除在外，因为它需要一个单独托管的 macOS Apple 
 当一个套件在多个环境 profile 中都有用例时，显式选择套件只会运行属于所请求 profile 的用例。没有匹配用例的选择仍会报错。
 
 pull request 会在常规 `CI` 工作流中运行目录和规划器测试，但不会获得 Agent/Judge/Langfuse 的 secret，
-因此不会操作设备。真实的基准测试执行来自默认分支上的每日定时运行，或任意仓库分支上的手动 `workflow_dispatch`。
-pull request 和 fork 的 ref 仍然无法手动分派。
+因此不会操作设备。真实的基准测试执行来自默认分支上的每日定时运行、任意仓库分支上的手动 `workflow_dispatch`，
+或下文所述由维护者添加的 `run-baseline-gate` 标签。
+
+### 基线门禁
+
+`benchmark/ci/baseline_gate_v1.json` 列出基线代码必须保持通过的任务。每个条目指定一个目录用例及其 `task_ids` 的子集，
+因此被门禁的任务沿用该用例的环境、并发数和评分约定。`plan.py validate` 会检查每个条目都指向一个自动目录用例和一个存在的任务，
+所以重命名或删除被门禁的任务会使 `CI` 工作流失败，直到门禁列表同步更新。
+
+这些任务选自 2026-11-12 至 2026-11-25 期间定时运行和手动分派运行的逐任务结果。入选条件是：在 `main` 上每次有评分的尝试都通过
+（至少五次），在所有分支上有评分尝试的通过率不低于 90%，并且在切换到 `google/gemini-3.5-flash-lite` 之后的每次尝试都通过。
+在 66 个符合条件的任务中，门禁为每种能力保留一到三个，并去掉近似重复的任务（例如 `episode_reflection_v1`，其用例在
+`episode_reflection_v2` 中重复；同一设置搜索的 Aico App 文本输入变体；以及十四个相似 PersonaMem 召回中的大部分）。
+门禁还排除了准备时间占主导的用例：内置 Android App 工作流和 Aico App 用例。10 个用例中的 18 个任务使一次门禁运行约为五分钟。
+当 Agent 模型或被门禁的套件发生变化时，请重新校准这份列表。
+
+`baseline-gate` profile 将每个被门禁的任务运行一次，并把 `BENCHMARK_REPEATS` 强制设为 1。随后 `ci.gate_verdict` 只重跑未通过的任务，
+当某个任务在两次运行中都未通过时，作业（检查名 `baseline-gate`）失败。作业摘要把这类任务标记为 `regression`（某次运行将其评为失败），
+或 `unverified`（没有任何运行产生评分：评分模型错误、超时、跳过或缺少结果）。如果一次失败的尝试没有调用任何工具，
+却在回复中写出了 `<parcel_call>` 或 `default_api:<tool>` 这类工具调用标记，就记为 `model_format`。这是模型输出缺陷，
+在 `google/gemini-3.5-flash-lite` 的尝试中约占 5%，并不代表 Agent 的决策发生了变化。仅以这种方式失败的任务会作为警告报告，
+不会使门禁失败。门禁运行不会发布到 Langfuse，也不会生成看板，因此任务子集永远不会显示为套件退化。
+
+#### 检查 pull request
+
+仓库是公开的，而基准测试运行在带有基准凭据的自托管 runner 上，因此 pull request 的代码不会自动在那里运行。
+审查过 pull request 的维护者会添加 `run-baseline-gate` 标签。它通过 `pull_request_target` 触发 Benchmark 工作流，
+而该事件的工作流定义始终来自 `main`，所以 pull request 无法修改触发条件。工作流会：
+
+1. 移除标签，并在 pull request 的 head 提交上设置一个 pending 状态的 `baseline-gate` 提交状态；
+2. 根据 `main` 上的 `baseline_gate_v1.json` 构建任务列表；
+3. 精确检出打标签时的 head 提交，在自托管 runner 上运行门禁，并对未通过的任务重跑一次；
+4. 在 GitHub 托管的 runner 上用 `main` 的 `ci.gate_verdict` 判定结果，将 `baseline-gate` 状态设为 success、failure 或 error，
+   并把结果表格评论到 pull request 上。
+
+之后的推送不会被测试，直到维护者再次添加标签；再次添加标签还会取消该 pull request 仍在进行中的门禁运行。
+来自 fork 的 pull request 也以同样方式运行，因为启动运行的是标签而不是作者。
+`scripts/test_github_actions_self_hosted_safety.sh` 只接受这一种让 pull request 代码进入自托管 runner 的守卫，
+并且要求 `pull_request_target` 只响应 `labeled` 事件。
+
+添加标签是一个信任决定。被打标签的提交会带着基准凭据在自托管 runner 上运行，并由它自己的基准代码写出结果，
+再由 `main` 的 `ci.gate_verdict` 判定。因此，修改了基准 runner 的 pull request 可能报告并非真实取得的结果。
+请只在审查过变更（包括 `benchmark/` 下的任何变更）之后再添加标签。
+
+要把门禁作为合入要求，请在 `main` 的 ruleset 中把 `baseline-gate` 添加为必需的状态检查。仓库内的分支也可以不经 pull request 直接检查：
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f profile=baseline-gate
+```
 
 手动分派工作流时，使用 `model` 下拉菜单为该次运行选择 Agent 模型。手动分派默认使用
 `google/gemini-3.5-flash-lite`，这也是定时运行所用的模型。
