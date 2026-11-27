@@ -63,7 +63,7 @@ func TestGuardAppliesSwitchAndPasswordIndependently(t *testing.T) {
 	} {
 		state := newState(t)
 		if tc.password {
-			if err := state.SetPassword("luckfox"); err != nil {
+			if err := state.SetPassword("aicolink"); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -102,7 +102,7 @@ func TestSwitchKeepsPasswordAndSessions(t *testing.T) {
 	if err := state.SetEnabled(true); err != nil {
 		t.Fatalf("LAN access must turn on without a password: %v", err)
 	}
-	if err := state.SetPassword("luckfox"); err != nil {
+	if err := state.SetPassword("aicolink"); err != nil {
 		t.Fatal(err)
 	}
 	token, _, err := state.IssueToken(time.Now())
@@ -125,7 +125,7 @@ func TestSwitchKeepsPasswordAndSessions(t *testing.T) {
 
 func TestClearPasswordKeepsSwitchAndMCPTokens(t *testing.T) {
 	state := newState(t)
-	if err := state.SetPassword("luckfox"); err != nil {
+	if err := state.SetPassword("aicolink"); err != nil {
 		t.Fatal(err)
 	}
 	if err := state.SetEnabled(true); err != nil {

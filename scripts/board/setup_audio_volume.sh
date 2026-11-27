@@ -1,5 +1,5 @@
 #!/bin/sh
-# Audio volume setup script for Luckfox Pico Zero (RV1106)
+# Audio volume setup script for the Aico Link board (RV1106)
 # This script sets the audio output volume to maximum levels
 
 echo "Setting up audio volume..."

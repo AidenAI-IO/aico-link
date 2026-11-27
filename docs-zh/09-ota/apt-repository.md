@@ -71,9 +71,9 @@ sudo apt install --reinstall aico-business
 
 ```bash
 scp overlay-debian/usr/share/keyrings/aico-archive-keyring.asc \
-    overlay-debian/usr/lib/aico/aico-apt-source luckfox:/tmp/
-ssh -t luckfox 'sudo python3 /tmp/aico-apt-source --public-key /tmp/aico-archive-keyring.asc'
-ssh -t luckfox 'sudo apt update && sudo apt upgrade'
+    overlay-debian/usr/lib/aico/aico-apt-source aico@<device-ip>:/tmp/
+ssh -t aico@<device-ip> 'sudo python3 /tmp/aico-apt-source --public-key /tmp/aico-archive-keyring.asc'
+ssh -t aico@<device-ip> 'sudo apt update && sudo apt upgrade'
 ```
 
 公钥指纹：`D40CD0F29C3A65449439857F53CFFB430DBD167D`。

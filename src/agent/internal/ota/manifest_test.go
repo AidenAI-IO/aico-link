@@ -69,7 +69,7 @@ func TestCanonicalManifestJSONRemovesOnlySignatureValue(t *testing.T) {
 }
 
 func TestCanonicalManifestJSONBytesPreservesUnknownSignedFields(t *testing.T) {
-	raw := []byte(`{"signature":{"value":"abc","algorithm":"ed25519"},"schema_version":2,"channel":"stable","version":"20260521-120000-abcdef0","build_time":"2026-05-21T12:00:00Z","compatibility":{"board":"luckfox-pico-zero"},"parts":[{"name":"boot","asset_a":{"name":"boot_a.img","size":1,"sha256":"` + testHashA + `"},"asset_b":{"name":"boot_b.img","size":2,"sha256":"` + testHashB + `"}}]}`)
+	raw := []byte(`{"signature":{"value":"abc","algorithm":"ed25519"},"schema_version":2,"channel":"stable","version":"20260521-120000-abcdef0","build_time":"2026-05-21T12:00:00Z","compatibility":{"board":"aico-link"},"parts":[{"name":"boot","asset_a":{"name":"boot_a.img","size":1,"sha256":"` + testHashA + `"},"asset_b":{"name":"boot_b.img","size":2,"sha256":"` + testHashB + `"}}]}`)
 
 	canonical, err := CanonicalManifestJSONBytes(raw)
 	if err != nil {
@@ -78,7 +78,7 @@ func TestCanonicalManifestJSONBytesPreservesUnknownSignedFields(t *testing.T) {
 	if strings.Contains(string(canonical), "\"value\"") {
 		t.Fatalf("canonical JSON contains signature value field: %s", canonical)
 	}
-	if !strings.Contains(string(canonical), "\"compatibility\":{") || !strings.Contains(string(canonical), "luckfox-pico-zero") {
+	if !strings.Contains(string(canonical), "\"compatibility\":{") || !strings.Contains(string(canonical), "aico-link") {
 		t.Fatalf("canonical JSON lost unknown signed field: %s", canonical)
 	}
 }
@@ -88,7 +88,7 @@ func TestVerifyManifestJSONPreservesUnknownSignedFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
-	rawTemplate := []byte(`{"schema_version":2,"channel":"stable","version":"20260521-120000-abcdef0","build_time":"2026-05-21T12:00:00Z","compatibility":{"board":"luckfox-pico-zero"},"parts":[{"name":"boot","asset_a":{"name":"boot_a.img","size":1,"sha256":"` + testHashA + `"},"asset_b":{"name":"boot_b.img","size":2,"sha256":"` + testHashB + `"}}],"signature":{"algorithm":"ed25519"}}`)
+	rawTemplate := []byte(`{"schema_version":2,"channel":"stable","version":"20260521-120000-abcdef0","build_time":"2026-05-21T12:00:00Z","compatibility":{"board":"aico-link"},"parts":[{"name":"boot","asset_a":{"name":"boot_a.img","size":1,"sha256":"` + testHashA + `"},"asset_b":{"name":"boot_b.img","size":2,"sha256":"` + testHashB + `"}}],"signature":{"algorithm":"ed25519"}}`)
 	canonical, err := CanonicalManifestJSONBytes(rawTemplate)
 	if err != nil {
 		t.Fatalf("CanonicalManifestJSONBytes() error = %v", err)
@@ -104,7 +104,7 @@ func TestVerifyManifestJSONPreservesUnknownSignedFields(t *testing.T) {
 		t.Fatalf("VerifyManifestJSON() version = %q", manifest.Version)
 	}
 
-	tampered := []byte(strings.Replace(string(signed), "luckfox-pico-zero", "other-board", 1))
+	tampered := []byte(strings.Replace(string(signed), "aico-link", "other-board", 1))
 	if _, err := VerifyManifestJSON(tampered, pub); err == nil {
 		t.Fatal("VerifyManifestJSON() error = nil, want tamper failure")
 	}

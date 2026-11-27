@@ -1,5 +1,5 @@
 #!/bin/bash
-# Deploy agent files visualization to Luckfox device
+# Deploy agent files visualization to an Aico Link device
 
 set -e
 

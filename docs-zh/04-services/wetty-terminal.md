@@ -68,7 +68,7 @@ ttyd 守护进程以非特权用户 `aico` 运行。其默认登录辅助程序�
 与登录 shell 走相同的路由。仍然需要身份验证。安装此修复后，已打开的终端可以执行
 `. /etc/profile.d/aico-env.sh` 重新加载；新打开的登录终端会自动加载。
 SSH 单次命令不会加载登录配置文件；如果需要相同环境，请使用
-`ssh luckfox 'bash -lc "COMMAND"'`。
+`ssh aico@<device-ip> 'bash -lc "COMMAND"'`。
 
 ## 移动浏览器默认设置
 

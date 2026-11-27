@@ -1,5 +1,5 @@
 #!/bin/bash
-# Generate agent files visualization report on Luckfox device
+# Generate agent files visualization report on an Aico Link device
 # This script should be deployed to the device
 
 set -e

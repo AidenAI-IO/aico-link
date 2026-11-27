@@ -148,7 +148,7 @@ class WifiPrepareTest(StartupFixture):
         self.assertEqual(self.sleeps(), RESET + [ENUMERATED])
 
     def test_other_board_untouched(self):
-        self.model.write_text("Luckfox Pico Zero")
+        self.model.write_text("Other RV1106 Board")
         self.assert_untouched(True)
 
     def test_live_interface_untouched(self):

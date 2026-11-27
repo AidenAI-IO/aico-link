@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate HTML visualization for agent memory and skills on Luckfox device.
+Generate HTML visualization for agent memory and skills on an Aico Link device.
 Scans /userdata/agent/memory/ and /userdata/agent/skills/ directories.
 """
 import json
