@@ -110,8 +110,7 @@ python3 scripts/local_agent.py ios --xctrunner YOUR_RUNNER_ID.xctrunner --permis
 [iOS 直连参考](../../benchmark/ios_device/README.md)。Android 通过可选的
 [ADBKeyBoard 设置](../../benchmark/adbandroid/README.md#unicode-text-with-adbkeyboard)支持提交 Unicode 文本。
 默认使用 ADBKeyBoard：桥接会临时选择它进行 Base64 输入，然后恢复原来的键盘。如果想改用 Appium Settings 的 UnicodeIME，
-请用 `--unicode-input-method appium` 启动 Android 模式。如果所选输入法缺失且设备在启动时已就绪，桥接会自动安装它；
-安装失败时，启动会在桥接服务器启动之前终止。如果设备尚未就绪，安装会推迟到设备响应之后的某次能力探测或文本输入时进行。
+请用 `--unicode-input-method appium` 启动 Android 模式。桥接会在探测设备能力或插入 Unicode 文本时按需安装所选输入法。
 桥接运行期间，如果所选输入法无法安装，则保留 ASCII 输入。Appium 路径通过 `adb input text` 发送 modified UTF-7，
 无法发送字面量 `%s`。两条路径在桥接启动时选定，彼此不会相互回退。参见
 [Appium UnicodeIME 设置](../../benchmark/adbandroid/README.md#appium-unicodeime-alternative)。
@@ -129,6 +128,7 @@ python3 scripts/local_agent.py ios --bridge-url http://127.0.0.1:8896
 
 使用 `--agent-binary` 复用原生二进制文件，使用 `--python` 指定已准备好的桥接环境，使用 `--no-open`
 只打印 URL 而不打开浏览器。必要时可以覆盖 `--agent-port`、`--config-port`、`--bridge-port` 或 `--share-port`。
+使用预先构建的 Agent 时，同一目录或 `PATH` 中必须有可执行的 `device-cli`。
 运行 `python3 scripts/local_agent.py --help` 查看所有选项。
 
 ## 停止、恢复或切换模式

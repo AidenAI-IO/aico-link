@@ -129,12 +129,13 @@ type EpisodeRecorder struct {
 	recalledRefs []string
 	// priorUserTexts are the user's messages from the turns just before this
 	// run; see UserTexts.
-	priorUserTexts []string
-	events         []TaskEpisodeEvent
-	counter        int
-	store          *TaskEpisodeStore
-	started        bool
-	startErr       error
+	priorUserTexts        []string
+	events                []TaskEpisodeEvent
+	counter               int
+	store                 *TaskEpisodeStore
+	started               bool
+	startErr              error
+	benchmarkToolEvidence bool
 }
 
 type episodeRecorderCtxKey struct{}
@@ -274,19 +275,26 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 
 	toolName := toolCallName(result.Call)
 	input := normalizeToolInput(result.Call.Action.ToolInput)
+	content := toolContentFromAction(result.Call.Action)
+	redact := toolResultIsSensitive(toolName) || result.Result.containsPrivateDeviceData()
+	if redact && !r.benchmarkToolEvidence {
+		var fields map[string]any
+		_ = json.Unmarshal([]byte(input), &fields)
+		input = jsonString(deviceCLIOperationInput(toolName, fields))
+		content = ""
+	}
 	callEvent := TaskEpisodeEvent{
 		Type:      runEventToolCall,
 		Role:      "agent",
 		ToolName:  toolName,
 		ToolInput: input,
-		Content:   toolContentFromAction(result.Call.Action),
+		Content:   content,
 	}
 	r.append(callEvent)
 
 	output := result.Result.EventOutput()
 	rawObservation := result.Step.Observation
 	toolError := cloneToolError(result.Result.Error)
-	redact := toolResultIsSensitive(toolName) || result.Result.containsPrivateDeviceData()
 	if redact {
 		output = sensitiveToolResultRedaction
 		rawObservation = ""
@@ -309,7 +317,7 @@ func (r *EpisodeRecorder) RecordExecution(result ToolCallExecutionResult) {
 		if redact {
 			calls = slices.Clone(calls)
 			for i := range calls {
-				calls[i].Input = map[string]any{}
+				calls[i].Input = deviceCLIOperationInput(calls[i].Tool, calls[i].Input)
 			}
 		}
 		resultEvent.Metadata = map[string]any{"device_cli_calls": calls}

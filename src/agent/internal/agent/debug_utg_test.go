@@ -28,19 +28,19 @@ func TestDebugUTGSnapshot(t *testing.T) {
 		t.Fatalf("unexpected empty snapshot: %d %s", r.Code, r.Body.String())
 	}
 	graph := skillUTG{
-		Nodes: map[string]*utgNode{"phone_home": {Label: "phone_home", Samples: []utgFingerprint{{Hash: 99}}}},
-		Edges: []utgEdge{{From: "phone_home", To: "phone_settings", Intent: "nav", Successes: 2}},
+		Nodes: map[string]*utgNode{"phone_home": {Label: "phone_home", Samples: []utgFingerprint{{Hash: 99}}}, "phone_settings": {Label: "phone_settings"}},
+		Edges: []utgEdge{{From: "phone_home", To: "phone_settings", Intent: "nav", Successes: 2, Guide: utgOpenGuide, VerifiedNavigation: true}},
 	}
 	if err := saveSkillUTG(skillUTGPath(rt.config, view.Platform), graph); err != nil {
 		t.Fatal(err)
 	}
 	r, view = get()
-	if r.Code != http.StatusOK || len(view.Nodes) != 1 || view.Nodes[0].Samples != 1 || len(view.Edges) != 1 || view.Edges[0].Successes != 2 || strings.Contains(r.Body.String(), `"hash"`) || strings.Contains(r.Body.String(), `"gray"`) {
+	if r.Code != http.StatusOK || len(view.Nodes) != 2 || view.Nodes[0].Samples != 1 || len(view.Edges) != 1 || view.Edges[0].Successes != 2 || strings.Contains(r.Body.String(), `"hash"`) || strings.Contains(r.Body.String(), `"gray"`) {
 		t.Fatalf("expected metadata without visual fingerprints: %d %s", r.Code, r.Body.String())
 	}
 	rt.config.EnvironmentBridge.Endpoint = "http://bridge.invalid"
 	r, view = get()
-	if r.Code != http.StatusOK || !view.Available || len(view.Nodes) != 1 || view.Nodes[0].Label != "phone_home" || len(view.Edges) != 1 {
+	if r.Code != http.StatusOK || !view.Available || len(view.Nodes) != 2 || view.Nodes[0].Label != "phone_home" || len(view.Edges) != 1 {
 		t.Fatalf("bridge should expose the saved graph for the configured profile and platform: %d %s", r.Code, r.Body.String())
 	}
 	post := httptest.NewRecorder()

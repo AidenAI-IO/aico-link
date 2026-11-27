@@ -515,3 +515,16 @@ def test_aggregate_rows_has_one_canonical_metric_shape():
     assert "metrics" not in agg
     assert "task_wall_ms_p50" not in agg
     assert "failure_class_rates" not in agg
+
+
+def test_episode_cli_metrics_exclude_redacted_reads_and_undispatched_actions():
+    metrics = derive_episode_metrics({"events": [{
+        "type": "tool_result", "tool_name": "shell", "metadata": {"device_cli_calls": [
+            {"tool": "bridge_contacts", "input": {}, "is_error": False, "duration_ms": 11},
+            {"tool": "bridge_contacts", "input": {"action": "query"}, "is_error": False, "duration_ms": 17},
+            {"tool": "bridge_clipboard", "input": {"action": "write"}, "is_error": False, "duration_ms": 23},
+            {"tool": "touch_gesture", "input": {}, "is_error": True, "not_dispatched": True},
+        ]},
+    }]})
+    assert metrics["device_actions"] == 1
+    assert metrics["device_execution_ms"] == 23

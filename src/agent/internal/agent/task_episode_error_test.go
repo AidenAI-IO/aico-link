@@ -55,13 +55,13 @@ func testEpisodeRedactsSensitiveToolResult(t *testing.T, toolName string) {
 		NewTaskEpisodeStore(root),
 	)
 	secret := "SENSITIVE_EPISODE_MARKER_8f2d"
-	action := schema.AgentAction{Tool: toolName, ToolInput: `{"action":"read"}`}
+	action := schema.AgentAction{Tool: toolName, ToolInput: jsonString(map[string]any{"action": "write", "text": secret})}
 	var deviceCalls []deviceCLIToolEvidence
 	if toolName == "shell" {
-		action.ToolInput = `{"command":"device-cli app clipboard read"}`
+		action.ToolInput = jsonString(map[string]any{"command": "device-cli app clipboard write " + secret})
 		duration := int64(42)
 		deviceCalls = []deviceCLIToolEvidence{
-			{Tool: toolBridgeClipboard, Input: map[string]any{"text": secret}, DurationMs: &duration},
+			{Tool: toolBridgeClipboard, Input: map[string]any{"action": "write", "text": secret}, DurationMs: &duration},
 			{Tool: "touch_gesture", Input: map[string]any{"type": "tap"}, IsError: true, NotDispatched: true},
 		}
 	}
@@ -92,7 +92,7 @@ func testEpisodeRedactsSensitiveToolResult(t *testing.T, toolName string) {
 		foundRedactedResult = true
 		if toolName == "shell" {
 			calls, ok := event.Metadata["device_cli_calls"].([]deviceCLIToolEvidence)
-			if !ok || len(calls) != 2 || calls[0].Tool != toolBridgeClipboard || calls[0].Input == nil || len(calls[0].Input) != 0 ||
+			if !ok || len(calls) != 2 || calls[0].Tool != toolBridgeClipboard || calls[0].Input["action"] != "write" || len(calls[0].Input) != 1 ||
 				calls[0].DurationMs == nil || *calls[0].DurationMs != 42 || calls[1].Input == nil || len(calls[1].Input) != 0 ||
 				!calls[1].NotDispatched || !calls[1].IsError || deviceCalls[0].Input["text"] != secret {
 				t.Fatalf("redaction must clear only persisted nested inputs: %+v", calls)

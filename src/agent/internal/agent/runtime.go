@@ -1370,6 +1370,10 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 			r.logger.Warn("[memory] refresh user profile section failed: %v", err)
 		}
 	}
+	if episodeRecorder != nil {
+		// Benchmark fixtures check original arguments even after a context fold.
+		episodeRecorder.benchmarkToolEvidence = cfg.Benchmark.Token != ""
+	}
 	// A request to keep a secret may come a turn before the secret itself.
 	episodeRecorder.setPriorUserTexts(recentUserTexts(r.contextManager, priorUserTurnsForMemoryRequests))
 	if req.ResumeSessionID != "" {
@@ -1444,7 +1448,6 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 
 	conactEnabled := cfg.supportsConact()
-	contextBudget.conactActive = conactEnabled
 
 	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, r.contextManager)
 	agentLoop.notices = notices
@@ -1459,7 +1462,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	agentLoop.DevicePlatform = r.devicePlatformFromState()
 	agentLoop.PointerMode = r.devicePointerModeFromState()
 	agentLoop.ContextBudgetGuard = contextBudget.guard
-	if !conactEnabled && contextBudget.thresholdCompactionEnabled() {
+	if contextBudget.thresholdCompactionEnabled() {
 		agentLoop.ContextCompactionTrigger = contextBudget.compactionTrigger
 		agentLoop.ContextThresholdCompaction = contextBudget.compactAtThreshold
 	}

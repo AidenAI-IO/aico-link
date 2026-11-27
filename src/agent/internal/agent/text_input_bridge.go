@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -103,18 +104,22 @@ func (t *textInputBridge) runClipboardFirstFlow(ctx context.Context, platform st
 	status := bridge.getStatus()
 	switch strings.ToLower(strings.TrimSpace(platform)) {
 	case "ios":
-		if bridge.ClipboardRecentlyEquals(args.Text, preparedClipboardMaxAge) {
+		if verify && bridge.ClipboardRecentlyEquals(args.Text, preparedClipboardMaxAge) {
 			return t.finishClipboardPaste(ctx, platform, args, verify)
 		}
 		if phoneBridgeCanUsePiPBackground(status, "clipboard_write") {
 			return t.runClipboardWritePasteFlow(ctx, platform, args, verify)
+		}
+		if !verify && bridge.ClipboardRecentlyEquals(args.Text, preparedClipboardMaxAge) &&
+			phoneBridgeReadyForCommand(status, "clipboard_read") && t.clipboardMatches(ctx, bridge, args.Text) {
+			return t.finishClipboardPaste(ctx, platform, args, verify)
 		}
 		if args.Focus != nil && (phoneBridgeCanRestoreFromReturnEntry(status) || phoneBridgeReadyForCommand(status)) {
 			return t.runLegacyBridgeFlow(ctx, platform, args, verify)
 		}
 		return textViaBridgeResult{}
 	case "android":
-		if bridge.ClipboardRecentlyEquals(args.Text, preparedClipboardMaxAge) {
+		if verify && bridge.ClipboardRecentlyEquals(args.Text, preparedClipboardMaxAge) {
 			return t.finishClipboardPaste(ctx, platform, args, verify)
 		}
 		return t.runClipboardWritePasteFlow(ctx, platform, args, verify)
@@ -445,6 +450,18 @@ func (t *textInputBridge) callQuickAction(ctx context.Context, action string) (s
 		return out, err
 	}
 	return out, nil
+}
+
+// A recorded write is only a hint. Read without a restorer so confirmation
+// cannot switch away from the intended input field.
+func (t *textInputBridge) clipboardMatches(ctx context.Context, bridge *PhoneBridge, text string) bool {
+	toolCtx, _ := WithToolError(ctx)
+	out, err := NewClipboardTool(bridge, nil).read(toolCtx)
+	var result struct {
+		OK   bool   `json:"ok"`
+		Text string `json:"text"`
+	}
+	return err == nil && ToolErrorFromContext(toolCtx) == nil && json.Unmarshal([]byte(out), &result) == nil && result.OK && result.Text == text
 }
 
 func (t *textInputBridge) writeClipboard(ctx context.Context, bridge *PhoneBridge, text string) error {

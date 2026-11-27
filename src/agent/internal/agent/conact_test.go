@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"image"
 	"path/filepath"
@@ -158,9 +159,10 @@ func TestSkillUTGPreservesIntentAndRejectsUnsupportedEvidence(t *testing.T) {
 		{"label":"calendar_editor","summary":"Calendar editing form","step":2,"side":"before"},{"label":"calendar_month","summary":"Calendar monthly grid","step":2,"side":"after"},
 		{"label":"calendar_editor","summary":"Calendar editing form","step":3,"side":"before"},{"label":"calendar_month","summary":"Calendar monthly grid","step":3,"side":"after"}],
 		"edges":[{"from":"calendar_editor","to":"calendar_month","intent":"save","guide":"Tap the Save button","step":1},
+		{"from":"calendar_editor","to":"calendar_month","intent":"nav","guide":"Tap the Save button","step":2},
 		{"from":"calendar_editor","to":"calendar_month","intent":"cancel","guide":"Close the draft editor","step":2},
 		{"from":"calendar_editor","to":"calendar_month","intent":"nav","guide":"Open the monthly grid","step":3}],
-		"pitfalls":[{"label":"calendar_editor","guide":"Avoid tapping inactive controls","failed":3,"recovered":4}]}`), &p); err != nil {
+		"pitfalls":[{"label":"calendar_editor","guide":"Inspect the current screen before trying a different control","failed":3,"recovered":4}]}`), &p); err != nil {
 		t.Fatal(err)
 	}
 	g := skillUTG{}
@@ -233,19 +235,41 @@ func TestSkillUTGReflectionForkDoesNotAppendOrLearnHiddenFrames(t *testing.T) {
 	}
 	// A Bridge operation in the same turn must not prevent learning from later UI evidence.
 	c.observe(ToolResult{deviceCalls: []deviceCLIToolEvidence{{Tool: toolBridgeClipboard}}})
-	step := utgStep{After: utgFingerprint{Hash: 0xffff}, Kind: "tap", OK: true}
-	c.steps = []utgStep{step, step}
-	attachment := messages.Attachment{Source: messages.AttachmentSourceScreenshotObservation, MIMEType: "image/jpeg", FilePath: "screen.jpg"}
+	makeScreen := func(rect image.Rectangle) (messages.Attachment, utgFingerprint) {
+		t.Helper()
+		var shot struct{ Data string }
+		if err := json.Unmarshal([]byte(terminationPolicyScreenshotObservation(t, 200, 400, rect)), &shot); err != nil {
+			t.Fatal(err)
+		}
+		data, err := base64.StdEncoding.DecodeString(shot.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attachment, err := manager.StoreAttachment("image/jpeg", data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attachment.Source = messages.AttachmentSourceScreenshotObservation
+		fingerprint, ok := fingerprintUI(data)
+		if !ok {
+			t.Fatal("missing screenshot fingerprint")
+		}
+		return attachment, fingerprint
+	}
+	before, beforePrint := makeScreen(image.Rectangle{})
+	after, afterPrint := makeScreen(image.Rect(0, 0, 140, 310))
+	step := utgStep{Before: beforePrint, After: afterPrint, Kind: "open_app", OK: true}
+	c.steps, c.stepID = []utgStep{{Before: afterPrint, After: beforePrint}, step}, 2
 	if err := manager.AppendMessages([]messages.Message{
-		{Role: messages.MessageRoleUser, Content: "Open the settings", Attachments: []messages.Attachment{attachment}},
-		{Role: messages.MessageRoleState, Content: "Skill-UTG evidence step 1 (after) [previous-run]", Attachments: []messages.Attachment{attachment}},
-		{Role: messages.MessageRoleState, Content: "Skill-UTG evidence step 2 (after) [" + c.evidenceTag + "]", Attachments: []messages.Attachment{attachment}},
+		{Role: messages.MessageRoleUser, Content: "Open the settings", Attachments: []messages.Attachment{before}},
+		{Role: messages.MessageRoleState, Content: "Skill-UTG evidence step 1 (after) [" + c.evidenceTag + "]", Attachments: []messages.Attachment{before}},
+		{Role: messages.MessageRoleState, Content: "Skill-UTG evidence step 2 (after) [" + c.evidenceTag + "]", Attachments: []messages.Attachment{after}},
 		{Role: messages.MessageRoleAssistant, Content: "Settings opened."},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	mod := &utgReflectionModel{started: make(chan struct{}), resume: make(chan struct{}), content: `{"states":[
-		{"label":"hidden_screen","summary":"Unknown earlier screen","step":1,"side":"before"},
+		{"label":"clock_screen","summary":"Unknown earlier screen","step":1,"side":"before"},
 		{"label":"phone_home","summary":"Phone home screen","step":2,"side":"before"},
 		{"label":"phone_settings","summary":"Phone settings screen","step":2,"side":"after"}],
 		"edges":[{"from":"phone_home","to":"phone_settings","intent":"open","guide":"Open the Settings app","step":2}]}`}
@@ -270,11 +294,11 @@ func TestSkillUTGReflectionForkDoesNotAppendOrLearnHiddenFrames(t *testing.T) {
 	if err := rt.episodeMaintenance.closeAndWait(waitCtx); err != nil {
 		t.Fatal(err)
 	}
-	if len(manager.CloneMessageList()) != count+1 || len(mod.seen) != count+1 || mod.seen[count-1].Content != "Settings opened." || strings.Contains(mod.seen[count].Content, "step 1: tap") {
+	if len(manager.CloneMessageList()) != count+1 || len(mod.seen) != count+1 || mod.seen[count-1].Content != "Settings opened." || strings.Contains(mod.seen[count].Content, "step 1:") {
 		t.Fatalf("reflection must fork, using only current evidence, saw %d messages", len(mod.seen))
 	}
 	g := newConactRun(rt).graph
-	if g.Nodes["hidden_screen"] != nil || len(g.route("phone_home", "phone_settings", "nav")) != 1 {
+	if g.Nodes["clock_screen"] != nil || len(g.route("phone_home", "phone_settings", "nav")) != 1 {
 		t.Fatalf("expected the next bridge run to load only the visible transition: %+v", g)
 	}
 }

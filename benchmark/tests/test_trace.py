@@ -477,3 +477,23 @@ def test_episode_evidence_recovers_contact_and_notification_flags_from_a_batch()
                               "emails": ["a@example.test", "b@example.test"]}
     assert notification.input == {"action": "send", "title": "Reminder", "sound": False, "badge": 0}
     assert notification.is_error
+
+
+@pytest.mark.parametrize("failed, recovered", [(True, True), (False, False)])
+def test_short_circuited_cli_chain_recovers_only_recorded_prefix(failed, recovered):
+    from runner.trace import apply_episode_tool_evidence
+
+    command = "device-cli app clipboard write A && device-cli app contacts query --query X && device-cli app clipboard read"
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "shell", "tool_input": json.dumps({"command": command})},
+        {"type": "tool_result", "tool_name": "shell"},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [{
+        "type": "tool_result", "tool_name": "shell", "is_error": True, "metadata": {"device_cli_calls": [
+            {"tool": "bridge_clipboard", "input": {"action": "write"}, "is_error": False},
+            {"tool": "bridge_contacts", "input": {"action": "query"}, "is_error": failed},
+        ]},
+    }]})
+    write, query = trace.tool_calls[0].device_cli_calls
+    assert write.input == ({"action": "write", "text": "A"} if recovered else {"action": "write"})
+    assert query.is_error == failed

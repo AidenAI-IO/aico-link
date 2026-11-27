@@ -154,12 +154,12 @@ func TestDeviceCLIDragReleasesOnCaptureFailure(t *testing.T) {
 			action := &TouchGestureTool{mnkProvider: provider}
 			screen := &stubTool{name: "screenshot"}
 			screen.callFn = func(context.Context, string) (string, error) {
-				if len(screen.inputs) == 1 {
+				if (tc.useHTTP || tc.directTool) && len(screen.inputs) == 1 {
 					return terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{}), nil
 				}
-				if len(screen.inputs) == 2 {
-					if !provider.dragActive {
-						t.Error("expected a held contact when final capture failed")
+				if len(screen.inputs) == 2 || (!tc.useHTTP && !tc.directTool) {
+					if wantHeld := tc.useHTTP || tc.directTool || tc.standalone; provider.dragActive != wantHeld {
+						t.Errorf("held contact at capture = %t, want %t", provider.dragActive, wantHeld)
 					}
 					if tc.cancel {
 						cancel()
@@ -191,13 +191,21 @@ func TestDeviceCLIDragReleasesOnCaptureFailure(t *testing.T) {
 					t.Fatalf("expected failed drag, got %s", w.Body.String())
 				}
 			} else {
-				result, err := executeDeviceCLI(ctx, server, args, &deviceCLICapture{})
-				if err == nil && !result.IsError {
-					t.Fatal("drag unexpectedly succeeded")
+				capture := &deviceCLICapture{deferObservation: true}
+				result, err := executeDeviceCLI(ctx, server, args, capture)
+				if err != nil || result.IsError {
+					t.Fatalf("shell drag failed before finalizing: %+v, %v", result, err)
+				}
+				if err := capture.finishShell(ctx, rt, true); err == nil {
+					t.Fatal("final capture unexpectedly succeeded")
 				}
 			}
-			if provider.dragActive || provider.releaseX != 100 || provider.releaseY != 250 {
-				t.Fatalf("contact cleanup did not release at origin: %+v", provider)
+			wantX, wantY := 100.0, 250.0
+			if !tc.standalone && !tc.useHTTP {
+				wantX, wantY = 800, 900
+			}
+			if provider.dragActive || provider.releaseX != wantX || provider.releaseY != wantY {
+				t.Fatalf("contact was not released at the expected point: %+v", provider)
 			}
 		})
 	}

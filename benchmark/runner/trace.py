@@ -307,7 +307,7 @@ def _restore_app_data_args(tc: ToolCall) -> None:
     # text cannot establish execution or success, including a short-circuited tail.
     command = tc.input.get("command")
     if (tc.tool != "shell" or not isinstance(command, str) or tc.input.get("background")
-            or "action" in tc.input or not any(not call.input for call in tc.device_cli_calls)):
+            or "action" in tc.input or not any(set(call.input) <= {"action"} for call in tc.device_cli_calls)):
         return
     parsed: list[tuple[str, dict[str, Any]]] = []
     for args in _literal_cli_commands(command):
@@ -341,10 +341,15 @@ def _restore_app_data_args(tc: ToolCall) -> None:
         else:
             return
     recorded = tc.device_cli_calls
+    if len(parsed) != len(recorded):
+        if not (0 < len(recorded) < len(parsed) and tc.is_error and recorded[-1].is_error
+                and is_device_cli_shell(tc)):
+            return
+        parsed = parsed[:len(recorded)]
     if [name for name, _ in parsed] != [call.tool for call in recorded]:
         return
     for (_, fields), call in zip(parsed, recorded):
-        if not call.input:
+        if not call.input or (fields and call.input == {"action": fields.get("action")}):
             call.input = fields
 
 
@@ -397,7 +402,6 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
         return False
     for (result, normalized), tool_call in zip(results, completed):
         tool_call.device_cli_calls = episode_device_cli_calls(result, tool_call.step)
-        _restore_app_data_args(tool_call)
         metadata = result.get("metadata")
         if (isinstance(metadata, dict) and metadata.get("has_screenshot") is True
                 or isinstance(result.get("screenshot_ref"), str) and result["screenshot_ref"].strip()):
@@ -410,6 +414,7 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
             tool_call.is_error = False
         elif result.get("is_error") or tool_error is not None:
             tool_call.is_error = True
+        _restore_app_data_args(tool_call)
         if normalized is not None:
             tool_call.input = normalized
     return True

@@ -527,7 +527,7 @@ func TestDeviceCLITextRoutesDoNotSwitchBackends(t *testing.T) {
 		{name: "app requires transport even with cached clipboard", route: "app", platform: "android", code: CodeBridgeNotConnected},
 		{name: "app pastes through FGS without WebSocket", route: "app", platform: "android", fgs: true, wantWrites: 1, wantPastes: 1},
 		{name: "app pastes through PiP without WebSocket", route: "app", platform: "ios", pip: true, wantWrites: 1, wantPastes: 1},
-		{name: "app only pastes", route: "app", platform: "android", connected: true, wantWrites: 1, wantPastes: 1},
+		{name: "app refreshes an Android clipboard even after a recorded write", route: "app", platform: "android", connected: true, wantWrites: 1, wantPastes: 1},
 		{name: "app write failure does not fall back", route: "app", platform: "android", connected: true, writeFails: true, wantWrites: 1, code: CodeToolExecutionFailed},
 		{name: "app ambiguous paste failure does not replay", route: "app", platform: "ios", pip: true, pasteFails: true, wantWrites: 1, wantPastes: 1, code: CodeToolExecutionFailed},
 		{name: "connected but no usable paste route", route: "app", platform: "ios", connected: true, code: CodeModuleUnavailable},
@@ -540,7 +540,7 @@ func TestDeviceCLITextRoutesDoNotSwitchBackends(t *testing.T) {
 				pb.appState = "background"
 				pb.fgsBridgeSeen, pb.fgsBridgeEnabled, pb.fgsBridgeAt = tc.fgs, tc.fgs, time.Now()
 				pb.pipBridgeSeen, pb.pipBridgeEnabled = tc.pip, tc.pip
-			} else if !tc.connected {
+			} else if !tc.connected || tc.platform == "android" {
 				pb.NoteClipboardWrite(text)
 			}
 			typing := &recordingTextInputTool{name: "keyboard_text", out: "ok"}

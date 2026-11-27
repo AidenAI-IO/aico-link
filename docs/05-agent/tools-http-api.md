@@ -15,7 +15,7 @@ For MCP Streamable HTTP on the same Agent (`POST /mcp`), see [mcp.md](./mcp.md).
 | `GET` | `/api/tools` | List HTTP-visible tools with descriptions, input modes, examples, and HTTP bindings |
 | `POST` | `/api/tools/{tool_name}` | Invoke the specified tool |
 | `POST` | `/api/device-cli/drag` | Run a composite or split drag start on the controller. The standalone CLI sends a JSON array such as `["drag","100","250","800","900"]` or `["drag-start","100","250"]`. |
-| `POST` | `/api/device-cli/app` | Run an app command from a JSON argument array, such as `["app","clipboard","read"]`. Requires at least one of `app_connected`, `app_fgs_enabled`, or `app_pip_enabled`. |
+| `POST` | `/api/device-cli/app` | Run an app command from a JSON argument array, such as `["app","clipboard","read"]`. App typing requires `app_connected`, `app_fgs_enabled`, or `app_pip_enabled`. Supported app-data operations can also use BLE Wake on backgrounded iOS or a usable return-entry route. |
 | `GET` | `/api/tool-skills` | Generate a `SKILL.md` bundle suitable for external agents |
 
 ## Request Format

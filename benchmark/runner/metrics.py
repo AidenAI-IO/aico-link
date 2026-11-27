@@ -54,7 +54,7 @@ def _is_device_action(tool_name: str, tool_input: Any) -> bool:
     action = str(parsed_input.get("action") or "").lower()
     return not (
         tool_name.startswith("bridge_")
-        and action in {"query", "read", "get", "inspect", "list", "search"}
+        and (not action or action in {"query", "read", "get", "inspect", "list", "search"})
     )
 
 

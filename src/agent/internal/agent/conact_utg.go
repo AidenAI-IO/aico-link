@@ -10,7 +10,7 @@ import (
 	"math/bits"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -105,11 +105,12 @@ type utgNode struct {
 	Pitfall string           `json:"pitfall,omitempty"`
 }
 type utgEdge struct {
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Intent    string `json:"intent"`
-	Guide     string `json:"guide"`
-	Successes int    `json:"successes"`
+	From               string `json:"from"`
+	To                 string `json:"to"`
+	Intent             string `json:"intent"`
+	Guide              string `json:"guide"`
+	Successes          int    `json:"successes"`
+	VerifiedNavigation bool   `json:"verified_navigation,omitempty"`
 }
 type skillUTG struct {
 	Nodes map[string]*utgNode `json:"nodes"`
@@ -183,11 +184,41 @@ func (g skillUTG) route(from, to, intent string) []utgEdge {
 	return nil
 }
 
-var utgLabel = regexp.MustCompile(`^[a-z][a-z0-9]{1,23}(?:_[a-z][a-z0-9]{0,23}){1,4}$`)
-var utgOverfit = regexp.MustCompile(`(?i)(https?://|[\w.+-]+@[\w.-]+|\d|[<>` + "`" + `]|cannot be completed|无法完成)`)
+// Only controller-owned vocabulary is persisted. The model selects reusable
+// landmarks and guides from this vocabulary using visible screen evidence.
+const utgApps = "phone settings launcher calendar contacts clock calculator messages notes browser camera photos files mail maps store music weather wechat"
+const utgScreens = "home screen main list grid month week day detail editor search results menu dialog picker settings permissions gallery preview compose inbox tabs recents keypad alarms account"
 
-func utgGeneric(s string) bool {
-	return len(s) >= 6 && len(s) <= 360 && !strings.ContainsAny(s, "\r\n") && !utgOverfit.MatchString(s)
+const utgRecoveryGuide = "Inspect the current screen before trying a different control"
+
+var utgIntentGuides = map[string]string{
+	"create": "Tap the Add button",
+	"edit":   "Tap the Edit button",
+	"commit": "Tap the Save button",
+	"cancel": "Close the draft editor",
+	"delete": "Tap the Delete button",
+}
+
+const utgOpenGuide = "Open the destination app"
+const utgHomeGuide = "Return to the home screen"
+
+func utgLandmarkSummary(label string) string {
+	app, screen, ok := strings.Cut(label, "_")
+	if !ok || !slices.Contains(strings.Fields(utgApps), app) || !slices.Contains(strings.Fields(utgScreens), screen) {
+		return ""
+	}
+	return app + " " + screen
+}
+
+func (s utgStep) verifiedNavigationGuide() string {
+	switch s.Kind {
+	case "open_app":
+		return utgOpenGuide
+	case "home":
+		return utgHomeGuide
+	default:
+		return ""
+	}
 }
 
 // One step represents one dispatched action bracketed by actual observations;
@@ -226,7 +257,8 @@ func (g *skillUTG) merge(p utgProposal, steps []utgStep) bool {
 	bindings := make(map[int][2]string)
 	for _, s := range p.States {
 		l := norm(s.Label)
-		if len(l) > 64 || !utgLabel.MatchString(l) || utgOverfit.MatchString(l) || !utgGeneric(s.Summary) || s.Step < 1 || s.Step > len(steps) || (s.Side != "before" && s.Side != "after") {
+		summary := utgLandmarkSummary(l)
+		if summary == "" || s.Step < 1 || s.Step > len(steps) || (s.Side != "before" && s.Side != "after") {
 			continue
 		}
 		pair := bindings[s.Step]
@@ -244,7 +276,7 @@ func (g *skillUTG) merge(p utgProposal, steps []utgStep) bool {
 			if len(g.Nodes) >= utgMaxNodes {
 				continue
 			}
-			n = &utgNode{Label: l, Summary: s.Summary}
+			n = &utgNode{Label: l, Summary: summary}
 			g.Nodes[l] = n
 			changed = true
 		}
@@ -270,7 +302,16 @@ func (g *skillUTG) merge(p utgProposal, steps []utgStep) bool {
 	verified := make(map[int]bool)
 	for _, e := range p.Edges {
 		from, to, intent := norm(e.From), norm(e.To), utgIntent(e.Intent)
-		if verified[e.Step] || e.Step < 1 || e.Step > len(steps) || from == to || intent == "" || !utgGeneric(e.Guide) || bindings[e.Step] != [2]string{from, to} || !steps[e.Step-1].OK || !steps[e.Step-1].progressed() {
+		if verified[e.Step] || e.Step < 1 || e.Step > len(steps) || from == to || intent == "" || bindings[e.Step] != [2]string{from, to} || !steps[e.Step-1].OK || !steps[e.Step-1].progressed() {
+			continue
+		}
+		guide := utgIntentGuides[intent]
+		if intent == "nav" {
+			guide = steps[e.Step-1].verifiedNavigationGuide()
+			if guide == "" {
+				continue
+			}
+		} else if guide == "" || e.Guide != guide {
 			continue
 		}
 		verified[e.Step] = true
@@ -281,7 +322,8 @@ func (g *skillUTG) merge(p utgProposal, steps []utgStep) bool {
 				parallel++
 				if old.Intent == intent {
 					g.Edges[i].Successes = min(old.Successes, 9999) + 1
-					g.Edges[i].Guide = e.Guide
+					g.Edges[i].Guide = guide
+					g.Edges[i].VerifiedNavigation = intent == "nav"
 					exists = true
 					changed = true
 					break
@@ -289,14 +331,14 @@ func (g *skillUTG) merge(p utgProposal, steps []utgStep) bool {
 			}
 		}
 		if !exists && parallel < 3 && len(g.Edges) < utgMaxEdges {
-			g.Edges = append(g.Edges, utgEdge{from, to, intent, e.Guide, 1})
+			g.Edges = append(g.Edges, utgEdge{From: from, To: to, Intent: intent, Guide: guide, Successes: 1, VerifiedNavigation: intent == "nav"})
 			changed = true
 		}
 	}
 	for _, p := range p.Pitfalls {
 		l := norm(p.Label)
 		n := g.Nodes[l]
-		if n == nil || n.Pitfall != "" || !utgGeneric(p.Guide) || p.Failed < 1 || p.Recovered > len(steps) || p.Recovered <= p.Failed || p.Recovered-p.Failed > 8 || bindings[p.Failed][0] != l {
+		if n == nil || n.Pitfall != "" || p.Guide != utgRecoveryGuide || p.Failed < 1 || p.Recovered > len(steps) || p.Recovered <= p.Failed || p.Recovered-p.Failed > 8 || bindings[p.Failed][0] != l {
 			continue
 		}
 		end := steps[p.Recovered-1]
@@ -332,7 +374,7 @@ func (g *skillUTG) merge(p utgProposal, steps []utgStep) bool {
 		if len(g.Tips) >= 12 {
 			break
 		}
-		if !utgGeneric(t) {
+		if t != utgRecoveryGuide {
 			continue
 		}
 		duplicate := false
@@ -380,8 +422,33 @@ func loadSkillUTG(path string) (skillUTG, error) {
 	if err != nil {
 		return g, err
 	}
-	err = json.Unmarshal(b, &g)
-	return g, err
+	if err := json.Unmarshal(b, &g); err != nil {
+		return g, err
+	}
+	for label, node := range g.Nodes {
+		summary := utgLandmarkSummary(label)
+		if summary == "" || node == nil {
+			delete(g.Nodes, label)
+			continue
+		}
+		node.Label = label
+		node.Summary = summary
+		if node.Pitfall != utgRecoveryGuide {
+			node.Pitfall = ""
+		}
+	}
+	g.Edges = slices.DeleteFunc(g.Edges, func(e utgEdge) bool {
+		if g.Nodes[e.From] == nil || g.Nodes[e.To] == nil {
+			return true
+		}
+		if e.Intent == "nav" {
+			return !e.VerifiedNavigation || (e.Guide != utgOpenGuide && e.Guide != utgHomeGuide)
+		}
+		guide := utgIntentGuides[e.Intent]
+		return guide == "" || e.Guide != guide
+	})
+	g.Tips = slices.DeleteFunc(g.Tips, func(tip string) bool { return tip != utgRecoveryGuide })
+	return g, nil
 }
 
 func saveSkillUTG(path string, g skillUTG) error {

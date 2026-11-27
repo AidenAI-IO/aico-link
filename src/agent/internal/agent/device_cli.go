@@ -203,12 +203,12 @@ func executeDeviceCLI(ctx context.Context, s *Server, args []string, capture *de
 		return ToolInvokeResponse{IsError: true, Error: err.Error(), ToolError: NewToolError(CodeInvalidArguments, err.Error())}, nil
 	}
 	scoped := context.WithValue(ctx, deviceCLICaptureKey{}, capture)
+	if len(capture.calls)+len(calls) > maxDeviceCLIActions {
+		return ToolInvokeResponse{}, fmt.Errorf("device-cli action limit per shell reached; continue in a new shell call")
+	}
 	if args[0] == "look" {
 		// Return the raw screenshot only to the CLI process, which saves the file.
 		return capture.invoke(scoped, s, calls[0])
-	}
-	if len(capture.calls)+len(calls) > maxDeviceCLIActions {
-		return ToolInvokeResponse{}, fmt.Errorf("device-cli action limit per shell reached; continue in a new shell call")
 	}
 	if calls[0].AppData {
 		// Data-only operations do not trigger a final capture.
@@ -376,15 +376,22 @@ func (c *deviceCLICapture) invoke(ctx context.Context, s *Server, call devicecli
 
 // Keep only operation names used by Live Activity's localized labels.
 func deviceCLIActivityInput(call devicecli.Call) string {
-	switch call.Tool {
-	case toolBridgeClipboard, toolBridgeCalendar, toolBridgeContacts, toolBridgeNotification:
-		action, _ := call.Input["action"].(string)
-		switch action {
-		case "read", "write", "query", "create", "update", "delete", "send":
-			return jsonString(map[string]any{"action": action})
-		}
+	if input := deviceCLIOperationInput(call.Tool, call.Input); len(input) != 0 {
+		return jsonString(input)
 	}
 	return ""
+}
+
+func deviceCLIOperationInput(tool string, input map[string]any) map[string]any {
+	switch tool {
+	case toolBridgeClipboard, toolBridgeCalendar, toolBridgeContacts, toolBridgeNotification:
+		action, _ := input["action"].(string)
+		switch action {
+		case "read", "write", "query", "create", "update", "delete", "send":
+			return map[string]any{"action": action}
+		}
+	}
+	return map[string]any{}
 }
 
 // App data also inherits the per-command BLE Wake and return-entry routes

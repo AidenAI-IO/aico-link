@@ -629,11 +629,9 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 			if l.conact.revision != llmExecutor.ContextManager().GetSessionID() {
 				l.conact.rebase(llmExecutor.ContextManager())
 			}
-			previous := len(l.conact.steps)
-			l.conact.observe(toolExecution.Result)
-
-			if len(followup) > 0 && len(l.conact.steps) > previous {
-				followup[0].Parts = append(followup[0].Parts, llms.TextPart(fmt.Sprintf("%s%d (after) [%s]", conactEvidencePrefix, len(l.conact.steps), l.conact.evidenceTag)))
+			stepID := l.conact.observe(toolExecution.Result)
+			if len(followup) > 0 && stepID != 0 {
+				followup[0].Parts = append(followup[0].Parts, llms.TextPart(fmt.Sprintf("%s%d (after) [%s]", conactEvidencePrefix, stepID, l.conact.evidenceTag)))
 			}
 		}
 		appendErr = appendToolExecutionMessages(llmExecutor, parser, toolCallMessage, toolExecution.Step, prepared, followup...)

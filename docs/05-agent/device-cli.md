@@ -32,12 +32,12 @@ focus coordinates or chooses a field for you.
 - `device-cli type TEXT` uses device input (native insertion where available,
   otherwise HID/IME). It does not use the companion app.
 - `device-cli app type TEXT` requires a usable Phone Bridge clipboard route. It
-  writes or reuses the clipboard and sends the paste shortcut to the focused
+  writes the requested text or confirms the prepared clipboard before sending the paste shortcut to the focused
   field. A successful clipboard operation and paste dispatch are sufficient;
   it does not read the field back or fall back to device typing. The foreground
   shell still attaches its normal final screenshot. If dispatch fails and the
   text may already be present, inspect the screen before retrying. On iOS
-  without PiP, this command needs a recently prepared matching clipboard.
+  without PiP, this command needs a recently prepared matching clipboard and a usable direct clipboard read route.
 
 Prefer `device-cli app type` for text entry when `app_connected`,
 `app_pip_enabled`, or `app_fgs_enabled` is true. For multiline text, use one
@@ -167,7 +167,7 @@ and Skill-UTG.
 - **`utg_search` and `utg_goto`** return lookup results and route guidance, not
   device actions. The graph separates `nav`, `create`, `edit`, `commit`,
   `cancel`, and `delete` edges. A default route uses only navigation edges;
-  non-navigation guidance requires an explicit final-hop intent. The Agent
+  non-navigation guidance requires an explicit final-hop intent. Only observed app launches and Home actions can establish navigation edges. The Agent
   must verify landmarks on the live screen before acting. When landmarks
   are available, the Agent includes a short list in the initial state message
   when a conversation starts. It is not repeated in later turn-state messages.
@@ -180,12 +180,12 @@ runs. Overlapping reflections on the same Agent are skipped. Reflection uses a
 snapshot of the finished transcript and a bounded ledger of individually
 attributable controller transitions;
 chained UI actions are not learned as individual edges. It saves reusable
-labels, guidance, and coarse screenshot fingerprints under
+labels and guidance from a fixed vocabulary, plus coarse screenshot fingerprints, under
 `<config-dir>/memory/skill-utg/<platform>.json`, scoped to the local Agent
 profile and target platform. It does not store raw screenshots or command
 arguments in the graph. The local graph is available in environment-bridge
 runs as well as native runs; use separate Agent profiles for unrelated targets
-or sensitive work. The text filter is not a privacy classifier. This
+or sensitive work. This
 implementation does not automatically return to a home screen or execute a
 suggested graph route.
 
