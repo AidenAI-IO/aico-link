@@ -4,11 +4,10 @@ sidebar_position: 4
 
 # Device CLI
 
-The backend agent operates the target screen using `device-cli` in a foreground
-`shell` call. The backend agent's tool catalog routes UI operations through
-Device CLI. The CLI forwards actions to the existing
-[Tools HTTP API](tools-http-api.md). Standalone realtime voice sessions can
-invoke the underlying tools directly.
+Backend Agent and standalone realtime sessions use `device-cli` through a
+foreground `shell` call. The CLI forwards actions to the existing
+[Tools HTTP API](tools-http-api.md). Realtime providers that support images
+receive the final screenshot with the shell result.
 
 ```sh
 device-cli tap 500 650

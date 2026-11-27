@@ -1747,9 +1747,7 @@ func (r *Runtime) captureStateScreenshot(keep func() bool) (*messages.Attachment
 		return nil, nil
 	}
 	observation, ok := parseScreenshotObservation(output)
-	if r.ConfigSnapshot().usesBackendAgent() {
-		observation = compressCLIFrame(observation)
-	}
+	observation = compressCLIFrame(observation)
 	if !ok {
 		if r.logger != nil {
 			r.logger.Debug("[state] screenshot output is not a valid visual observation")
@@ -1767,23 +1765,7 @@ func (r *Runtime) captureStateScreenshot(keep func() bool) (*messages.Attachment
 		return nil, nil
 	}
 	attachment.Source = messages.AttachmentSourceScreenshotObservation
-	grounding := observation.Result.Grounding
-	if r.usesVisualCoordinateProtocol() {
-		// touch_gesture takes screenshot pixels under the visual coordinate
-		// protocol; the tool path converts in its wrapper, this one here.
-		grounding = pixelGrounding(grounding, observation.Result.Width, observation.Result.Height)
-	}
-	return &attachment, grounding
-}
-
-// usesVisualCoordinateProtocol reports whether the current model takes
-// screenshot pixels for touch_gesture (see AgentLoop.Run).
-func (r *Runtime) usesVisualCoordinateProtocol() bool {
-	if r == nil || r.models == nil || r.ConfigSnapshot().usesBackendAgent() {
-		return false
-	}
-	spec := r.models.Spec()
-	return IsAnthropicModel(spec.Provider, spec.Name)
+	return &attachment, observation.Result.Grounding
 }
 
 func (r *Runtime) beginSession(ctx context.Context, req SessionBeginRequest) (SessionBeginResult, error) {
@@ -2128,33 +2110,30 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		return nil
 	}
 	tools := NewToolSpecs(r.toolSnapshot().All()).AgentToolsForPlatform(r.devicePlatformFromState())
-	cli := r.ConfigSnapshot().usesBackendAgent()
-	if cli {
-		filtered := tools[:0]
-		for _, tool := range tools {
-			// Keep the underlying Bridge handlers registered for CLI dispatch,
-			// but give the model only one entry point for these operations.
-			switch tool.Name() {
-			case toolBridgeClipboard, toolBridgeCalendar, toolBridgeContacts:
-				continue
-			}
-			if !builtInToolSpecMetadata[tool.Name()].UIOperation {
-				if shell, ok := tool.(*ShellTool); ok {
-					copy := *shell
-					copy.deviceCLI = true
-					tool = &copy
-				}
-				filtered = append(filtered, tool)
-			}
+	filtered := tools[:0]
+	for _, tool := range tools {
+		// Keep the underlying Bridge handlers registered for CLI dispatch,
+		// but give the model only one entry point for these operations.
+		switch tool.Name() {
+		case toolBridgeClipboard, toolBridgeCalendar, toolBridgeContacts:
+			continue
 		}
-		tools = filtered
+		if !builtInToolSpecMetadata[tool.Name()].UIOperation {
+			if shell, ok := tool.(*ShellTool); ok {
+				copy := *shell
+				copy.deviceCLI = true
+				tool = &copy
+			}
+			filtered = append(filtered, tool)
+		}
 	}
+	tools = filtered
 	if r.mcpClients != nil {
 		for _, tool := range r.mcpClients.Tools() {
 			tools = append(tools, tool)
 		}
 	}
-	return benchmarkHeadlessTools(r.ConfigSnapshot(), benchmarkMockTools(r.ConfigSnapshot(), r.filterPhoneBridgeAgentTools(tools, cli)))
+	return benchmarkHeadlessTools(r.ConfigSnapshot(), benchmarkMockTools(r.ConfigSnapshot(), r.filterPhoneBridgeAgentTools(tools)))
 }
 
 // AvailableTools returns the runtime-filtered tools exposed to the
@@ -2185,66 +2164,29 @@ func (r *Runtime) Tool(name string) (langtools.Tool, bool) {
 	return nil, false
 }
 
-func (r *Runtime) filterPhoneBridgeAgentTools(tools []langtools.Tool, cli bool) []langtools.Tool {
-	if r == nil || r.toolSnapshot() == nil || r.toolSnapshot().phoneBridge == nil {
-		if cli {
-			// A caller-injected catalog without a bridge cannot query the board ring.
-			return slices.DeleteFunc(tools, func(tool langtools.Tool) bool {
-				return tool != nil && tool.Name() == toolBridgeNotification
-			})
-		}
-		return tools
-	}
+func (r *Runtime) filterPhoneBridgeAgentTools(tools []langtools.Tool) []langtools.Tool {
 	bridge := r.toolSnapshot().phoneBridge
+	if bridge == nil {
+		return slices.DeleteFunc(tools, func(tool langtools.Tool) bool {
+			return tool != nil && tool.Name() == toolBridgeNotification
+		})
+	}
 	bridge.SetConfiguredPlatform(r.devicePlatformFromState())
-	status := bridge.getStatus()
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	capabilities := bridge.bleCapabilities(ctx)
-	cancel()
-
-	// HTTP(S) URLs fall back to the visible browser, so open_url stays
-	// available whenever that route is configured.
-	openURLAvailable := openURLBridgeRouteAvailable(status) || r.toolSnapshot().openURLBrowserFallbackAvailable()
-	clipboardAvailable := phoneBridgeCommandAvailable(status, "clipboard_read", capabilities.Wake) ||
-		phoneBridgeCommandAvailable(status, "clipboard_write", capabilities.Wake)
-	calendarAvailable := phoneBridgeCommandAvailable(status, "calendar_create", capabilities.Wake) ||
-		phoneBridgeCommandAvailable(status, "calendar_query", capabilities.Wake) ||
-		phoneBridgeCommandAvailable(status, "calendar_delete", capabilities.Wake)
-	contactsQueryAvailable := phoneBridgeCommandAvailable(status, "contacts_query", capabilities.Wake)
-	contactsCreateAvailable := phoneBridgeCommandAvailable(status, "contacts_create", capabilities.Wake)
-	contactsUpdateAvailable := phoneBridgeCommandAvailable(status, "contacts_update", capabilities.Wake)
-	contactsAvailable := contactsQueryAvailable || contactsCreateAvailable || contactsUpdateAvailable
-	notificationSendAvailable := !cli && phoneBridgeCommandAvailable(status, "notification_send", capabilities.Wake)
-	notificationQueryAvailable := capabilities.NotificationQuery
-	notificationAvailable := notificationSendAvailable || notificationQueryAvailable
-
+	defer cancel()
+	canQueryNotifications := bridge.bleCapabilities(ctx).NotificationQuery
 	filtered := make([]langtools.Tool, 0, len(tools))
 	for _, tool := range tools {
 		if tool == nil {
 			continue
 		}
-		available := true
-		switch tool.Name() {
-		case toolOpenURL:
-			available = openURLAvailable
-		case toolBridgeClipboard:
-			available = clipboardAvailable
-		case toolBridgeCalendar:
-			available = calendarAvailable
-		case toolBridgeContacts:
-			available = contactsAvailable
-		case toolBridgeNotification:
-			available = notificationAvailable
-		}
-		if available {
-			switch tool.Name() {
-			case toolBridgeContacts:
-				tool = newContactsCapabilityTool(tool, contactsQueryAvailable, contactsCreateAvailable, contactsUpdateAvailable)
-			case toolBridgeNotification:
-				tool = newNotificationCapabilityTool(tool, notificationSendAvailable, notificationQueryAvailable)
+		if tool.Name() == toolBridgeNotification {
+			if !canQueryNotifications {
+				continue
 			}
-			filtered = append(filtered, tool)
+			tool = newNotificationCapabilityTool(tool, false, true)
 		}
+		filtered = append(filtered, tool)
 	}
 	return filtered
 }
@@ -2516,10 +2458,7 @@ func (r *Runtime) exportEpisodeBestEffort(episode TaskEpisode, promptCapture *te
 
 func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool, userProfile string) RoleProfile {
 	cfg := r.ConfigSnapshot()
-	rules := agentRoleRules()
-	if cfg.usesBackendAgent() {
-		rules = deviceCLIRoleRules()
-	}
+	rules := deviceCLIRoleRules()
 	if cfg.supportsConact() {
 		rules = append(rules, conactFoldRoleRule)
 	}

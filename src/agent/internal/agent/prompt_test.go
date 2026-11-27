@@ -44,19 +44,11 @@ func TestRolePromptCarriesNoDate(t *testing.T) {
 	}
 }
 
-func TestRolePromptRoutesDeviceControlByMode(t *testing.T) {
+func TestRolePromptRoutesDeviceControlThroughCLI(t *testing.T) {
 	rt := NewRuntimeWithDeps(Config{ConfigDir: t.TempDir()}, nil, nil, nil, NewSkillIndex())
-	rt.config.InputMode = "realtime"
-	legacy := rt.buildAgentProfile(rt.skills, nil, "").SystemPrompt
-	rt.config.VoiceModel.UseBackendAgent = true
-	cli := rt.buildAgentProfile(rt.skills, nil, "").SystemPrompt
-	for _, name := range []string{"device-operator", "touch_gesture", "quick_action", "open_app"} {
-		if !strings.Contains(legacy, name) || strings.Contains(cli, name) {
-			t.Errorf("legacy routing hint %q should appear only in legacy mode", name)
-		}
-	}
-	if !strings.Contains(cli, "including App data commands") || !strings.Contains(cli, "load device-cli with skill_read") {
-		t.Fatal("CLI prompt must route App data work through the Device CLI skill")
+	prompt := rt.buildAgentProfile(rt.skills, nil, "").SystemPrompt
+	if strings.Contains(prompt, "device-operator") || !strings.Contains(prompt, "load device-cli with skill_read") {
+		t.Fatal("runtime prompt must route device work through the Device CLI skill")
 	}
 }
 

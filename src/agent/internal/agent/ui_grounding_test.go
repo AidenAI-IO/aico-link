@@ -471,7 +471,7 @@ func TestStateHookGroundsUserTurnScreenshotWhenEnabled(t *testing.T) {
 		wantCenter string // "" means no grounding
 	}{
 		{name: "on, normalized model", enabled: true, provider: "openai", wantCenter: `"center":[508.5,252.1]`},
-		{name: "on, visual coordinate protocol", enabled: true, provider: "anthropic", wantCenter: `"center":[30,30]`},
+		{name: "on, Anthropic", enabled: true, provider: "anthropic", wantCenter: `"center":[508.5,252.1]`},
 		{name: "off", enabled: false, provider: "openai"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

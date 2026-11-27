@@ -1187,6 +1187,7 @@ func realtimeDelegatedVoiceToolDefinition(tool langtools.Tool, description strin
 }
 
 type realtimeVoiceToolExecutor struct {
+	runtime   *agent.Runtime
 	delegated map[string]langtools.Tool
 	now       func() time.Time
 	tasks     *agenttask.Manager
@@ -1195,7 +1196,7 @@ type realtimeVoiceToolExecutor struct {
 }
 
 func newRealtimeVoiceToolExecutor(runtime *agent.Runtime, tasks *agenttask.Manager, availableTools ...[]langtools.Tool) realtimeVoiceToolExecutor {
-	executor := realtimeVoiceToolExecutor{now: time.Now, tasks: tasks}
+	executor := realtimeVoiceToolExecutor{now: time.Now, tasks: tasks, runtime: runtime}
 	if runtime == nil {
 		return executor
 	}
@@ -1227,10 +1228,20 @@ func newRealtimeVoiceToolExecutor(runtime *agent.Runtime, tasks *agenttask.Manag
 // result runs a tool call and separates the image a visual tool returns from
 // its text, so the image never reaches the provider as base64 text.
 func (e realtimeVoiceToolExecutor) result(ctx context.Context, call realtimevoice.Event) realtimeToolResult {
-	result := realtimeToolResult{call: call, output: e.call(ctx, call.Name, call.Arguments)}
-	if observation, ok := agent.SplitVisualToolOutput(e.delegated[call.Name], result.output); ok {
+	result := realtimeToolResult{call: call}
+	tool := e.delegated[call.Name]
+	if call.Name == "shell" && tool != nil && e.runtime != nil {
+		observation := e.runtime.RunRealtimeShell(ctx, tool, call.Arguments)
 		result.output = observation.ToolContentWithoutImages(agent.ImageOmittedModelUnsupported)
-		result.visual = &observation
+		if len(observation.Images()) > 0 {
+			result.visual = &observation
+		}
+	} else {
+		result.output = e.call(ctx, call.Name, call.Arguments)
+		if observation, ok := agent.SplitVisualToolOutput(tool, result.output); ok {
+			result.output = observation.ToolContentWithoutImages(agent.ImageOmittedModelUnsupported)
+			result.visual = &observation
+		}
 	}
 	return result
 }

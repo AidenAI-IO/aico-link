@@ -98,7 +98,7 @@ func TestBenchmarkMockToolsKeepNativePostActionVerification(t *testing.T) {
 	}
 }
 
-func TestBenchmarkMockRuntimeRetainsBridgeAvailabilityAndNativeSchemas(t *testing.T) {
+func TestBenchmarkMockRuntimeDispatchesDeviceCLIContactsOverPiP(t *testing.T) {
 	pip := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/phone-bridge/status" {
@@ -116,28 +116,23 @@ func TestBenchmarkMockRuntimeRetainsBridgeAvailabilityAndNativeSchemas(t *testin
 	bridge := NewPhoneBridgeProxy(server.URL, "task-1", nil)
 	t.Cleanup(func() { bridge.queue.Stop() })
 	runtime.tools.RegisterPhoneBridge(bridge)
-	if _, exists := toolNameSet(runtime.AvailableTools())["bridge_contacts"]; exists {
-		t.Fatal("unavailable contacts exposed")
+	serverTool := &Server{runtime: runtime}
+	args := []string{"app", "contacts", "query", "--query", "Biden"}
+	call := func() ToolInvokeResponse {
+		t.Helper()
+		result, err := executeDeviceCLI(context.Background(), serverTool, args, &deviceCLICapture{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	if result := call(); !result.IsError || !actionNotDispatched(result.ToolError) {
+		t.Fatalf("expected route rejection without PiP: %+v", result)
 	}
 	pip = true
-	for _, tool := range runtime.AvailableTools() {
-		if tool.Name() != "bridge_contacts" {
-			continue
-		}
-		if _, ok := tool.(*benchmarkMockTool); !ok {
-			t.Fatal("native device transport still selected")
-		}
-		schema := tool.(structuredInputTool).ArgsSchema()
-		if schema["properties"] == nil {
-			t.Fatal("native schema lost")
-		}
-		output, err := tool.Call(context.Background(), `{"action":"query","query":"Biden"}`)
-		if err != nil || output != `{"ok":true,"contacts":[{"name":"Biden"}]}` {
-			t.Fatalf("mock call=%s %v", output, err)
-		}
-		return
+	if result := call(); result.IsError || result.Output != `{"ok":true,"contacts":[{"name":"Biden"}]}` {
+		t.Fatalf("expected mock contacts query over PiP: %+v", result)
 	}
-	t.Fatal("PiP contacts tool unavailable")
 }
 
 func TestBenchmarkHeadlessToolsExcludeDeviceServices(t *testing.T) {
