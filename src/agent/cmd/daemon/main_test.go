@@ -147,7 +147,7 @@ func TestRealtimeSessionConfigTransfersRuntimeToolsWhenBackendDisabled(t *testin
 		agent.ProxyConfig{},
 		agent.WithWaitForWakeupController(agent.NewWaitForWakeupController()),
 	)
-	runtime := agent.NewRuntimeWithDeps(agent.Config{}, nil, nil, toolSet, agent.NewSkillIndex())
+	runtime := agent.NewRuntimeWithDeps(agent.Config{InputMode: "realtime"}, nil, nil, toolSet, agent.NewSkillIndex())
 	defer runtime.Close()
 
 	backendDisabledConfigs := []agent.Config{

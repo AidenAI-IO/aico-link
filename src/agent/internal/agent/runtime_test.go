@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -538,8 +539,16 @@ func TestRuntimeRunWaitForWakeupTerminatesRoleLoop(t *testing.T) {
 	}
 }
 
+func cliTestShellInput(t *testing.T, args string) string {
+	t.Helper()
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl required")
+	}
+	return jsonString(map[string]any{"command": `curl -fsS -H "Authorization: Bearer $AICO_DEVICE_CLI_TOKEN" -d '` + args + `' "$AICO_DEVICE_CLI_URL/command"`})
+}
+
 func TestRuntimeRunInjectsDeviceTypeStateIntoTools(t *testing.T) {
-	model := &scriptedModel{responses: roleToolResponses("enter_text", `{"text":"hello","focus":{"x":500,"y":500}}`, "done")}
+	model := &scriptedModel{responses: roleToolResponses("shell", cliTestShellInput(t, `["type","hello"]`), "done")}
 	tool := &deviceTypeCaptureTool{
 		stubTool: stubTool{
 			name:        "enter_text",
@@ -555,7 +564,7 @@ func TestRuntimeRunInjectsDeviceTypeStateIntoTools(t *testing.T) {
 		}),
 		&testModelResolver{model: model},
 		NewMemoryManager(""),
-		&ToolSet{tools: map[string]langtools.Tool{"enter_text": tool}},
+		&ToolSet{tools: map[string]langtools.Tool{"enter_text": tool, "shell": &ShellTool{}}},
 		NewSkillIndex(),
 	)
 
@@ -593,7 +602,7 @@ func TestRuntimeRunDoesNotUsePhoneEnvironmentPlatformForPointerModeMismatch(t *t
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			model := &scriptedModel{responses: roleToolResponses("touch_gesture", `{"type":"tap","point":{"x":500,"y":500}}`, "continued with device_type state")}
+			model := &scriptedModel{responses: roleToolResponses("shell", cliTestShellInput(t, `["tap","500","500"]`), "continued with device_type state")}
 			tool := &stubTool{
 				name:        "touch_gesture",
 				description: "Touch.",
@@ -607,7 +616,7 @@ func TestRuntimeRunDoesNotUsePhoneEnvironmentPlatformForPointerModeMismatch(t *t
 				}),
 				&testModelResolver{model: model},
 				NewMemoryManager(""),
-				&ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool}},
+				&ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "shell": &ShellTool{}}},
 				NewSkillIndex(),
 			)
 
@@ -634,7 +643,7 @@ func TestRuntimeRunDoesNotUsePhoneEnvironmentPlatformForPointerModeMismatch(t *t
 func TestRuntimeRunDoesNotStopMismatchContentFromPhoneEnvironmentPlatform(t *testing.T) {
 	stopMessage := `touch_gesture produced no visible screen change, and the connected platform is Android while [device].device_type derives hid.pointer_mode="absolute". Stop operation here because the touch mode likely does not match the target. Please switch [device].device_type to "Android", restart the agent, and retry.`
 	model := &scriptedModel{responses: []*llms.ContentResponse{
-		toolCallResponseWithContent("call_1", "touch_gesture", `{"type":"long_press","point":{"x":500,"y":500}}`, stopMessage),
+		toolCallResponseWithContent("call_1", "shell", cliTestShellInput(t, `["long-press","500","500"]`), stopMessage),
 		contentResponse("continued with device_type state"),
 	}}
 	tool := &stubTool{
@@ -650,7 +659,7 @@ func TestRuntimeRunDoesNotStopMismatchContentFromPhoneEnvironmentPlatform(t *tes
 		}),
 		&testModelResolver{model: model},
 		NewMemoryManager(""),
-		&ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool}},
+		&ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "shell": &ShellTool{}}},
 		NewSkillIndex(),
 	)
 
@@ -675,7 +684,7 @@ func TestRuntimeRunDoesNotStopMismatchContentFromPhoneEnvironmentPlatform(t *tes
 func TestRuntimeRunDoesNotStopBracketedMismatchContentFromPhoneEnvironmentPlatform(t *testing.T) {
 	stopMessage := `touch_gesture produced no visible screen change. The connected platform is Android but [device].device_type is configured for iOS. Stop operation here because the touch mode likely does not match the target.`
 	model := &scriptedModel{responses: []*llms.ContentResponse{
-		toolCallResponseWithContent("call_1", "touch_gesture", `{"type":"tap","point":{"x":500,"y":500}}`, stopMessage),
+		toolCallResponseWithContent("call_1", "shell", cliTestShellInput(t, `["tap","500","500"]`), stopMessage),
 		contentResponse("continued with device_type state"),
 	}}
 	tool := &stubTool{
@@ -691,7 +700,7 @@ func TestRuntimeRunDoesNotStopBracketedMismatchContentFromPhoneEnvironmentPlatfo
 		}),
 		&testModelResolver{model: model},
 		NewMemoryManager(""),
-		&ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool}},
+		&ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "shell": &ShellTool{}}},
 		NewSkillIndex(),
 	)
 
@@ -716,7 +725,7 @@ func TestRuntimeRunDoesNotStopBracketedMismatchContentFromPhoneEnvironmentPlatfo
 func TestRuntimeRunDoesNotStopPointerModeMismatchContentForOtherTool(t *testing.T) {
 	stopMessage := `touch_gesture produced no visible screen change, and the connected platform is Android while [device].device_type derives hid.pointer_mode="absolute". Stop operation here because the touch mode likely does not match the target. Please switch [device].device_type to "Android", restart the agent, and retry.`
 	model := &scriptedModel{responses: []*llms.ContentResponse{
-		toolCallResponseWithContent("call_1", "screenshot", `{}`, stopMessage),
+		toolCallResponseWithContent("call_1", "shell", cliTestShellInput(t, `["look"]`), stopMessage),
 		contentResponse("continued after screenshot"),
 	}}
 	tool := &stubTool{
@@ -732,7 +741,7 @@ func TestRuntimeRunDoesNotStopPointerModeMismatchContentForOtherTool(t *testing.
 		}),
 		&testModelResolver{model: model},
 		NewMemoryManager(""),
-		&ToolSet{tools: map[string]langtools.Tool{"screenshot": tool}},
+		&ToolSet{tools: map[string]langtools.Tool{"screenshot": tool, "shell": &ShellTool{}}},
 		NewSkillIndex(),
 	)
 
@@ -755,7 +764,7 @@ func TestRuntimeRunDoesNotStopPointerModeMismatchContentForOtherTool(t *testing.
 }
 
 func TestRuntimeRunContinuesTouchGestureWhenPointerModeMatches(t *testing.T) {
-	model := &scriptedModel{responses: roleToolResponses("touch_gesture", `{"type":"tap","point":{"x":500,"y":500}}`, "verified after inspection")}
+	model := &scriptedModel{responses: roleToolResponses("shell", cliTestShellInput(t, `["tap","500","500"]`), "verified after inspection")}
 	tool := &stubTool{
 		name:        "touch_gesture",
 		description: "Touch.",
@@ -769,7 +778,7 @@ func TestRuntimeRunContinuesTouchGestureWhenPointerModeMatches(t *testing.T) {
 		}),
 		&testModelResolver{model: model},
 		NewMemoryManager(""),
-		&ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool}},
+		&ToolSet{tools: map[string]langtools.Tool{"touch_gesture": tool, "shell": &ShellTool{}}},
 		NewSkillIndex(),
 	)
 
@@ -2482,7 +2491,7 @@ func TestRuntimeRunCompactionTriggerIncludesToolSchema(t *testing.T) {
 	largeSchemaTool := &structuredStubTool{
 		// Cross the summary threshold while leaving room for the protected
 		// head/tail messages under the hard input budget after summarization.
-		stubTool: stubTool{name: "large_schema", description: strings.Repeat("schema ", 1750)},
+		stubTool: stubTool{name: "large_schema", description: strings.Repeat("schema ", 1350)},
 		schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -2497,6 +2506,7 @@ func TestRuntimeRunCompactionTriggerIncludesToolSchema(t *testing.T) {
 	}}
 	runtime := NewRuntimeWithDeps(
 		Config{
+			Benchmark:     BenchmarkConfig{Headless: true},
 			ConfigDir:     configDir,
 			Model:         ModelConfig{Provider: "fake"},
 			Instruction:   "Answer directly.",
@@ -2608,6 +2618,7 @@ func TestRuntimeRunPrunesContextDuringSingleLongToolRun(t *testing.T) {
 	}
 	runtime := NewRuntimeWithDeps(
 		Config{
+			Benchmark:             BenchmarkConfig{Headless: true},
 			ConfigDir:             configDir,
 			ContextPruneThreshold: 0.2,
 			Model:                 ModelConfig{Provider: "fake", MaxResponseTokens: 256},
@@ -3431,7 +3442,7 @@ func TestRuntimeRunExecutesOnlyFirstToolCallAndKeepsModelToolCallMessage(t *test
 
 func TestRuntimeRunFeedsToolErrorsBackToModel(t *testing.T) {
 	model := &scriptedModel{
-		responses: roleReviewedToolResponses("screenshot", `{"__arg1":"{}"}`, "屏幕暂时获取失败，frame service 正在恢复。"),
+		responses: roleReviewedToolResponses("read_image", `{"__arg1":"{}"}`, "屏幕暂时获取失败，frame service 正在恢复。"),
 	}
 	runtime := NewRuntimeWithDeps(
 		withTestConfigDir(t, Config{
@@ -3441,8 +3452,8 @@ func TestRuntimeRunFeedsToolErrorsBackToModel(t *testing.T) {
 		&testModelResolver{model: model},
 		NewMemoryManager(""),
 		&ToolSet{tools: map[string]langtools.Tool{
-			"screenshot": &stubTool{
-				name:        "screenshot",
+			"read_image": &stubTool{
+				name:        "read_image",
 				description: "Capture a screenshot from the connected display.",
 				visual:      true,
 				err:         errors.New("frame service: SERVICE_RECOVERING"),
@@ -3702,13 +3713,14 @@ func TestRuntimeDirectAnswerDoesNotGenerateTodo(t *testing.T) {
 func TestRuntimeSimpleLoopDoesNotGenerateImplicitTodo(t *testing.T) {
 	model := &scriptedModel{
 		responses: []*llms.ContentResponse{
-			toolCallResponse("call_1", "screenshot", `{"__arg1":"{}"}`),
+			toolCallResponse("call_1", "read_image", `{"path":"/tmp/fixture.jpg"}`),
 			toolCallResponse("call_2", "shell", `{"command":"date"}`),
 			contentResponse("done"),
 			verifierFinishResponse("done"),
 		},
 	}
 	screenshot := &stubTool{name: "screenshot", description: "Capture screen.", output: "screen"}
+	reader := &stubTool{name: "read_image", output: "fixture image"}
 	shell := &stubTool{name: "shell", description: "Run controller commands.", output: "now"}
 	runtime := NewRuntimeWithDeps(
 		withTestConfigDir(t, Config{Model: ModelConfig{Provider: "fake"}, Instruction: "Use tools."}),
@@ -3717,6 +3729,7 @@ func TestRuntimeSimpleLoopDoesNotGenerateImplicitTodo(t *testing.T) {
 		&ToolSet{tools: map[string]langtools.Tool{
 			"screenshot": screenshot,
 			"shell":      shell,
+			"read_image": reader,
 		}},
 		NewSkillIndex(),
 	)
@@ -3737,8 +3750,8 @@ func TestRuntimeSimpleLoopDoesNotGenerateImplicitTodo(t *testing.T) {
 	if closed := runEventsOfType(events, "todo_closed"); len(closed) != 0 {
 		t.Fatalf("simple loop emitted implicit todo_closed events: %#v", closed)
 	}
-	if len(screenshot.inputs) != 2 || len(shell.inputs) != 1 {
-		t.Fatalf("expected simple tools to execute without todo, screenshot=%#v shell=%#v", screenshot.inputs, shell.inputs)
+	if len(reader.inputs) != 1 || len(shell.inputs) != 1 {
+		t.Fatalf("expected simple tools to execute without todo, read_image=%#v shell=%#v", reader.inputs, shell.inputs)
 	}
 }
 
@@ -3956,7 +3969,7 @@ func TestRuntimeRunStreamsToolCapableCallsWhenWriterIsProvided(t *testing.T) {
 		t.Fatalf("stream = %q, want streamed model chunks", stream.String())
 	}
 }
-func TestRuntimeRunKeyboardToolFeedsPostActionScreenshotImage(t *testing.T) {
+func TestAgentLoopKeyboardToolFeedsPostActionScreenshotImage(t *testing.T) {
 	jpegBytes := []byte("keyboard-post-action-jpeg")
 	model := &scriptedModel{
 		responses: roleReviewedToolResponses("keyboard_tap", `{"keys":["enter"]}`, "The keyboard action updated the UI."),
@@ -3968,25 +3981,14 @@ func TestRuntimeRunKeyboardToolFeedsPostActionScreenshotImage(t *testing.T) {
 		output: `{"action_output":"ok","screen_changed":false,"screen_stable":true,"stable_wait_ms":250,"width":800,"height":600,"format":"jpeg","size":25,"data":"` +
 			base64.StdEncoding.EncodeToString(jpegBytes) + `"}`,
 	}
-	runtime := NewRuntimeWithDeps(
-		withTestConfigDir(t, Config{
-			Model:       ModelConfig{Provider: "openrouter"},
-			Instruction: "Use input tools when needed.",
-		}),
-		&testModelResolver{model: model},
-		NewMemoryManager(""),
-		&ToolSet{tools: map[string]langtools.Tool{
-			"keyboard_tap": tool,
-		}},
-		NewSkillIndex(),
-	)
-
-	result, err := runtime.Run(context.Background(), RunRequest{Input: "press enter"})
+	manager := newPromptTestContextManager(t)
+	loop := NewAgentLoop(&testModelResolver{model: model}, RoleProfile{Tools: []langtools.Tool{tool}}, 4, nil, nil, manager)
+	output, err := loop.Run(context.Background(), "press enter")
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if result.Output != "The keyboard action updated the UI." {
-		t.Fatalf("unexpected output: %q", result.Output)
+	if output != "The keyboard action updated the UI." {
+		t.Fatalf("unexpected output: %q", output)
 	}
 
 	var foundToolResponse, foundImage, foundStateNote bool

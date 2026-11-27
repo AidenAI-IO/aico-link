@@ -46,9 +46,9 @@ func TestRolePromptCarriesNoDate(t *testing.T) {
 
 func TestRolePromptRoutesDeviceControlByMode(t *testing.T) {
 	rt := NewRuntimeWithDeps(Config{ConfigDir: t.TempDir()}, nil, nil, nil, NewSkillIndex())
-	rt.deviceCLI = false
+	rt.config.InputMode = "realtime"
 	legacy := rt.buildAgentProfile(rt.skills, nil, "").SystemPrompt
-	rt.deviceCLI = true
+	rt.config.VoiceModel.UseBackendAgent = true
 	cli := rt.buildAgentProfile(rt.skills, nil, "").SystemPrompt
 	for _, name := range []string{"device-operator", "touch_gesture", "quick_action", "open_app"} {
 		if !strings.Contains(legacy, name) || strings.Contains(cli, name) {
@@ -60,26 +60,25 @@ func TestRolePromptRoutesDeviceControlByMode(t *testing.T) {
 	}
 }
 
-func TestConactFoldGuidanceEnabledByDefaultAndCanBeDisabled(t *testing.T) {
-	t.Setenv("AICO_CONACT_UTG", "")
-	cfg := Config{ConfigDir: t.TempDir()}
-	runtime := NewRuntimeWithDeps(cfg, nil, nil, nil, NewSkillIndex())
-	runtime.deviceCLI = true
-	profile := runtime.buildAgentProfile(runtime.skills, nil, "")
-	if !strings.Contains(profile.SystemPrompt, conactFoldRoleRule) {
-		t.Fatal("default ConAct fold guidance missing from system prompt")
-	}
-	if !runtime.conactEnabled(cfg) {
-		t.Fatal("ConAct should be enabled when AICO_CONACT_UTG is unset or empty")
-	}
-
-	t.Setenv("AICO_CONACT_UTG", "0")
-	profile = runtime.buildAgentProfile(runtime.skills, nil, "")
-	if strings.Contains(profile.SystemPrompt, "fold_subtask") {
-		t.Fatal("disabled ConAct fold guidance appeared in system prompt")
-	}
-	if runtime.conactEnabled(cfg) {
-		t.Fatal("AICO_CONACT_UTG=0 should disable ConAct")
+func TestConactFoldGuidanceFollowsSessionEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{name: "backend", want: true},
+		{name: "realtime with backend", cfg: Config{InputMode: "realtime", VoiceModel: VoiceModelConfig{UseBackendAgent: true}}, want: true},
+		{name: "standalone realtime", cfg: Config{InputMode: "realtime"}},
+		{name: "headless benchmark", cfg: Config{Benchmark: BenchmarkConfig{Headless: true}}},
+		{name: "scripted benchmark", cfg: Config{Benchmark: BenchmarkConfig{MockTools: true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime := NewRuntimeWithDeps(tc.cfg, nil, nil, nil, NewSkillIndex())
+			profile := runtime.buildAgentProfile(runtime.skills, nil, "")
+			if got := strings.Contains(profile.SystemPrompt, conactFoldRoleRule); got != tc.want {
+				t.Fatalf("ConAct fold guidance present = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -536,10 +535,8 @@ func TestRolePromptOmitsRuntimeAndMemoryContext(t *testing.T) {
 }
 
 func TestStateHookInjectsUTGLandmarksOnlyAtConversationStart(t *testing.T) {
-	t.Setenv("AICO_CONACT_UTG", "1")
 	cfg := Config{ConfigDir: t.TempDir()}
 	runtime := NewRuntimeWithDeps(cfg, nil, nil, &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
-	runtime.deviceCLI = true
 	path := skillUTGPath(cfg, runtime.devicePlatformFromState())
 	graph := skillUTG{Nodes: map[string]*utgNode{
 		"phone_home":      {Label: "phone_home", Summary: "Home screen with app icons"},
@@ -575,11 +572,9 @@ func TestStateHookInjectsUTGLandmarksOnlyAtConversationStart(t *testing.T) {
 	}
 }
 
-func TestStateHookDoesNotInjectUTGLandmarksWhenDisabled(t *testing.T) {
-	t.Setenv("AICO_CONACT_UTG", "0")
-	cfg := Config{ConfigDir: t.TempDir()}
+func TestStateHookDoesNotInjectUTGLandmarksInStandaloneRealtime(t *testing.T) {
+	cfg := Config{ConfigDir: t.TempDir(), InputMode: "realtime"}
 	runtime := NewRuntimeWithDeps(cfg, nil, nil, &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
-	runtime.deviceCLI = true
 	if err := saveSkillUTG(skillUTGPath(cfg, runtime.devicePlatformFromState()), skillUTG{Nodes: map[string]*utgNode{
 		"phone_home": {Label: "phone_home", Summary: "Home screen"},
 	}}); err != nil {
@@ -593,7 +588,7 @@ func TestStateHookDoesNotInjectUTGLandmarksWhenDisabled(t *testing.T) {
 	}
 	for _, msg := range manager.CloneMessageList() {
 		if strings.Contains(msg.Content, "Optional Skill-UTG landmarks") {
-			t.Fatalf("disabled ConAct injected a UTG banner: %q", msg.Content)
+			t.Fatalf("standalone realtime injected a UTG banner: %q", msg.Content)
 		}
 	}
 }

@@ -111,7 +111,7 @@ func TestBenchmarkMockRuntimeRetainsBridgeAvailabilityAndNativeSchemas(t *testin
 		json.NewEncoder(w).Encode(map[string]any{"output": `{"ok":true,"contacts":[{"name":"Biden"}]}`})
 	}))
 	defer server.Close()
-	cfg := Config{EnvironmentBridge: EnvironmentBridgeConfig{Enabled: true, Endpoint: server.URL}, Benchmark: BenchmarkConfig{Token: "token", MockTools: true}}
+	cfg := Config{InputMode: "realtime", EnvironmentBridge: EnvironmentBridgeConfig{Enabled: true, Endpoint: server.URL}, Benchmark: BenchmarkConfig{Token: "token", MockTools: true}}
 	runtime := newRuntimeWithTextEntryToolsWithConfig(cfg)
 	bridge := NewPhoneBridgeProxy(server.URL, "task-1", nil)
 	t.Cleanup(func() { bridge.queue.Stop() })

@@ -57,7 +57,6 @@ const (
 )
 
 type Runtime struct {
-	deviceCLI               bool
 	config                  Config
 	configReloadMu          sync.Mutex
 	configOperations        sync.RWMutex
@@ -601,7 +600,6 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 		toolSet.RegisterSkillToolsWithDeviceType(skillsDir, manifestPath, rt.deviceTypeFromState, rt.MarkSkillsDirty)
 	}
 	rt.logger = logger
-	rt.deviceCLI = os.Getenv("AICO_LEGACY_DEVICE_TOOLS") != "1"
 	rt.profileDebouncer = debouncer
 	rt.waitForWakeup = waitForWakeupController
 	rt.storageMonitor = newRuntimeStorageMonitor(cfg, logger)
@@ -1029,7 +1027,7 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// transferred tools itself. Take the decision under the same config snapshot
 	// the rest of the run reads, so a reload cannot flip it mid-run.
 	cfg := r.ConfigSnapshot()
-	if cfg.InputModeOrDefault() == "realtime" && !cfg.UseBackendAgentEffective() {
+	if !cfg.usesBackendAgent() {
 		return RunResult{}, fmt.Errorf("backend agent is disabled for this realtime session; all processing should be handled by the realtime voice session")
 	}
 
@@ -1445,7 +1443,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		return RunResult{}, err
 	}
 
-	conactEnabled := r.conactEnabled(cfg)
+	conactEnabled := cfg.supportsConact()
 	contextBudget.conactActive = conactEnabled
 
 	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, r.contextManager)
@@ -1467,15 +1465,12 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 	agentLoop.ContextOverflowRecovery = contextBudget.recoverOverflow
 
-	loopCtx := ctx
-	if r.deviceCLIEnabled() {
-		loopCtx = context.WithValue(ctx, deviceCLIRuntimeKey{}, r)
-		if req.LiveActivityEventHandler != nil {
-			loopCtx = context.WithValue(loopCtx, deviceCLIActivityKey{}, req.LiveActivityEventHandler)
-		}
-		if conactEnabled {
-			agentLoop.conact = newConactRun(r)
-		}
+	loopCtx := context.WithValue(ctx, deviceCLIRuntimeKey{}, r)
+	if req.LiveActivityEventHandler != nil {
+		loopCtx = context.WithValue(loopCtx, deviceCLIActivityKey{}, req.LiveActivityEventHandler)
+	}
+	if conactEnabled {
+		agentLoop.conact = newConactRun(r)
 	}
 	output, err = agentLoop.Run(loopCtx, normalizedInput, callOptions...)
 	// If the agent couldn't parse the LLM output format, extract the raw
@@ -1752,7 +1747,7 @@ func (r *Runtime) captureStateScreenshot(keep func() bool) (*messages.Attachment
 		return nil, nil
 	}
 	observation, ok := parseScreenshotObservation(output)
-	if r.deviceCLIEnabled() {
+	if r.ConfigSnapshot().usesBackendAgent() {
 		observation = compressCLIFrame(observation)
 	}
 	if !ok {
@@ -1784,7 +1779,7 @@ func (r *Runtime) captureStateScreenshot(keep func() bool) (*messages.Attachment
 // usesVisualCoordinateProtocol reports whether the current model takes
 // screenshot pixels for touch_gesture (see AgentLoop.Run).
 func (r *Runtime) usesVisualCoordinateProtocol() bool {
-	if r == nil || r.models == nil || r.deviceCLIEnabled() {
+	if r == nil || r.models == nil || r.ConfigSnapshot().usesBackendAgent() {
 		return false
 	}
 	spec := r.models.Spec()
@@ -2133,7 +2128,7 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		return nil
 	}
 	tools := NewToolSpecs(r.toolSnapshot().All()).AgentToolsForPlatform(r.devicePlatformFromState())
-	cli := r.deviceCLIEnabled()
+	cli := r.ConfigSnapshot().usesBackendAgent()
 	if cli {
 		filtered := tools[:0]
 		for _, tool := range tools {
@@ -2520,19 +2515,20 @@ func (r *Runtime) exportEpisodeBestEffort(episode TaskEpisode, promptCapture *te
 }
 
 func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool, userProfile string) RoleProfile {
+	cfg := r.ConfigSnapshot()
 	rules := agentRoleRules()
-	if r.deviceCLIEnabled() {
+	if cfg.usesBackendAgent() {
 		rules = deviceCLIRoleRules()
-		if r.conactEnabled(r.ConfigSnapshot()) {
-			rules = append(rules, conactFoldRoleRule)
-		}
+	}
+	if cfg.supportsConact() {
+		rules = append(rules, conactFoldRoleRule)
 	}
 	profile := buildProfile(
 		AgentConfig{
-			Instruction: r.ConfigSnapshot().Instruction,
-			Prompt:      r.ConfigSnapshot().Prompt,
-			Locale:      r.ConfigSnapshot().LocaleOrDefault(),
-			Timezone:    r.ConfigSnapshot().TimezoneOrDefault(),
+			Instruction: cfg.Instruction,
+			Prompt:      cfg.Prompt,
+			Locale:      cfg.LocaleOrDefault(),
+			Timezone:    cfg.TimezoneOrDefault(),
 		},
 		skills,
 		availableTools,

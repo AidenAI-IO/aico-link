@@ -9,8 +9,7 @@ import (
 )
 
 func TestDebugUTGSnapshot(t *testing.T) {
-	t.Setenv("AICO_CONACT_UTG", "1")
-	rt := &Runtime{config: Config{ConfigDir: t.TempDir()}, deviceCLI: true}
+	rt := &Runtime{config: Config{ConfigDir: t.TempDir()}}
 	handler := (&Server{runtime: rt}).Handler()
 	get := func() (*httptest.ResponseRecorder, debugUTGSnapshot) {
 		t.Helper()

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -52,8 +51,8 @@ type conactRun struct {
 	evidenceTag       string
 }
 
-func (r *Runtime) conactEnabled(cfg Config) bool {
-	return r.deviceCLIEnabled() && os.Getenv("AICO_CONACT_UTG") != "0" && !cfg.Benchmark.Headless && !cfg.Benchmark.MockTools
+func (cfg Config) supportsConact() bool {
+	return cfg.usesBackendAgent() && !cfg.Benchmark.Headless && !cfg.Benchmark.MockTools
 }
 
 func skillUTGPath(cfg Config, platform string) string {
@@ -96,7 +95,7 @@ func (r *Runtime) loadConactGraph(cfg Config) (string, skillUTG) {
 
 func (r *Runtime) conactLandmarkHint() string {
 	cfg := r.ConfigSnapshot()
-	if !r.conactEnabled(cfg) {
+	if !cfg.supportsConact() {
 		return ""
 	}
 	_, graph := r.loadConactGraph(cfg)

@@ -42,7 +42,7 @@ func (s *Server) handleDebugUTG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := rt.ConfigSnapshot()
-	view := debugUTGSnapshot{Enabled: rt.conactEnabled(cfg), Platform: rt.devicePlatformFromState(),
+	view := debugUTGSnapshot{Enabled: cfg.supportsConact(), Platform: rt.devicePlatformFromState(),
 		Nodes: []debugUTGNode{}, Edges: []utgEdge{}, Intents: utgIntents, Tips: []string{}}
 	if path := skillUTGPath(cfg, view.Platform); path != "" {
 		view.Available = true

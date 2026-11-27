@@ -46,7 +46,7 @@ def test_supplied_agent_checks_device_cli(args, tmp_path, monkeypatch, location)
         (cli_dir / "device-cli").touch(mode=0o755)
     if location == "legacy":
         monkeypatch.setenv("AICO_LEGACY_DEVICE_TOOLS", "1")
-    if location == "missing":
+    if location in {"missing", "legacy"}:
         with pytest.raises(RuntimeError, match="device-cli"):
             launcher.agent_binary(args)
     else:

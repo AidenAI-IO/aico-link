@@ -5,11 +5,10 @@ sidebar_position: 4
 # Device CLI
 
 The backend agent operates the target screen using `device-cli` in a foreground
-`shell` call. The CLI forwards to the existing [Tools HTTP API](tools-http-api.md);
-it does not implement another device driver. The backend agent no longer receives
-the legacy direct UI tools. The HTTP API and the standalone realtime voice path
-still expose their existing device tools. Set `AICO_LEGACY_DEVICE_TOOLS=1` before
-starting the daemon to opt out of CLI mode.
+`shell` call. The backend agent's tool catalog routes UI operations through
+Device CLI. The CLI forwards actions to the existing
+[Tools HTTP API](tools-http-api.md). Standalone realtime voice sessions can
+invoke the underlying tools directly.
 
 ```sh
 device-cli tap 500 650
@@ -151,11 +150,10 @@ Standalone `wait` only sleeps and does not contact the Agent.
 
 ## ConAct and Skill-UTG
 
-ConAct and Skill-UTG are enabled by default for backend Device CLI runs,
-including environment-bridge runs such as MobileGym. Set
-`AICO_CONACT_UTG=0` in the Agent daemon's environment only to disable them.
-They remain unavailable to the standalone CLI, legacy tools, and
-headless/scripted benchmark fixtures.
+ConAct and Skill-UTG are always enabled for backend Device CLI runs with a
+device, including environment-bridge runs such as MobileGym. The standalone CLI,
+standalone realtime, and headless or scripted benchmarks run without ConAct
+and Skill-UTG.
 
 - **`fold_subtask`** records verbatim facts and the next goal at an explicit
   subtask boundary. It replaces the active subtask with those facts and one

@@ -50,10 +50,6 @@ type deviceCLICapture struct {
 	activitySucceeded bool
 }
 
-func (r *Runtime) deviceCLIEnabled() bool {
-	return r.deviceCLI && (r.ConfigSnapshot().InputModeOrDefault() != "realtime" || r.ConfigSnapshot().UseBackendAgentEffective())
-}
-
 // Prefer the installed sibling on native launches; otherwise use the image PATH.
 func deviceCLIPath() string {
 	exe, err := os.Executable()

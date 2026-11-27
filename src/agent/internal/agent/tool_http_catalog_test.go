@@ -34,7 +34,7 @@ func toolSpecsForNames(names []string) *ToolSpecs {
 }
 
 func newRuntimeWithTextEntryTools() *Runtime {
-	return newRuntimeWithTextEntryToolsWithConfig(Config{})
+	return newRuntimeWithTextEntryToolsWithConfig(Config{InputMode: "realtime"})
 }
 
 func newRuntimeWithTextEntryToolsWithConfig(cfg Config) *Runtime {
@@ -181,7 +181,7 @@ func TestHTTPDescriptorReportsUIOperationSurface(t *testing.T) {
 
 func TestAvailableToolsIncludesQuickAction(t *testing.T) {
 	runtime := NewRuntimeWithDeps(
-		Config{},
+		Config{InputMode: "realtime"},
 		nil,
 		NewMemoryManager(""),
 		NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
@@ -375,7 +375,8 @@ func TestAgentToolsForPlatformFiltersPlatformSpecificTools(t *testing.T) {
 
 func TestRuntimeAvailableToolsUsesDeviceTypePlatformFilter(t *testing.T) {
 	runtime := newRuntimeWithTextEntryToolsWithConfig(Config{
-		Device: DeviceConfig{DeviceType: "windows"},
+		InputMode: "realtime",
+		Device:    DeviceConfig{DeviceType: "windows"},
 	})
 	bridge := newPhoneBridgeForTest()
 	t.Cleanup(func() { bridge.queue.Stop() })
@@ -676,7 +677,8 @@ func TestDeviceCLICatalogDeduplicatesBridgeDataActions(t *testing.T) {
 	}
 	rt.tools.RegisterPhoneBridge(bridge)
 	for _, cli := range []bool{false, true} {
-		rt.deviceCLI = cli
+		rt.config.InputMode = "realtime"
+		rt.config.VoiceModel.UseBackendAgent = cli
 		tools := NewToolSpecs(rt.AvailableTools())
 		for _, name := range []string{toolBridgeCalendar, toolBridgeContacts, toolBridgeClipboard} {
 			if _, found := tools.Lookup(name); found == cli {

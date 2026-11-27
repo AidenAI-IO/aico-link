@@ -488,7 +488,7 @@ func TestStateHookGroundsUserTurnScreenshotWhenEnabled(t *testing.T) {
 			tools := &ToolSet{tools: map[string]langtools.Tool{"screenshot": screenshot}}
 			enabled := tc.enabled
 			// The runtime installs the live ui_grounding_enabled setting.
-			runtime := NewRuntimeWithDeps(Config{UIGroundingEnabled: &enabled}, nil, nil, tools, NewSkillIndex())
+			runtime := NewRuntimeWithDeps(Config{InputMode: "realtime", UIGroundingEnabled: &enabled}, nil, nil, tools, NewSkillIndex())
 			runtime.models = NewModelManager(ModelConfig{Provider: tc.provider, Model: "test-model"}, ProxyConfig{})
 			manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), nil)
 			if err != nil {

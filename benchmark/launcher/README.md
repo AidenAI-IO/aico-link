@@ -103,8 +103,8 @@ Launcher-started MobileGym environments enable an active simulated Aico App for
 each Agent route by default. The Agent state therefore reports
 `app_connected=true` and `app_fgs_enabled=false` by default. A task can
 explicitly enable the Android foreground service; iOS PiP is not simulated.
-ConAct and Skill-UTG are enabled by default for backend Device CLI runs,
-including MobileGym; set `AICO_CONACT_UTG=0` only when they should be disabled.
+ConAct and Skill-UTG are enabled for backend Device CLI runs in Launcher
+MobileGym environments.
 Standalone MobileGym benchmark environments still opt in to simulated App state
 per task.
 
