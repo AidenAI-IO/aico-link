@@ -18,6 +18,10 @@ description: 一条命令启动原生 Agent、设置页面以及 Android 或 iPh
 安装 Git、Go 1.26 或更高版本、Python 3.10 或更高版本，以及用于隔离手机桥接依赖的
 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)。准备好模型提供商和 API key。
 
+首次启动时，启动器会通过 `scripts/build-config-web.sh` 把 Config Web 资源构建到 `src/config_web/dist`，
+这一步需要 Docker 和 `rsync`。之后的启动会复用已构建的资源，只有使用 `--rebuild-web` 时才需要再次用到 Docker。
+Agent 本身仍然原生运行，而不是运行在 Docker 沙箱中。
+
 ```bash
 git clone https://github.com/AidenAI-IO/aico-link.git
 cd aico-link
