@@ -22,7 +22,7 @@ with `-s 20 --english-speed -10 -a 0`, using `-v English` for Latin-only chunks
 so numbers reach Flite's English normalization, and `-v Mandarin` for Chinese
 and mixed chunks. A synthesis worker prepares the next sentence during current
 playback, with at most two WAVs and one queued text sentence. See
-[Agent audio features](../../../docs/04-agent/audio-features.md#local-ekho-default)
+[Agent audio features](../../../docs/05-agent/audio-features.md#local-ekho-default)
 for language selection, numeric continuations, buffering and cancellation.
 English speed percentages are relative to SLT's natural rate and
 Ekho's common `-s` processing also applies; matching the old eSpeak percentage
@@ -59,7 +59,7 @@ The documentation directory contains the original `COPYING` and
 `COPYING-mandarin-yali` licenses, build provenance, the full upstream source
 archive, the Flite SLT patch, and the build helper/container inputs. Source
 and voice archives are downloaded during the build, not committed to this
-repository. See [Debian package installation](../../../docs/08-ota/debian-package.md)
+repository. See [Debian package installation](../../../docs/09-ota/debian-package.md)
 for the supported installation flow and a synthesis check.
 
 ## Device validation

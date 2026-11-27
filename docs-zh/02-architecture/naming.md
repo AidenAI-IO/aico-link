@@ -46,8 +46,8 @@ root 用户的持久化主目录仍为 `/userdata/userhome`。Agent 把用户配
 其内置的自我认知 Skill 使用 `aico`，受管理的 SD 卡数据位于卡上的 `aico` 目录下。
 备份导出使用 `aico-backup` 格式和 `AICOBKP1` 魔数。
 
-关于部署和更新，参见 [部署](../01-getting-started/deployment.md)、[OTA](../08-ota/README.md) 和
-[Debian 业务软件包](../08-ota/debian-package.md)。
+关于部署和更新，参见 [部署](../01-getting-started/deployment.md)、[OTA](../09-ota/README.md) 和
+[Debian 业务软件包](../09-ota/debian-package.md)。
 
 ## 现有的外部名称
 

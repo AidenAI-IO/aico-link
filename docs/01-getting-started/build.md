@@ -98,7 +98,7 @@ driver startup and `wpa_supplicant` run it through `ExecStartPre`.
 
 To build and stage only the business `.deb` (default `0.0.1-2`), run
 `scripts/debian-package/release.sh build` on Linux amd64. See
-[Debian business package](../08-ota/debian-package.md) for independent GitHub
+[Debian business package](../09-ota/debian-package.md) for independent GitHub
 Release publication and installation.
 
 ### Debian archive mirror

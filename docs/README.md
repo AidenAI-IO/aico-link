@@ -21,30 +21,30 @@ AI Agent that runs on it. The official website is [aico.link](https://aico.link)
 - Follow the [Newcomer Quickstart](01-getting-started/quickstart.md) for an Aico Link development board.
 - Review [Hardware & Wiring](01-getting-started/hardware.md) before powering a self-assembled device.
 - Set up the [Build Environment](01-getting-started/build.md), then [deploy to the device](01-getting-started/deployment.md).
-- Use [Troubleshooting](07-operations/troubleshooting.md) when a service or peripheral is not working as expected.
+- Use [Troubleshooting](08-operations/troubleshooting.md) when a service or peripheral is not working as expected.
 
 ## Core Reference
 
 - [Product Names and Technical Identifiers](02-architecture/naming.md): hardware and
   Agent names, preferred SDK identifiers, and stable technical interfaces.
 - [Architecture](02-architecture/overview.md): system boundaries, boot services, source layout, and runtime paths.
-- [Device Services](03-services/agent.md): Agent, configuration, terminal, frame capture, audio, BLE, and USB HID services.
-- [MCU Service](03-services/mcu-service.md): power handshake, wake long polling, hardware APIs and post-flash validation.
-- [Agent](04-agent/overview.md): runtime configuration, tools, skills, memory, voice, and phone integration.
-- [Agent Files Report](04-agent/user-files.md): inspect generated memory and
+- [Device Services](04-services/agent.md): Agent, configuration, terminal, frame capture, audio, BLE, and USB HID services.
+- [MCU Service](04-services/mcu-service.md): power handshake, wake long polling, hardware APIs and post-flash validation.
+- [Agent](05-agent/overview.md): runtime configuration, tools, skills, memory, voice, and phone integration.
+- [Agent Files Report](05-agent/user-files.md): inspect generated memory and
   Skills file reports and their cross-file references.
-- [Persistent Python Packages](04-agent/python-packages.md): shared pip environment, storage layout, and cleanup policy.
-- [SDK & Tools](05-sdk-and-tools/cpp-sdk.md): C++ SDK, examples, and image utilities.
-- [Protocols](06-protocols/uds-protocol.md): Unix domain socket and service protocol contracts.
+- [Persistent Python Packages](05-agent/python-packages.md): shared pip environment, storage layout, and cleanup policy.
+- [SDK & Tools](06-sdk-and-tools/cpp-sdk.md): C++ SDK, examples, and image utilities.
+- [Protocols](07-protocols/uds-protocol.md): Unix domain socket and service protocol contracts.
 - [Wi-Fi Regulatory Domain](02-architecture/wifi-regulatory-domain.md): country-code
   configuration, runtime application, and rollback behavior.
-- [Internet over USB](07-operations/usb-internet.md): Mac and Android Internet
+- [Internet over USB](08-operations/usb-internet.md): Mac and Android Internet
   sharing controlled by the default-off Config Web setting.
-- [User Data Backup and Restore](07-operations/backup-restore.md): supported
+- [User Data Backup and Restore](08-operations/backup-restore.md): supported
   backup components, compatibility rules, and transactional restore behavior.
-- [OTA](08-ota/README.md): signed releases, A/B updates, rollback, verification, and custom distribution.
+- [OTA](09-ota/README.md): signed releases, A/B updates, rollback, verification, and custom distribution.
 
 ## Developer Workflows
 
-- [Benchmark](09-benchmark/README.md): run and evaluate Agent tasks against device or simulated environments.
-- [SkillOpt](10-skillopt/README.md): improve Agent skills through rollout and held-out validation.
+- [Benchmark](10-benchmark/README.md): run and evaluate Agent tasks against device or simulated environments.
+- [SkillOpt](11-skillopt/README.md): improve Agent skills through rollout and held-out validation.

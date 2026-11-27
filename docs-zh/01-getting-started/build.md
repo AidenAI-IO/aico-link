@@ -86,7 +86,7 @@ rootfs 打包会保留 `overlay-debian/` 中的可执行权限。由 systemd 调
 
 如果只想构建并暂存业务 `.deb`（默认 `0.0.1-2`），请在 Linux amd64 上运行
 `scripts/debian-package/release.sh build`。关于独立的 GitHub Release 发布和安装，参见
-[Debian 业务软件包](../08-ota/debian-package.md)。
+[Debian 业务软件包](../09-ota/debian-package.md)。
 
 ### Debian 归档镜像源
 

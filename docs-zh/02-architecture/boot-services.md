@@ -282,7 +282,7 @@ Agent 在恢复期间允许失败；它的失败不会阻塞门户，也不会�
 持久化的 OTA 分区挂载在 `/userdata/ota/`，包含状态、下载内容、待定启动数据和健康标记。不可变的出厂仓库和分区基线
 单独保存在 `/userdata/debian/ota/config.json`。
 
-完整的状态机参见 [OTA 概览](../08-ota/README.md)。
+完整的状态机参见 [OTA 概览](../09-ota/README.md)。
 
 ## Config Web
 

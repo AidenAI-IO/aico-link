@@ -18,12 +18,12 @@ This page is the main path for anyone touching Aico Link hardware for the first 
 | --- | --- | --- |
 | 1 | Wire up per the hardware design (legacy self-assembled board only) | [Hardware & Wiring (legacy)](hardware.md) |
 | 2 | Flash the `update.img` firmware onto the Pico Zero | [Firmware Build & Flashing](firmware.md) |
-| 3 | Open the config page and connect to Wi-Fi | [Config Web](../04-agent/configuration.md#config-web-the-device-config-page) |
-| 4 | Configure keys such as model / tts / stt | [Agent Configuration](../04-agent/configuration.md) |
+| 3 | Open the config page and connect to Wi-Fi | [Config Web](../05-agent/configuration.md#config-web-the-device-config-page) |
+| 4 | Configure keys such as model / tts / stt | [Agent Configuration](../05-agent/configuration.md) |
 | 5 | Bring the board up and verify | [Testing & Verification](testing.md) |
 | 6 | Understand the architecture and modules | [Architecture Overview](../02-architecture/overview.md) |
-| 7 | Firmware build & OTA upgrade | [Firmware](firmware.md) / [OTA](../08-ota/README.md) |
-| 8 | Troubleshoot when something breaks | [Troubleshooting](../07-operations/troubleshooting.md) |
+| 7 | Firmware build & OTA upgrade | [Firmware](firmware.md) / [OTA](../09-ota/README.md) |
+| 8 | Troubleshoot when something breaks | [Troubleshooting](../08-operations/troubleshooting.md) |
 
 ## 1. Hardware & Wiring
 
@@ -84,7 +84,7 @@ On the page, configure Wi-Fi first:
 - Enter the SSID and password; on save it is written to
   `/userdata/debian/wifi/wpa_supplicant-wlan0.conf`.
 
-The config page also maintains Agent configuration and system environment variables. See [Config Web](../04-agent/configuration.md#config-web-the-device-config-page) for details.
+The config page also maintains Agent configuration and system environment variables. See [Config Web](../05-agent/configuration.md#config-web-the-device-config-page) for details.
 
 ## 4. Configure the Keys
 
@@ -107,7 +107,7 @@ The Agent HTTP server and Web UI always start. `input_mode` selects whether the 
 
 > Note the two distinct web pages: `http://192.168.42.1` (port 80) is the device config page; `http://<device-ip>:8080` is the Agent Web UI, available in both `text` and `stt` modes.
 
-Field meanings, minimal working config examples, and TTS/STT provider values are in [Agent Configuration](../04-agent/configuration.md).
+Field meanings, minimal working config examples, and TTS/STT provider values are in [Agent Configuration](../05-agent/configuration.md).
 
 ## 5. Bring the Board Up
 
@@ -140,12 +140,12 @@ Before developing, build an overall understanding first:
 
 Then dive into each module:
 
-- [Frame Service](../03-services/frame-service.md): HDMI frame capture service
-- [Audio Service](../03-services/audio-service.md): audio record/playback service
-- [USB HID & Device Control](../03-services/usb-hid.md)
-- [Go Agent Overview](../04-agent/overview.md): LLM runtime, tool calling, voice pipeline
-- [Agent Configuration](../04-agent/configuration.md): agent.toml reference and the Config Web config page
-- [Tools HTTP API](../04-agent/tools-http-api.md)
+- [Frame Service](../04-services/frame-service.md): HDMI frame capture service
+- [Audio Service](../04-services/audio-service.md): audio record/playback service
+- [USB HID & Device Control](../04-services/usb-hid.md)
+- [Go Agent Overview](../05-agent/overview.md): LLM runtime, tool calling, voice pipeline
+- [Agent Configuration](../05-agent/configuration.md): agent.toml reference and the Config Web config page
+- [Tools HTTP API](../05-agent/tools-http-api.md)
 
 Source layout is in [Source Tree](../02-architecture/source-tree.md); boot services and runtime layout are in [Boot Services & Runtime Layout](../02-architecture/boot-services.md).
 
@@ -155,13 +155,13 @@ After development, build the firmware and upgrade the device:
 
 - Native / cross-compile dev environment: [Build & Development Environment](build.md);
 - Full Debian firmware build (`./debian_build.sh`) and flashing: [Firmware Build & Flashing](firmware.md);
-- Over-the-air upgrade: [OTA Overview](../08-ota/README.md).
+- Over-the-air upgrade: [OTA Overview](../09-ota/README.md).
 
 ### OTA for a development build
 
 The **Aico Link Channel Release** workflow manually publishes `dev`, `staging`, or
 `prod`, selecting a business package or full OTA from the changes since that
-channel's previous release. See [Channel Releases](../08-ota/channel-release.md).
+channel's previous release. See [Channel Releases](../09-ota/channel-release.md).
 For a local build that was not published, use a test device with a matching
 channel, serve its artifacts from a development HTTP(S) endpoint, and point
 the device at its manifest explicitly:
@@ -176,8 +176,8 @@ ota update \
 ```
 
 The public key must match the key used by the local build. Use `--dry-run` first
-to verify downloads without switching slots. See [OTA for External Developers](../08-ota/ota-external-developers.md) for hosting details.
+to verify downloads without switching slots. See [OTA for External Developers](../09-ota/ota-external-developers.md) for hosting details.
 
 ## 8. Troubleshooting
 
-When you hit problems, start with [Troubleshooting](../07-operations/troubleshooting.md), which covers common connection, service, video/audio, Agent, and OTA issues. Log locations are in [Deployment](deployment.md).
+When you hit problems, start with [Troubleshooting](../08-operations/troubleshooting.md), which covers common connection, service, video/audio, Agent, and OTA issues. Log locations are in [Deployment](deployment.md).

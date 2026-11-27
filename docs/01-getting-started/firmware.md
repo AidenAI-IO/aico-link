@@ -21,7 +21,7 @@ channel's previous release. System changes produce signed firmware; business-onl
 changes produce a Debian package. The primary workflow checks `main` hourly at
 `:17` UTC and publishes changed content to `dev`; unchanged content is skipped.
 All three channels (`dev`, `staging`, `prod`) also support manual releases;
-see [Channel Releases](../08-ota/channel-release.md). Primary and backup entries
+see [Channel Releases](../09-ota/channel-release.md). Primary and backup entries
 default to verified publication, using `aico-hosted-01` and `aico-hosted-02`
 respectively for firmware builds. Fallback and standalone package builds upload
 artifacts only. You can also build the image locally with
@@ -92,7 +92,7 @@ building an image, verify the runtime with:
 ```
 
 Runtime-installed packages stay under `/userdata`; see
-[Persistent Python Packages](../04-agent/python-packages.md).
+[Persistent Python Packages](../05-agent/python-packages.md).
 
 ## System Suspend
 
@@ -281,4 +281,4 @@ The production image uses an A/B partition layout. Online OTA only writes to the
 
 The Debian `update.img` includes an initially empty `ota.img`. The generated factory configuration is stored in `userdata.img` at `/debian/ota/config.json` and appears at `/userdata/debian/ota/config.json` after boot. It contains `repo`, `channel`, `factory_version`, `factory_build_time`, and slot-aware `factory_partition_hashes`; `/userdata/ota` remains the dedicated workspace for state and downloads.
 
-For more OTA details, see [OTA Overview](../08-ota/README.md).
+For more OTA details, see [OTA Overview](../09-ota/README.md).

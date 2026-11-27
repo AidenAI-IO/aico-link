@@ -1,6 +1,6 @@
 """Dashboard measurement definitions, shared by score retrieval and charts.
 
-Units and populations follow docs/09-benchmark/metrics-reference.md. These
+Units and populations follow docs/10-benchmark/metrics-reference.md. These
 are run distributions over measured eligible attempts, not task-level traces.
 """
 
