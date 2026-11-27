@@ -64,6 +64,7 @@
   .bar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--accent); }
   .bar .prev, .prev-key { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); opacity: .6; }
   .prev-key { position: relative; display: inline-block; top: 2px; height: 12px; margin: 0 2px 0 6px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .tag { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 11px; font-weight: 400; }
   button.dataset.weekly-dataset { font-weight: 400; }
   @media (max-width: 700px) {
@@ -196,10 +197,10 @@
   <h1>Benchmark Dashboard</h1>
   <div class="sub" id="sub"></div>
   <div class="tabs" id="mode-tabs" role="tablist" aria-label="Report period">
-    <button id="mode-weekly" role="tab" type="button" data-mode="weekly" aria-selected="true" aria-controls="weekly-summary view-trends" tabindex="0">Last 7 days</button>
-    <button id="mode-latest" role="tab" type="button" data-mode="latest" aria-selected="false" aria-controls="weekly-summary view-latest" tabindex="-1">Latest run</button>
+    <button id="mode-weekly" role="tab" type="button" data-mode="weekly" aria-selected="true" aria-controls="view-trends" tabindex="0">Last 7 days</button>
+    <button id="mode-latest" role="tab" type="button" data-mode="latest" aria-selected="false" aria-controls="view-latest" tabindex="-1">Latest run</button>
   </div>
-  <section class="panel" id="weekly-summary" aria-labelledby="summary-title">
+  <section class="panel" id="weekly-summary" aria-labelledby="summary-title summary-scope">
     <div class="section-actions"><h2 id="summary-title">Summary</h2><span class="empty" id="summary-scope"></span></div>
     <div class="kpis">
       <div class="kpi kpi-primary">
@@ -300,7 +301,7 @@ const weekChange = d => {
 const rateBar = (rate, previous, label) => `<span class="rate"><span class="rate-value">${pct(rate)}</span><span class="bar">` +
   (known(rate) ? `<span class="fill" style="width:${(rate * 100).toFixed(1)}%"></span>` : "") +
   (known(previous) ? `<span class="prev" style="left:${(previous * 100).toFixed(1)}%" title="${esc(label)} ${pct(previous)}"></span>` : "") +
-  "</span></span>";
+  "</span>" + (known(previous) ? `<span class="sr-only">${esc(label)} ${pct(previous)}</span>` : "") + "</span>";
 const datasetIndexByName = name => datasets.findIndex(dataset => dataset.suite === name.replace(/ \[[^\]]*\]$/, ""));
 const workflowLink = summary => DATA.repo && summary.workflow_run_id
   ? safeLink(`https://github.com/${DATA.repo.split('/').map(encodeURIComponent).join('/')}/actions/runs/${encodeURIComponent(summary.workflow_run_id)}`,
@@ -380,13 +381,16 @@ function renderSummary(mode) {
     const name = index >= 0
       ? `<button type="button" class="dataset weekly-dataset" data-weekly-dataset="${index}" title="${mode === "latest" ? "View failure details" : "View dataset trends"}">${esc(suite.suite)}</button>`
       : esc(suite.suite);
-    const configTag = suite.config_changes?.length && known(suite.change)
-      ? `<span class="tag" title="${esc(suite.config_changes.map(c => `${c.field}: ${c.previous} → ${c.current}`).join("\n"))}">config</span>` : "";
+    const changes = suite.config_changes?.length && known(suite.change) ? suite.config_changes : [];
+    const changeText = changes.map(c => `${c.field}: ${c.previous} → ${c.current}`).join("; ");
+    const configTag = changes.length
+      ? `<span class="tag" title="${esc(changeText)}" aria-hidden="true">config</span><span class="sr-only">Configuration changed. ${esc(changeText)}</span>` : "";
     let detail = `${num(suite.passed)} / ${num(suite.eligible_tasks)} passed` + (mode === "weekly" ? ` · ${num(suite.suite_runs)} runs` : "");
     if (!known(suite.pass_at_1)) {
       detail = `No valid evaluation ${config.unit}`;
       if (suite.last_valid) detail += ` · last valid ${pct(suite.last_valid.pass_at_1)} (${when(suite.last_valid.timestamp)})`;
     }
+    if (changes.length) detail += ` · changed: ${changes.map(c => c.field).join(", ")}`;
     return `<div class="area-suite"><span class="area-name">${name}${suite.new ? '<span class="tag">new</span>' : ""}${configTag}<span class="area-sub">${esc(detail)}</span></span>
       <span class="area-cell rate-cell">${rateBar(suite.pass_at_1, suite.previous_pass_at_1, config.previous)}</span>
       <span class="area-cell n" data-label="${esc(config.change)}">${weekChange(suite.change)}</span>
