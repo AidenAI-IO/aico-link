@@ -231,6 +231,8 @@ func TestSkillUTGReflectionForkDoesNotAppendOrLearnHiddenFrames(t *testing.T) {
 	if want := filepath.Join(rt.config.ConfigDir, "memory", "skill-utg", "android.json"); c.path != want {
 		t.Fatalf("bridge run graph path = %q, want %q", c.path, want)
 	}
+	// A Bridge operation in the same turn must not prevent learning from later UI evidence.
+	c.observe(ToolResult{deviceCalls: []deviceCLIToolEvidence{{Tool: toolBridgeClipboard}}})
 	step := utgStep{After: utgFingerprint{Hash: 0xffff}, Kind: "tap", OK: true}
 	c.steps = []utgStep{step, step}
 	attachment := messages.Attachment{Source: messages.AttachmentSourceScreenshotObservation, MIMEType: "image/jpeg", FilePath: "screen.jpg"}

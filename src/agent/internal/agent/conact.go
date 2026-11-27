@@ -36,19 +36,18 @@ const (
 // One run owns the anchor, budget, and transient evidence. Only the compact
 // graph survives the run. No raw frame, shell argument or tool output is saved there.
 type conactRun struct {
-	runtime           *Runtime
-	anchor            int
-	revision          string
-	hasAction         bool
-	free              int
-	graph             skillUTG
-	path              string
-	steps             []utgStep
-	last              utgFingerprint
-	hasLast           bool
-	secretTerms       map[string]struct{}
-	privateDeviceData bool
-	evidenceTag       string
+	runtime     *Runtime
+	anchor      int
+	revision    string
+	hasAction   bool
+	free        int
+	graph       skillUTG
+	path        string
+	steps       []utgStep
+	last        utgFingerprint
+	hasLast     bool
+	secretTerms map[string]struct{}
+	evidenceTag string
 }
 
 func (cfg Config) supportsConact() bool {
@@ -349,9 +348,6 @@ func isConactTool(name string) bool {
 }
 
 func (c *conactRun) observe(result ToolResult) {
-	if result.containsPrivateDeviceData() {
-		c.privateDeviceData = true
-	}
 	if len(result.deviceCalls) == 0 {
 		c.hasLast = false // An arbitrary shell command may have changed the screen.
 		return
@@ -393,7 +389,7 @@ func (c *conactRun) observe(result ToolResult) {
 	} else {
 		c.hasLast = false
 	}
-	if len(actions) == 1 && !result.containsPrivateDeviceData() && had && c.hasLast && len(c.steps) < conactLedgerLimit {
+	if len(actions) == 1 && had && c.hasLast && len(c.steps) < conactLedgerLimit {
 		step := actions[0]
 		step.Before, step.After = before, c.last
 		c.steps = append(c.steps, step)
@@ -404,7 +400,7 @@ func (c *conactRun) observe(result ToolResult) {
 // Skip overlapping reflections so consecutive turns cannot queue model calls.
 func (c *conactRun) startReflection(ctx context.Context, manager *contextmanager.ContextManager, opts []llms.CallOption) {
 	rt := c.runtime
-	if ctx.Err() != nil || c.path == "" || c.privateDeviceData || len(c.steps) == 0 || rt.models == nil ||
+	if ctx.Err() != nil || c.path == "" || len(c.steps) == 0 || rt.models == nil ||
 		!rt.utgReflectionRunning.CompareAndSwap(false, true) {
 		return
 	}
@@ -440,8 +436,6 @@ func (c *conactRun) consolidate(ctx context.Context, model llms.Model, transcrip
 	switch {
 	case c.path == "":
 		reason = "graph_unavailable"
-	case c.privateDeviceData:
-		reason = "private_device_data"
 	case len(c.steps) == 0:
 		reason = "no_ledger_steps"
 	case ctx.Err() != nil:
