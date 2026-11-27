@@ -106,8 +106,10 @@ closing their dedicated request connection. Active waits are bounded to 32.
 Waiting does not occupy the UART request slot. Daemon shutdown cancels waits.
 
 Wake events carry `type: "wakeup"`, decimal-string `id`, `received_at`,
-`uart_seq`, `source_code` and `source`. Sources 1–6 are `external_power`,
-`power_switch`, `touch_key`, `rtc_timer`, `other`, `asr`. Unknown codes retain
+`uart_seq`, `source_code` and `source`. Sources 1–7 are `external_power`,
+`power_switch`, `touch_key`, `rtc_timer`, `other`, `asr`, `external_input`.
+Source 7 is the EXT_WAKE_IN pin of the SCH V2.19 expansion connector and no
+application acts on it. Unknown codes retain
 their numeric value with `source: "unknown"`; applications must not select
 a known action for them. Invalid payload lengths/reserved bytes are rejected.
 The separate `rk628_plugin_det_changed` event includes inserted/raw-level data.
@@ -269,7 +271,8 @@ journalctl -u aico-mcu-event.service -f
 ```
 
 Stop the service before using the MCU repository's direct serial peer.
-`RV_HOLD` remains unused. The retained service name lets existing package
+`RV_HOLD` remains unused; SCH V2.19 no longer wires it (see
+[SCH V2.19 adaptation](../03-hardware/sch-v2-19-adaptation.md)). The retained service name lets existing package
 lifecycle handling stop/start the replacement without a competing logger.
 
 ## After flashing: executable checks

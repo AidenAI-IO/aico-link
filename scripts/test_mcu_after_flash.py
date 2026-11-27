@@ -211,7 +211,7 @@ def arguments(argv=None):
     parser.add_argument("--require-led", action="store_true")
     parser.add_argument("--exercise-led", action="store_true", help="Temporarily override white LED and verify lease expiry")
     parser.add_argument("--exercise-timer", action="store_true", help="Arm an unused two-second timer and observe WAKEUP")
-    parser.add_argument("--expect-source", choices=("touch_key", "asr", "rtc_timer", "external_power", "power_switch", "other"))
+    parser.add_argument("--expect-source", choices=("touch_key", "asr", "rtc_timer", "external_power", "power_switch", "other", "external_input"))
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--power-cycle", action="store_true", help="Host-side coordinated software-shutdown/timer-wake scenario; keep the switch ON")
     parser.add_argument("--allow-power-cycle", action="store_true", help="Acknowledge the power-removal scenario")

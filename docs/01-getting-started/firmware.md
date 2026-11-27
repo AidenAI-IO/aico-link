@@ -158,10 +158,14 @@ to fail; the command does not detach drivers to bypass that error.
 UART5 remains a wake source for the MCU link, so periodic MCU traffic can wake
 `s2idle` immediately. The MCU suspends periodic probes after granting a suspend
 request. Deep resume requires a suitable PMU-bank GPIO wake source and its kernel
-configuration; UART5 is not a deep-sleep wake path. The current board schematic
-does not connect an MCU output to a PMU-bank RV wake pin, so `deep-sleep`
-returns an error without changing the power state. A future board revision
-needs a verified MCU wake output and kernel wake IRQ before enabling deep.
+configuration; UART5 is not a deep-sleep wake path. SCH v1 does not connect
+an MCU output to a PMU-bank RV wake pin. SCH V2.19 connects MCU PA12 to
+GPIO0_A4 as the deep-sleep wake line: the MCU pulses it with every wake, and
+the production DTS installs it as the wake-capable `mcu-wake` key (see
+[SCH V2.19 adaptation](../03-hardware/sch-v2-19-adaptation.md)).
+`deep-sleep` still returns an error without changing the power state on both
+revisions: the wake line has not been verified on a V2.19 board, and the
+remaining gaps are listed on that page.
 The temporary
 J2-13/GPIO0_A6 wake key used in hardware testing is not installed by the
 production DTS. Shell and network access pause while suspended.

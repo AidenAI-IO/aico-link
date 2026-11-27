@@ -124,8 +124,10 @@ cat /sys/power/mem_sleep
 
 UART5 仍是 MCU 链路的唤醒源，因此周期性的 MCU 通信可能会立即唤醒 `s2idle`。MCU 在批准挂起请求后会暂停周期性探测。
 深度睡眠恢复需要合适的 PMU bank GPIO 唤醒源及其内核配置；UART5 不是深度睡眠的唤醒路径。
-当前开发板原理图没有把 MCU 输出连接到 PMU bank 上的 RV 唤醒引脚，因此 `deep-sleep` 会返回错误，
-而不改变电源状态。未来的开发板版本需要经过验证的 MCU 唤醒输出和内核唤醒 IRQ，才能启用 deep。
+SCH v1 没有把 MCU 输出连接到 PMU bank 上的 RV 唤醒引脚。SCH V2.19 把 MCU PA12 连接到 GPIO0_A4，作为深度睡眠唤醒线：
+MCU 每次唤醒都会在这条线上输出脉冲，生产 DTS 将其安装为可唤醒的 `mcu-wake` 按键
+（见 [SCH V2.19 适配](../03-hardware/sch-v2-19-adaptation.md)）。
+两个版本上 `deep-sleep` 仍会返回错误而不改变电源状态：唤醒线尚未在 V2.19 开发板上验证，其余缺口列在该页面中。
 硬件测试中使用的临时
 J2-13/GPIO0_A6 唤醒按键不会由生产 DTS 安装。挂起期间 shell 和网络访问会暂停。
 

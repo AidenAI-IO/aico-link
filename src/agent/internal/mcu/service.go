@@ -241,8 +241,10 @@ func (s *Service) HandleEvent(f Frame) {
 		e.Type = "wakeup"
 		e.SourceCode = p[0]
 		e.Source = "unknown"
-		if p[0] >= 1 && p[0] <= 6 {
-			e.Source = []string{"external_power", "power_switch", "touch_key", "rtc_timer", "other", "asr"}[p[0]-1]
+		// Code 7 is EXT_WAKE_IN on the SCH V2.19 expansion connector.
+		sources := []string{"external_power", "power_switch", "touch_key", "rtc_timer", "other", "asr", "external_input"}
+		if p[0] >= 1 && int(p[0]) <= len(sources) {
+			e.Source = sources[p[0]-1]
 		}
 	} else {
 		e.Type = "rk628_plugin_det_changed"

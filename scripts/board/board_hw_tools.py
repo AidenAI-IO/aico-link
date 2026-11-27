@@ -40,7 +40,8 @@ FULL_SCALE = 32768.0
 DEFAULT_RATE = 16000
 MCU_SOCKET = "/run/mcu_service/mcu_service.sock"
 BLE_SOCKET = "/run/ble_service/ble_service.sock"
-WAKE_SOURCES = ("external_power", "power_switch", "touch_key", "rtc_timer", "other", "asr")
+WAKE_SOURCES = ("external_power", "power_switch", "touch_key", "rtc_timer", "other", "asr",
+                "external_input")
 
 
 class Report:

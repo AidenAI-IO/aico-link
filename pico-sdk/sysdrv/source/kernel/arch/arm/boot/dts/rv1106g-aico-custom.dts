@@ -7,6 +7,16 @@
  * hardware (GD32L235 MCU + MP2720 charger + BQ27220 fuel gauge,
  * RK628F/H HDMI-to-CSI bridge on I2C4, SDMMC0 TF card, SKI.WB800D80S.1
  * (AIC8800D80) WiFi/BT, AW8010 amplifier and ASRPro voice module).
+ *
+ * The same tree serves SCH V2.19 (AIDEN_SCH_V2_19: SGM41574 charger, GX8002
+ * voice chip, J2 expansion connector). Every RV1106 pin the two revisions
+ * use differently is unconnected on the other one:
+ *   pin 87 GPIO1_D1     v1 RV_HOLD            V2.19 unconnected
+ *   pin 63 GPIO0_A4     v1 unconnected        V2.19 deep-sleep wake from MCU PA12
+ *   pins 64/65 GPIO0_A5/A6  v1 header UART1 RTS/CTS  V2.19 I2C1 on J2
+ *   pins 77/83/84 GPIO1_B0/C6/C7  v1 unconnected     V2.19 GPIOs on J2
+ * The model string stays "Aico Link SCH v1": userspace and the image audit
+ * use it as the board family name.
  */
 
 /dts-v1/;
@@ -89,6 +99,7 @@
 	 * SCH v1 p4: SY8892, R82=56k, R84=100k, R85=24k,
 	 * R86=150k, R87=10k; 0.6V feedback and 3.3V PWM.
 	 * Vout = 1.149933V - 0.104869 * Vpwm (nominal).
+	 * SCH V2.19 fits a JW5292 (U36) with the same resistor network.
 	 */
 	vdd_arm: vdd-arm {
 		compatible = "pwm-regulator";
@@ -149,7 +160,8 @@
 	 * RV_HOLD keeps VCC5V0_SYS enabled: the MCU forces the rail up at
 	 * power-on and cuts it again unless the SoC takes over the signal
 	 * within its supervision window.  The kernel drives GPIO1_D1 high
-	 * through the gpio-leds default state.
+	 * through the gpio-leds default state.  SCH V2.19 leaves pin 87
+	 * unconnected, so the output has no effect there.
 	 */
 	mcu_control {
 		compatible = "gpio-leds";
@@ -170,12 +182,29 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 		autorepeat;
+		pinctrl-names = "default";
+		pinctrl-0 = <&mcu_wake_pin>;
 
 		recovery {
 			label = "recovery";
 			linux,code = <KEY_VENDOR>;
 			gpios = <&gpio4 RK_PC0 GPIO_ACTIVE_LOW>;
 			debounce-interval = <100>;
+		};
+
+		/*
+		 * SCH V2.19: MCU PA12 -> GPIO0_A4 (pin 63, R205 pull-down),
+		 * the deep-sleep wake line on the PMU GPIO bank.  The MCU
+		 * raises it for 100 ms with every WAKEUP event and every
+		 * shutdown request, asleep or not.  The pin is unconnected on
+		 * SCH v1; the internal pull-down holds it low.
+		 */
+		mcu_wake: mcu-wake {
+			label = "mcu-wake";
+			linux,code = <KEY_WAKEUP>;
+			gpios = <&gpio0 RK_PA4 GPIO_ACTIVE_HIGH>;
+			debounce-interval = <5>;
+			wakeup-source;
 		};
 	};
 
@@ -314,7 +343,7 @@
 	supports-sd;
 	disable-wp;
 	vmmc-supply = <&vcc3v3_sd>; /* TF card supply */
-	vqmmc-supply = <&vcc_3v3>; /* VCCIO4 is fixed at 3.3 V through R185. */
+	vqmmc-supply = <&vcc_3v3>; /* VCCIO4 is fixed at 3.3 V (v1: through R185). */
 	no-sdio;
 	no-mmc;
 	post-power-on-delay-ms = <20>;
@@ -338,9 +367,18 @@
 	status = "okay";
 };
 
-/* Charger/fuel gauge are on the MCU bus. I2C1 M1 conflicts with BT UART0. */
+/*
+ * Charger/fuel gauge are on the MCU bus, not here.  SCH V2.19 routes I2C1 M0
+ * (GPIO0_A5/A6, pins 64/65, 4.7k pull-ups R226/R227 to VCC_3V3) to expansion
+ * connector J2-13/14 while J2 MODE is low; nothing on the board uses the bus.
+ * SCH v1 has the two pins on its header without pull-ups.  I2C1 M1 conflicts
+ * with BT UART0 and must not be selected.
+ */
 &i2c1 {
-	status = "disabled";
+	status = "okay";
+	clock-frequency = <100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1m0_xfer>;
 };
 
 /*************************** CSI *********************************/
@@ -417,7 +455,7 @@
 	};
 };
 
-/* RV_I2C3_{SCL,SDA}_1V8 goes to the header, not RK628. */
+/* v1: RV_I2C3_{SCL,SDA}_1V8 goes to the header, not RK628. V2.19: unconnected. */
 &i2c3 {
 	status = "disabled";
 };
@@ -519,12 +557,12 @@
 	status = "disabled";
 };
 
-/* UART3 M1 RX is RV_HOLD, not the MCU serial link. */
+/* UART3 M1 RX is RV_HOLD on v1 (unconnected on V2.19), not the MCU serial link. */
 &uart3 {
 	status = "disabled";
 };
 
-/* ASRPro: GPIO1_C4/C5, pins 91/90. */
+/* Voice chip UART (v1 ASRPro, V2.19 GX8002 UART0): GPIO1_C4/C5, pins 91/90. */
 &uart4 {
 	status = "okay";
 	pinctrl-names = "default";
@@ -557,6 +595,11 @@
 	wifi {
 		wifi_enable: wifi-enable {
 			rockchip,pins = <3 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+	mcu {
+		mcu_wake_pin: mcu-wake-pin {
+			rockchip,pins = <0 RK_PA4 RK_FUNC_GPIO &pcfg_pull_down>;
 		};
 	};
 	rk628 {

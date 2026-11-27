@@ -81,7 +81,8 @@ GET /api/mcu/events?since=0&limit=50&wait_ms=25000
 同时进行的等待最多 32 个。等待不会占用 UART 请求槽位。守护进程关闭时会取消所有等待。
 
 唤醒事件包含 `type: "wakeup"`、十进制字符串 `id`、`received_at`、`uart_seq`、`source_code` 和 `source`。
-来源 1–6 分别为 `external_power`、`power_switch`、`touch_key`、`rtc_timer`、`other`、`asr`。
+来源 1–7 分别为 `external_power`、`power_switch`、`touch_key`、`rtc_timer`、`other`、`asr`、`external_input`。
+来源 7 是 SCH V2.19 扩展接口的 EXT_WAKE_IN 引脚，目前没有应用对其作出响应。
 未知代码保留其数值，并带有 `source: "unknown"`；应用不得为其选择任何已知操作。无效的负载长度/保留字节会被拒绝。
 单独的 `rk628_plugin_det_changed` 事件包含插入状态/原始电平数据。
 
@@ -186,7 +187,8 @@ systemctl status aico-mcu-event.service
 journalctl -u aico-mcu-event.service -f
 ```
 
-在使用 MCU 仓库中的直连串口对端之前，请先停止该服务。`RV_HOLD` 仍未使用。保留原服务名称，
+在使用 MCU 仓库中的直连串口对端之前，请先停止该服务。`RV_HOLD` 仍未使用；SCH V2.19 已不再连接该信号（见
+[SCH V2.19 适配](../03-hardware/sch-v2-19-adaptation.md)）。保留原服务名称，
 可以让现有的软件包生命周期处理逻辑启停替换后的服务，而不会出现与之竞争的日志程序。
 
 ## 烧录后：可执行的检查

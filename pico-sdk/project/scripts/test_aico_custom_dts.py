@@ -84,7 +84,12 @@ class AicoCustomBoardTest(unittest.TestCase):
         # I2C1 M1 binding also steals Bluetooth UART0 RX/TX.
         for absent in ("charger@4b", "mps,mp2720", "fuel-gauge@55", "ti,bq27220"):
             self.assertNotIn(absent, self.dts)
-        self.assertIn('status = "disabled";', self.node("&i2c1"))
+        # SCH V2.19 brings I2C1 out on the expansion connector. Only the M0
+        # pins (GPIO0_A5/A6) are free; M1 would take them from Bluetooth.
+        expansion = self.node("&i2c1")
+        self.assertIn("pinctrl-0 = <&i2c1m0_xfer>;", expansion)
+        self.assertNotIn("i2c1m1_xfer", expansion)
+        self.assertNotIn("@", expansion)  # No device is described on it.
         self.assertIn("vcc3v3_sd: vcc3v3-sd-regulator", self.dts)
         self.assertIn("v_wifi_vcc: v-wifi-vcc", self.dts)
 
@@ -273,6 +278,16 @@ class AicoCustomBoardTest(unittest.TestCase):
         # UART3 M1 RX shares GPIO1_D1 with RV_HOLD.
         self.assertIn('status = "disabled";', self.node("&uart3"))
         self.assertNotIn("uart3m1_xfer", self.dts)
+        # SCH V2.19 deep-sleep wake line from the MCU: a wake-capable key on
+        # the PMU bank, held low by a pull-down where the pin is unconnected (v1).
+        wake = self.node("mcu_wake: mcu-wake")
+        self.assertIn("gpios = <&gpio0 RK_PA4 GPIO_ACTIVE_HIGH>;", wake)
+        self.assertIn("wakeup-source;", wake)
+        self.assertIn(
+            "<0 RK_PA4 RK_FUNC_GPIO &pcfg_pull_down>",
+            self.node("mcu_wake_pin: mcu-wake-pin"),
+        )
+        self.assertIn("pinctrl-0 = <&mcu_wake_pin>;", self.node("gpio-keys"))
 
     def test_recovery_key_keeps_its_gpio(self):
         recovery = self.node("recovery")
