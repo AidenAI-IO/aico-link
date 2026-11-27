@@ -69,7 +69,8 @@ class RepositoryTests(unittest.TestCase):
         else:
             os.environ["GNUPGHOME"] = self.old_gpg
 
-    def release(self, version, channel="dev", kind="business", contract=None, runtime_config=0):
+    def release(self, version, channel="dev", kind="business", contract=None, runtime_config=0,
+                platform_id="aico-rv1106"):
         previous = next((r for r in reversed(self.history) if r["channel"] == channel), None)
         commit = hashlib.sha1(version.encode()).hexdigest()
         tag = f"{channel}-v{version}"
@@ -83,7 +84,7 @@ class RepositoryTests(unittest.TestCase):
             "fingerprints": {"business": hashlib.sha256(version.encode()).hexdigest(),
                              "system": hashlib.sha256(str(platform["contract"]).encode()).hexdigest()},
         }
-        declaration = {"format": 1, "product": "aico", "platform_id": "luckfox-rv1106", "architecture": "armhf",
+        declaration = {"format": 1, "product": "aico", "platform_id": platform_id, "architecture": "armhf",
                        "os_release": "debian-13", "libc": "glibc", "channel": channel,
                        "platform_contract": platform["contract"], "base_release": platform["base_release"],
                        "system_fingerprint": record["fingerprints"]["system"]}
@@ -195,6 +196,12 @@ class RepositoryTests(unittest.TestCase):
             self.assertNotIn("0.0.6", policy)
             downloaded = self.apt("apt-get", "--print-uris", "--download-only", "--assume-yes", "install", "aico-business").stdout
             self.assertIn("pool/dev-c1/dev-v0.0.3/aico-business_0.0.3-1_armhf.deb", downloaded)
+
+    def test_legacy_platform_id_remains_publishable_and_configurable(self):
+        device = self.release("0.0.2", kind="ota", contract=1, platform_id="luckfox-rv1106")
+        self.release("0.0.3", platform_id="luckfox-rv1106")
+        self.build()
+        self.assertEqual(apt_source.suite_for(device), "dev-c1")
 
     def test_hybrid_check_refreshes_only_business_source_and_targets_business(self):
         device = self.release("0.0.2", kind="ota", contract=1)
@@ -327,12 +334,20 @@ class RepositoryTests(unittest.TestCase):
 
 class ConfigurationTests(unittest.TestCase):
     def test_contract_is_a_positive_json_integer(self):
-        platform = {"product": "aico", "platform_id": "luckfox-rv1106", "architecture": "armhf",
+        platform = {"product": "aico", "platform_id": "aico-rv1106", "architecture": "armhf",
                     "channel": "dev", "base_release": "dev-v0.0.2", "system_fingerprint": "a" * 64}
         self.assertEqual(apt_source.suite_for({**platform, "platform_contract": 1}), "dev-c1")
         for value in (0, -1, True, False, 1.0, "1", "1.0.0", None):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "positive integer"):
                 apt_source.suite_for({**platform, "platform_contract": value})
+
+    def test_platform_id_transition_accepts_only_current_and_legacy_ids(self):
+        platform = {"product": "aico", "architecture": "armhf", "channel": "dev",
+                    "platform_contract": 1, "base_release": "dev-v0.0.2", "system_fingerprint": "a" * 64}
+        for platform_id in ("aico-rv1106", "luckfox-rv1106"):
+            self.assertEqual(apt_source.suite_for({**platform, "platform_id": platform_id}), "dev-c1")
+        with self.assertRaisesRegex(ValueError, "Unexpected device platform"):
+            apt_source.suite_for({**platform, "platform_id": "rv1106"})
 
     def test_unmanaged_or_invalid_platform_does_not_write_sources(self):
         for platform in ({}, {"channel": "unknown"}, {"channel": "dev", "platform_contract": 0}):

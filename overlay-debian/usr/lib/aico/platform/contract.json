@@ -1,7 +1,7 @@
 {
   "format": 1,
   "product": "aico",
-  "platform_id": "luckfox-rv1106",
+  "platform_id": "aico-rv1106",
   "platform_contract": 1,
   "architecture": "armhf",
   "os_release": "debian-13",

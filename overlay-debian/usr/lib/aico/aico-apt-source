@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 DEFAULT_URL = "https://aidenai-io.github.io/aico-link/apt"
 KEY_PATH = "usr/share/keyrings/aico-archive-keyring.asc"
+SUPPORTED_PLATFORM_IDS = {"aico-rv1106", "luckfox-rv1106"}
 
 
 def suite_for(platform):
@@ -20,8 +21,8 @@ def suite_for(platform):
         raise ValueError("The device must have a managed dev/staging/prod OTA base")
     if type(contract) is not int or contract < 1:
         raise ValueError("Platform contract must be a positive integer")
-    if (platform.get("product"), platform.get("platform_id"), platform.get("architecture")) != (
-            "aico", "luckfox-rv1106", "armhf"):
+    if (platform.get("product"), platform.get("architecture")) != ("aico", "armhf") \
+            or platform.get("platform_id") not in SUPPORTED_PLATFORM_IDS:
         raise ValueError("Unexpected device platform")
     if not re.fullmatch(channel + r"-v[0-9]+\.[0-9]+\.[0-9]+", platform.get("base_release", "")):
         raise ValueError("Missing or invalid OTA base")
