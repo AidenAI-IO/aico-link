@@ -1041,6 +1041,7 @@ func TestRealtimeSessionAdmissionGatesBackgroundResponses(t *testing.T) {
 		{"speech", func(s *realtimeSessionAdmissionState) { s.localSpeechActive = true }},
 		{"notification", func(s *realtimeSessionAdmissionState) { s.notificationActive = true }},
 		{"notification drain", func(s *realtimeSessionAdmissionState) { s.notificationDraining = true }},
+		{"task result drain", func(s *realtimeSessionAdmissionState) { s.taskDraining = true }},
 		{"chat", func(s *realtimeSessionAdmissionState) { s.activeChat = true }},
 		{"standby", func(s *realtimeSessionAdmissionState) { s.standbyPending = true }},
 		{"chat bridge", func(s *realtimeSessionAdmissionState) { s.bridgePending = true }},
@@ -1054,6 +1055,13 @@ func TestRealtimeSessionAdmissionGatesBackgroundResponses(t *testing.T) {
 				t.Fatalf("background response admitted with %s active", test.name)
 			}
 		})
+	}
+
+	// A chat waits for a task result to finish playing instead of being refused.
+	draining := ready
+	draining.taskDraining = true
+	if got := draining.admission(); got != realtimeChatQueueAfterResponse {
+		t.Fatalf("admission() during task result playback = %v, want queued", got)
 	}
 
 	withoutTasks := ready

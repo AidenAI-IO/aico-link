@@ -43,7 +43,12 @@ const (
 	// waits for the user's words to be transcribed before it is finished.
 	realtimeInterruptedWordsWait = 15 * time.Second
 	// realtimeInterruptedDecisionTimeout bounds the decision on those words.
-	realtimeInterruptedDecisionTimeout = 6 * time.Second
+	// It leaves room for the main model's own 8-second bound.
+	realtimeInterruptedDecisionTimeout = 10 * time.Second
+	// realtimeTaskUpdateTellings bounds how often an update is told when its
+	// response keeps failing or not finishing playback; after that it counts
+	// as delivered, so a fault never makes it repeat for the whole session.
+	realtimeTaskUpdateTellings = 3
 	// realtimeContextReplayGap ends verbatim replay: a conversation resumed
 	// after it gets the earlier turns only as one transcript marked old.
 	// Replayed turns steer the model more than its instructions do, so an old
@@ -315,17 +320,23 @@ type realtimeSessionAdmissionState struct {
 	localSpeechActive    bool
 	notificationActive   bool
 	notificationDraining bool
-	standbyPending       bool
-	bridgePending        bool
-	supportsText         bool
-	runtimeAvailable     bool
-	taskUpdatesReady     bool
-	pendingTaskCount     int
+	// taskDraining is set while a task result that has been generated is
+	// still playing. A chat waits for it instead of cutting it off.
+	taskDraining     bool
+	standbyPending   bool
+	bridgePending    bool
+	supportsText     bool
+	runtimeAvailable bool
+	taskUpdatesReady bool
+	pendingTaskCount int
 }
 
 func (s realtimeSessionAdmissionState) admission() realtimeChatAdmission {
 	if s.activeChat || s.queuedChat || s.notificationActive || s.notificationDraining {
 		return realtimeChatRejectBusy
+	}
+	if s.taskDraining {
+		return realtimeChatQueueAfterResponse
 	}
 	if s.localSpeechActive && !s.responseActive && !s.turnBlocked {
 		return realtimeChatQueueAfterResponse
@@ -346,7 +357,7 @@ func (s realtimeSessionAdmissionState) admission() realtimeChatAdmission {
 
 func (s realtimeSessionAdmissionState) canInjectBackgroundResponse() bool {
 	return s.supportsText && !s.turnBlocked && !s.localSpeechActive &&
-		!s.notificationActive && !s.notificationDraining && !s.activeChat &&
+		!s.notificationActive && !s.notificationDraining && !s.taskDraining && !s.activeChat &&
 		!s.standbyPending && !s.bridgePending
 }
 
@@ -2024,6 +2035,19 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	// spokenTaskUpdates has played any speech. Speech before that cuts off
 	// nothing the user heard.
 	spokenTaskUpdatesAudible := false
+	// spokenTaskUpdatesSilenced is set when any speech of that response was
+	// muted, even if the speaker is unmuted before playback ends.
+	spokenTaskUpdatesSilenced := false
+	// spokenTaskUpdatesAudioBytes is the speech of that response, so the wait
+	// for playback covers all of it, however long it is.
+	var spokenTaskUpdatesAudioBytes int64
+	// failedTellings counts tellings of each update that failed for a reason
+	// other than the user speaking or a mute.
+	failedTellings := make(map[string]int)
+	// interruptions counts how often each result was spoken over. Unclear
+	// words bring a result back once, as a question; spoken over again with
+	// unclear words, it is dropped.
+	interruptions := make(map[string]int)
 	// taskDrainDone reports when the speech of a task-update response has
 	// finished playing. The provider ends a response once it has generated the
 	// audio, well before the user has heard it.
@@ -2041,7 +2065,8 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			turnBlocked:          !turnState.canInjectResponse(),
 			localSpeechActive:    realtimeAdmissionSpeechActive(admissionTurnEndpoint),
 			notificationActive:   activeNotificationToken != "",
-			notificationDraining: notificationDrainDone != nil || taskDrainDone != nil,
+			notificationDraining: notificationDrainDone != nil,
+			taskDraining:         taskDrainDone != nil,
 			standbyPending:       sleep.pending(),
 			bridgePending:        chatBridgeHasPending(chatBridge),
 			supportsText:         supportsText,
@@ -2127,23 +2152,54 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		}
 		taskDrainDone = nil
 	}
+	resetSpokenTaskUpdates := func() {
+		spokenTaskUpdates = nil
+		spokenTaskUpdatesAudible = false
+		spokenTaskUpdatesSilenced = false
+		spokenTaskUpdatesAudioBytes = 0
+	}
 	// requeueSpokenTaskUpdates returns updates that did not play in full for
-	// a reason other than the user speaking, such as a mute or a failed
-	// response, so a later response tells them again.
-	requeueSpokenTaskUpdates := func(reason error) {
+	// a reason other than the user speaking over them, so a later response
+	// tells them again.
+	requeueSpokenTaskUpdates := func(reason error, why realtimeRequeue) {
 		stopTaskDrain()
 		if len(spokenTaskUpdates) == 0 {
 			return
 		}
-		logging.Infof("agent", "realtime", "Task update not heard in full, returned to the queue: tasks=%d reason=%v", len(spokenTaskUpdates), reason)
+		var requeued, givenUp []agenttask.Task
 		for _, task := range spokenTaskUpdates {
-			unheardTaskUpdates[task.ID] = realtimeRetell
+			if why == realtimeRequeueFailed {
+				failedTellings[task.ID]++
+				if failedTellings[task.ID] >= realtimeTaskUpdateTellings {
+					givenUp = append(givenUp, task)
+					continue
+				}
+			}
+			// Nothing of an unplayed update was heard, so it is told as new.
+			if why != realtimeRequeueUnplayed {
+				unheardTaskUpdates[task.ID] = realtimeRetell
+			}
+			requeued = append(requeued, task)
 		}
+		resetSpokenTaskUpdates()
+		if len(givenUp) > 0 {
+			logging.Warnf("agent", "realtime", "Task update told %d times without playing out, counted as delivered: tasks=%d reason=%v", realtimeTaskUpdateTellings, len(givenUp), reason)
+			for _, task := range givenUp {
+				delete(unheardTaskUpdates, task.ID)
+				delete(failedTellings, task.ID)
+				delete(interruptions, task.ID)
+			}
+			if tasks != nil {
+				tasks.CompleteTaskUpdateDelivery(givenUp)
+			}
+		}
+		if len(requeued) == 0 {
+			return
+		}
+		logging.Infof("agent", "realtime", "Task update not heard in full, returned to the queue: tasks=%d reason=%v", len(requeued), reason)
 		if tasks != nil {
-			restoreRealtimeTaskUpdates(tasks, spokenTaskUpdates)
+			restoreRealtimeTaskUpdates(tasks, requeued)
 		}
-		spokenTaskUpdates = nil
-		spokenTaskUpdatesAudible = false
 	}
 	// interruptedTaskUpdates are results the user spoke over. Whether to
 	// finish one is decided from what the user said: the decision model
@@ -2156,11 +2212,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	interruptedWordsDue := false
 	var interruptedWordsTimer *time.Timer
 	var interruptedWordsTimeout <-chan time.Time
-	interruptedVerdicts := make(chan agent.InterruptedReportVerdict, 1)
-	// interruptions counts how often each result was spoken over. Unclear
-	// words bring a result back once, as a question; spoken over again with
-	// unclear words, it is dropped.
-	interruptions := make(map[string]int)
+	interruptedVerdicts := make(chan realtimeInterruptedVerdict, 1)
+	// judgingTaskUpdates are interrupted results whose words are being judged.
+	var judgingTaskUpdates []agenttask.Task
 	stopInterruptedWordsTimer := func() {
 		if interruptedWordsTimer != nil {
 			interruptedWordsTimer.Stop()
@@ -2171,18 +2225,15 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	// settleInterruptedTaskUpdates drops the interrupted results when the user
 	// does not want the rest, and otherwise queues them to be finished once
 	// the user's turn has been answered.
-	settleInterruptedTaskUpdates := func(verdict agent.InterruptedReportVerdict, why string) {
-		stopInterruptedWordsTimer()
-		interruptedWordsDue = false
+	settleInterruptedTaskUpdates := func(batch []agenttask.Task, verdict agent.InterruptedReportVerdict, why string) {
 		var settled, dropped []agenttask.Task
-		for _, task := range interruptedTaskUpdates {
+		for _, task := range batch {
 			if verdict == agent.InterruptedReportUnwanted || (verdict == agent.InterruptedReportUnsure && interruptions[task.ID] > 1) {
 				dropped = append(dropped, task)
 			} else {
 				settled = append(settled, task)
 			}
 		}
-		interruptedTaskUpdates = nil
 		if len(dropped) > 0 {
 			logging.Infof("agent", "realtime", "Interrupted task update dropped: tasks=%d verdict=%s (%s)", len(dropped), verdict, why)
 			for _, task := range dropped {
@@ -2209,11 +2260,21 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			restoreRealtimeTaskUpdates(tasks, settled)
 		}
 	}
+	// settleWaitingTaskUpdates settles the results still waiting for the
+	// user's words.
+	settleWaitingTaskUpdates := func(verdict agent.InterruptedReportVerdict, why string) {
+		stopInterruptedWordsTimer()
+		interruptedWordsDue = false
+		batch := interruptedTaskUpdates
+		interruptedTaskUpdates = nil
+		settleInterruptedTaskUpdates(batch, verdict, why)
+	}
 	defer func() {
 		stopInterruptedWordsTimer()
-		// Results still waiting on the user's words are told next session.
-		if tasks != nil && len(interruptedTaskUpdates) > 0 {
-			restoreRealtimeTaskUpdates(tasks, interruptedTaskUpdates)
+		// Results still waiting on, or being judged from, the user's words
+		// are told next session.
+		if waiting := append(interruptedTaskUpdates, judgingTaskUpdates...); tasks != nil && len(waiting) > 0 {
+			restoreRealtimeTaskUpdates(tasks, waiting)
 		}
 	}()
 	// noteInterruptedTaskUpdates handles the user speaking over an update.
@@ -2225,13 +2286,12 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		}
 		if !spokenTaskUpdatesAudible {
 			// Nothing of it had played; it is told once the user is answered.
-			requeueSpokenTaskUpdates(errors.New("the user spoke before it played"))
+			requeueSpokenTaskUpdates(errors.New("the user spoke before it played"), realtimeRequeueUnplayed)
 			return nil
 		}
 		stopTaskDrain()
 		newly := spokenTaskUpdates
-		spokenTaskUpdates = nil
-		spokenTaskUpdatesAudible = false
+		resetSpokenTaskUpdates()
 		for _, task := range newly {
 			unheardTaskUpdates[task.ID] = realtimeRetell
 			interruptions[task.ID]++
@@ -2257,21 +2317,30 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		if !interruptedWordsDue || len(interruptedTaskUpdates) == 0 {
 			return
 		}
-		interruptedWordsDue = false
-		stopInterruptedWordsTimer()
 		if words == "" {
-			settleInterruptedTaskUpdates(agent.InterruptedReportUnsure, "no words transcribed")
+			settleWaitingTaskUpdates(agent.InterruptedReportUnsure, "no words transcribed")
 			return
 		}
+		interruptedWordsDue = false
+		stopInterruptedWordsTimer()
+		// The verdict applies to these results only: others spoken over while
+		// it is decided wait for their own words.
+		batch := interruptedTaskUpdates
+		interruptedTaskUpdates = nil
+		judgingTaskUpdates = append(judgingTaskUpdates, batch...)
 		var reports []string
-		for _, task := range interruptedTaskUpdates {
-			reports = append(reports, limitRealtimeTaskField(task.Result+task.Error, 2000))
+		for _, task := range batch {
+			reports = append(reports, formatRealtimeTaskLine(task))
 		}
 		report := strings.Join(reports, "\n")
 		go func() {
 			decideCtx, cancel := context.WithTimeout(ctx, realtimeInterruptedDecisionTimeout)
 			defer cancel()
-			interruptedVerdicts <- decideRealtimeInterruptedResult(decideCtx, runtime, words, report)
+			verdict := decideRealtimeInterruptedResult(decideCtx, runtime, words, report)
+			select {
+			case interruptedVerdicts <- realtimeInterruptedVerdict{tasks: batch, verdict: verdict}:
+			case <-ctx.Done():
+			}
 		}()
 	}
 	tryInjectTaskUpdates := func() error {
@@ -2279,6 +2348,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			return err
 		}
 		if !currentAdmission().canInjectTaskUpdates() {
+			return nil
+		}
+		if !textOnly && voice.SpeakerMuted() {
+			// An update is spoken to be heard; it waits for the speaker to be
+			// unmuted, which tries again.
 			return nil
 		}
 		delivering := pendingTaskUpdates
@@ -2318,6 +2392,8 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		// Delivered only once the user has heard the response it asks for.
 		spokenTaskUpdates = append(spokenTaskUpdates, delivering...)
 		spokenTaskUpdatesAudible = false
+		spokenTaskUpdatesSilenced = false
+		spokenTaskUpdatesAudioBytes = 0
 		pendingTaskUpdates = nil
 		taskUpdatesReady = false
 		requestResponse()
@@ -2389,7 +2465,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		return nil
 	}
 	tryStartQueuedChat := func() error {
-		if queuedChat == nil || realtimeAdmissionSpeechActive(admissionTurnEndpoint) {
+		if queuedChat == nil || taskDrainDone != nil || realtimeAdmissionSpeechActive(admissionTurnEndpoint) {
 			return nil
 		}
 		if !turnState.canInjectResponse() {
@@ -2435,12 +2511,19 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			return nil
 		case <-voice.MuteChanged():
 			if !voice.SpeakerMuted() {
+				// Updates held while muted can be told now.
+				if err := tryInjectTaskUpdates(); err != nil {
+					return err
+				}
 				continue
 			}
 			// Later speech is replaced by silence as it arrives; this stops
 			// what the speaker or the browser already holds.
 			if activeNotificationToken != "" {
 				activeNotificationSilenced = true
+			}
+			if len(spokenTaskUpdates) > 0 {
+				spokenTaskUpdatesSilenced = true
 			}
 			if err := playback.dropQueued(playbackAudio, outputFormat); err != nil {
 				return fmt.Errorf("silence realtime playback: %w", err)
@@ -2479,17 +2562,17 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			}
 			logging.Infof("agent", "realtime", "Conversation ended by request, returning to standby")
 			return nil
-		case verdict := <-interruptedVerdicts:
-			settleInterruptedTaskUpdates(verdict, "decided from the user's words")
+		case judged := <-interruptedVerdicts:
+			judgingTaskUpdates = withoutRealtimeTasks(judgingTaskUpdates, judged.tasks)
+			settleInterruptedTaskUpdates(judged.tasks, judged.verdict, "decided from the user's words")
 		case <-interruptedWordsTimeout:
-			settleInterruptedTaskUpdates(agent.InterruptedReportUnsure, "the user's words were not transcribed in time")
+			settleWaitingTaskUpdates(agent.InterruptedReportUnsure, "the user's words were not transcribed in time")
 		case err := <-taskDrainDone:
 			stopTaskDrain()
-			if err == nil && voice.SpeakerMuted() {
-				err = errors.New("speaker muted before the task update finished playing")
-			}
-			if err != nil {
-				requeueSpokenTaskUpdates(err)
+			if err == nil && !textOnly && (voice.SpeakerMuted() || spokenTaskUpdatesSilenced) {
+				requeueSpokenTaskUpdates(errors.New("speaker muted before the task update finished playing"), realtimeRequeueMuted)
+			} else if err != nil {
+				requeueSpokenTaskUpdates(err, realtimeRequeueFailed)
 			} else if len(spokenTaskUpdates) > 0 {
 				logging.Infof("agent", "realtime", "Task update heard: tasks=%d playback_wait_ms=%d", len(spokenTaskUpdates), time.Since(taskDrainStarted).Milliseconds())
 				if tasks != nil {
@@ -2497,10 +2580,13 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				}
 				for _, task := range spokenTaskUpdates {
 					delete(unheardTaskUpdates, task.ID)
+					delete(failedTellings, task.ID)
 					delete(interruptions, task.ID)
 				}
-				spokenTaskUpdates = nil
-				spokenTaskUpdatesAudible = false
+				resetSpokenTaskUpdates()
+			}
+			if err := tryStartQueuedChat(); err != nil {
+				return err
 			}
 			if err := tryInjectTaskUpdates(); err != nil {
 				return err
@@ -3055,8 +3141,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if err := playback.appendItem(playbackAudio, outputFormat, event.ItemID, pcm); err != nil {
 					return err
 				}
-				if audible && len(responseUpdateIDs) > 0 && len(spokenTaskUpdates) > 0 {
-					spokenTaskUpdatesAudible = true
+				if len(responseUpdateIDs) > 0 && len(spokenTaskUpdates) > 0 && !playback.suppressDeltas {
+					spokenTaskUpdatesAudible = spokenTaskUpdatesAudible || audible
+					spokenTaskUpdatesSilenced = spokenTaskUpdatesSilenced || (len(pcm) > 0 && !audible)
+					spokenTaskUpdatesAudioBytes += int64(len(pcm))
 				}
 				if activeNotificationToken != "" {
 					// Only speech the user heard in full counts as delivered; a
@@ -3244,9 +3332,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 							return err
 						}
 					} else if finishErr != nil {
-						requeueSpokenTaskUpdates(finishErr)
+						requeueSpokenTaskUpdates(finishErr, realtimeRequeueFailed)
 					} else {
-						drainCtx, cancel := context.WithTimeout(ctx, realtimeNotificationDrain)
+						// The speech generated may all be still to play.
+						drainCtx, cancel := context.WithTimeout(ctx, realtimeNotificationDrain+realtimeAudioDuration(spokenTaskUpdatesAudioBytes, outputFormat))
 						taskDrainCancel = cancel
 						taskDrainStarted = time.Now()
 						logging.Infof("agent", "realtime", "Task update speech generated; waiting for playback: tasks=%d", len(spokenTaskUpdates))
@@ -3918,6 +4007,51 @@ func formatRealtimeTaskUpdates(tasks []agenttask.Task, unheard map[string]realti
 		output.WriteByte('\n')
 	}
 	return strings.TrimSpace(output.String())
+}
+
+// realtimeRequeue is why an update sent to the provider goes back to the
+// queue without the user speaking over it.
+type realtimeRequeue uint8
+
+const (
+	// realtimeRequeueUnplayed: the user spoke before any of it played.
+	realtimeRequeueUnplayed realtimeRequeue = iota
+	// realtimeRequeueMuted: the speaker was muted while it played; it waits
+	// for the speaker to be unmuted.
+	realtimeRequeueMuted
+	// realtimeRequeueFailed: the response failed or did not finish playing.
+	realtimeRequeueFailed
+)
+
+// realtimeInterruptedVerdict is the decision on the user's words over the
+// results in tasks.
+type realtimeInterruptedVerdict struct {
+	tasks   []agenttask.Task
+	verdict agent.InterruptedReportVerdict
+}
+
+// withoutRealtimeTasks returns tasks without those in remove.
+func withoutRealtimeTasks(tasks, remove []agenttask.Task) []agenttask.Task {
+	ids := make(map[string]struct{}, len(remove))
+	for _, task := range remove {
+		ids[task.ID] = struct{}{}
+	}
+	var kept []agenttask.Task
+	for _, task := range tasks {
+		if _, ok := ids[task.ID]; !ok {
+			kept = append(kept, task)
+		}
+	}
+	return kept
+}
+
+// realtimeAudioDuration is how long size bytes of format take to play.
+func realtimeAudioDuration(size int64, format agent.AudioFormat) time.Duration {
+	bytesPerSecond := int64(format.SampleRate) * int64(format.Channels) * int64(format.BitWidth) / 8
+	if bytesPerSecond <= 0 || size <= 0 {
+		return 0
+	}
+	return time.Duration(size) * time.Second / time.Duration(bytesPerSecond)
 }
 
 // realtimeRetelling is how an update the user did not hear in full is

@@ -1284,7 +1284,7 @@ func TestRealtimeInterruptedTaskResultIsFinishedUnlessUnwanted(t *testing.T) {
 						t.Fatalf("finishing update does not ask for the missed part: %q", s.lastText())
 					}
 				}
-				if got, _ := judged.Load().(string); got != "what time is it|the report is ready" {
+				if got, _ := judged.Load().(string); !strings.HasPrefix(got, "what time is it|") || !strings.Contains(got, "the report is ready") {
 					t.Fatalf("decision asked with %q", got)
 				}
 			})
@@ -1330,8 +1330,9 @@ func TestRealtimeSpeechBeforeTaskResultPlaysRetellsIt(t *testing.T) {
 	if s.countTexts("Private note for the assistant") != 0 {
 		t.Fatal("a result that never played was noted as interrupted")
 	}
-	if !strings.Contains(s.lastText(), "the report is ready") {
-		t.Fatalf("result not told again: %q", s.lastText())
+	// Nothing was heard, so it is told in full, not as a brief retelling.
+	if !strings.Contains(s.lastText(), "the report is ready") || strings.Contains(s.lastText(), "not_heard=true") {
+		t.Fatalf("result not told again as new: %q", s.lastText())
 	}
 }
 
