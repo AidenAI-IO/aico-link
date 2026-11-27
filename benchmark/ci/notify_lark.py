@@ -63,8 +63,8 @@ def _markdown(content: str, **options: Any) -> dict[str, Any]:
     return {"tag": "markdown", "content": content, **options}
 
 
-def _columns(*groups: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"tag": "column_set", "columns": [
+def _columns(*groups: list[dict[str, Any]], **options: Any) -> dict[str, Any]:
+    return {"tag": "column_set", **options, "columns": [
         {"tag": "column", "width": "weighted", "weight": 1, "vertical_spacing": "4px", "elements": group}
         for group in groups
     ]}
@@ -80,6 +80,19 @@ def _metric(label: str, current: float | None, previous: float | None, counts: s
         _markdown(f"**{label}**"),
         _markdown(f"**{_format_rate(current)}**", text_size="heading-0"),
         _markdown(f"{counts}\n{baseline}", text_size="notation"),
+    ]
+
+
+def _latest_run(run: dict[str, Any]) -> list[dict[str, Any]]:
+    """The newest workflow run's pass@1, from the summary the dashboard shows."""
+    totals = run["totals"]
+    counts = f"{_format_count(totals['passed'])} / {_format_count(totals['eligible_tasks'])} 项通过"
+    models = ", ".join(model or "未知模型" for model in run.get("agent_models", []))
+    detail = " · ".join(filter(None, [_date(run["start"]), html.escape(models)]))
+    return [
+        _markdown("**最近一次运行**"),
+        _markdown(f"**{_format_rate(totals['pass_at_1'])}**", text_size="heading-0"),
+        _markdown(f"{counts}\n{detail}", text_size="notation"),
     ]
 
 
@@ -147,12 +160,16 @@ def _build_card(data: dict[str, Any], dashboard_url: str, weekly_report_url: str
     passed = _format_count(week["passed"])
     eligible = _format_count(week["eligible_tasks"])
     recorded = _format_count(week.get("tasks"))
+    headline = [
+        _metric("有效评测通过率", week["pass_at_1"], previous.get("pass_at_1"), f"{passed} / {eligible} 项通过"),
+        _metric("评测覆盖率", week.get("coverage"), previous.get("coverage"), f"{eligible} / {recorded} 项有效"),
+    ]
+    if data.get("latest_run"):
+        headline.append(_latest_run(data["latest_run"]))
+    # Three columns are too narrow on phones; stretch stacks them there.
     elements = [
         _markdown(period, text_size="notation"),
-        _columns(
-            _metric("有效评测通过率", week["pass_at_1"], previous.get("pass_at_1"), f"{passed} / {eligible} 项通过"),
-            _metric("评测覆盖率", week.get("coverage"), previous.get("coverage"), f"{eligible} / {recorded} 项有效"),
-        ),
+        _columns(*headline, **({"flex_mode": "stretch"} if len(headline) > 2 else {})),
     ]
     failures = week.get("failure_counts", {})
     if failures and any(value is not None for value in failures.values()):
@@ -172,17 +189,6 @@ def _build_card(data: dict[str, Any], dashboard_url: str, weekly_report_url: str
             names = set(capability["suites"])
             rows = [suite for suite in suites if suite["suite"] in names]
             elements.append(_capability_panel(capability, rows))
-
-    compared = weekly.get("compared_pass_at_1")
-    if compared and weekly["compared_datasets"]:
-        elements.append(_markdown(
-            f"相同 {weekly['compared_datasets']} 个数据集的通过率 · "
-            f"{_format_rate(compared['previous'])} → {_format_rate(compared['current'])}"
-            f"{_format_change(weekly['change'])}", text_size="notation"
-        ))
-    changed = sum(s.get("change") is not None and bool(s.get("config_changes")) for s in suites)
-    if changed:
-        elements.append(_markdown(f"{changed} 个可比数据集的配置与上周不同。", text_size="notation"))
 
     diagnostics = [row for row in weekly.get("diagnostics", []) if row["rate"] is not None]
     if diagnostics:

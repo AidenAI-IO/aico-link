@@ -6,7 +6,7 @@ import hmac
 from datetime import datetime, timezone
 
 from ci.notify_lark import _build_card, _sign
-from ci.weekly_report import summarize_weekly
+from ci.weekly_report import summarize_latest_run, summarize_weekly
 
 
 END = datetime(2026, 10, 13, tzinfo=timezone.utc)
@@ -46,7 +46,7 @@ def test_sign_matches_lark_custom_bot_algorithm():
     assert _sign("test_secret", "1626164479") == expected
 
 
-def test_card_separates_the_full_window_trend_coverage_and_shared_dataset_trend():
+def test_card_separates_the_full_window_trend_and_coverage():
     card = _card([
         _record("memory_v1", timestamp="2026-10-05T00:00:00+00:00", passed=8, eligible=10, tasks=10),
         _record("memory_v1", missing_metrics=["evaluation_coverage"],
@@ -57,7 +57,6 @@ def test_card_separates_the_full_window_trend_coverage_and_shared_dataset_trend(
     assert "5 / 6 项通过\n上周 80.0% <font color='green'>+3.3 pp</font>" in text
     assert "6 / 10 项有效\n上周 100.0% <font color='red'>-40.0 pp</font>" in text
     assert "**3** 次评测错误" in text and "**1** 次跳过" in text
-    assert "相同 1 个数据集的通过率 · 80.0% → 75.0%" in text
 
     panels = [element for element in _elements(card) if element.get("tag") == "collapsible_panel"]
     assert all(not panel["expanded"] for panel in panels)
@@ -66,6 +65,18 @@ def test_card_separates_the_full_window_trend_coverage_and_shared_dataset_trend(
     urls = [element["behaviors"][0]["default_url"]
             for element in _elements(card) if element.get("tag") == "button"]
     assert urls == [DASHBOARD, REPORT]
+
+
+def test_card_shows_the_newest_workflow_run_beside_the_week():
+    records = [_record("memory_v1", timestamp="2026-10-11T00:00:00+00:00", workflow_run_id=1, passed=1),
+               _record("memory_v1", timestamp="2026-10-12T10:00:00+00:00", workflow_run_id=2,
+                       agent_model="b/model"),
+               _record("perception_v1", timestamp="2026-10-12T10:05:00+00:00", workflow_run_id=2,
+                       agent_model="a/model", passed=4)]
+    card = _card(records, latest_run=summarize_latest_run(records, end=END))
+    assert "**最近一次运行**\n**87.5%**\n7 / 8 项通过\n10/12 18:00 · a/model, b/model" in _text(card)
+    headline = next(e for e in _elements(card) if e.get("tag") == "column_set")
+    assert len(headline["columns"]) == 3 and headline["flex_mode"] == "stretch"
 
 
 def test_card_labels_a_fallback_with_its_date_without_adding_it_to_the_headline():

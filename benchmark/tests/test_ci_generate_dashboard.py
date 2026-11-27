@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS
+from ci.weekly_report import label_datasets
 from ci.generate_dashboard import (
     _group_into_runs,
     _summarize_suites,
@@ -43,20 +44,20 @@ def _record(**overrides):
     return record
 
 
-def test_adb_bridge_pair_keeps_same_workload_and_distinct_environment():
-    runs = _group_into_runs([
+def test_a_suite_in_two_environments_is_two_datasets():
+    runs = _group_into_runs(label_datasets([
         _record(suite="adb_android_basic", run_id="ci-1-1-adb_android_basic",
                 execution_environment="adb", passed=2, pass_at_1=0.5),
         _record(suite="adb_android_basic", run_id="ci-1-1-adb_android_basic-aidenbridge",
                 timestamp="2026-10-10T01:00:00+00:00", execution_environment="adb_aidenbridge",
                 passed=3, pass_at_1=0.75),
-    ])
-    summary, = _summarize_suites(runs)
-    assert summary["changed_fields"] == ["execution_environment"]
-    assert summary["previous"]["environment_label"] == "ADB device"
-    assert summary["latest"]["environment_label"] == "ADB + Aico App"
-    assert summary["delta"] == 0.25
-    assert len(summary["points"]) == 2
+    ]))
+    summaries = {summary["suite"]: summary for summary in _summarize_suites(runs)}
+    assert sorted(summaries) == ["adb_android_basic [adb]", "adb_android_basic [adb_aidenbridge]"]
+    bridge = summaries["adb_android_basic [adb_aidenbridge]"]
+    assert bridge["latest"]["environment_label"] == "ADB + Aico App"
+    assert bridge["previous"] is None and len(bridge["points"]) == 1
+    assert bridge["capability"] == "UI operation"
 
 
 def test_group_into_runs_weights_pass_rate_by_task_count() -> None:
@@ -528,6 +529,13 @@ global.Chart = function(element, config) {
 """
     verification = """
 if (elements.get('suites').innerHTML.includes('<img')) process.exit(1);
+// The newest run holds only an unscored 'other' run; the week holds every dataset.
+renderSummary('latest');
+if (!elements.get('summary-areas').innerHTML.includes('No valid evaluation in this run')) process.exit(10);
+renderSummary('weekly');
+const summaryHTML = elements.get('summary-areas').innerHTML;
+if (summaryHTML.includes('<img') || !summaryHTML.includes('&lt;img')) process.exit(10);
+if (elements.get('summary-pass-rate').textContent === '—') process.exit(11);
 if (!elements.get('suites').innerHTML.includes('&lt;img')) process.exit(2);
 if (selected.suite !== 'other') process.exit(3);
 if (JSON.stringify(chart.data.datasets[0].data) !== '[25,null]') process.exit(4);
@@ -554,7 +562,10 @@ if (['retry_count', 'replan_count', 'time_to_first_token_ms', 'vision_llm_time_m
 if (!['llm_time_ms', 'cost_usd', 'screenshot_capture_ms'].every(metric => chartMetrics.includes(metric))) process.exit(48);
 if (!elements.get('latest').innerHTML.includes('Latest commit')) process.exit(27);
 const overviewHTML = elements.get('suites').innerHTML;
-if (!elements.get('latest-run-note').innerHTML.includes('https://github.com/owner/repo/commit/aaaaaaaa1111') ||
+renderSummary('latest');
+const latestContext = elements.get('summary-context-meta').innerHTML;
+renderSummary('weekly');
+if (!latestContext.includes('https://github.com/owner/repo/commit/aaaaaaaa1111') ||
     overviewHTML.includes('/commit/')) process.exit(36);
 if (!overviewHTML.includes('Tool calls · mean') || !overviewHTML.includes('LLM calls · mean') ||
     !overviewHTML.includes('Task time · p50') || !overviewHTML.includes('4.5 calls') ||
@@ -648,9 +659,13 @@ assert(sourceDiffLink({...memoryComparison, latest: {...memoryComparison.latest,
 assert.equal(sourceDiffLink(memoryComparison), '');
 assert.equal(activeFilter, 'Memory');
 assert.equal(el('view-trends').hidden, false);
+assert.equal(el('view-latest').hidden, true);
+assert.equal(el('mode-weekly')['aria-selected'], 'true');
 openFailures(memoryIndex);
 assert.equal(activeFilter, 'Memory');
 assert.equal(el('view-latest').hidden, false);
+assert.equal(el('view-trends').hidden, true);
+assert(el('summary-scope').textContent.startsWith('Newest workflow run'));
 assert.equal(el('failure-dataset-' + memoryIndex).open, true);
 clickFilter('trend-capabilities', 'all');
 assert.equal(selected.suite, 'memory_v1');
@@ -673,4 +688,7 @@ assert.equal(skillReadRate({skill_discovery:{read:0,observed:4}}),0);
 assert.equal(skillReadRate({skill_discovery:{read:2,observed:1}}),null);
 assert.equal(skillReadRate({}),null);
 """
-    subprocess.run(["node", "-e", prefix + script + verification], check=True)
+    # A file, not `node -e`: Linux caps a single argument at 128 KiB.
+    runner = tmp_path / "dashboard_test.js"
+    runner.write_text(prefix + script + verification, encoding="utf-8")
+    subprocess.run(["node", str(runner)], check=True)

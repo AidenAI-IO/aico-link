@@ -470,7 +470,7 @@ second step:
 
 Latest results keeps scores, deltas, test-area filters, and failure evidence in
 view. Metric definitions and data-coverage notes are collapsed. Select a dataset
-to inspect its run comparison under **Weekly trends → Run details**: model,
+to inspect its run comparison under **Dataset trends → Run details**: model,
 judge prompt, attempts per task, task and attempt counts, skills, and environment.
 Branch and commit identify each run; a branch change alone is not presented as
 a change to evaluation settings. A changed suite file is flagged with a source
@@ -482,10 +482,14 @@ Task-selection metadata distinguishes a repetition change from changed coverage;
 older records without that metadata retain a general coverage-change notice.
 
 The daily benchmark workflow generates `dashboard.html` with the last 7 days
-of pass@1 trends and efficiency metrics. The dashboard opens with the agent
-models and overall pass@1 for the latest workflow run. The overall rate pools
-passes across eligible first attempts and is unavailable if any dataset lacks
-complete first-attempt counts. A separate `benchmark-weekly-report.yml`
+of pass@1 trends and efficiency metrics. A switch at the top selects
+**Last 7 days** or **Latest run**. Each view opens with a summary of overall
+pass@1 and evaluation coverage, their change from the previous 7 days or the
+previous run, and each test area's pass@1, change, and coverage, expandable to
+its datasets. The 7-day view, which matches the Lark card, continues with
+dataset trends; the latest-run view continues with each dataset's latest
+results and failure details. Overall rates pool usable eligible first attempts
+and exclude diagnostic suites. A separate `benchmark-weekly-report.yml`
 workflow runs every Thursday and sends a Lark card summarizing the last 7 days
 and each dataset's change from its own previous 7 days, with a link to the dashboard. History comes from
 Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.

@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp, comparison_key, fetch_benchmark_history
-from ci.weekly_report import AREA_ORDER, DIAGNOSTIC_SUITES, capability_of, environment_of, summarize_weekly, render_weekly
+from ci.weekly_report import (AREA_ORDER, DIAGNOSTIC_SUITES, capability_of, environment_of, label_datasets,
+                              render_weekly, summarize_latest_run, summarize_weekly)
 from ci.dashboard_metrics import METRIC_CHARTS
 
 
@@ -49,13 +50,17 @@ def generate_dashboard(
     """
     report_end = report_end or datetime.now(timezone.utc)
     display_start = report_end - timedelta(days=7)
-    display_history = [record for record in history
+    # Name datasets as the weekly summary does, so a suite run in two
+    # environments is two datasets in every view.
+    display_history = [record for record in label_datasets(history)
                        if (stamp := parse_timestamp(record.get("timestamp"))) is not None
                        and display_start <= stamp < report_end]
     runs = _group_into_runs(display_history)
     suites = _summarize_suites(runs)
     warnings = warnings or []
     weekly = summarize_weekly(history, end=report_end)
+    # The newest run in the display window, compared with the run before it.
+    latest_run = summarize_latest_run(history, end=report_end) if runs else None
     if weekly_output is not None:
         weekly_output.parent.mkdir(parents=True, exist_ok=True)
         weekly_output.write_text(render_weekly(weekly, warnings), encoding="utf-8")
@@ -77,6 +82,7 @@ def generate_dashboard(
                     "history": history,
                     "warnings": warnings,
                     "weekly": weekly,
+                    "latest_run": latest_run,
                 },
                 indent=2,
             ),
@@ -86,7 +92,8 @@ def generate_dashboard(
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text(
         _render_html(runs=runs, suites=suites, repo=repo,
-                     warnings=warnings, report_end=report_end),
+                     warnings=warnings, report_end=report_end,
+                     weekly=weekly, latest_run=latest_run),
         encoding="utf-8",
     )
 
@@ -149,6 +156,7 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
             **{field: record.get(field) for field in COMPARISON_FIELDS},
             "comparison_key": comparison_key(record),
             "suite": record.get("suite") or "unknown",
+            "dataset": record.get("dataset") or record.get("suite") or "unknown",
             "timestamp": record.get("timestamp"),
             "commit_sha": record.get("commit_sha") or "unknown",
             "run_id": record.get("run_id"),
@@ -243,7 +251,7 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     series: dict[str, list[dict[str, Any]]] = {}
     for run in runs:
         for suite in run["suites"]:
-            series.setdefault(suite["suite"], []).append({
+            series.setdefault(suite["dataset"], []).append({
                 **suite,
                 "timestamp": suite.get("timestamp") or run["timestamp"],
                 "commit_sha": suite.get("commit_sha") or run["commit_sha"],
@@ -273,10 +281,11 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "Configuration changed" if changed_fields else
             "Comparable"
         )
+        suite = latest["suite"]
         summaries.append({
             "suite": name,
-            "capability": capability_of(name),
-            "diagnostic": name in DIAGNOSTIC_SUITES,
+            "capability": capability_of(suite),
+            "diagnostic": suite in DIAGNOSTIC_SUITES,
             "latest": latest,
             "previous": previous,
             "metric_deltas": metric_deltas,
@@ -317,6 +326,8 @@ def _render_html(
     repo: str,
     warnings: list[str],
     report_end: datetime | None = None,
+    weekly: dict[str, Any] | None = None,
+    latest_run: dict[str, Any] | None = None,
 ) -> str:
     """
     Render the dashboard HTML with its data embedded as JSON.
@@ -329,6 +340,8 @@ def _render_html(
         runs: Workflow runs, sorted oldest first
         suites: Per-suite summaries
         repo: GitHub repository ("owner/repo") for commit links
+        weekly: The weekly summary also sent to Lark, shown as the page headline
+        latest_run: The same summary for the newest workflow run
 
     Returns:
         A self-contained HTML document
@@ -350,6 +363,8 @@ def _render_html(
         "capabilities": [name for name in AREA_ORDER
                          if any(suite["capability"] == name for suite in suites)],
         "warnings": display_warnings,
+        "weekly": weekly,
+        "latestRun": latest_run,
         "metricCharts": sorted(METRIC_CHARTS, key=lambda spec:
                                ("latency", "timings", "calls", "reliability", "tokens", "cost").index(spec["id"])),
         "dataCompleteness": {

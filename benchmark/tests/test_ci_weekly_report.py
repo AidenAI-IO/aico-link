@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from ci.weekly_report import render_weekly, summarize_weekly
+from ci.weekly_report import render_weekly, summarize_latest_run, summarize_weekly
 
 END = datetime(2026, 10, 13, tzinfo=timezone.utc)
 
@@ -18,6 +18,26 @@ def _record(timestamp="2026-10-12T00:00:00+00:00", **overrides):
          "missing_metrics": []}
     r.update(overrides)
     return r
+
+
+def test_latest_run_compares_the_newest_workflow_run_with_the_one_before():
+    data = [
+        _record("2026-10-10T00:00:00+00:00", workflow_run_id=1, passed=2),
+        _record("2026-10-11T00:00:00+00:00", workflow_run_id=2, passed=6),
+        _record("2026-10-12T00:00:00+00:00", workflow_run_id=3, passed=4),
+        _record("2026-10-12T00:10:00+00:00", workflow_run_id=3, suite="perception", passed=8,
+                agent_model="other"),
+        _record("2026-10-13T00:00:00+00:00", workflow_run_id=4),  # at the end; excluded
+    ]
+    run = summarize_latest_run(data, end=END)
+    assert run["workflow_run_id"] == 3 and run["start"] == "2026-10-12T00:00:00+00:00"
+    assert run["agent_models"] == ["model", "other"]
+    assert run["totals"]["pass_at_1"] == 12 / 16
+    assert run["previous_totals"]["pass_at_1"] == 6 / 8
+    changes = {s["suite"]: s["change"] for s in run["suites"]}
+    assert changes["memory"] == pytest.approx(-0.25)
+    assert changes["perception"] is None and run["suites"][-1]["new"]
+    assert summarize_latest_run([], end=END) is None
 
 
 def test_window_is_the_seven_days_before_end_with_end_exclusive():

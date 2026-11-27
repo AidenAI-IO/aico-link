@@ -83,7 +83,7 @@ def _by_suite(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     return groups
 
 
-def _label_datasets(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def label_datasets(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Name each record's dataset: its suite, plus its environment when the
     same suite also ran in another environment, so those results never merge."""
     environments: dict[str, set[str]] = {}
@@ -232,10 +232,55 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=7)
     previous_start = start - timedelta(days=7)
-    history = _label_datasets(history)
+    history = label_datasets(history)
     current = [r for r in history if start <= parse_timestamp(r["timestamp"]) < end]
     earlier = [r for r in history if parse_timestamp(r["timestamp"]) < start]
     previous = [r for r in earlier if previous_start <= parse_timestamp(r["timestamp"])]
+    return {"start": start.isoformat(), "end": end.isoformat(), "previous_start": previous_start.isoformat(),
+            **_summarize(current, previous, earlier)}
+
+
+def _run_key(record: dict[str, Any]) -> tuple[Any, Any]:
+    if record.get("workflow_run_id"):
+        return record["workflow_run_id"], record.get("workflow_run_attempt")
+    return record.get("run_id") or record["timestamp"], None
+
+
+def summarize_latest_run(history: list[dict[str, Any]], *, end: datetime | None = None) -> dict[str, Any] | None:
+    """Summarize the newest workflow run before `end` against the run before it.
+
+    The result has the weekly summary's shape, so both views read the same way.
+    A dataset missing from the previous run has no change.
+    """
+    end = end or datetime.now(timezone.utc)
+    history = label_datasets([r for r in history if parse_timestamp(r["timestamp"]) < end])
+    runs: dict[tuple[Any, Any], list[dict[str, Any]]] = {}
+    for record in history:
+        runs.setdefault(_run_key(record), []).append(record)
+    if not runs:
+        return None
+    ordered = sorted(runs.values(), key=lambda run: min(parse_timestamp(r["timestamp"]) for r in run))
+    current = ordered[-1]
+    previous = ordered[-2] if len(ordered) > 1 else []
+    first = min(current, key=lambda r: parse_timestamp(r["timestamp"]))
+    return {
+        "start": first["timestamp"],
+        "previous_start": (min(previous, key=lambda r: parse_timestamp(r["timestamp"]))["timestamp"]
+                           if previous else None),
+        **{field: first.get(field) for field in (
+            "workflow_run_id", "workflow_run_number", "workflow_run_attempt", "commit_sha", "git_branch")},
+        "agent_models": sorted({(r.get("agent_model") or "").strip() for r in current}),
+        **_summarize(current, previous, [r for run in ordered[:-1] for r in run]),
+    }
+
+
+def _summarize(current: list[dict[str, Any]], previous: list[dict[str, Any]],
+               earlier: list[dict[str, Any]]) -> dict[str, Any]:
+    """Totals, test areas and datasets of `current`, with changes from `previous`.
+
+    `earlier` holds every record before `current`, for first appearances and
+    the last usable result of a dataset that has none now.
+    """
     previous_by_suite = _by_suite(previous)
     earlier_by_suite = _by_suite(earlier)
     suites = []
@@ -276,8 +321,7 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     scored_previous = [r for r in previous if r["suite"] not in DIAGNOSTIC_SUITES]
     totals = {**_totals(scored_current), "failure_counts": _failure_counts(scored_current)}
     previous_totals = _totals(scored_previous)
-    return {"start": start.isoformat(), "end": end.isoformat(), "previous_start": previous_start.isoformat(),
-            "totals": totals, "previous_totals": previous_totals,
+    return {"totals": totals, "previous_totals": previous_totals,
             **_comparison(scored_current, scored_previous),
             "capabilities": capabilities, "suites": suites, "diagnostics": diagnostics}
 

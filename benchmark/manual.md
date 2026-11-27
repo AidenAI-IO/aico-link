@@ -1295,19 +1295,21 @@ Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 `BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card shows effective
 pass@1 and evaluation coverage side by side, with their changes from the
 previous seven days and counts of evaluation errors, environment errors, and
-skips. Expand a test area to see each dataset's pass@1, change, and coverage.
+skips. Beside them, it shows the latest workflow run's overall pass@1, time,
+and agent models. The dashboard's **Last 7 days** view opens with the same
+summary. Expand a test area to see each dataset's pass@1, change, and coverage.
 A dataset with no usable first attempts can display its most recent usable
 result and date from the fetched history. The historical result is excluded
 from the current window's totals and changes. A suite measured in multiple
 execution environments appears once per environment, for example
-`adb_android_text_editing [adb_aidenbridge]`.
+`adb_android_text_editing [adb_aidenbridge]`. The dashboard uses the same
+names, so each environment has its own results, trends, and failure details.
 
 The card's headline and test-area changes compare each window's own totals.
-It also shows a pass@1 change restricted to datasets with a usable rate in
-both windows. Positive and negative changes indicate direction. Coverage and
-configuration changes help interpret differences between the two windows.
-The card links to the run dashboard and the workflow summary, which lists
-the distinct configuration values for each dataset.
+Positive and negative changes indicate direction. Coverage helps interpret
+differences between the two windows. The dashboard and the workflow summary
+also show the pass@1 change restricted to datasets with a usable rate in both
+windows and the configuration changes for each dataset. The card links to both.
 Historical data comes
 from Langfuse v4 experiments and scores. Only suites present in the current
 CI catalog are included, so retired or renamed suite names do not appear as
@@ -1332,12 +1334,16 @@ retains the usable first attempts in partially evaluated runs. Missing or
 invalid result counts remain unavailable.
 
 The dashboard focuses on individual datasets (each published benchmark suite
-maps to a Langfuse dataset). The default **Latest results** tab shows one
+maps to a Langfuse dataset). A switch at the top selects the period for both
+the summary and the detail below it. **Last 7 days**, the default, shows the
+weekly summary followed by **Dataset trends**: the selected dataset's pass@1 /
+pass@k trends and performance charts. **Latest run** summarizes the newest
+workflow run against the run before it, followed by **Latest results**: one
 overview table with highlighted changes, mean tool and LLM calls per eligible
-attempt, and p50 task execution time, followed by task-level failure details.
-**Weekly trends** contains the selected dataset's pass@1 / pass@k trends and
-performance charts. Clicking a dataset in an overview row opens its Weekly
-trends tab. The displayed window is the seven days before report generation. The
+attempt, and p50 task execution time, then task-level failure details. Append
+`#latest` to the dashboard URL to open the Latest run view. Clicking a dataset
+in the overview opens its trends; clicking a dataset in the summary opens its
+trends or, in the Latest run view, its failure details. The displayed window is the seven days before report generation. The
 most recently run dataset is selected initially. Each chart point represents one
 dataset run; hover over points for commit, branch, model, k and eligible task
 counts.
@@ -1347,14 +1353,14 @@ pass@k, and pass^k, highlighting increases and decreases. Changed datasets
 appear first. Missing scores or a missing previous run show as unavailable.
 The comparison always uses the previous run, even when its configuration
 differs. Dataset rows focus on scores and changes. Select a dataset and expand
-**Run details** in Weekly trends to compare the latest two runs' agent model,
+**Run details** in Dataset trends to compare the latest two runs' agent model,
 judge model and prompt version, attempts per task, task and attempt counts,
 environment, and skills, with changed values highlighted. Branch and commit
 identify each run. A changed suite file includes a source comparison link when
 both commits are known; raw fingerprints are kept in the report data rather
 than displayed. Run history also shows each run's agent model and judge.
 
-Weekly trends also includes charts for task execution latency (p50 and p90),
+Dataset trends also includes charts for task execution latency (p50 and p90),
 mean tool/device/LLM calls per attempt, recorded timing components (p50), token
 distributions, explicitly measured monetary cost, and tool errors. Each chart
 shows the latest value and sample count over eligible attempts; tooltips expose
@@ -1362,7 +1368,7 @@ the same coverage for historical points. Distributions include measured eligible
 attempts, including failures. Zero samples produce missing points; measured
 zeros remain zero.
 
-Latest results and Weekly trends share **test area** filters with the weekly
+Latest results and Dataset trends share **test area** filters with the weekly
 notification card. Areas describe the primary test objective, not whether tools
 were called or which environment executed the task:
 
@@ -1410,8 +1416,8 @@ inferred from suite names. A suite can appear in the same area across different
 execution environments.
 
 The selected area filters the
-overview, failure details, and trends dataset selector, and persists across tab
-changes. Selecting an area retains
+overview, failure details, and trends dataset selector, and persists across
+period changes. Selecting an area retains
 the current dataset if it matches, otherwise selects the most recently run
 dataset in that area. Select All to show every dataset. Per-dataset score
 changes remain visible in the overview.
