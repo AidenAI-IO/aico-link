@@ -1,6 +1,6 @@
 {
   "label": "Device Services",
-  "position": 3,
+  "position": 4,
   "link": {
     "type": "generated-index",
     "description": "Operate Aico Link's device, hardware, configuration, terminal, and Agent services."
