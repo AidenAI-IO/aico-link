@@ -12,7 +12,7 @@ if [ -z "${amixer_bin}" ] || [ ! -x "${amixer_bin}" ]; then
     exit 1
 fi
 
-# The Pico Zero DTS names the card rv1106-acodec. ALSA removes punctuation
+# The board DTS names the card rv1106-acodec. ALSA removes punctuation
 # when generating its ID, which stays stable when card indices change.
 card=rv1106acodec
 

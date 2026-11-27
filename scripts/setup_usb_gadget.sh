@@ -1,5 +1,5 @@
 #!/bin/bash
-# USB Gadget ConfigFS Setup Script for Luckfox Pico Zero
+# USB Gadget ConfigFS Setup Script for the Aico Link board
 
 set -e
 

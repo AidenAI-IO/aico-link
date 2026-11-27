@@ -86,7 +86,7 @@ func TestLANAccessSwitchAndPasswordAreIndependent(t *testing.T) {
 	if code != http.StatusBadRequest || server.lanAccess.PasswordSet() {
 		t.Fatalf("five-character password: %d", code)
 	}
-	code, body = callLANAccess(t, server, http.MethodPut, `{"password":"luckfox"}`, true)
+	code, body = callLANAccess(t, server, http.MethodPut, `{"password":"aicolink"}`, true)
 	if code != http.StatusOK || body["enabled"] != true || body["password_set"] != true || body["system_synced"] != true {
 		t.Fatalf("set password: %d %v", code, body)
 	}
@@ -105,7 +105,7 @@ func TestLANAccessSwitchAndPasswordAreIndependent(t *testing.T) {
 // included, and leaves LAN access alone.
 func TestClearPasswordNeedsCurrentPasswordAndKeepsSwitch(t *testing.T) {
 	server, marker := newLANAccessServer(t)
-	if code, _ := callLANAccess(t, server, http.MethodPut, `{"enabled":true,"password":"luckfox"}`, true); code != http.StatusOK {
+	if code, _ := callLANAccess(t, server, http.MethodPut, `{"enabled":true,"password":"aicolink"}`, true); code != http.StatusOK {
 		t.Fatalf("setup: %d", code)
 	}
 	_ = os.Remove(marker)
@@ -114,7 +114,7 @@ func TestClearPasswordNeedsCurrentPasswordAndKeepsSwitch(t *testing.T) {
 			t.Fatalf("clear with %s: %d", body, code)
 		}
 	}
-	code, body := callClearPassword(t, server, `{"current_password":"luckfox"}`, true)
+	code, body := callClearPassword(t, server, `{"current_password":"aicolink"}`, true)
 	if code != http.StatusOK || body["enabled"] != true || body["password_set"] != false || body["system_synced"] != true {
 		t.Fatalf("clear: %d %v", code, body)
 	}
@@ -127,7 +127,7 @@ func TestClearPasswordNeedsCurrentPasswordAndKeepsSwitch(t *testing.T) {
 // session cannot be used to guess the password.
 func TestCurrentPasswordGuessesAreThrottled(t *testing.T) {
 	server, _ := newLANAccessServer(t)
-	if code, _ := callLANAccess(t, server, http.MethodPut, `{"password":"luckfox"}`, true); code != http.StatusOK {
+	if code, _ := callLANAccess(t, server, http.MethodPut, `{"password":"aicolink"}`, true); code != http.StatusOK {
 		t.Fatalf("setup: %d", code)
 	}
 	code := 0
@@ -137,7 +137,7 @@ func TestCurrentPasswordGuessesAreThrottled(t *testing.T) {
 	if code != http.StatusTooManyRequests {
 		t.Fatalf("repeated wrong current passwords were never throttled: %d", code)
 	}
-	if code, _ := callClearPassword(t, server, `{"current_password":"luckfox"}`, true); code != http.StatusTooManyRequests || !server.lanAccess.PasswordSet() {
+	if code, _ := callClearPassword(t, server, `{"current_password":"aicolink"}`, true); code != http.StatusTooManyRequests || !server.lanAccess.PasswordSet() {
 		t.Fatalf("the right password must also wait out the lockout: %d", code)
 	}
 }
@@ -213,7 +213,7 @@ func TestLANGuardGatesConfigWeb(t *testing.T) {
 		t.Fatalf("browser request while off: %d %q", response.Code, response.Body.String())
 	}
 	// No password: USB clients need no credentials and can set one.
-	if response := guardedCall(server, http.MethodPut, api, `{"password":"luckfox","enabled":true}`, "", true, nil); response.Code != http.StatusOK {
+	if response := guardedCall(server, http.MethodPut, api, `{"password":"aicolink","enabled":true}`, "", true, nil); response.Code != http.StatusOK {
 		t.Fatalf("USB update without a password: %d %s", response.Code, response.Body.String())
 	}
 	// With a password, USB clients need a session too; the app pairs.
@@ -233,7 +233,7 @@ func TestLANGuardGatesConfigWeb(t *testing.T) {
 		return body.Token
 	}
 	paired := tokenFrom(guardedCall(server, http.MethodPost, "/api/auth/pair", "", "", true, nil))
-	signedIn := tokenFrom(guardedCall(server, http.MethodPost, "/api/auth/login", `{"password":"luckfox"}`, "", false, nil))
+	signedIn := tokenFrom(guardedCall(server, http.MethodPost, "/api/auth/login", `{"password":"aicolink"}`, "", false, nil))
 
 	// The paired app reaches the settings over the LAN as well.
 	if response := guardedCall(server, http.MethodGet, api, "", paired, false, nil); response.Code != http.StatusOK {
@@ -245,10 +245,10 @@ func TestLANGuardGatesConfigWeb(t *testing.T) {
 			t.Fatalf("%s password change without the current password: %d", name, response.Code)
 		}
 	}
-	if !server.lanAccess.CheckPassword("luckfox") {
+	if !server.lanAccess.CheckPassword("aicolink") {
 		t.Fatal("password changed without the current one")
 	}
-	if response := guardedCall(server, http.MethodPut, api, `{"password":"another","current_password":"luckfox"}`, signedIn, false, nil); response.Code != http.StatusOK {
+	if response := guardedCall(server, http.MethodPut, api, `{"password":"another","current_password":"aicolink"}`, signedIn, false, nil); response.Code != http.StatusOK {
 		t.Fatalf("LAN password change with the current password: %d %s", response.Code, response.Body.String())
 	}
 	// That signed everyone out, the app included; it pairs again.
