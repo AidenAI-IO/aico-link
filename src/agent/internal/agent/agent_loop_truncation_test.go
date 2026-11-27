@@ -183,6 +183,10 @@ func TestWritesToolCallAsText(t *testing.T) {
 		{"Your calendar has two events: Standup at 09:30 and Product review at 14:00.", false},
 		{"I used bridge_calendar to check June 2; there are no events.", false},
 		{"Call `bridge_calendar(action=query)` to list events.", false},
+		{"Example: `default_api:shell{command:pwd}`", false},
+		{"Run `echo shell(x)` in a terminal.", false},
+		{"Example:\n```\nshell(command=\"pwd\")\n```", false},
+		{"See `shell` docs.\nshell(command=\"pwd\")", true},
 		{"The subshell{} syntax groups commands.", false},
 		{"<tts>Locating search.</tts><parcel_point>{\"x\": 934, \"y\": 77}</parcel_point>", false},
 	}

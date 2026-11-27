@@ -54,16 +54,21 @@ const maxTextToolCallRetries = 1
 
 const textToolCallRetryNotice = "Your previous response wrote a tool call as text instead of calling the tool, so nothing ran. If the task needs that action, call the tool through function calling now. If the task is complete, give the final answer in plain words without tool-call syntax."
 
-var textToolCallAPIPattern = regexp.MustCompile(`\bdefault_api\s*[:.]\s*[A-Za-z_]\w*`)
+var (
+	textToolCallAPIPattern = regexp.MustCompile(`\bdefault_api\s*[:.]\s*[A-Za-z_]\w*`)
+	// Fenced blocks first, so their backticks do not pair as inline spans.
+	markdownCodePattern = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`")
+)
 
 // writesToolCallAsText reports a final answer that spells out a tool call
 // instead of making one. Some models (for example gemini-3.5-flash-lite)
 // occasionally emit their call in text such as
 // `<call>default_api:bridge_calendar{action:query}</call>` with no native tool
 // call, which would otherwise end the run with nothing executed. It matches a
-// `default_api` call or an offered tool name followed by `(` or `{`; a name in
-// inline code or plain prose does not match.
+// `default_api` call or an offered tool name followed by `(` or `{`, outside
+// Markdown code; a name in code or plain prose does not match.
 func writesToolCallAsText(content string, offered []langtools.Tool) bool {
+	content = markdownCodePattern.ReplaceAllString(content, " ")
 	if textToolCallAPIPattern.MatchString(content) {
 		return true
 	}
@@ -80,7 +85,7 @@ func writesToolCallAsText(content string, offered []langtools.Tool) bool {
 			i += start
 			start = i + len(name)
 			if i > 0 {
-				if before := content[i-1]; before == '_' || before == '`' || isASCIIAlnum(before) {
+				if before := content[i-1]; before == '_' || isASCIIAlnum(before) {
 					continue
 				}
 			}
