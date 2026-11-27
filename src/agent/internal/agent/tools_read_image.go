@@ -45,7 +45,7 @@ func (t *ReadImageTool) Name() string { return toolReadImage }
 func (t *ReadImageTool) ReturnsVisualObservation() bool { return true }
 
 func (t *ReadImageTool) Description() string {
-	return "Look at a local image file using its absolute path, such as a screenshot saved by device-cli look, an uploaded photo, or a chart. " +
+	return "Look at an image under /tmp or " + sharedFilesDir() + " using its absolute path, such as a screenshot saved by device-cli look, an uploaded photo, or a chart. " +
 		"Input: {\"path\": \"/tmp/device-cli-example.jpg\"}. Supports PNG, JPEG, and GIF (first frame). " +
 		"The tool result is ok, and the image arrives in a follow-up state message, scaled down if its longer side exceeds " + fmt.Sprint(readImageMaxEdge) + " px. " +
 		"It is a file, not the connected display: do not use its coordinates for touch_gesture. Use screenshot to see the display."
@@ -53,7 +53,7 @@ func (t *ReadImageTool) Description() string {
 
 func (t *ReadImageTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
-		"path": stringArgSchema("Absolute path of a readable local image file.", "/tmp/device-cli-example.jpg"),
+		"path": stringArgSchema("Absolute image path under /tmp or "+sharedFilesDir()+".", "/tmp/device-cli-example.jpg"),
 	}, "path")
 }
 
@@ -104,17 +104,40 @@ func parseReadImageArgs(input string) (string, error) {
 	return trimmed, nil
 }
 
-// readLocalImageFile reads only regular files. Use a nonblocking open so a
-// path replaced by a FIFO between stat and open cannot stall the Agent.
+// readLocalImageFile confines each open to an allowed root. A nonblocking
+// open prevents a file replaced by a FIFO from stalling the Agent.
 func readLocalImageFile(path string) ([]byte, error) {
-	before, err := os.Stat(path)
+	share := sharedFilesDir()
+	rootPath := share
+	rel, shared := strings.CutPrefix(path, share+"/")
+	if !shared {
+		rootPath = "/tmp"
+		var ok bool
+		rel, ok = strings.CutPrefix(path, "/tmp/")
+		if !ok || !filepath.IsLocal(rel) {
+			return nil, fmt.Errorf("image path must be inside /tmp or %s", share)
+		}
+	}
+	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		return nil, err
 	}
-	if !before.Mode().IsRegular() {
-		return nil, errors.New("not a regular file")
+	defer root.Close()
+
+	const flags = os.O_RDONLY | syscall.O_NONBLOCK
+	var file *os.File
+	if shared {
+		file, err = openSharedFileWithFlags(root, rel, flags)
+	} else {
+		before, statErr := root.Stat(rel)
+		if statErr != nil {
+			return nil, statErr
+		}
+		if !before.Mode().IsRegular() {
+			return nil, errors.New("not a regular file")
+		}
+		file, err = root.OpenFile(rel, flags, 0)
 	}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}

@@ -61,7 +61,7 @@ func TestReadImageToolIsBackendOnly(t *testing.T) {
 func TestReadImageToolReturnsImageObservation(t *testing.T) {
 	share := t.TempDir()
 	t.Setenv("AICO_SHARE_DIR", share)
-	small := filepath.Join(t.TempDir(), "small.png")
+	small := filepath.Join(readImageTestTempDir(t), "small.png")
 	writeTestPNG(t, small, 40, 20, color.NRGBA{R: 200, A: 255})
 	large := filepath.Join(share, "photos", "large.png")
 	// Fully transparent: scaling must flatten it onto white, not black.
@@ -124,19 +124,46 @@ func TestReadImageToolReturnsImageObservation(t *testing.T) {
 	}
 }
 
+func readImageTestTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "read-image-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestReadImageToolRejectsInvalidPathsAndNonImages(t *testing.T) {
-	dir := t.TempDir()
+	dir := readImageTestTempDir(t)
+	share := t.TempDir()
+	t.Setenv("AICO_SHARE_DIR", share)
+	pic := filepath.Join(share, "pic.png")
+	writeTestPNG(t, pic, 1, 1, color.White)
+	writeTestPNG(t, filepath.Join(dir, "pic.png"), 1, 1, color.White)
+	link := filepath.Join(dir, "link.png")
+	if err := os.Symlink(pic, link); err != nil {
+		t.Fatal(err)
+	}
+	sharedLink := filepath.Join(share, "link.png")
+	if err := os.Symlink("pic.png", sharedLink); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("not an image"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	tool := NewReadImageTool()
 	for name, input := range map[string]string{
-		"missing path": `{}`,
-		"relative":     `{"path":"sample.png"}`,
-		"directory":    `{"path":"` + dir + `"}`,
-		"absent":       `{"path":"` + filepath.Join(dir, "absent.png") + `"}`,
-		"not image":    `{"path":"` + filepath.Join(dir, "notes.txt") + `"}`,
+		"missing path":  `{}`,
+		"relative":      `{"path":"sample.png"}`,
+		"directory":     `{"path":"` + dir + `"}`,
+		"absent":        `{"path":"` + filepath.Join(dir, "absent.png") + `"}`,
+		"not image":     `{"path":"` + filepath.Join(dir, "notes.txt") + `"}`,
+		"other root":    `{"path":"/etc/pic.png"}`,
+		"tmp traversal": jsonString(map[string]any{"path": "/tmp/../tmp/" + filepath.Base(dir) + "/pic.png"}),
+		"tmp symlink":   jsonString(map[string]any{"path": link}),
+		"share symlink": jsonString(map[string]any{"path": sharedLink}),
 	} {
 		ctx, _ := WithToolError(context.Background())
 		out, err := tool.Call(ctx, input)

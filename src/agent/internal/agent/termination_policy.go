@@ -36,14 +36,11 @@ type StopReason string
 
 const (
 	StopReasonBudgetExceeded StopReason = "budget_exceeded"
-	StopReasonLoopDetected   StopReason = "loop_detected"
-	StopReasonNoProgress     StopReason = "no_progress"
 	StopReasonExternal       StopReason = "external"
 	StopReasonParseFailure   StopReason = "parse_failure"
 )
 
-// InterventionTier escalates from a notice to a stronger notice to
-// termination. No tier blocks a tool.
+// InterventionTier ranks stall notices and identifies independent hard stops.
 type InterventionTier int
 
 const (
@@ -234,9 +231,6 @@ func (p *TerminationPolicy) CheckBeforeIteration(ctx context.Context, iteration,
 	if p.parseFailures >= p.cfg.ParseFailureLimit {
 		return p.terminate(StopReasonParseFailure, "too many unparseable model outputs")
 	}
-	if p.shouldTerminate() {
-		return p.terminateFromStall()
-	}
 	return p.interventionDecision()
 }
 
@@ -252,9 +246,7 @@ func (p *TerminationPolicy) RecordParseFailure() TerminationDecision {
 	return p.interventionDecision()
 }
 
-// BeforeToolCall never blocks a tool: the guard warns about an obvious loop
-// and then ends the run, and in between the model stays free to act on
-// what it sees.
+// BeforeToolCall never blocks a tool. Stall detection reports notices after execution.
 func (p *TerminationPolicy) BeforeToolCall(toolName, input string) (ToolResult, bool) {
 	return ToolResult{}, true
 }
@@ -277,7 +269,8 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 			p.artifactResultStreak = 1
 		}
 		if p.artifactResultStreak >= max(p.cfg.RepeatActionLimit, p.cfg.SameResultLimit) {
-			return p.terminate(StopReasonLoopDetected, "artifact recovery calls repeated without new information")
+			p.tier = TierFinalWarning
+			return p.interventionDecision()
 		}
 	} else {
 		p.artifactResultHash = ""
@@ -335,17 +328,14 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 		p.bumpStall(2)
 	}
 	if p.sameSigStreak >= p.cfg.RepeatActionLimit && p.sameResultStreak >= p.cfg.SameResultLimit {
-		return p.terminate(StopReasonLoopDetected, "same tool call repeated without new information")
-	}
-	if p.shouldTerminate() {
-		return p.terminateFromStall()
+		p.tier = TierFinalWarning
 	}
 	return p.interventionDecision()
 }
 
 // afterUIAction counts a UI action that repeats the previous UI action
 // exactly and leaves the screen identical to what that action left. The
-// second such repeat gets a notice and repeat_action_limit ends the run.
+// first repeated action gets one notice for the streak.
 // Anything else, including a different action on an unchanged screen, is
 // left to the model.
 func (p *TerminationPolicy) afterUIAction(signature string, screen image.Image, isError bool) TerminationDecision {
@@ -361,9 +351,6 @@ func (p *TerminationPolicy) afterUIAction(signature string, screen image.Image, 
 		return p.interventionDecision()
 	}
 	p.uiRepeatStreak++
-	if p.uiRepeatStreak >= p.cfg.RepeatActionLimit {
-		return p.terminate(StopReasonLoopDetected, "the same UI action was repeated and the screen stayed identical")
-	}
 	if p.uiRepeatStreak == 2 {
 		return TerminationDecision{
 			Tier:   p.tier,
@@ -413,8 +400,6 @@ func (p *TerminationPolicy) recordProgress() {
 
 func (p *TerminationPolicy) refreshTier() {
 	switch {
-	case p.stallScore >= p.cfg.TerminateStallScore:
-		p.tier = TierTerminate
 	case p.stallScore >= p.cfg.RestrictToolsStallScore:
 		p.tier = TierFinalWarning
 	case p.stallScore >= p.cfg.SoftNoticeStallScore:
@@ -422,10 +407,6 @@ func (p *TerminationPolicy) refreshTier() {
 	default:
 		p.tier = TierNone
 	}
-}
-
-func (p *TerminationPolicy) shouldTerminate() bool {
-	return p.tier >= TierTerminate
 }
 
 func (p *TerminationPolicy) interventionDecision() TerminationDecision {
@@ -445,7 +426,7 @@ func (p *TerminationPolicy) noticeForTier(tier InterventionTier) string {
 	case TierSoftNotice:
 		return "Loop guard: recent tool calls are repeating without new results. Change strategy, verify with observation tools, give your final answer with the evidence you have, or call request_user_action if only the user can unblock the task on the device."
 	case TierFinalWarning:
-		return "Loop guard: tool calls are still repeating without new results, and the run will stop if this continues. Change strategy now, give your final answer with the evidence you have, or call request_user_action if only the user can unblock the task on the device."
+		return "Loop guard: tool calls are still repeating without new results. Change strategy now, give your final answer with the evidence you have, or call request_user_action if only the user can unblock the task on the device."
 	default:
 		return ""
 	}
@@ -459,16 +440,6 @@ func (p *TerminationPolicy) terminate(reason StopReason, message string) Termina
 		Message: message,
 		Tier:    TierTerminate,
 	}
-}
-
-func (p *TerminationPolicy) terminateFromStall() TerminationDecision {
-	reason := StopReasonNoProgress
-	message := "agent stalled without measurable progress"
-	if p.sameSigStreak >= p.cfg.RepeatActionLimit {
-		reason = StopReasonLoopDetected
-		message = "repeated tool calls without progress"
-	}
-	return p.terminate(reason, message)
 }
 
 func formatLoopGuardStopMessage(decision TerminationDecision, lastTool string) string {

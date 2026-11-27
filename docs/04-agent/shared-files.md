@@ -117,9 +117,10 @@ through `shell` and Python. An attached file reaches the model as its absolute
 path in the user message.
 
 To look at an image file, the Agent calls `read_image` with its path. The tool
-reads PNG, JPEG, or GIF (first frame) from any absolute local path that resolves
-to a regular file readable by the Agent, including `/share` and `/tmp`. This
-does not change the separate shared-file download rules. Every image is fully
+reads PNG, JPEG, or GIF (first frame) from regular files under `/tmp` or the
+configured shared directory (`/share` by default). Path resolution stays within
+its selected directory, and shared files follow the existing hidden-file and
+symlink rules. Every image is fully
 decoded first, so a truncated file is refused rather than sent. A GIF's first
 frame is placed on its full canvas.
 Images whose longer side exceeds 1568 px are scaled down and sent
