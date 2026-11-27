@@ -121,7 +121,7 @@ Settings > Accessibility > Touch > AssistiveTouch
 It is also recommended to enable **Show Onscreen Keyboard** on the AssistiveTouch page for a more stable keyboard input experience.
 
 Current firmware drives iOS with a HID touchpad instead and needs Zoom on and
-AssistiveTouch off; see [USB HID](../03-services/usb-hid.md).
+AssistiveTouch off; see [USB HID](../04-services/usb-hid.md).
 
 ## Default Device Nodes
 

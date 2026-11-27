@@ -239,7 +239,7 @@ stdout/stderr that is intentionally persisted remains in the files above.
 The `aico-mcu-event.service` unit now runs `mcu_service`, the production UART
 peer on `/dev/ttyS5` (115200 8N1). It exposes battery/timer/LED operations and
 cursor-based wake long polling, and coordinates MCU-requested Linux poweroff.
-See [MCU Service](../03-services/mcu-service.md) for application contracts,
+See [MCU Service](../04-services/mcu-service.md) for application contracts,
 shutdown timing constraints and post-flash validation commands. Stop the unit
 before using another UART owner. Journald is volatile on this board; export
 logs before reboot when the record needs to be retained.

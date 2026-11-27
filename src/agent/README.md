@@ -10,9 +10,9 @@ variables use the `aico` / `AICO_` names. For upgrade and integration details, s
 The full documentation is available here:
 
 - [Local Agent with a Real Phone](../../docs/01-getting-started/local-agent-real-phone.md): native startup, Config Web, Android ADB, and macOS iPhone Mirroring
-- [Agent overview](../../docs/04-agent/overview.md)
-- [Agent configuration reference](../../docs/04-agent/configuration.md)
-- [Tools HTTP API](../../docs/04-agent/tools-http-api.md)
-- [Voice capabilities: VAD / STT / TTS](../../docs/04-agent/audio-features.md)
-- [Shared file uploads and downloads](../../docs/04-agent/shared-files.md)
-- [Skills mechanism](../../docs/04-agent/skills.md)
+- [Agent overview](../../docs/05-agent/overview.md)
+- [Agent configuration reference](../../docs/05-agent/configuration.md)
+- [Tools HTTP API](../../docs/05-agent/tools-http-api.md)
+- [Voice capabilities: VAD / STT / TTS](../../docs/05-agent/audio-features.md)
+- [Shared file uploads and downloads](../../docs/05-agent/shared-files.md)
+- [Skills mechanism](../../docs/05-agent/skills.md)

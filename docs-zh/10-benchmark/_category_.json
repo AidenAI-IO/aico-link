@@ -1,0 +1,8 @@
+{
+  "label": "基准测试",
+  "position": 10,
+  "link": {
+    "type": "doc",
+    "id": "benchmark/README"
+  }
+}

@@ -102,7 +102,7 @@ instead of assuming `mmcblk2`; this board exposes `/dev/mmcblk1p1`. Mount
 checks include a synced temporary write and readback, and reject read-only
 mounts or I/O errors. Failed reads cannot trigger blank-card formatting.
 Debian includes FAT32, ext4 and exFAT checking/formatting tools. See
-[Storage Manager](04-agent/storage-manager.md) for the full usability gate,
+[Storage Manager](05-agent/storage-manager.md) for the full usability gate,
 explicit device overrides and the default 64 MiB minimum free space.
 
 ### Validation

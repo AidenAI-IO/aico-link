@@ -57,8 +57,8 @@ SD-card data lives under the card's `aico` directory. Backup exports use the
 `aico-backup` format and `AICOBKP1` magic.
 
 For deployment and updates, see [Deployment](../01-getting-started/deployment.md),
-[OTA](../08-ota/README.md), and
-[Debian Business Packages](../08-ota/debian-package.md).
+[OTA](../09-ota/README.md), and
+[Debian Business Packages](../09-ota/debian-package.md).
 
 ## Existing External Names
 

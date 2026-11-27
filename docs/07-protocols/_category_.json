@@ -1,0 +1,8 @@
+{
+  "label": "Protocols",
+  "position": 7,
+  "link": {
+    "type": "generated-index",
+    "description": "Unix domain socket and hardware service protocol references."
+  }
+}

@@ -107,7 +107,7 @@ def stage(root, apps, output):
         "Contains applications, resources and managed runtime configuration; no partition images.\n\n"
         "Verify SHA256SUMS before installing with apt. Package maintainer scripts "
         "stop and restore previously running Aico Link services; then run the OTA self-check. "
-        "See docs/08-ota/debian-package.md for the installation procedure.\n\n"
+        "See docs/09-ota/debian-package.md for the installation procedure.\n\n"
         "This GitHub prerelease distributes .deb files; it is not an APT repository "
         "or a signed firmware OTA release.\n"
     )

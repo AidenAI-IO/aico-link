@@ -1,0 +1,8 @@
+{
+  "label": "Agent",
+  "position": 5,
+  "link": {
+    "type": "generated-index",
+    "description": "配置和扩展 Aico 运行时、工具、Skill、记忆和语音功能。"
+  }
+}
