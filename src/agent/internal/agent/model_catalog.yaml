@@ -1,0 +1,837 @@
+# Local main-model catalog for Config Web and the companion App.
+# Served by GET /api/models. Later a remote file can override this fallback.
+#
+# default: selected when switching to this provider if the current model is not listed.
+# recommended: shown as recommended in the UI (multiple allowed).
+
+providers:
+  openai:
+    default: gpt-5.5
+    models:
+      - id: gpt-5.5
+        recommended: true
+        descriptions:
+          en-US: "Latest flagship with 1M+ context"
+          zh-CN: "最新旗舰，100万+ 上下文"
+      - id: gpt-5.5-pro
+        recommended: true
+        descriptions:
+          en-US: "Higher-compute GPT-5.5 variant"
+          zh-CN: "更高算力的 GPT-5.5"
+      - id: gpt-5.4
+        recommended: true
+        descriptions:
+          en-US: "Previous flagship with 1M+ context"
+          zh-CN: "上一代旗舰，100万+ 上下文"
+      - id: gpt-5.4-pro
+        recommended: true
+        descriptions:
+          en-US: "Higher-compute GPT-5.4 variant"
+          zh-CN: "更高算力的 GPT-5.4"
+      - id: gpt-5.4-mini
+        recommended: true
+        descriptions:
+          en-US: "Fast economical GPT-5.4"
+          zh-CN: "快速经济的 GPT-5.4"
+      - id: gpt-5.4-nano
+        recommended: true
+        descriptions:
+          en-US: "Ultra-fast GPT-5.4 nano"
+          zh-CN: "超快速 GPT-5.4 nano"
+      - id: gpt-5.6
+        recommended: true
+        descriptions:
+          en-US: "GPT-5.6 multimodal line"
+          zh-CN: "GPT-5.6 多模态系列"
+      - id: gpt-5.6-luna
+        recommended: true
+        descriptions:
+          en-US: "GPT-5.6 Luna"
+          zh-CN: "GPT-5.6 Luna"
+      - id: gpt-5.6-sol
+        recommended: true
+        descriptions:
+          en-US: "GPT-5.6 Sol"
+          zh-CN: "GPT-5.6 Sol"
+      - id: gpt-5.6-terra
+        recommended: true
+        descriptions:
+          en-US: "GPT-5.6 Terra"
+          zh-CN: "GPT-5.6 Terra"
+      - id: gpt-5.2
+        recommended: true
+        descriptions:
+          en-US: "GPT-5.2"
+          zh-CN: "GPT-5.2"
+      - id: gpt-5.2-pro
+        recommended: true
+        descriptions:
+          en-US: "GPT-5.2 Pro"
+          zh-CN: "GPT-5.2 Pro"
+      - id: gpt-5.1
+        recommended: true
+        descriptions:
+          en-US: "GPT-5.1"
+          zh-CN: "GPT-5.1"
+      - id: gpt-5
+        recommended: true
+        descriptions:
+          en-US: "GPT-5"
+          zh-CN: "GPT-5"
+      - id: gpt-5-pro
+        recommended: true
+        descriptions:
+          en-US: "GPT-5 Pro"
+          zh-CN: "GPT-5 Pro"
+      - id: gpt-5-mini
+        recommended: true
+        descriptions:
+          en-US: "GPT-5 Mini"
+          zh-CN: "GPT-5 Mini"
+      - id: gpt-5-nano
+        recommended: true
+        descriptions:
+          en-US: "GPT-5 Nano"
+          zh-CN: "GPT-5 Nano"
+      - id: gpt-4.1
+        recommended: true
+        descriptions:
+          en-US: "GPT-4.1 multimodal"
+          zh-CN: "GPT-4.1 多模态"
+      - id: gpt-4.1-mini
+        recommended: true
+        descriptions:
+          en-US: "GPT-4.1 mini"
+          zh-CN: "GPT-4.1 mini"
+      - id: gpt-4o
+        recommended: true
+        descriptions:
+          en-US: "Classic multimodal GPT-4o"
+          zh-CN: "经典多模态 GPT-4o"
+      - id: gpt-4o-mini
+        recommended: true
+        descriptions:
+          en-US: "Compact GPT-4o"
+          zh-CN: "紧凑版 GPT-4o"
+      - id: gpt-6-astra
+        recommended: true
+        descriptions:
+          en-US: "GPT-6 Astra"
+          zh-CN: "GPT-6 Astra"
+      - id: gpt-6-sol
+        recommended: true
+        descriptions:
+          en-US: "GPT-6 Sol"
+          zh-CN: "GPT-6 Sol"
+      - id: gpt-6-luna
+        recommended: true
+        descriptions:
+          en-US: "GPT-6 Luna"
+          zh-CN: "GPT-6 Luna"
+      - id: gpt-6.1-sol
+        recommended: true
+        descriptions:
+          en-US: "GPT-6.1 Sol"
+          zh-CN: "GPT-6.1 Sol"
+      - id: gpt-6.1-terra
+        recommended: true
+        descriptions:
+          en-US: "GPT-6.1 Terra"
+          zh-CN: "GPT-6.1 Terra"
+      - id: gpt-6.2-astra
+        recommended: true
+        descriptions:
+          en-US: "GPT-6.2 Astra"
+          zh-CN: "GPT-6.2 Astra"
+      - id: gpt-6.2-sol
+        recommended: true
+        descriptions:
+          en-US: "GPT-6.2 Sol"
+          zh-CN: "GPT-6.2 Sol"
+      - id: o3
+        recommended: true
+        descriptions:
+          en-US: "OpenAI o3 reasoning"
+          zh-CN: "OpenAI o3 推理"
+      - id: o3-pro
+        recommended: true
+        descriptions:
+          en-US: "OpenAI o3 Pro"
+          zh-CN: "OpenAI o3 Pro"
+
+  anthropic:
+    default: claude-fable-5
+    models:
+      - id: claude-fable-5
+        recommended: true
+        descriptions:
+          en-US: "Anthropic's most capable Claude"
+          zh-CN: "Anthropic 最强 Claude"
+      - id: claude-fable-5-1
+        recommended: true
+        descriptions:
+          en-US: "Claude Fable 5.1"
+          zh-CN: "Claude Fable 5.1"
+      - id: claude-fable-5-2
+        recommended: true
+        descriptions:
+          en-US: "Claude Fable 5.2"
+          zh-CN: "Claude Fable 5.2"
+      - id: claude-opus-5
+        recommended: true
+        descriptions:
+          en-US: "Flagship for agentic coding"
+          zh-CN: "面向智能体编程的旗舰"
+      - id: claude-opus-5-5
+        recommended: true
+        descriptions:
+          en-US: "Claude Opus 5.5"
+          zh-CN: "Claude Opus 5.5"
+      - id: claude-opus-4-8
+        recommended: true
+        descriptions:
+          en-US: "Claude Opus 4.8"
+          zh-CN: "Claude Opus 4.8"
+      - id: claude-opus-4-7
+        recommended: true
+        descriptions:
+          en-US: "Claude Opus 4.7"
+          zh-CN: "Claude Opus 4.7"
+      - id: claude-opus-4-6
+        recommended: true
+        descriptions:
+          en-US: "Claude Opus 4.6"
+          zh-CN: "Claude Opus 4.6"
+      - id: claude-opus-4-5
+        recommended: true
+        descriptions:
+          en-US: "Claude Opus 4.5"
+          zh-CN: "Claude Opus 4.5"
+      - id: claude-sonnet-5-5
+        recommended: true
+        descriptions:
+          en-US: "Claude Sonnet 5.5"
+          zh-CN: "Claude Sonnet 5.5"
+      - id: claude-sonnet-5
+        recommended: true
+        descriptions:
+          en-US: "Claude Sonnet 5"
+          zh-CN: "Claude Sonnet 5"
+      - id: claude-sonnet-4-6
+        recommended: true
+        descriptions:
+          en-US: "Balanced performance and speed"
+          zh-CN: "性能与速度平衡"
+      - id: claude-sonnet-4-5
+        recommended: true
+        descriptions:
+          en-US: "Claude Sonnet 4.5"
+          zh-CN: "Claude Sonnet 4.5"
+      - id: claude-haiku-5-5
+        recommended: true
+        descriptions:
+          en-US: "Fast Claude Haiku 5.5"
+          zh-CN: "快速 Claude Haiku 5.5"
+      - id: claude-haiku-4-5
+        recommended: true
+        descriptions:
+          en-US: "Fast economical Claude"
+          zh-CN: "快速经济的 Claude"
+
+  kimi:
+    default: kimi-k3
+    models:
+      - id: kimi-k3
+        recommended: true
+        descriptions:
+          en-US: "Deep reasoning with 1M+ context"
+          zh-CN: "深度推理，100万+ 上下文"
+      - id: kimi-k3.1-pro
+        recommended: true
+        descriptions:
+          en-US: "Kimi K3.1 Pro multimodal"
+          zh-CN: "Kimi K3.1 Pro 多模态"
+      - id: kimi-k2.6
+        recommended: true
+        descriptions:
+          en-US: "Kimi K2.6"
+          zh-CN: "Kimi K2.6"
+      - id: kimi-k2.7-code
+        recommended: true
+        descriptions:
+          en-US: "Kimi K2.7 Code"
+          zh-CN: "Kimi K2.7 Code"
+
+  kimi-cn:
+    default: kimi-k3
+    models:
+      - id: kimi-k3
+        recommended: true
+        descriptions:
+          en-US: "Deep reasoning with 1M+ context"
+          zh-CN: "深度推理，100万+ 上下文"
+      - id: kimi-k3.1-pro
+        recommended: true
+        descriptions:
+          en-US: "Kimi K3.1 Pro multimodal"
+          zh-CN: "Kimi K3.1 Pro 多模态"
+      - id: kimi-k2.6
+        recommended: true
+        descriptions:
+          en-US: "Kimi K2.6"
+          zh-CN: "Kimi K2.6"
+      - id: kimi-k2.7-code
+        recommended: true
+        descriptions:
+          en-US: "Kimi K2.7 Code"
+          zh-CN: "Kimi K2.7 Code"
+
+  volcengine:
+    default: doubao-seed-2-1-pro-260628
+    models:
+      - id: doubao-seed-2-1-pro-260628
+        recommended: true
+        descriptions:
+          en-US: "Doubao Seed 2.1 Pro"
+          zh-CN: "豆包 Seed 2.1 Pro"
+      - id: doubao-seed-2-1-pro-260915
+        recommended: true
+        descriptions:
+          en-US: "Doubao Seed 2.1 Pro (260915)"
+          zh-CN: "豆包 Seed 2.1 Pro（260915）"
+      - id: doubao-seed-2-1-lite-260915
+        recommended: true
+        descriptions:
+          en-US: "Doubao Seed 2.1 Lite"
+          zh-CN: "豆包 Seed 2.1 Lite"
+      - id: doubao-seed-2-1-turbo-260628
+        recommended: true
+        descriptions:
+          en-US: "Doubao Seed 2.1 Turbo"
+          zh-CN: "豆包 Seed 2.1 Turbo"
+      - id: doubao-seed-2-0-pro-260215
+        recommended: true
+        descriptions:
+          en-US: "Doubao Seed 2.0 Pro"
+          zh-CN: "豆包 Seed 2.0 Pro"
+      - id: doubao-seed-2-0-lite-260428
+        recommended: true
+        descriptions:
+          en-US: "Doubao Seed 2.0 Lite"
+          zh-CN: "豆包 Seed 2.0 Lite"
+      - id: doubao-seed-2-0-mini-260428
+        recommended: true
+        descriptions:
+          en-US: "Doubao Seed 2.0 Mini"
+          zh-CN: "豆包 Seed 2.0 Mini"
+      - id: doubao-seed-evolving
+        recommended: true
+        descriptions:
+          en-US: "Doubao Seed Evolving"
+          zh-CN: "豆包 Seed Evolving"
+
+  deepseek:
+    default: deepseek-flash
+    models:
+      - id: deepseek-flash
+        recommended: true
+        descriptions:
+          en-US: "Fast multimodal DeepSeek Flash"
+          zh-CN: "快速多模态 DeepSeek Flash"
+      - id: deepseek-v4-flash
+        recommended: true
+        descriptions:
+          en-US: "DeepSeek V4 Flash vision"
+          zh-CN: "DeepSeek V4 Flash 视觉"
+      - id: deepseek-v4-flash-vision-exp
+        recommended: true
+        descriptions:
+          en-US: "DeepSeek V4 Flash Vision Exp"
+          zh-CN: "DeepSeek V4 Flash Vision 实验"
+
+  gemini:
+    default: gemini-3.8-flash
+    models:
+      - id: gemini-3.8-flash
+        recommended: true
+        descriptions:
+          en-US: "Most capable Gemini Flash for agents"
+          zh-CN: "最强 Gemini Flash，适合智能体"
+      - id: gemini-3.7-flash
+        recommended: true
+        descriptions:
+          en-US: "Gemini 3.7 Flash"
+          zh-CN: "Gemini 3.7 Flash"
+      - id: gemini-3.6-flash
+        recommended: true
+        descriptions:
+          en-US: "Gemini 3.6 Flash"
+          zh-CN: "Gemini 3.6 Flash"
+      - id: gemini-3.5-flash
+        recommended: true
+        descriptions:
+          en-US: "Gemini 3.5 Flash"
+          zh-CN: "Gemini 3.5 Flash"
+      - id: gemini-3.5-flash-lite
+        recommended: true
+        descriptions:
+          en-US: "Gemini 3.5 Flash Lite"
+          zh-CN: "Gemini 3.5 Flash Lite"
+      - id: gemini-3.1-flash-lite
+        recommended: true
+        descriptions:
+          en-US: "Gemini 3.1 Flash Lite"
+          zh-CN: "Gemini 3.1 Flash Lite"
+      - id: gemini-2.5-pro
+        recommended: true
+        descriptions:
+          en-US: "Gemini 2.5 Pro"
+          zh-CN: "Gemini 2.5 Pro"
+      - id: gemini-2.5-flash
+        recommended: true
+        descriptions:
+          en-US: "Gemini 2.5 Flash"
+          zh-CN: "Gemini 2.5 Flash"
+      - id: gemini-2.5-flash-lite
+        recommended: true
+        descriptions:
+          en-US: "Gemini 2.5 Flash Lite"
+          zh-CN: "Gemini 2.5 Flash Lite"
+      - id: gemini-4-argon
+        recommended: true
+        descriptions:
+          en-US: "Gemini 4 Argon"
+          zh-CN: "Gemini 4 Argon"
+      - id: gemini-4-carbon
+        recommended: true
+        descriptions:
+          en-US: "Gemini 4 Carbon"
+          zh-CN: "Gemini 4 Carbon"
+      - id: gemini-4-hydrogen
+        recommended: true
+        descriptions:
+          en-US: "Gemini 4 Hydrogen"
+          zh-CN: "Gemini 4 Hydrogen"
+      - id: gemini-4-neon
+        recommended: true
+        descriptions:
+          en-US: "Gemini 4 Neon"
+          zh-CN: "Gemini 4 Neon"
+
+  openrouter:
+    default: bytedance-seed/seed-2.0-lite
+    models:
+      - id: bytedance-seed/seed-2.0-lite
+        recommended: true
+        descriptions:
+          en-US: "ByteDance Seed 2.0 Lite (factory default)"
+          zh-CN: "字节 Seed 2.0 Lite（出厂默认）"
+      - id: bytedance-seed/seed-2.0-mini
+        recommended: true
+        descriptions:
+          en-US: "ByteDance Seed 2.0 Mini"
+          zh-CN: "字节 Seed 2.0 Mini"
+      - id: bytedance-seed/seed-2-1-turbo
+        recommended: true
+        descriptions:
+          en-US: "ByteDance Seed 2.1 Turbo"
+          zh-CN: "字节 Seed 2.1 Turbo"
+      - id: anthropic/claude-fable-5
+        recommended: true
+        descriptions:
+          en-US: "claude-fable-5"
+          zh-CN: "claude-fable-5"
+      - id: anthropic/claude-fable-5.1
+        recommended: true
+        descriptions:
+          en-US: "claude-fable-5.1"
+          zh-CN: "claude-fable-5.1"
+      - id: anthropic/claude-fable-5.2
+        recommended: true
+        descriptions:
+          en-US: "claude-fable-5.2"
+          zh-CN: "claude-fable-5.2"
+      - id: anthropic/claude-opus-5
+        recommended: true
+        descriptions:
+          en-US: "claude-opus-5"
+          zh-CN: "claude-opus-5"
+      - id: anthropic/claude-opus-5.5
+        recommended: true
+        descriptions:
+          en-US: "claude-opus-5.5"
+          zh-CN: "claude-opus-5.5"
+      - id: anthropic/claude-opus-4.8
+        recommended: true
+        descriptions:
+          en-US: "claude-opus-4.8"
+          zh-CN: "claude-opus-4.8"
+      - id: anthropic/claude-opus-4.7
+        recommended: true
+        descriptions:
+          en-US: "claude-opus-4.7"
+          zh-CN: "claude-opus-4.7"
+      - id: anthropic/claude-opus-4.6
+        recommended: true
+        descriptions:
+          en-US: "claude-opus-4.6"
+          zh-CN: "claude-opus-4.6"
+      - id: anthropic/claude-opus-4.5
+        recommended: true
+        descriptions:
+          en-US: "claude-opus-4.5"
+          zh-CN: "claude-opus-4.5"
+      - id: anthropic/claude-sonnet-5.5
+        recommended: true
+        descriptions:
+          en-US: "claude-sonnet-5.5"
+          zh-CN: "claude-sonnet-5.5"
+      - id: anthropic/claude-sonnet-5
+        recommended: true
+        descriptions:
+          en-US: "claude-sonnet-5"
+          zh-CN: "claude-sonnet-5"
+      - id: anthropic/claude-sonnet-4.6
+        recommended: true
+        descriptions:
+          en-US: "claude-sonnet-4.6"
+          zh-CN: "claude-sonnet-4.6"
+      - id: anthropic/claude-sonnet-4.5
+        recommended: true
+        descriptions:
+          en-US: "claude-sonnet-4.5"
+          zh-CN: "claude-sonnet-4.5"
+      - id: anthropic/claude-haiku-5.5
+        recommended: true
+        descriptions:
+          en-US: "claude-haiku-5.5"
+          zh-CN: "claude-haiku-5.5"
+      - id: anthropic/claude-haiku-4.5
+        recommended: true
+        descriptions:
+          en-US: "claude-haiku-4.5"
+          zh-CN: "claude-haiku-4.5"
+      - id: google/gemini-3.8-flash
+        recommended: true
+        descriptions:
+          en-US: "gemini-3.8-flash"
+          zh-CN: "gemini-3.8-flash"
+      - id: google/gemini-3.7-flash
+        recommended: true
+        descriptions:
+          en-US: "gemini-3.7-flash"
+          zh-CN: "gemini-3.7-flash"
+      - id: google/gemini-3.6-flash
+        recommended: true
+        descriptions:
+          en-US: "gemini-3.6-flash"
+          zh-CN: "gemini-3.6-flash"
+      - id: google/gemini-3.5-flash
+        recommended: true
+        descriptions:
+          en-US: "gemini-3.5-flash"
+          zh-CN: "gemini-3.5-flash"
+      - id: google/gemini-3.5-flash-lite
+        recommended: true
+        descriptions:
+          en-US: "gemini-3.5-flash-lite"
+          zh-CN: "gemini-3.5-flash-lite"
+      - id: google/gemini-3.1-flash-lite
+        recommended: true
+        descriptions:
+          en-US: "gemini-3.1-flash-lite"
+          zh-CN: "gemini-3.1-flash-lite"
+      - id: google/gemini-2.5-pro
+        recommended: true
+        descriptions:
+          en-US: "gemini-2.5-pro"
+          zh-CN: "gemini-2.5-pro"
+      - id: google/gemini-2.5-flash
+        recommended: true
+        descriptions:
+          en-US: "gemini-2.5-flash"
+          zh-CN: "gemini-2.5-flash"
+      - id: google/gemini-2.5-flash-lite
+        recommended: true
+        descriptions:
+          en-US: "gemini-2.5-flash-lite"
+          zh-CN: "gemini-2.5-flash-lite"
+      - id: google/gemini-4-argon
+        recommended: true
+        descriptions:
+          en-US: "gemini-4-argon"
+          zh-CN: "gemini-4-argon"
+      - id: google/gemini-4-carbon
+        recommended: true
+        descriptions:
+          en-US: "gemini-4-carbon"
+          zh-CN: "gemini-4-carbon"
+      - id: google/gemini-4-hydrogen
+        recommended: true
+        descriptions:
+          en-US: "gemini-4-hydrogen"
+          zh-CN: "gemini-4-hydrogen"
+      - id: google/gemini-4-neon
+        recommended: true
+        descriptions:
+          en-US: "gemini-4-neon"
+          zh-CN: "gemini-4-neon"
+      - id: openai/gpt-5.5
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.5"
+          zh-CN: "gpt-5.5"
+      - id: openai/gpt-5.5-pro
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.5-pro"
+          zh-CN: "gpt-5.5-pro"
+      - id: openai/gpt-5.4
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.4"
+          zh-CN: "gpt-5.4"
+      - id: openai/gpt-5.4-pro
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.4-pro"
+          zh-CN: "gpt-5.4-pro"
+      - id: openai/gpt-5.4-mini
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.4-mini"
+          zh-CN: "gpt-5.4-mini"
+      - id: openai/gpt-5.4-nano
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.4-nano"
+          zh-CN: "gpt-5.4-nano"
+      - id: openai/gpt-5.6-luna
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.6-luna"
+          zh-CN: "gpt-5.6-luna"
+      - id: openai/gpt-5.6-sol
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.6-sol"
+          zh-CN: "gpt-5.6-sol"
+      - id: openai/gpt-5.6-terra
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.6-terra"
+          zh-CN: "gpt-5.6-terra"
+      - id: openai/gpt-5.2
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.2"
+          zh-CN: "gpt-5.2"
+      - id: openai/gpt-5.2-pro
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.2-pro"
+          zh-CN: "gpt-5.2-pro"
+      - id: openai/gpt-5.1
+        recommended: true
+        descriptions:
+          en-US: "gpt-5.1"
+          zh-CN: "gpt-5.1"
+      - id: openai/gpt-5
+        recommended: true
+        descriptions:
+          en-US: "gpt-5"
+          zh-CN: "gpt-5"
+      - id: openai/gpt-5-pro
+        recommended: true
+        descriptions:
+          en-US: "gpt-5-pro"
+          zh-CN: "gpt-5-pro"
+      - id: openai/gpt-5-mini
+        recommended: true
+        descriptions:
+          en-US: "gpt-5-mini"
+          zh-CN: "gpt-5-mini"
+      - id: openai/gpt-5-nano
+        recommended: true
+        descriptions:
+          en-US: "gpt-5-nano"
+          zh-CN: "gpt-5-nano"
+      - id: openai/gpt-4.1
+        recommended: true
+        descriptions:
+          en-US: "gpt-4.1"
+          zh-CN: "gpt-4.1"
+      - id: openai/gpt-4.1-mini
+        recommended: true
+        descriptions:
+          en-US: "gpt-4.1-mini"
+          zh-CN: "gpt-4.1-mini"
+      - id: openai/gpt-4o
+        recommended: true
+        descriptions:
+          en-US: "gpt-4o"
+          zh-CN: "gpt-4o"
+      - id: openai/gpt-4o-mini
+        recommended: true
+        descriptions:
+          en-US: "gpt-4o-mini"
+          zh-CN: "gpt-4o-mini"
+      - id: openai/gpt-6-astra
+        recommended: true
+        descriptions:
+          en-US: "gpt-6-astra"
+          zh-CN: "gpt-6-astra"
+      - id: openai/gpt-6-sol
+        recommended: true
+        descriptions:
+          en-US: "gpt-6-sol"
+          zh-CN: "gpt-6-sol"
+      - id: openai/gpt-6-luna
+        recommended: true
+        descriptions:
+          en-US: "gpt-6-luna"
+          zh-CN: "gpt-6-luna"
+      - id: openai/gpt-6.1-sol
+        recommended: true
+        descriptions:
+          en-US: "gpt-6.1-sol"
+          zh-CN: "gpt-6.1-sol"
+      - id: openai/gpt-6.1-terra
+        recommended: true
+        descriptions:
+          en-US: "gpt-6.1-terra"
+          zh-CN: "gpt-6.1-terra"
+      - id: openai/gpt-6.2-astra
+        recommended: true
+        descriptions:
+          en-US: "gpt-6.2-astra"
+          zh-CN: "gpt-6.2-astra"
+      - id: openai/gpt-6.2-sol
+        recommended: true
+        descriptions:
+          en-US: "gpt-6.2-sol"
+          zh-CN: "gpt-6.2-sol"
+      - id: moonshotai/kimi-k3
+        recommended: true
+        descriptions:
+          en-US: "kimi-k3"
+          zh-CN: "kimi-k3"
+      - id: moonshotai/kimi-k3.1-pro
+        recommended: true
+        descriptions:
+          en-US: "kimi-k3.1-pro"
+          zh-CN: "kimi-k3.1-pro"
+      - id: moonshotai/kimi-k2.6
+        recommended: true
+        descriptions:
+          en-US: "kimi-k2.6"
+          zh-CN: "kimi-k2.6"
+      - id: moonshotai/kimi-k2.7-code
+        recommended: true
+        descriptions:
+          en-US: "kimi-k2.7-code"
+          zh-CN: "kimi-k2.7-code"
+      - id: moonshotai/kimi-k2.5
+        recommended: true
+        descriptions:
+          en-US: "kimi-k2.5"
+          zh-CN: "kimi-k2.5"
+      - id: deepseek/deepseek-v4.1-flash
+        recommended: true
+        descriptions:
+          en-US: "deepseek-v4.1-flash"
+          zh-CN: "deepseek-v4.1-flash"
+      - id: deepseek/deepseek-v4.1-flash-1017
+        recommended: true
+        descriptions:
+          en-US: "deepseek-v4.1-flash-1017"
+          zh-CN: "deepseek-v4.1-flash-1017"
+      - id: deepseek/deepseek-v4-flash-vision-exp
+        recommended: true
+        descriptions:
+          en-US: "deepseek-v4-flash-vision-exp"
+          zh-CN: "deepseek-v4-flash-vision-exp"
+      - id: qwen/qwen3.8-27b
+        recommended: true
+        descriptions:
+          en-US: "qwen3.8-27b"
+          zh-CN: "qwen3.8-27b"
+      - id: qwen/qwen3.8-flash
+        recommended: true
+        descriptions:
+          en-US: "qwen3.8-flash"
+          zh-CN: "qwen3.8-flash"
+      - id: qwen/qwen3.8-max-prime
+        recommended: true
+        descriptions:
+          en-US: "qwen3.8-max-prime"
+          zh-CN: "qwen3.8-max-prime"
+      - id: qwen/qwen3.8-omni-flash
+        recommended: true
+        descriptions:
+          en-US: "qwen3.8-omni-flash"
+          zh-CN: "qwen3.8-omni-flash"
+      - id: qwen/qwen4-max
+        recommended: true
+        descriptions:
+          en-US: "qwen4-max"
+          zh-CN: "qwen4-max"
+      - id: qwen/qwen3.7-flash
+        recommended: true
+        descriptions:
+          en-US: "qwen3.7-flash"
+          zh-CN: "qwen3.7-flash"
+      - id: qwen/qwen3.7-plus
+        recommended: true
+        descriptions:
+          en-US: "qwen3.7-plus"
+          zh-CN: "qwen3.7-plus"
+      - id: qwen/qwen3.6-flash
+        recommended: true
+        descriptions:
+          en-US: "qwen3.6-flash"
+          zh-CN: "qwen3.6-flash"
+      - id: qwen/qwen3.6-plus
+        recommended: true
+        descriptions:
+          en-US: "qwen3.6-plus"
+          zh-CN: "qwen3.6-plus"
+      - id: qwen/qwen3-vl-8b-instruct
+        recommended: true
+        descriptions:
+          en-US: "qwen3-vl-8b-instruct"
+          zh-CN: "qwen3-vl-8b-instruct"
+      - id: qwen/qwen3-vl-30b-a3b-instruct
+        recommended: true
+        descriptions:
+          en-US: "qwen3-vl-30b-a3b-instruct"
+          zh-CN: "qwen3-vl-30b-a3b-instruct"
+      - id: qwen/qwen3-vl-235b-a22b-instruct
+        recommended: true
+        descriptions:
+          en-US: "qwen3-vl-235b-a22b-instruct"
+          zh-CN: "qwen3-vl-235b-a22b-instruct"
+
+  ollama:
+    default: qwen2.5:14b
+    models:
+      - id: qwen2.5:14b
+        recommended: true
+        descriptions:
+          en-US: "General Chinese model"
+          zh-CN: "通用中文模型"
+      - id: qwen2.5:7b
+        recommended: false
+        descriptions:
+          en-US: "Lightweight Chinese model"
+          zh-CN: "轻量级中文模型"
+      - id: llama3.1:8b
+        recommended: false
+        descriptions:
+          en-US: "Meta Llama 3.1 8B"
+          zh-CN: "Meta Llama 3.1 8B"
+      - id: llama3.1:70b
+        recommended: false
+        descriptions:
+          en-US: "Meta Llama 3.1 70B"
+          zh-CN: "Meta Llama 3.1 70B"

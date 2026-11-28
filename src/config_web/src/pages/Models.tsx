@@ -23,7 +23,7 @@ import { useQuery, useSchema } from '../hooks/query';
 import { matches, sectionFields, fieldLabel, optionsFor, placeholderFor } from '../lib/schema';
 import type { Field } from '../lib/schema';
 import { apiError, json } from '../api/client';
-import { getActiveLocale, msg, resolve } from '../lib/i18n';
+import { getActiveLocale, msg, resolve, t } from '../lib/i18n';
 import { ChoiceRow, CustomValue } from '../components/choices';
 import { ProviderMark, SelectedCheck } from '../components/marks';
 import { Button, Group, Row, Text } from '../components/ui';
@@ -73,7 +73,8 @@ export interface ModelSpec {
   reasoning?: { supported?: boolean; efforts?: string[] };
 }
 export interface ModelCatalogue {
-  models: { id: string; name?: string; recommended?: boolean }[];
+  models: { id: string; name?: string; description?: string; recommended?: boolean }[];
+  default?: string;
   spec?: ModelSpec;
 }
 export function effortChoices(spec?: ModelSpec) {
@@ -127,6 +128,39 @@ export async function selectModel(
   }
   return patch;
 }
+
+/** After a main-model save, probe connectivity without blocking; failures are warnings only. */
+export async function warnIfModelUnreachable(
+  props: PageProps,
+  values: { provider?: string; model?: string },
+) {
+  const provider = String(values.provider || '').trim();
+  const model = String(values.model || '').trim();
+  if (!provider || !model) return;
+  try {
+    const response = await props.model.send<{
+      ok?: boolean;
+      results?: { passed: boolean; detail?: string }[];
+    }>('/api/config/test', {
+      method: 'POST',
+      ...json({ section: 'model', values: { provider, model } }),
+    });
+    if (response.ok) return;
+    const detail = response.results?.find((entry) => !entry.passed)?.detail?.trim();
+    toast(
+      detail
+        ? t('model.test_failed_detail', {
+            detail,
+            defaultValue: '连接失败：{{detail}}',
+          })
+        : msg('model.test_failed_continue', '已保存，但连接测试未通过；可稍后在有网络或代理时再测'),
+    );
+  } catch {
+    toast(
+      msg('model.test_failed_continue', '已保存，但连接测试未通过；可稍后在有网络或代理时再测'),
+    );
+  }
+}
 export function ModelsPage(props: PageProps) {
   const saver = useSettings(props, msg('ui.nav_model', '模型设置'));
   const name = saver.config.model?.provider || '',
@@ -173,13 +207,14 @@ export function MainModelPage(props: PageProps) {
   const saver = useSettings(props, msg('model.main', '主模型'), '/model');
   const model = section(saver.config, 'model');
   const type = saver.config.model_providers?.[String(model.provider)]?.type || '';
+  const localeRevision = useAtomValue(props.model.locale);
   const catalogue = useQuery(
     (signal) =>
       props.model.send<ModelCatalogue>(
         `/api/models?${new URLSearchParams({ provider: type, model: String(model.model || ''), locale: getActiveLocale() })}`,
         { signal },
       ),
-    [props.model, type, model.model],
+    [props.model, type, model.model, localeRevision],
   );
   const efforts = effortChoices(catalogue.data?.spec);
   const record = saver.config.model_providers?.[String(model.provider || '')];
@@ -299,39 +334,42 @@ export function ConnectionTest({
   values: Record<string, unknown>;
 }) {
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ fingerprint: string; text: string } | null>(null);
-  const fingerprint = JSON.stringify(values);
   return (
     <div className="ds-group">
       <Button
         className="ds-card-action"
         action={`test-${sectionName}-connection`}
         disabled={busy}
+        aria-busy={busy || undefined}
         onClick={async () => {
-          const tested = fingerprint;
           setBusy(true);
           try {
             const response = await props.model.send<{
               ok: boolean;
               results?: { passed: boolean; detail?: string }[];
             }>('/api/config/test', { method: 'POST', ...json({ section: sectionName, values }) });
-            setResult({
-              fingerprint: tested,
-              text: response.ok
-                ? resolve(msg('model.test_passed', '连接成功'))
-                : response.results?.find((entry) => !entry.passed)?.detail ||
-                  resolve(msg('model.test_failed', '连接失败')),
-            });
+            if (response.ok) {
+              toast(msg('model.test_passed', '连接成功'));
+              return;
+            }
+            const detail = response.results?.find((entry) => !entry.passed)?.detail?.trim();
+            toast(
+              detail
+                ? t('model.test_failed_detail', {
+                    detail,
+                    defaultValue: '连接失败：{{detail}}',
+                  })
+                : msg('model.test_failed', '连接失败'),
+            );
           } catch (error) {
-            setResult({ fingerprint: tested, text: apiError(error).message });
+            toast(apiError(error).message);
           } finally {
             setBusy(false);
           }
         }}
       >
-        <Text value={msg('model.test', '测试连接')} />
+        <Text value={busy ? msg('model.testing', '正在测试…') : msg('model.test', '测试连接')} />
       </Button>
-      {result?.fingerprint === fingerprint && <p role="status">{result.text}</p>}
     </div>
   );
 }
@@ -584,6 +622,8 @@ export function ModelPicker(props: PageProps) {
   const selected = saver.config.model || {};
   const type = saver.config.model_providers?.[selected.provider || '']?.type || '';
   const history = useAtomValue(props.model.modelHistory);
+  const localeRevision = useAtomValue(props.model.locale);
+  const [query, setQuery] = useState('');
   const scope = modelScope(
     'model',
     selected.provider || '',
@@ -595,24 +635,53 @@ export function ModelPicker(props: PageProps) {
         `/api/models?provider=${encodeURIComponent(type)}&locale=${getActiveLocale()}`,
         { signal },
       ),
-    [type, props.model],
+    [type, props.model, localeRevision],
   );
   async function choose(model: string) {
+    const provider = selected.provider || '';
     const outcome = await saver.apply(
       'model.model',
-      await selectModel(props, selected.provider || '', type, model, selected.reasoning_effort),
+      await selectModel(props, provider, type, model, selected.reasoning_effort),
     );
-    if (outcome === 'saved') props.navigate('/model/main');
+    if (outcome !== 'saved') return;
+    props.navigate('/model/main');
+    void warnIfModelUnreachable(props, { provider, model });
   }
+  const needle = query.trim().toLowerCase();
+  const models = withModelHistory(catalog.data?.models || [], history[scope]).filter((model) => {
+    if (!needle) return true;
+    const haystack = `${model.id} ${model.name || ''} ${model.description || ''}`.toLowerCase();
+    return haystack.includes(needle);
+  });
   return (
     <div className="ds-screen">
       <QueryError {...catalog} />
       <Group>
-        {withModelHistory(catalog.data?.models || [], history[scope]).map((model) => (
+        <div className="ds-form-card">
+          <input
+            className="ds-input"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={resolve(msg('model.search_placeholder', '搜索模型'))}
+            aria-label={resolve(msg('model.search_placeholder', '搜索模型'))}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+        </div>
+      </Group>
+      <Group>
+        {models.map((model) => (
           <Row
             key={model.id}
             label={model.name || model.id}
-            description={model.id}
+            description={
+              model.recommended
+                ? [resolve(msg('provider.recommended', '推荐')), model.description || model.id]
+                    .filter(Boolean)
+                    .join(' · ')
+                : model.description || model.id
+            }
             onPress={() => void choose(model.id)}
           >
             {selected.model === model.id && <SelectedCheck />}
@@ -815,12 +884,17 @@ export function ProviderEditPage(props: PageProps) {
       const current = saver.config.model?.model || '';
       const selected = catalog.models.some((model) => model.id === current)
         ? current
-        : (catalog.models.find((model) => model.recommended) || catalog.models[0])?.id || current;
+        : catalog.default ||
+          catalog.models.find((model) => model.recommended)?.id ||
+          catalog.models[0]?.id ||
+          current;
       const result = await saver.apply(
         'model.provider',
         await selectModel(props, name, record.type, selected, saver.config.model?.reasoning_effort),
       );
-      if (result === 'saved') props.navigate('/model/main');
+      if (result !== 'saved') return;
+      props.navigate('/model/main');
+      void warnIfModelUnreachable(props, { provider: name, model: selected });
     } catch (error) {
       toast(apiError(error).message);
     }

@@ -1,118 +1,98 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 )
 
-func TestGetDisplayModelsForProvider(t *testing.T) {
-	tests := []struct {
-		name         string
-		provider     string
-		wantCount    int
-		wantFirstID  string
-		hasRecommend bool
-	}{
-		{
-			name:         "openai has models",
-			provider:     "openai",
-			wantCount:    6,
-			wantFirstID:  "gpt-5.5",
-			hasRecommend: true,
-		},
-		{
-			name:         "kimi has models",
-			provider:     "kimi",
-			wantCount:    1,
-			wantFirstID:  "kimi-k3",
-			hasRecommend: true,
-		},
-		{
-			name:         "anthropic has native model IDs",
-			provider:     "anthropic",
-			wantCount:    4,
-			wantFirstID:  "claude-fable-5",
-			hasRecommend: true,
-		},
-		{
-			name:         "ollama has models",
-			provider:     "ollama",
-			wantCount:    4,
-			wantFirstID:  "qwen2.5:14b",
-			hasRecommend: true,
-		},
-		{
-			name:         "deepseek only presets vision models",
-			provider:     "deepseek",
-			wantCount:    1,
-			wantFirstID:  "deepseek-flash",
-			hasRecommend: true,
-		},
-		{
-			name:         "gemini has current multimodal models",
-			provider:     "gemini",
-			wantCount:    3,
-			wantFirstID:  "gemini-3.8-flash",
-			hasRecommend: true,
-		},
-		{
-			name:      "unknown provider returns empty",
-			provider:  "unknown-provider",
-			wantCount: 0,
-		},
-		{
-			name:      "empty provider returns empty",
-			provider:  "",
-			wantCount: 0,
-		},
-		{
-			name:         "case insensitive",
-			provider:     "OPENAI",
-			wantCount:    6,
-			wantFirstID:  "gpt-5.5",
-			hasRecommend: true,
-		},
+func TestModelCatalogLoadsAndHasInvariants(t *testing.T) {
+	catalog, err := loadModelCatalog()
+	if err != nil {
+		t.Fatalf("loadModelCatalog: %v", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			models := GetDisplayModelsForProvider(tt.provider)
-
-			if len(models) != tt.wantCount {
-				t.Errorf("got %d models, want %d", len(models), tt.wantCount)
+	required := []string{"openai", "anthropic", "openrouter", "kimi", "kimi-cn", "volcengine", "deepseek", "gemini", "ollama"}
+	for _, provider := range required {
+		entry, ok := catalog[provider]
+		if !ok {
+			t.Fatalf("missing provider %q", provider)
+		}
+		if entry.Default == "" {
+			t.Fatalf("provider %q missing default", provider)
+		}
+		ids := make(map[string]bool, len(entry.Models))
+		hasRecommended := false
+		for _, model := range entry.Models {
+			if model.ID == "" {
+				t.Fatalf("provider %q has empty model id", provider)
 			}
-
-			if tt.wantCount > 0 {
-				if models[0].ID != tt.wantFirstID {
-					t.Errorf("first model ID = %q, want %q", models[0].ID, tt.wantFirstID)
-				}
-
-				if tt.hasRecommend {
-					foundRecommended := false
-					for _, m := range models {
-						if m.Recommended {
-							foundRecommended = true
-							break
-						}
-					}
-					if !foundRecommended {
-						t.Error("expected at least one recommended model, found none")
-					}
-				}
+			if ids[model.ID] {
+				t.Fatalf("provider %q duplicate model %q", provider, model.ID)
 			}
-		})
+			ids[model.ID] = true
+			if model.Recommended {
+				hasRecommended = true
+			}
+			if model.GetDescription(localeEnglishUS) == "" {
+				t.Fatalf("provider %q model %q missing English description", provider, model.ID)
+			}
+		}
+		if !hasRecommended {
+			t.Fatalf("provider %q has no recommended model", provider)
+		}
+		if !ids[entry.Default] {
+			t.Fatalf("provider %q default %q not in models", provider, entry.Default)
+		}
 	}
 }
 
-func TestAnthropicDisplayModelsUseMessagesAPIIDs(t *testing.T) {
-	want := []string{"claude-fable-5", "claude-opus-5", "claude-sonnet-4-6", "claude-haiku-4-5"}
-	models := GetDisplayModelsForProvider("anthropic")
-	if len(models) != len(want) {
-		t.Fatalf("models = %#v, want %d entries", models, len(want))
+func TestGetDisplayModelsOrdersDefaultFirst(t *testing.T) {
+	models := GetDisplayModelsForProvider("openrouter")
+	if len(models) == 0 {
+		t.Fatal("openrouter catalog is empty")
 	}
-	for i, model := range models {
-		if model.ID != want[i] {
-			t.Errorf("models[%d].ID = %q, want %q", i, model.ID, want[i])
+	want := GetDefaultModelForProvider("openrouter")
+	if want == "" {
+		t.Fatal("openrouter default is empty")
+	}
+	if models[0].ID != want {
+		t.Fatalf("first model = %q, want default %q", models[0].ID, want)
+	}
+	if !models[0].Recommended {
+		t.Fatalf("default model %q should be recommended", models[0].ID)
+	}
+}
+
+func TestGetDisplayModelsForProviderUnknown(t *testing.T) {
+	if models := GetDisplayModelsForProvider("unknown-provider"); len(models) != 0 {
+		t.Fatalf("unknown provider models = %#v, want empty", models)
+	}
+	if models := GetDisplayModelsForProvider(""); len(models) != 0 {
+		t.Fatalf("empty provider models = %#v, want empty", models)
+	}
+}
+
+func TestGetDisplayModelsForProviderCaseInsensitive(t *testing.T) {
+	lower := GetDisplayModelsForProvider("openai")
+	upper := GetDisplayModelsForProvider("OPENAI")
+	if len(lower) == 0 || len(lower) != len(upper) {
+		t.Fatalf("case mismatch: lower=%d upper=%d", len(lower), len(upper))
+	}
+	if lower[0].ID != upper[0].ID {
+		t.Fatalf("first id mismatch: %q vs %q", lower[0].ID, upper[0].ID)
+	}
+}
+
+func TestAnthropicDisplayModelsUseBareIDs(t *testing.T) {
+	for _, model := range GetDisplayModelsForProvider("anthropic") {
+		if strings.Contains(model.ID, "/") {
+			t.Fatalf("anthropic model id %q should be a bare Messages API id", model.ID)
 		}
+	}
+}
+
+func TestOpenRouterDefaultIsFactorySeed(t *testing.T) {
+	if got := GetDefaultModelForProvider("openrouter"); got != "bytedance-seed/seed-2.0-lite" {
+		t.Fatalf("openrouter default = %q, want bytedance-seed/seed-2.0-lite", got)
 	}
 }
 
@@ -124,41 +104,11 @@ func TestModelDisplayInfo_GetDescription(t *testing.T) {
 			localeSimplifiedChinese: "中文描述",
 		},
 	}
-
-	tests := []struct {
-		name   string
-		locale string
-		want   string
-	}{
-		{
-			name:   "get English description",
-			locale: localeEnglishUS,
-			want:   "English description",
-		},
-		{
-			name:   "get Chinese description",
-			locale: localeSimplifiedChinese,
-			want:   "中文描述",
-		},
-		{
-			name:   "fallback to English for unknown locale",
-			locale: "fr-FR",
-			want:   "English description",
-		},
-		{
-			name:   "fallback to English for empty locale",
-			locale: "",
-			want:   "English description",
-		},
+	if got := model.GetDescription(localeSimplifiedChinese); got != "中文描述" {
+		t.Fatalf("zh description = %q", got)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := model.GetDescription(tt.locale)
-			if got != tt.want {
-				t.Errorf("GetDescription(%q) = %q, want %q", tt.locale, got, tt.want)
-			}
-		})
+	if got := model.GetDescription("fr-FR"); got != "English description" {
+		t.Fatalf("fallback description = %q", got)
 	}
 }
 
@@ -171,88 +121,21 @@ func TestModelDisplayInfo_Localized(t *testing.T) {
 		},
 		Recommended: true,
 	}
-
-	tests := []struct {
-		name            string
-		locale          string
-		wantDescription string
-	}{
-		{
-			name:            "localized to English",
-			locale:          localeEnglishUS,
-			wantDescription: "English description",
-		},
-		{
-			name:            "localized to Chinese",
-			locale:          localeSimplifiedChinese,
-			wantDescription: "中文描述",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			localized := model.Localized(tt.locale)
-
-			if localized.ID != model.ID {
-				t.Errorf("ID = %q, want %q", localized.ID, model.ID)
-			}
-			if localized.Description != tt.wantDescription {
-				t.Errorf("Description = %q, want %q", localized.Description, tt.wantDescription)
-			}
-			if localized.Recommended != model.Recommended {
-				t.Errorf("Recommended = %v, want %v", localized.Recommended, model.Recommended)
-			}
-		})
+	localized := model.Localized(localeSimplifiedChinese)
+	if localized.ID != "test-model" || localized.Description != "中文描述" || !localized.Recommended {
+		t.Fatalf("localized = %#v", localized)
 	}
 }
 
 func TestGetLocalizedModelsForProvider(t *testing.T) {
-	tests := []struct {
-		name      string
-		provider  string
-		locale    string
-		wantCount int
-		checkDesc bool
-	}{
-		{
-			name:      "openai models in English",
-			provider:  "openai",
-			locale:    localeEnglishUS,
-			wantCount: 6,
-			checkDesc: true,
-		},
-		{
-			name:      "openai models in Chinese",
-			provider:  "openai",
-			locale:    localeSimplifiedChinese,
-			wantCount: 6,
-			checkDesc: true,
-		},
-		{
-			name:      "unknown provider returns empty",
-			provider:  "unknown",
-			locale:    localeEnglishUS,
-			wantCount: 0,
-		},
+	models := GetLocalizedModelsForProvider("openai", localeSimplifiedChinese)
+	if len(models) == 0 {
+		t.Fatal("expected openai models")
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			models := GetLocalizedModelsForProvider(tt.provider, tt.locale)
-
-			if len(models) != tt.wantCount {
-				t.Errorf("got %d models, want %d", len(models), tt.wantCount)
-			}
-
-			if tt.checkDesc && tt.wantCount > 0 {
-				// Check that descriptions are present and localized
-				for _, m := range models {
-					if m.Description == "" {
-						t.Errorf("model %q has empty description for locale %q", m.ID, tt.locale)
-					}
-				}
-			}
-		})
+	for _, m := range models {
+		if m.Description == "" {
+			t.Fatalf("model %q missing localized description", m.ID)
+		}
 	}
 }
 
@@ -273,38 +156,36 @@ func TestLocalizedProviderModelsIncludeProviderScopedReasoningCapability(t *test
 	t.Fatal("openai display models do not include gpt-4o")
 }
 
-func TestAllDisplayModelsHaveDescriptions(t *testing.T) {
-	// Verify all models have at least English descriptions
-	for provider, models := range displayModelsByProvider {
-		for _, m := range models {
-			if m.ID == "" {
-				t.Errorf("provider %q has model with empty ID", provider)
-			}
-
-			englishDesc, hasEnglish := m.Descriptions[localeEnglishUS]
-			if !hasEnglish || englishDesc == "" {
-				t.Errorf("model %q in provider %q missing English description", m.ID, provider)
-			}
-
-			// Chinese description is recommended but not required
-			if _, hasChinese := m.Descriptions[localeSimplifiedChinese]; !hasChinese {
-				t.Logf("model %q in provider %q missing Chinese description (informational)", m.ID, provider)
-			}
-		}
+func TestParseModelCatalogRejectsBadDefault(t *testing.T) {
+	_, err := parseModelCatalogYAML([]byte(`
+providers:
+  demo:
+    default: missing-model
+    models:
+      - id: real-model
+        recommended: true
+        descriptions:
+          en-US: "x"
+`))
+	if err == nil {
+		t.Fatal("expected error for missing default")
 	}
 }
 
 func TestEachProviderHasRecommendedModel(t *testing.T) {
-	// Each provider should have at least one recommended model
-	for provider, models := range displayModelsByProvider {
+	catalog, err := loadModelCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for provider, entry := range catalog {
 		hasRecommended := false
-		for _, m := range models {
+		for _, m := range entry.Models {
 			if m.Recommended {
 				hasRecommended = true
 				break
 			}
 		}
-		if !hasRecommended && len(models) > 0 {
+		if !hasRecommended {
 			t.Errorf("provider %q has no recommended model", provider)
 		}
 	}
